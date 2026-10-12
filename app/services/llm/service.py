@@ -71,7 +71,7 @@ class LLMService:
             )
         except Exception as e:
             self._current_model_index = 0
-            self._llm = LLMRegistry.LLMS[0]["llm"]
+            self._llm = LLMRegistry.LLMS[0]["llm"] if LLMRegistry.LLMS else None
             logger.warning(
                 "default_model_not_found_using_first",
                 requested=settings.DEFAULT_LLM_MODEL,

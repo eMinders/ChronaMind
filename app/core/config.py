@@ -61,20 +61,28 @@ def load_env_file():
     print(f"Loading environment: {env}")
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
+    # Load root .env first if it exists as baseline configuration
+    root_env = os.path.join(base_dir, ".env")
+    if os.path.isfile(root_env):
+        load_dotenv(dotenv_path=root_env)
+
     # Define env files in priority order
     env_files = [
         os.path.join(base_dir, f".env.{env.value}.local"),
         os.path.join(base_dir, f".env.{env.value}"),
         os.path.join(base_dir, ".env.local"),
-        os.path.join(base_dir, ".env"),
     ]
 
     # Load the first env file that exists
     for env_file in env_files:
         if os.path.isfile(env_file):
-            load_dotenv(dotenv_path=env_file)
+            load_dotenv(dotenv_path=env_file, override=True)
             print(f"Loaded environment from {env_file}")
             return env_file
+
+    if os.path.isfile(root_env):
+        print(f"Loaded environment from {root_env}")
+        return root_env
 
     # Fall back to default if no env file found
     return None

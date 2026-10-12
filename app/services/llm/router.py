@@ -649,6 +649,22 @@ class GeminiAdapter(BaseLLMAdapter):
 # ======================================================================
 
 
+def _is_active_key(key: Optional[str]) -> bool:
+    """Check if an API key is provided and is not an unpopulated placeholder."""
+    if not key or not key.strip():
+        return False
+    clean = key.strip().lower()
+    placeholder_indicators = (
+        "placeholder",
+        "replace-with",
+        "your-",
+        "sk-placeholder",
+        "changeme",
+        "todo",
+    )
+    return not any(indicator in clean for indicator in placeholder_indicators)
+
+
 class DynamicLLMRouter:
     """Scans .env variables at runtime, mounts adapters, and dispatches requests.
 
@@ -666,45 +682,57 @@ class DynamicLLMRouter:
         # 1. OpenAI (or OpenAI-compatible proxies such as Atlas Cloud)
         openai_key = getattr(settings, "OPENAI_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
         base_url = getattr(settings, "OPENAI_BASE_URL", "") or os.getenv("OPENAI_BASE_URL", "")
-        if openai_key and openai_key.strip():
+        if _is_active_key(openai_key):
             self._adapters["openai"] = OpenAIAdapter(api_key=openai_key.strip(), base_url=base_url)
             logger.info("llm_router_provider_mounted", provider="openai", custom_base_url=bool(base_url))
+        elif openai_key:
+            logger.debug("llm_router_skipping_placeholder", provider="openai")
 
         # 2. Groq
         groq_key = getattr(settings, "GROQ_API_KEY", "") or os.getenv("GROQ_API_KEY", "")
-        if groq_key and groq_key.strip():
+        if _is_active_key(groq_key):
             self._adapters["groq"] = GroqAdapter(api_key=groq_key.strip())
             logger.info("llm_router_provider_mounted", provider="groq")
+        elif groq_key:
+            logger.debug("llm_router_skipping_placeholder", provider="groq")
 
         # 3. Mistral
         mistral_key = getattr(settings, "MISTRAL_API_KEY", "") or os.getenv("MISTRAL_API_KEY", "")
-        if mistral_key and mistral_key.strip():
+        if _is_active_key(mistral_key):
             self._adapters["mistral"] = MistralAdapter(api_key=mistral_key.strip())
             logger.info("llm_router_provider_mounted", provider="mistral")
+        elif mistral_key:
+            logger.debug("llm_router_skipping_placeholder", provider="mistral")
 
         # 4. DeepSeek
         deepseek_key = getattr(settings, "DEEPSEEK_API_KEY", "") or os.getenv("DEEPSEEK_API_KEY", "")
-        if deepseek_key and deepseek_key.strip():
+        if _is_active_key(deepseek_key):
             self._adapters["deepseek"] = DeepSeekAdapter(api_key=deepseek_key.strip())
             logger.info("llm_router_provider_mounted", provider="deepseek")
+        elif deepseek_key:
+            logger.debug("llm_router_skipping_placeholder", provider="deepseek")
 
         # 5. OpenRouter
         openrouter_key = getattr(settings, "OPENROUTER_API_KEY", "") or os.getenv("OPENROUTER_API_KEY", "")
-        if openrouter_key and openrouter_key.strip():
+        if _is_active_key(openrouter_key):
             self._adapters["openrouter"] = OpenRouterAdapter(api_key=openrouter_key.strip())
             logger.info("llm_router_provider_mounted", provider="openrouter")
+        elif openrouter_key:
+            logger.debug("llm_router_skipping_placeholder", provider="openrouter")
 
         # 6. Ollama (local server)
         ollama_url = getattr(settings, "OLLAMA_BASE_URL", "") or os.getenv("OLLAMA_BASE_URL", "")
-        if ollama_url and ollama_url.strip():
+        if ollama_url and ollama_url.strip() and not any(p in ollama_url.lower() for p in ("placeholder", "todo")):
             self._adapters["ollama"] = OllamaAdapter(base_url=ollama_url.strip())
             logger.info("llm_router_provider_mounted", provider="ollama", base_url=ollama_url)
 
         # 7. Anthropic
         anthropic_key = getattr(settings, "ANTHROPIC_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
-        if anthropic_key and anthropic_key.strip():
+        if _is_active_key(anthropic_key):
             self._adapters["anthropic"] = AnthropicAdapter(api_key=anthropic_key.strip())
             logger.info("llm_router_provider_mounted", provider="anthropic")
+        elif anthropic_key:
+            logger.debug("llm_router_skipping_placeholder", provider="anthropic")
 
         # 8. Google / Gemini
         gemini_key = (
@@ -712,9 +740,25 @@ class DynamicLLMRouter:
             or os.getenv("GEMINI_API_KEY", "")
             or os.getenv("GOOGLE_API_KEY", "")
         )
-        if gemini_key and gemini_key.strip():
+        if _is_active_key(gemini_key):
             self._adapters["gemini"] = GeminiAdapter(api_key=gemini_key.strip())
             logger.info("llm_router_provider_mounted", provider="gemini")
+        elif gemini_key:
+            logger.debug("llm_router_skipping_placeholder", provider="gemini")
+
+        # Graceful fallback if only placeholders exist in .env
+        if not self._adapters:
+            logger.warning(
+                "no_active_llm_providers_detected",
+                hint="Replace placeholder API keys in .env with your real credentials",
+            )
+            raw_key = (
+                getattr(settings, "OPENAI_API_KEY", "")
+                or os.getenv("OPENAI_API_KEY", "")
+                or "sk-placeholder-unconfigured"
+            )
+            base_url = getattr(settings, "OPENAI_BASE_URL", "") or os.getenv("OPENAI_BASE_URL", "")
+            self._adapters["openai"] = OpenAIAdapter(api_key=raw_key.strip(), base_url=base_url)
 
         # Fallback check for default provider
         if self._adapters and self.default_provider not in self._adapters:
