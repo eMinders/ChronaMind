@@ -1,2 +1,5 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Enforce LF line endings for scripts and env files
+*.sh text eol=lf
+*.env text eol=lf
+.env.* text eol=lf
+Makefile text eol=lf
