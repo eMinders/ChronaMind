@@ -136,8 +136,11 @@ class JsonlFileHandler(logging.Handler):
 
             with open(self.file_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_entry) + "\n")
-        except Exception:
-            self.handleError(record)
+        except (Exception, NameError):
+            try:
+                self.handleError(record)
+            except Exception:
+                pass
 
     @override
     def close(self) -> None:

@@ -1,5 +1,7 @@
 """This file contains the main application entry point."""
 
+import asyncio
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -32,6 +34,9 @@ from app.core.middleware import (
 from app.core.observability import langfuse_init
 from app.services.database import database_service
 from app.services.memory import memory_service
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Load environment variables
 load_dotenv()
