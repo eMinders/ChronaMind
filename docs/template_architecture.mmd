@@ -1,0 +1,41 @@
+graph TB
+    Client["Client (HTTP / Streaming SSE)"]
+
+    subgraph FastAPI["FastAPI Application"]
+        MW["Middleware (Rate Limit, Metrics, Correlation ID, Profiler)"]
+        Auth["JWT Authentication & Session Management"]
+        API["REST API Endpoints (/chat, /chat/stream, /auth/*, /health)"]
+    end
+
+    subgraph AgentEngine["LangGraph State Engine"]
+        Graph["StateGraph (chat <--> tool_call)"]
+        Checkpointer["AsyncPostgresSaver (Multi-turn Checkpoint Store)"]
+    end
+
+    subgraph Services["Core Application Services"]
+        LLM["LLM Service (Circular Fallback, Retries & Total Timeout)"]
+        Memory["Memory Service (mem0 Semantic Memory + Cache)"]
+        Tools["Tools Execution Pool (DuckDuckGo, Custom Tools)"]
+    end
+
+    subgraph Storage["Storage & Vector Infrastructure"]
+        PG[("PostgreSQL 16 + pgvector (Data & Vectors)")]
+        Cache["Valkey / Redis (Optional Memory Cache)"]
+    end
+
+    subgraph Observability["Observability & Telemetry"]
+        Langfuse["Langfuse Tracing (Traces, Costs, Latencies)"]
+        Prometheus["Prometheus Metrics + Grafana Dashboards"]
+        Logs["structlog (Structured JSON / Console Context)"]
+    end
+
+    Client --> MW --> Auth --> API
+    API --> Graph
+    Graph --> LLM --> Langfuse
+    Graph --> Tools
+    Graph --> Memory --> Cache
+    Graph <--> Checkpointer
+    Memory --> PG
+    Checkpointer --> PG
+    API --> Prometheus
+    API --> Logs

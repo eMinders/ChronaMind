@@ -8,7 +8,24 @@
 - OpenAI API key
 - Langfuse account (optional — set `LANGFUSE_TRACING_ENABLED=false` to skip)
 
-## Option A: Docker (recommended)
+## Option A: Automated One-Command Setup (Fastest for Contributors)
+
+Runs dependency syncing via `uv`, configures `.env.development`, starts PostgreSQL + `pgvector`, applies migrations, and launches the server:
+
+- **Windows**:
+  ```powershell
+  .\setup.ps1
+  ```
+- **Linux / macOS**:
+  ```bash
+  chmod +x setup.sh && ./setup.sh
+  ```
+- **Cross-platform**:
+  ```bash
+  uv run python scripts/setup.py
+  ```
+
+## Option B: Docker Stack
 
 The fastest way to get running. One command starts the API and PostgreSQL with pgvector.
 
@@ -28,7 +45,7 @@ make docker-migrate # runs Alembic migrations inside the app container
 
 Open [http://localhost:8000/docs](http://localhost:8000/docs).
 
-## Option B: Local Python
+## Option C: Local Python (Manual)
 
 ```bash
 git clone <repo-url> my-agent

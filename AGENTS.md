@@ -2,11 +2,31 @@
 
 This document provides essential guidelines for AI agents working on this LangGraph FastAPI Agent project.
 
+## First-Time Setup & Installation
+
+Run one of the automated setup scripts to bootstrap the repository (downloads `uv`, creates `.env.development` with secure keys, starts PostgreSQL with `pgvector`, syncs dependencies, installs pre-commit hooks, applies migrations, and boots the server):
+
+- **Windows (PowerShell)**:
+  ```powershell
+  .\setup.ps1
+  ```
+- **macOS / Linux**:
+  ```bash
+  chmod +x setup.sh && ./setup.sh
+  ```
+- **Cross-Platform / CLI**:
+  ```bash
+  uv run python scripts/setup.py
+  # or
+  make setup
+  ```
+
 ## Quick Commands
 
 ```bash
+make setup                # Automated first-time repo bootstrap
 make install              # Install deps (uv sync) + pre-commit hooks
-make dev                  # Dev server with hot reload (port 8000)
+make dev                  # Dev server with hot reload (port 8000 via run.py)
 make lint                 # ruff check .
 make format               # ruff format .
 make typecheck            # uv run pyright (static type check)

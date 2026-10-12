@@ -27,6 +27,9 @@ run_with_env = bash -c "source scripts/set_env.sh $(ENV) && $(1)"
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
+setup:
+	@uv run python scripts/setup.py
+
 install:
 	pip install uv
 	uv sync
@@ -36,7 +39,7 @@ install:
 # Server
 # ---------------------------------------------------------------------------
 dev:
-	@$(call run_with_env,uv run uvicorn app.main:app --reload --port 8000)
+	@$(call run_with_env,uv run python run.py)
 
 staging:
 	@$(call run_with_env,$(MAKE) _serve ENV=staging)

@@ -107,6 +107,25 @@ This works as a drop-in replacement anywhere `ChatOpenAI` is used in your LangGr
 
 ## Quickstart
 
+### Option 1: One-Command Automated Setup (Recommended)
+
+Clones, installs `uv`, creates `.env.development` with secure keys, starts PostgreSQL + `pgvector`, applies migrations, and launches the server:
+
+- **Windows (PowerShell)**:
+  ```powershell
+  .\setup.ps1
+  ```
+- **macOS / Linux**:
+  ```bash
+  chmod +x setup.sh && ./setup.sh
+  ```
+- **Any OS (via uv / python)**:
+  ```bash
+  uv run python scripts/setup.py
+  ```
+
+### Option 2: Docker Full Stack
+
 ```bash
 git clone <repo-url> my-agent && cd my-agent
 cp .env.example .env.development   # fill in your keys
@@ -116,7 +135,7 @@ make docker-up                     # starts API + PostgreSQL
 
 Open [http://localhost:8000/docs](http://localhost:8000/docs) to see the interactive API.
 
-> For local development without Docker see [docs/getting-started.md](docs/getting-started.md).
+> For local development guide see [docs/getting-started.md](docs/getting-started.md).
 
 ## Documentation
 
