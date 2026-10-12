@@ -157,8 +157,19 @@ class Settings:
             os.getenv("LANGFUSE_HOST") or os.getenv("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
         )
 
-        # LangGraph Configuration
+        # Multi-provider LLM Configuration
+        self.DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "openai").lower()
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+        self.OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+        self.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+        self.GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+        self.GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+        self.MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+        self.DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+        self.OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+        self.OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "")
+
+        # LangGraph Configuration
         self.DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-5.6-luna")
         self.SESSION_NAMING_ENABLED = os.getenv("SESSION_NAMING_ENABLED", "true").lower() == "true"
         self.DEFAULT_LLM_TEMPERATURE = float(os.getenv("DEFAULT_LLM_TEMPERATURE", "0.2"))
