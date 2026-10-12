@@ -106,7 +106,7 @@ ignore = "migrations"
 
 [tool.ruff]
 line-length = 119
-exclude = ["migrations", "*.ipynb", "venv"]
+exclude = ["migrations", "*.ipynb", "venv", ".venv", ".agents", ".cursor", ".claude"]
 
 [tool.ruff.lint]
 # Enable flake8-bugbear (`B`) rules and docstring (`D`) rules
@@ -135,6 +135,8 @@ exclude = [
 stubPath = "typings"
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
 
 # Tightened from defaults — cheap real-bug catchers
 reportDuplicateImport = "error"

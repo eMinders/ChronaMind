@@ -4,6 +4,7 @@ If VALKEY_HOST is configured, uses Redis client to connect to Valkey for distrib
 Otherwise, falls back to a simple in-memory TTL cache.
 """
 
+import asyncio
 import hashlib
 import time
 from typing import (
@@ -170,7 +171,11 @@ class ValkeyCacheService:
     async def close(self) -> None:
         """Close the Valkey connection."""
         if self._client:
-            await self._client.aclose()
+            close_fn = getattr(self._client, "aclose", getattr(self._client, "close", None))
+            if close_fn:
+                res = close_fn()
+                if asyncio.iscoroutine(res):
+                    await res
             logger.info("cache_connection_closed")
 
 

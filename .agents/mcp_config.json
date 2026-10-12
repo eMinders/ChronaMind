@@ -9,6 +9,11 @@
       "type": "http",
       "serverUrl": "https://reference.langchain.com/mcp",
       "url": "https://reference.langchain.com/mcp"
+    },
+    "langfuse-docs": {
+      "type": "http",
+      "serverUrl": "https://langfuse.com/api/mcp",
+      "url": "https://langfuse.com/api/mcp"
     }
   }
 }

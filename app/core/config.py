@@ -153,7 +153,9 @@ class Settings:
         )
         self.LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
         self.LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
-        self.LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+        self.LANGFUSE_HOST = (
+            os.getenv("LANGFUSE_HOST") or os.getenv("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+        )
 
         # LangGraph Configuration
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
