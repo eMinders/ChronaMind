@@ -370,7 +370,7 @@ class OpenRouterAdapter(BaseLLMAdapter):
 
     provider_name = "openrouter"
     DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-    DEFAULT_MODEL = "openai/gpt-4o-mini"
+    DEFAULT_MODEL = "google/gemma-4-31b-it:free"
 
     def __init__(self, api_key: str):
         """Initialize the OpenRouter adapter.
@@ -392,12 +392,17 @@ class OpenRouterAdapter(BaseLLMAdapter):
         target_temp = temperature if temperature is not None else settings.DEFAULT_LLM_TEMPERATURE
         target_tokens = max_tokens or settings.MAX_TOKENS
 
+        headers = {"HTTP-Referer": "https://chronamind.ai", "X-Title": "ChronaMind"}
+        if "default_headers" in kwargs:
+            headers.update(kwargs.pop("default_headers"))
+
         return ChatOpenAI(
             model=target_model,
             api_key=SecretStr(self.api_key),
             base_url=self.DEFAULT_BASE_URL,
             temperature=target_temp,
             max_completion_tokens=target_tokens,
+            default_headers=headers,
             **kwargs,
         )
 

@@ -22,7 +22,15 @@ _PROVIDER_CATALOGS: Dict[str, List[str]] = {
     "gemini": ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"],
     "mistral": ["mistral-large-latest", "mistral-small-latest", "codestral-latest"],
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
-    "openrouter": ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"],
+    "openrouter": [
+        "google/gemma-4-31b-it:free",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "dots-studio/dots-3-note-preview:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "cohere/north-mini-code:free",
+        "openai/gpt-4o-mini",
+        "anthropic/claude-3.5-sonnet",
+    ],
     "ollama": ["llama3.2", "mistral"],
 }
 
