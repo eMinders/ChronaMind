@@ -1,0 +1,23 @@
+[
+  {
+    "key": "graphiti_code",
+    "url": "https://raw.githubusercontent.com/getzep/graphiti/d50741d1bf463cbe3859eb73914cbff1b66839e6/graphiti_core/graphiti.py",
+    "status": 200
+  },
+  {
+    "key": "graphiti_search",
+    "url": "https://raw.githubusercontent.com/getzep/graphiti/d50741d1bf463cbe3859eb73914cbff1b66839e6/graphiti_core/search/search_config_recipes.py",
+    "status": 200
+  },
+  {
+    "key": "mem0_code",
+    "url": "https://raw.githubusercontent.com/mem0ai/mem0/0724291bd864cf807e88ee8981c8226644e8fb42/mem0/memory/main.py",
+    "status": 200
+  },
+  {
+    "key": "lme_oracle",
+    "url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/98d7416c24c778c2fee6e6f3006e7a073259d48f/longmemeval_oracle.json",
+    "status": 200,
+    "bytes": 15388478
+  }
+]

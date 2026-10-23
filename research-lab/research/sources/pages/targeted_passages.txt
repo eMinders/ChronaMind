@@ -1,0 +1,2448 @@
+
+## zep_full
+Zep: A Temporal Knowledge Graph Architecture for Agent Memory
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY-NC-SA 4.0
+arXiv:2501.13956v1 [cs.CL] 20 Jan 2025
+Zep: A Temporal Knowledge Graph Architecture for Agent Memory
+Preston Rasmussen
+Affiliation:
+Zep AI
+Email:
+preston@getzep.com
+Pavlo Paliychuk
+Affiliation:
+Zep AI
+Email:
+paul@getzep.com
+Travis Beauvais
+Affiliation:
+Zep AI
+Email:
+travis@getzep.com
+Jack Ryan
+Affiliation:
+Zep AI
+Email:
+jack@getzep.com
+Daniel Chalef
+Affiliation:
+Zep AI
+Email:
+daniel@getzep.com
+Abstract
+We introduce Zep, a novel memory layer service for AI agents that outperforms the current state-of-the-art sy
+
+TERM Temporal Extraction
+e computational complexity of the deduplication process by limiting the search space to a subset of edges relevant to the specific entity pair.
+2.2.3
+Temporal Extraction and Edge Invalidation
+A key differentiating feature of Graphiti compared to other knowledge graph engines is its capacity to manage dynamic information updates through temporal extraction and edge invalidation processes.
+The system extracts temporal information about facts from the episode context using
+t
+ref
+t_{\text{ref}}
+. This enables accurate extraction and datetime representation of both absolute timestamps (e.g., "Alan Turing was born on June 23, 1912") and relative timestamps (e.g., "I started my new job two weeks ago"). Consistent with our bi-temporal modeling approach, the system tracks four timestamps:
+t
+′
+​
+created
+t^{\prime}\text{created}
+and
+t
+′
+​
+expired
+∈
+T
+′
+t^{\prime}\text{expired}\in T^{\prime}
+monitor when facts are created or invalidated in the system, while
+t
+valid
+t_{\text{valid}}
+and
+t
+invalid
+∈
+T
+t_{\text{invalid}}\in T
+track the temporal range during which facts held true. These temporal data points are stored on edges alongside other fact information.
+The introduction of new edges can invalidate existing edges in the database. The system employs an LLM to compare new edges against semantically related existing edges to identify potential contradictions. When the system identifies temporally overlapping contradictions, it invalidates the affected edges by setting their
+t
+invalid
+t_{\text{invalid}}
+to the
+t
+valid
+t_{\text{valid}}
+of the invalidating edge. Following the transactional timeline
+T
+′
+T^{\prime}
+, Graphiti consistently prioritizes new information when determining edge invalidation.
+This comprehensive approach enables the dynamic addition of data to Graphiti as conversations evolve, while maintaining both current relationship states and historical records of relationship evolution over time.
+2.3
+Communities
+After establishing the episodic and semantic subgraphs, the system constructs the community subgraph through community detection. While our community detection approach builds upon the technique described in GraphRAG
+[
+4
+]
+, we employ a label propagation algorithm
+[
+13
+]
+rather than the Leiden algorithm
+[
+14
+]
+. This choice was influenced by label propagation’s straightforward dynamic extension, which enables the system to maintain accurate community representations for longer periods as new data enters the graph, delaying the need for complete community refreshes.
+The dynamic extension implements the logic of a single recursive step in label propagation. When the system adds a new entity node
+n
+i
+∈
+𝒩
+s
+n_{i}\in\mathcal{N}_{s}
+to the graph, it surveys the communities of neighboring nodes. The syst
+
+TERM contradict
+date existing edges in the database. The system employs an LLM to compare new edges against semantically related existing edges to identify potential contradictions. When the system identifies temporally overlapping contradictions, it invalidates the affected edges by setting their
+t
+invalid
+t_{\text{invalid}}
+to the
+t
+valid
+t_{\text{valid}}
+of the invalidating edge. Following the transactional timeline
+T
+′
+T^{\prime}
+, Graphiti consistently prioritizes new information when determining edge invalidation.
+This comprehensive approach enables the dynamic addition of data to Graphiti as conversations evolve, while maintaining both current relationship states and historical records of relationship evolution over time.
+2.3
+Communities
+After establishing the episodic and semantic subgraphs, the system constructs the community subgraph through community detection. While our community detection approach builds upon the technique described in GraphRAG
+[
+4
+]
+, we employ a label propagation algorithm
+[
+13
+]
+rather than the Leiden algorithm
+[
+14
+]
+. This choice was influenced by label propagation’s straightforward dynamic extension, which enables the system to maintain accurate community representations for longer periods as new data enters the graph, delaying the need for complete community refreshes.
+The dynamic extension implements the logic of a single recursive step in label propagation. When the system adds a new entity node
+n
+i
+∈
+𝒩
+s
+n_{i}\in\mathcal{N}_{s}
+to the graph, it surveys the communities of neighboring nodes. The system assigns the new node to the community held by the plurality of its neighbors, then updates the community summary and graph accordingly. While this dynamic updating enables efficient community extension as data flows into the system, the resulting communities gradually diverge from those that would be generated by a complete label propagation run. Therefore, periodic community refreshes remain necessary. However, this dynamic updating strategy provides a practical heuristic that significantly reduces latency and LLM inference costs.
+Following
+[
+4
+]
+, our community nodes contain summaries derived through an iterative map-reduce-style summarization of member nodes. However, our retrieval methods differ substantially from GraphRAG’s map-reduce approach
+[
+4
+]
+. To support our retrieval methodology, we generate community names containing key terms and relevant subjects from the community summaries. These names are embedded and stored to enable cosine similarity searches.
+3
+Memory Retrieval
+The memory retrieval system in Zep provides powerful, complex, and highly configurable functionality. At a high level, the Zep graph search API implements a function
+f
+:
+S
+→
+S
+f:S\to S
+that accepts a t
+
+TERM Reciprocal
+ieve high recall, rerankers serve to increase precision by prioritizing the most relevant results. Zep supports existing reranking approaches such as Reciprocal Rank Fusion (RRF)
+[
+20
+]
+and Maximal Marginal Relevance (MMR)
+[
+21
+]
+. Additionally, Zep implements a graph-based episode-mentions reranker that prioritizes results based on the frequency of entity or fact mentions within a conversation, enabling a system where frequently referenced information becomes more readily accessible. The system also includes a node distance reranker that reorders results based on their graph distance from a designated centroid node, providing context localized to specific areas of the knowledge graph. The system’s most sophisticated reranking capability employs cross-encoders—LLMs that generate relevance scores by evaluating nodes and edges against queries using cross-attention, though this approach incurs the highest computational cost.
+4
+Experiments
+This section analyzes two experiments conducted using LLM-memory based benchmarks. The first evaluation employs the Deep Memory Retrieval (DMR) task developed in
+[
+3
+]
+, which uses a 500-conversation subset of the Multi-Session Chat dataset introduced in "Beyond Goldfish Memory: Long-Term Open-Domain Conversation"
+[
+22
+]
+. The second evaluation utilizes the LongMemEval benchmark from "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory"
+[
+7
+]
+. Specifically, we use the LongMemEval
+s
+dataset, which provides an extensive conversation context of on average 115,000 tokens.
+For both experiments, we integrate the conversation history into a Zep knowledge graph through Zep’s APIs. We then retrieve the 20 most relevant edges (facts) and entity nodes (entity summaries) using the techniques described in Section 3. The system reformats this data into a context string, matching the functionality provided by Zep’s memory APIs.
+While these experiments demonstrate key retrieval capabilities of Graphiti, they represent a subset of the system’s full search functionality. This focused scope enables clear comparison with existing benchmarks while reserving the exploration of additional knowledge graph capabilities for future work.
+4.1
+Choice of models
+Our experimental implementation employs the BGE-m3 models from BAAI for both reranking and embedding tasks
+[
+23
+]
+[
+24
+]
+. For graph construction and response generation, we utilize gpt-4o-mini-2024-07-18 for graph construction, and both gpt-4o-mini-2024-07-18 and gpt-4o-2024-11-20 for the chat agent generating responses to provided context.
+To ensure direct comparability with MemGPT’s DMR results, we also conducted the DMR evaluation using gpt-4-turbo-2024-04-09.
+The experimental notebooks will be made publicly availab
+NOT FOUND delete
+
+## mem0_full
+Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2504.19413v1 [cs.CL] 28 Apr 2025
+Mem0
+: Building Production
+-
+Ready AI Agents with Scalable Long
+-
+Term Memory
+Prateek Chhikara
+Dev Khant
+Saket Aryan
+Taranjeet Singh
+and
+Deshraj Yadav
+Affiliation:
+research@mem0.ai
+Abstract
+Large Language Models (LLMs) have demonstrated remarkable prowess in generating contextually coherent responses, yet their fixed context windows pose fundamental challenges for maintaining consistency over prolonged multi-session dialogues. We intro
+
+TERM update
+erate seamlessly within ongoing conversations. As illustrated in Figure
+2
+, the complete pipeline architecture consists of two phases:
+extraction
+and
+update
+.
+Figure 2
+:
+Architectural overview of the
+Mem0
+system showing extraction and update phase. The extraction phase processes messages and historical context to create new memories. The update phase evaluates these extracted memories against similar existing ones, applying appropriate operations through a Tool Call mechanism. The database serves as the central repository, providing context for processing and storing updated memories.
+The
+extraction phase
+initiates upon ingestion of a new message pair
+(
+m
+t
+−
+1
+,
+m
+t
+)
+(m_{t-1},m_{t})
+, where
+m
+t
+m_{t}
+represents the current message and
+m
+t
+−
+1
+m_{t-1}
+the preceding one. This pair typically consists of a user message and an assistant response, capturing a complete interaction unit. To establish appropriate context for memory extraction, the system employs two complementary sources:
+(1)
+a conversation summary
+S
+S
+retrieved from the database that encapsulates the semantic content of the entire conversation history, and
+(2)
+a sequence of recent messages
+{
+m
+t
+−
+m
+,
+m
+t
+−
+m
++
+1
+,
+…
+,
+m
+t
+−
+2
+}
+\{m_{t-m},m_{t-m+1},...,m_{t-2}\}
+from the conversation history, where
+m
+m
+is a hyperparameter controlling the recency window. To support context-aware memory extraction, we implement an asynchronous summary generation module that periodically refreshes the conversation summary. This component operates independently of the main processing pipeline, ensuring that memory extraction consistently benefits from up-to-date contextual information without introducing processing delays. While
+S
+S
+provides global thematic understanding across the entire conversation, the recent message sequence offers granular temporal context that may contain relevant details not consolidated in the summary. This dual contextual information, combined with the new message pair, forms a comprehensive prompt
+P
+=
+(
+S
+,
+{
+m
+t
+−
+m
+,
+…
+,
+m
+t
+−
+2
+}
+,
+m
+t
+−
+1
+,
+m
+t
+)
+P=(S,\{m_{t-m},...,m_{t-2}\},m_{t-1},m_{t})
+for an extraction function
+ϕ
+\phi
+implemented via an LLM. The function
+ϕ
+⁡
+(
+P
+)
+\phi(P)
+then extracts a set of salient memories
+Ω
+=
+{
+ω
+1
+,
+ω
+2
+,
+…
+,
+ω
+n
+}
+\Omega=\{\omega_{1},\omega_{2},...,\omega_{n}\}
+specifically from the new exchange while maintaining awareness of the conversation’s broader context, resulting in candidate facts for potential inclusion in the knowledge base.
+Following extraction, the
+update phase
+evaluates each candidate fact against existing memories to maintain consistency and avoid redundancy. This phase determines the appropriate memory management operation for each extracted fact
+ω
+i
+∈
+Ω
+\omega_{i}\in\Omega
+. Algorith
+
+TERM DELETE
+ creation of new memories when no semantically equivalent memory exists;
+UPDATE
+for augmentation of existing memories with complementary information;
+DELETE
+for removal of memories contradicted by new information; and
+NOOP
+when the candidate fact requires no modification to the knowledge base. Rather than using a separate classifier, we leverage the LLM’s reasoning capabilities to directly select the appropriate operation based on the semantic relationship between the candidate fact and existing memories. Following this determination, the system executes the provided operations, thereby maintaining knowledge base coherence and temporal consistency.
+In our experimental evaluation, we configured the system with ‘
+m
+m
+’ = 10 previous messages for contextual reference and ‘
+s
+s
+’ = 10 similar memories for comparative analysis. All language model operations utilized
+GPT-4o-mini
+as the inference engine. The vector database employs dense embeddings to facilitate efficient similarity search during the update phase.
+2.2
+Mem0
+g
+\texttt{Mem0}^{\tiny g}
+The
+Mem0
+g
+\texttt{Mem0}^{\tiny g}
+pipeline, illustrated in Figure
+3
+, implements a graph-based memory approach that effectively captures, stores, and retrieves contextual information from natural language interactions
+(
+Zhang et al., 2022
+)
+. In this framework, memories are represented as a directed labeled graph
+G
+=
+(
+V
+,
+E
+,
+L
+)
+G=(V,E,L)
+, where:
+•
+Nodes
+V
+V
+represent entities (e.g.,
+Alice
+,
+San_Francisco
+)
+•
+Edges
+E
+E
+represent relationships between entities (e.g.,
+lives_in
+)
+•
+Labels
+L
+L
+assign semantic types to nodes (e.g.,
+Alice
+-
+Person
+,
+San_Francisco
+-
+City
+)
+Each entity node
+v
+∈
+V
+v\in V
+contains three components: (1) an entity type classification that categorizes the entity (e.g., Person, Location, Event), (2) an embedding vector
+e
+v
+e_{v}
+that captures the entity’s semantic meaning, and (3) metadata including a creation timestamp
+t
+v
+t_{v}
+. Relationships in our system are structured as triplets in the form
+(
+v
+s
+,
+r
+,
+v
+d
+)
+(v_{s},r,v_{d})
+, where
+v
+s
+v_{s}
+and
+v
+d
+v_{d}
+are source and destination entity nodes, respectively, and
+r
+r
+is the labeled edge connecting them.
+Figure 3
+:
+Graph-based memory architecture of
+Mem0
+g
+\texttt{Mem0}^{\tiny g}
+illustrating entity extraction and update phase. The extraction phase uses LLMs to convert conversation messages into entities and relation triplets. The update phase employs conflict detection and resolution mechanisms when integrating new information into the existing knowledge graph.
+The extraction process employs a two-stage pipeline leveraging LLMs to transform unstructured text into structured graph representations. First, an
+entity extractor
+module processes the input text to identify a set of entities
+
+TERM evaluation
+riant that leverages graph-based memory representations to capture complex relational structures among conversational elements.
+Through comprehensive evaluations on the
+LOCOMO
+benchmark, we systematically compare our approaches against six baseline categories: (i) established memory-augmented systems, (ii) retrieval-augmented generation (RAG) with varying chunk sizes and
+k
+k
+-values, (iii) a full-context approach that processes the entire conversation history, (iv) an open-source memory solution, (v) a proprietary model system, and (vi) a dedicated memory management platform.
+Empirical results demonstrate that our methods consistently outperform all existing memory systems across four question categories: single-hop, temporal, multi-hop, and open-domain.
+Notably,
+Mem0
+achieves 26% relative improvements in the LLM-as-a-Judge metric over OpenAI, while
+Mem0
+with graph memory achieves around 2% higher overall score than the base
+Mem0
+configuration.
+Beyond accuracy gains, we also markedly reduce computational overhead compared to the full-context approach. In particular,
+Mem0
+attains a 91% lower p95 latency and saves more than 90% token cost, thereby offering a compelling balance between advanced reasoning capabilities and practical deployment constraints.
+Our findings highlight the critical role of structured, persistent memory mechanisms for long-term conversational coherence, paving the way for more reliable and efficient LLM-driven AI agents.
+Code can be found at
+:
+https://mem0.ai/research
+1
+Introduction
+Human memory is a
+foundation of intelligence
+—it shapes our identity, guides decision-making, and enables us to learn, adapt, and form meaningful relationships
+(
+Craik and Jennings, 1992
+)
+. Among its many roles, memory is essential for communication: we recall past interactions, infer preferences, and construct evolving mental models of those we engage with
+(
+Assmann, 2011
+)
+. This ability to retain and retrieve information over extended periods enables coherent, contextually rich exchanges that span days, weeks, or even months. AI agents, powered by large language models (LLMs), have made remarkable progress in generating fluent, contextually appropriate responses
+(
+Yu et al., 2024
+,
+Zhang et al., 2024
+)
+. However, these systems are fundamentally limited by their reliance on fixed context windows, which severely restrict their ability to maintain coherence over extended interactions
+(
+Bulatov et al., 2022
+,
+Liu et al., 2023
+)
+.
+This limitation stems from LLMs’ lack of persistent memory mechanisms that can extend beyond their finite context windows. While humans naturally accumulate and organize experiences over time, forming a continuous narrative of interactions, AI systems cannot inherently persist
+
+TERM judge
+s across four question categories: single-hop, temporal, multi-hop, and open-domain.
+Notably,
+Mem0
+achieves 26% relative improvements in the LLM-as-a-Judge metric over OpenAI, while
+Mem0
+with graph memory achieves around 2% higher overall score than the base
+Mem0
+configuration.
+Beyond accuracy gains, we also markedly reduce computational overhead compared to the full-context approach. In particular,
+Mem0
+attains a 91% lower p95 latency and saves more than 90% token cost, thereby offering a compelling balance between advanced reasoning capabilities and practical deployment constraints.
+Our findings highlight the critical role of structured, persistent memory mechanisms for long-term conversational coherence, paving the way for more reliable and efficient LLM-driven AI agents.
+Code can be found at
+:
+https://mem0.ai/research
+1
+Introduction
+Human memory is a
+foundation of intelligence
+—it shapes our identity, guides decision-making, and enables us to learn, adapt, and form meaningful relationships
+(
+Craik and Jennings, 1992
+)
+. Among its many roles, memory is essential for communication: we recall past interactions, infer preferences, and construct evolving mental models of those we engage with
+(
+Assmann, 2011
+)
+. This ability to retain and retrieve information over extended periods enables coherent, contextually rich exchanges that span days, weeks, or even months. AI agents, powered by large language models (LLMs), have made remarkable progress in generating fluent, contextually appropriate responses
+(
+Yu et al., 2024
+,
+Zhang et al., 2024
+)
+. However, these systems are fundamentally limited by their reliance on fixed context windows, which severely restrict their ability to maintain coherence over extended interactions
+(
+Bulatov et al., 2022
+,
+Liu et al., 2023
+)
+.
+This limitation stems from LLMs’ lack of persistent memory mechanisms that can extend beyond their finite context windows. While humans naturally accumulate and organize experiences over time, forming a continuous narrative of interactions, AI systems cannot inherently persist information across separate sessions or after context overflow.
+The absence of persistent memory creates a fundamental disconnect in human-AI interaction. Without memory, AI agents forget user preferences, repeat questions, and contradict previously established facts.
+Consider a simple example illustrated in Figure
+1
+, where a user mentions being vegetarian and avoiding dairy products in an initial conversation.
+In a subsequent session, when the user asks about dinner recommendations, a system without persistent memory might suggest chicken, completely contradicting the established dietary preferences. In contrast, a system with persistent memory would maintain this crit
+
+## amem_full
+A-Mem: Agentic Memory for LLM Agents
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2502.12110v11 [cs.CL] 08 Oct 2025
+A-Mem: Agentic Memory for LLM Agents
+Wujiang Xu
+Affiliation:
+Rutgers University
+Email:
+mailto:wujiang.xu@rutgers.eduwujiang.xu@rutgers.edu
+Zujie Liang
+Affiliation:
+Independent Researcher
+Kai Mei
+Affiliation:
+Rutgers University
+Hang Gao
+Affiliation:
+Rutgers University
+Juntao Tan
+Affiliation:
+Rutgers University
+Yongfeng Zhang
+Affiliation:
+Rutgers University
+Affiliation:
+AIOS Foundation
+Abstract
+While large language model (LLM) agents can effectively use external tools for
+
+TERM evolution
+storical memories to identify relevant connections, establishing links where meaningful similarities exist. Additionally, this process enables memory evolution – as new memories are integrated, they can trigger updates to the contextual representations and attributes of existing historical memories, allowing the memory network to continuously refine its understanding. Our approach combines the structured organization principles of Zettelkasten with the flexibility of agent-driven decision making, allowing for more adaptive and context-aware memory management.
+Empirical experiments on six foundation models show superior improvement against existing SOTA baselines.
+Code for Benchmark Evaluation
+:
+https://github.com/WujiangXu/AgenticMemory
+Code for Production-ready Agentic Memory
+:
+https://github.com/WujiangXu/A-mem-sys
+1
+Introduction
+Large Language Model (LLM) agents have demonstrated remarkable capabilities in various tasks, with recent advances enabling them to interact with environments, execute tasks, and make decisions autonomously
+[
+23
+,
+33
+,
+7
+]
+. They integrate LLMs with external tools and delicate workflows to improve reasoning and planning abilities. Though LLM agent has strong reasoning performance, it still needs a memory system to provide long-term interaction ability with the external environment
+[
+35
+]
+.
+Existing memory systems
+[
+25
+,
+39
+,
+28
+,
+21
+]
+for LLM agents provide basic memory storage functionality. These systems require agent developers to predefine memory storage structures, specify storage points within the workflow, and establish retrieval timing.
+Meanwhile, to improve structured memory organization, Mem0
+[
+8
+]
+, following the principles of RAG
+[
+9
+,
+18
+,
+30
+]
+, incorporates graph databases for storage and retrieval processes. While graph databases provide structured organization for memory systems, their reliance on predefined schemas and relationships fundamentally limits their adaptability. This limitation manifests clearly in practical scenarios - when an agent learns a novel mathematical solution, current systems can only categorize and link this information within their preset framework, unable to forge innovative connections or develop new organizational patterns as knowledge evolves. Such rigid structures, coupled with fixed agent workflows, severely restrict these systems’ ability to generalize across new environments and maintain effectiveness in long-term interactions. The challenge becomes increasingly critical as LLM agents tackle more complex, open-ended tasks, where flexible knowledge organization and continuous adaptation are essential. Therefore,
+how to design a flexible and universal memory system that supports LLM agents’ long-term interactions
+remains a cru
+
+TERM link generation
+ predetermined memory operations.
+∙
+\bullet
+We design an agentic memory update mechanism where new memories automatically trigger two key operations: link generation and memory evolution. Link generation automatically establishes connections between memories by identifying shared attributes and similar contextual descriptions. Memory evolution enables existing memories to dynamically adapt as new experiences are analyzed, leading to the emergence of higher-order patterns and attributes.
+∙
+\bullet
+We conduct comprehensive evaluations of our system using a long-term conversational dataset, comparing performance across six foundation models using six distinct evaluation metrics, demonstrating significant improvements. Moreover, we provide T-SNE visualizations to illustrate the structured organization of our agentic memory system.
+2
+Related Work
+2.1
+Memory for LLM Agents
+Prior works on LLM agent memory systems have explored various mechanisms for memory management and utilization
+[
+23
+,
+21
+,
+8
+,
+39
+]
+. Some approaches complete interaction storage, which maintains comprehensive historical records through dense retrieval models
+[
+39
+]
+or read-write memory structures
+[
+24
+]
+. Moreover, MemGPT
+[
+25
+]
+leverages cache-like architectures to prioritize recent information. Similarly, SCM
+[
+32
+]
+proposes a Self-Controlled Memory framework that enhances LLMs’ capability to maintain long-term memory through a memory stream and controller mechanism.
+However, these approaches face significant limitations in handling diverse real-world tasks. While they can provide basic memory functionality, their operations are typically constrained by predefined structures and fixed workflows. These constraints stem from their reliance on rigid operational patterns, particularly in memory writing and retrieval processes. Such inflexibility leads to poor generalization in new environments and limited effectiveness in long-term interactions. Therefore, designing a flexible and universal memory system that supports agents’ long-term interactions remains a crucial challenge.
+2.2
+Retrieval-Augmented Generation
+Retrieval-Augmented Generation (RAG) has emerged as a powerful approach to enhance LLMs by incorporating external knowledge sources
+[
+18
+,
+6
+,
+10
+]
+. The standard RAG
+[
+37
+,
+34
+]
+process involves indexing documents into chunks, retrieving relevant chunks based on semantic similarity, and augmenting the LLM’s prompt with this retrieved context for generation. Advanced RAG systems
+[
+20
+,
+12
+]
+have evolved to include sophisticated pre-retrieval and post-retrieval optimizations.
+Building upon these foundations, recent researches has introduced agentic RAG systems that demonstrate more autonomous and adaptive behaviors in the retrieval p
+
+TERM evaluation
+aware memory management.
+Empirical experiments on six foundation models show superior improvement against existing SOTA baselines.
+Code for Benchmark Evaluation
+:
+https://github.com/WujiangXu/AgenticMemory
+Code for Production-ready Agentic Memory
+:
+https://github.com/WujiangXu/A-mem-sys
+1
+Introduction
+Large Language Model (LLM) agents have demonstrated remarkable capabilities in various tasks, with recent advances enabling them to interact with environments, execute tasks, and make decisions autonomously
+[
+23
+,
+33
+,
+7
+]
+. They integrate LLMs with external tools and delicate workflows to improve reasoning and planning abilities. Though LLM agent has strong reasoning performance, it still needs a memory system to provide long-term interaction ability with the external environment
+[
+35
+]
+.
+Existing memory systems
+[
+25
+,
+39
+,
+28
+,
+21
+]
+for LLM agents provide basic memory storage functionality. These systems require agent developers to predefine memory storage structures, specify storage points within the workflow, and establish retrieval timing.
+Meanwhile, to improve structured memory organization, Mem0
+[
+8
+]
+, following the principles of RAG
+[
+9
+,
+18
+,
+30
+]
+, incorporates graph databases for storage and retrieval processes. While graph databases provide structured organization for memory systems, their reliance on predefined schemas and relationships fundamentally limits their adaptability. This limitation manifests clearly in practical scenarios - when an agent learns a novel mathematical solution, current systems can only categorize and link this information within their preset framework, unable to forge innovative connections or develop new organizational patterns as knowledge evolves. Such rigid structures, coupled with fixed agent workflows, severely restrict these systems’ ability to generalize across new environments and maintain effectiveness in long-term interactions. The challenge becomes increasingly critical as LLM agents tackle more complex, open-ended tasks, where flexible knowledge organization and continuous adaptation are essential. Therefore,
+how to design a flexible and universal memory system that supports LLM agents’ long-term interactions
+remains a crucial challenge.
+(a)
+Traditional memory system.
+(b)
+Our proposed agentic memory.
+Figure 1
+:
+Traditional memory systems require predefined memory access patterns specified in the workflow, limiting their adaptability to diverse scenarios. Contrastly, our
+A-Mem
+enhances the flexibility of LLM agents by enabling dynamic memory operations.
+In this paper, we introduce a novel agentic memory system, named as
+A-Mem
+, for LLM agents that enables dynamic memory structuring without relying on static, predetermined memory operations. Our approach 
+
+## memoryos_full
+Memory OS of AI Agent
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2506.06326v1 [cs.AI] 30 May 2025
+Memory OS of AI Agent
+Jiazheng Kang
+Affiliation:
+Beijing University of Posts
+Affiliation:
+and Telecommunications
+Email:
+kjz@bupt.edu.cn
+Mingming Ji
+Affiliation:
+Tencent AI Lab
+Email:
+matthhewj@tencent.com
+Zhe Zhao
+Affiliation:
+Tencent AI Lab
+Email:
+nlpzhezhao@tencent.com
+Ting Bai
+†
+†
+thanks:
+Corresponding author.
+Affiliation:
+Beijing University of Posts
+Affiliation:
+and Telecommunications
+Email:
+baiting@bupt.edu.cn
+Abstract
+Large Language Models (LLMs) face a crucial challenge from fix
+NOT FOUND Consolidation
+
+TERM profile
+ and personalization over long-term interactions.
+It consists of two components: the User Persona and the AI Agent Persona.
+•
+User Persona
+.
+The
+User Profile
+comprises a static component with fixed attributes (gender, name, birth year), a User Knowledge Base (
+User KB
+) that dynamically stores factual information extracted and incrementally updated from past interactions, and
+User Traits
+that contains the evolving interests, habits, and preferences of users over time.
+•
+Agent Persona
+. It contains the
+Agent Profile
+, which includes fixed settings like the role the AI agent assistant plays or its character traits, providing a consistent self-description.
+The
+Agent Traits
+are dynamic attributes that develop through interactions with the user, potentially including new settings added by the user or interaction history, e.g., recommended items, during conversations.
+3.3
+Memory Update Module
+Key updating operations include updates within each unit itself and the update mechanism from STM to MTM, MTM to LPM store units.
+STM-MTM Update:
+STM stores information in the form of dialogue pages in a queue with fixed length. We employ a First-In-First-Out (FIFO) update strategy for information migration to the Mid-Term Memory (MTM).
+New dialogue page is appended to the queue’s end. When the STM queue reaches its maximum capacity, the oldest dialogue page is transferred from the STM to the MTM according to the FIFO principle.
+MTM-LPM Update:
+MTM updates involve two operations, i.e., segment deletion and segment-to-LPM updates, both based on the Heat score of segments, defined as:
+H
+​
+e
+​
+a
+​
+t
+=
+α
+⋅
+N
+visit
++
+β
+⋅
+L
+interaction
++
+γ
+⋅
+R
+recency
+,
+Heat=\alpha\cdot N_{\text{visit}}+\beta\cdot L_{\text{interaction}}+\gamma\cdot R_{\text{recency}},
+(4)
+where coefficients
+α
+\alpha
+,
+β
+\beta
+, and
+γ
+\gamma
+determine the relative importance of each factor.
+N
+visit
+N_{\text{visit}}
+is the number of times the segment has been retrieved,
+L
+interaction
+L_{\text{interaction}}
+denotes the total number of dialogue pages within the segment, and
+R
+recency
+R_{\text{recency}}
+is the time decay coefficient represents the duration since the last retrieval time of the current segment, defined as:
+R
+recency
+=
+exp
+⁡
+(
+−
+Δ
+​
+t
+μ
+)
+R_{\text{recency}}=\exp\left(-\frac{\Delta t}{\mu}\right)
+,
+where
+Δ
+​
+t
+\Delta t
+is the time elapsed since the last access, measured in seconds, and
+μ
+\mu
+is a configurable time constant (i.e., 1e+7).
+These three metrics, i.e., retrieval count (
+N
+visit
+N_{\text{visit}}
+), total dialogue pages (
+L
+interaction
+L_{\text{interaction}}
+), and time decay coefficient (
+R
+recency
+R_{\text{recency}}
+), collectively represent the frequent access, high engagement, and recent use as core indicators of segment heat.
+When the l
+
+TERM update
+ises three levels of storage units: short-term memory, mid-term memory, and long-term personal memory. Key operations within MemoryOS include dynamic updates between storage units: short-term to mid-term updates follow a dialogue-chain-based FIFO principle, while mid-term to long-term updates use a segmented page organization strategy.
+Our pioneering MemoryOS enables hierarchical memory integration and dynamic updating. Extensive experiments on the LoCoMo benchmark show an average improvement of 49.11% on F1 and 46.18% on BLEU-1 over the baselines on GPT-4o-mini, showing contextual coherence and personalized memory retention in long conversations. The implementation code is open-sourced at
+https://github.com/BAI-LAB/MemoryOS
+.
+1
+Introduction
+Large Language Models (LLMs) demonstrate impressive capabilities in text comprehension and generation, but face inherent limitations in sustaining dialogue coherence due to their reliance on fixed-length contextual windows for memory management.
+This fixed-length design inherently struggles to preserve continuity in dialogues with significant temporal gaps, often resulting in disjointed memory that manifests as factual inconsistencies and reduced personalization.
+Long-term memory coherence is critical in scenarios requiring persistent user adaptation, multi-session knowledge retention, or stable persona representation across extended interactions, where the limitations of fixed-length memory management in default LLMs become particularly acute, constituting a significant open challenge in the field.
+To address this challenge, current memory mechanisms in default LLMs can be broadly categorized into three methodological types:
+(1)
+Knowledge-organization
+methods
+Xu et al. (2025)
+;
+Liu et al. (2023)
+, such as A-Mem structure memory into interconnected semantic networks or notes to enable adaptive management and flexible retrieval; (2)
+Retrieval mechanism-oriented
+approaches
+Huang et al. (2024)
+;
+Zhong et al. (2024)
+;
+Li et al. (2024)
+, e.g., MemoryBank integrates semantic retrieval with a memory forgetting curve mechanism to allow long-term memory updating; and (3)
+Architecture-driven
+methods
+Packer et al. (2023)
+;
+Chhikara et al. (2025)
+, such as MemGPT use hierarchical structures with explicit read and write operations to dynamically manage context.
+Although these diverse strategies typically operate in isolation, i.e., each focusing on single dimensions such as storage structure, retrieval machinism, or update strategies, no unified operating system has been proposed to enable systematic and comprehensive memory management for AI agents.
+Inspired by memory management principles in operating systems, we pioneer the proposal of a comprehensive memory operating syste
+
+## memos_full
+\titlefontMemOS: A Memory OS for AI System
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2507.03724v4 [cs.CL] 03 Dec 2025
+1]MemTensor (Shanghai) Technology Co., Ltd.
+2]Institute for Advanced Algorithms Research, Shanghai
+3]Research Institute of China Telecom
+4]Tongji University
+5]Zhejiang University
+6]University of Science and Technology of China
+7]Peking University
+8]Renmin University of China
+9]Beihang University
+10]Shanghai Jiao Tong University
+\checkdata
+[Author Legend]†Correspondence
+\checkdata
+[Project Website]
+https://memos.openmem.net/
+\checkdata
+[Code]
+https://github.com/MemTensor/MemOS
+\titlefont
+MemOS
+: A
+
+TERM govern
+ext.
+This motivates a layered memory hierarchy, similar to how OSs manage memory, consisting of working memory, long-term storage, and cold archives, governed by recency, access frequency, and importance.
+Sharing memory across users and agents requires scoping, permission control, and migratable, reusable representations.
+These capabilities are vital not only for system efficiency, but for the long-term sustainability of model-based knowledge evolution.
+The management of memory will become model-defined instead of human-defined.
+Just as deep learning replaced feature engineering, the transition of memory management from hard-coded pipelines (e.g., RAG) to learnable strategies is natural and necessary.
+Future agents will autonomously decide whether to retrieve memory, summarize interaction into reusable rules, abstract preferences, or transfer knowledge across contexts.
+In essence, models must take on the responsibility of shaping their own memory architectures and strategies.
+Yet, existing infrastructures fall short of enabling this shift.
+Mainstream LLMs rely on implicit
+parameter memory
+, encoding knowledge in billions or trillions of model weights.
+While this approach affords generalization, it suffers from high update cost, poor interpretability, and limited flexibility.
+Retraining or fine-tuning requires significant computational resources and risks issues such as catastrophic forgetting.
+To address this bottleneck, Retrieval-Augmented Generation (RAG) has emerged as a popular augmentation strategy.
+By incorporating external retrieval modules, RAG allows models to dynamically access fresh information at inference time, enabling augmentation without parameter updates
+[
+5
+,
+6
+,
+7
+,
+8
+,
+9
+,
+10
+,
+11
+]
+.
+It is now widely deployed in systems such as Copilots
+[
+12
+]
+and enterprise search
+[
+13
+,
+14
+,
+15
+,
+16
+]
+.
+Nonetheless, RAG remains fundamentally an “on-the-fly retrieval and transient composition” pipeline, rather than an integrated memory management system.
+It lacks core memory manageability features such as lifecycle tracking, versioning, and permission-aware scheduling, limiting its ability to support long-term, adaptive knowledge systems.
+As a result, models continue to exhibit short-memory behavior in multi-turn dialogue, planning, and personalization tasks, struggling to maintain behavioral consistency or long-horizon adaptation.
+Figure 2
+:
+Categorization of LLM knowledge, including the memory hierarchy.
+The explicit memories, extracted from model activations, lie half-way between raw data and model parameters,
+so a dotted line is used to indicate that they may or may not be regarded as parameters.
+Reproduced from
+[
+1
+]
+.
+Recent work has shown that the limitations of current memory mechanisms a
+
+TERM provenance
+ter-level memories, enabling cost-efficient storage and retrieval. As the basic unit, a MemCube encapsulates both memory content and metadata such as provenance and versioning. MemCubes can be composed, migrated, and fused over time, enabling flexible transitions between memory types and bridging retrieval with parameter-based learning.
+MemOS
+establishes a memory-centric system framework that brings controllability, plasticity, and evolvability to LLMs, laying the foundation for continual learning and personalized modeling.
+1
+Introduction
+Figure 1
+:
+MemOS
+achieves state-of-the-art performance across all benchmarks.
+This figure provides a comprehensive summary of our evaluation results, illustrating the personalized response rate on PreFEval(0 turns and 10 turns), the precision score on PersonaMem, the overall mean score on LongMemEval, and the overall mean LLM judge score on the LoCoMo benchmark. The
+MemOS
+(MemOS-1031) consistently ranks first in all categories, significantly outperforming strong baselines such as MIRIX, Mem0, Zep, Memobase, MemU, and Supermemory. Full detailed metric breakdowns are provided in Table
+3
+, Table
+5
+, Table
+4
+and Table
+6
+.
+With the advent of the Transformer architecture and the maturation of self-supervised pretraining, Large Language Models (LLMs) have become the cornerstone of modern NLP.
+Trained on large-scale corpora, LLMs exhibit near-human performance in open-domain QA, text generation, and summarization tasks
+[
+2
+]
+.
+With increasing model size and compute, their capabilities have expanded to structured code generation
+[
+3
+]
+, cross-modal reasoning
+[
+4
+]
+, multi-turn dialogue, and complex planning—positioning LLMs as a leading paradigm toward Artificial General Intelligence (AGI).
+Looking ahead, the presence of LLMs, or more generally, AGI systems, will expand vastly in both time and space.
+Temporally, models will shift from stateless, session-based tools to persistent agents embedded in long-running workflows.
+Much like humans, they will need to accumulate interaction histories, adapt internal states, and reason over extended contexts.
+Spatially, LLMs are evolving into foundational intelligence layers across users, platforms, and ecosystems.
+Whether deployed in cloud services or embedded in enterprise systems, they must support consistency, adaptability, and personalization across users, roles, and tasks.
+As such omnipresence becomes the norm, a critical challenge emerges: how should knowledge be organized, stored, and retrieved?
+With expanding interaction histories, models face a potentially unbounded context space.
+We anticipate that future LLMs will seek to leverage as much of their accessible temporal and spatial context as possible, to support deeper reasoning
+NOT FOUND deletion
+
+TERM lifecycle
+er extended periods.While Retrieval-Augmented Generation (RAG) introduces external knowledge in plain text, it remains a stateless workaround without lifecycle control or integration with persistent representations.Recent work has modeled the training and inference cost of LLMs from a memory hierarchy perspective, showing that introducing an explicit memory layer between parameter memory and external retrieval can substantially reduce these costs by externalizing specific knowledge
+[
+1
+]
+. Beyond computational efficiency, LLMs face broader challenges arising from how information is distributed over time and context, requiring systems capable of managing heterogeneous knowledge spanning different temporal scales and sources. To address this challenge, we propose
+MemOS
+, a memory operating system that treats memory as a manageable system resource. It unifies the representation, scheduling, and evolution of plaintext, activation-based, and parameter-level memories, enabling cost-efficient storage and retrieval. As the basic unit, a MemCube encapsulates both memory content and metadata such as provenance and versioning. MemCubes can be composed, migrated, and fused over time, enabling flexible transitions between memory types and bridging retrieval with parameter-based learning.
+MemOS
+establishes a memory-centric system framework that brings controllability, plasticity, and evolvability to LLMs, laying the foundation for continual learning and personalized modeling.
+1
+Introduction
+Figure 1
+:
+MemOS
+achieves state-of-the-art performance across all benchmarks.
+This figure provides a comprehensive summary of our evaluation results, illustrating the personalized response rate on PreFEval(0 turns and 10 turns), the precision score on PersonaMem, the overall mean score on LongMemEval, and the overall mean LLM judge score on the LoCoMo benchmark. The
+MemOS
+(MemOS-1031) consistently ranks first in all categories, significantly outperforming strong baselines such as MIRIX, Mem0, Zep, Memobase, MemU, and Supermemory. Full detailed metric breakdowns are provided in Table
+3
+, Table
+5
+, Table
+4
+and Table
+6
+.
+With the advent of the Transformer architecture and the maturation of self-supervised pretraining, Large Language Models (LLMs) have become the cornerstone of modern NLP.
+Trained on large-scale corpora, LLMs exhibit near-human performance in open-domain QA, text generation, and summarization tasks
+[
+2
+]
+.
+With increasing model size and compute, their capabilities have expanded to structured code generation
+[
+3
+]
+, cross-modal reasoning
+[
+4
+]
+, multi-turn dialogue, and complex planning—positioning LLMs as a leading paradigm toward Artificial General Intelligence (AGI).
+Looking ahead, the presence of LLMs, or more ge
+
+## memorygraft_full
+MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2512.16962v1 [cs.CR] 18 Dec 2025
+MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval
+Saksham Sahai Srivastava
+Affiliation:
+School of Computing
+Affiliation:
+University of Georgia
+Affiliation:
+Athens, GA 30602
+Email:
+saksham.srivastava@uga.edu
+Haoyu He
+Affiliation:
+School of Computing
+Affiliation:
+University of Georgia
+Affiliation:
+Athens, GA 30602
+Email:
+haoyu.he@uga.edu
+Abstract
+Large Language Model (LLM) agents increasingly rely on long-term memory and Retri
+
+TERM Abstract
+srivastava@uga.edu
+Haoyu He
+Affiliation:
+School of Computing
+Affiliation:
+University of Georgia
+Affiliation:
+Athens, GA 30602
+Email:
+haoyu.he@uga.edu
+Abstract
+Large Language Model (LLM) agents increasingly rely on long-term memory and Retrieval-Augmented Generation (RAG) to persist experiences and refine future performance. While this experience learning capability enhances agentic autonomy, it introduces a critical, unexplored attack surface, i.e., the trust boundary between an agent’s reasoning core and its own past. In this paper, we introduce
+MemoryGraft
+. It is a novel indirect injection attack that compromises agent behavior not through immediate jailbreaks, but by implanting malicious successful experiences into the agent’s long-term memory. Unlike traditional prompt injections that are transient, or standard RAG poisoning that targets factual knowledge, MemoryGraft exploits the agent’s semantic imitation heuristic which is the tendency to replicate patterns from retrieved successful tasks. We demonstrate that an attacker who can supply benign ingestion-level artifacts that the agent reads during execution can induce it to construct a poisoned RAG store where a small set of malicious procedure templates is persisted alongside benign experiences. When the agent later encounters semantically similar tasks, union retrieval over lexical and embedding similarity reliably surfaces these grafted memories, and the agent adopts the embedded unsafe patterns, leading to persistent behavioral drift across sessions. We validate MemoryGraft on MetaGPT’s
+DataInterpreter
+agent with GPT–4o and find that a small number of poisoned records can account for a large fraction of retrieved experiences on benign workloads, turning experience-based self-improvement into a vector for stealthy and durable compromise. To facilitate reproducibility and future research, our code and evaluation data are available at
+https://github.com/Jacobhhy/Agent-Memory-Poisoning
+.
+1
+Introduction
+Large language model agents have quickly moved beyond simple chatbots and now handle software development, autonomous driving, finance and healthcare. Modern agents couple a reasoning core with tool use and long
+-
+term memory so they can plan, execute and learn from experience. Several research works were done recently in the area of long-term memory. MemoryBank
+Zhong et al. (2023)
+encodes past events as dense vectors and retrieves them via similarity search. MemGPT
+Packer et al. (2023)
+pages information in and out of a hierarchical memory to circumvent small context windows. A
+-
+Mem
+Xu et al. (2025)
+uses a dynamic Zettelkasten
+-
+style network of linked notes that grows and reorganizes itself as new observations arrive. The Preference
+-
+Aware Memo
+
+TERM threat model
+our knowledge,
+MemoryGraft
+is the first persistent, trigger
+-
+free memory poisoning attack that leverages the agent’s semantic imitation heuristic.
+3
+Threat Model
+3.1
+Agent Setting
+We consider an autonomous LLM agent
+𝒜
+\mathcal{A}
+, where
+𝒜
+\mathcal{A}
+denotes the underlying decision-making model.
+The agent is equipped with (i) a retrieval-augmented generation (RAG) module, and (ii) a persistent long-term memory store
+ℳ
+\mathcal{M}
+, where
+ℳ
+\mathcal{M}
+represents the set of all stored experience records, each containing a past query and its associated reasoning trace.
+For an input query
+q
+q
+, where
+q
+q
+denotes the user-issued natural language request, the agent computes a retrieval set
+Retr
+⁡
+(
+q
+)
+=
+{
+(
+q
+i
+,
+R
+q
+i
+)
+}
+i
+=
+1
+k
+,
+\mathrm{Retr}(q)=\{(q_{i},R_{q_{i}})\}_{i=1}^{k},
+where
+q
+i
+q_{i}
+is the
+i
+i
+-th retrieved past query,
+R
+q
+i
+R_{q_{i}}
+is the corresponding reasoning or action trace associated with
+q
+i
+q_{i}
+, and
+k
+k
+is the retrieval budget specifying the maximum number of records returned.
+Each retrieved pair
+(
+q
+i
+,
+R
+q
+i
+)
+(q_{i},R_{q_{i}})
+is selected by ranking memory items in
+ℳ
+\mathcal{M}
+using both lexical similarity (BM25) and vector-based similarity (cosine distance over embeddings). Let
+Retr
+lex
+​
+(
+q
+)
+\mathrm{Retr}^{\mathrm{lex}}(q)
+denote the top-
+k
+k
+BM25 retrieval set, and
+Retr
+vec
+​
+(
+q
+)
+\mathrm{Retr}^{\mathrm{vec}}(q)
+denote the top-
+k
+k
+embedding-based retrieval set.
+The final retrieval set is then defined as the union
+Retr
+⁡
+(
+q
+)
+=
+Retr
+lex
+​
+(
+q
+)
+∪
+Retr
+vec
+​
+(
+q
+)
+,
+\mathrm{Retr}(q)=\mathrm{Retr}^{\mathrm{lex}}(q)\cup\mathrm{Retr}^{\mathrm{vec}}(q),
+representing all memory items that the agent considers relevant to
+q
+q
+under either similarity channel.
+The retrieved set
+Retr
+⁡
+(
+q
+)
+\mathrm{Retr}(q)
+is incorporated into the prompt as demonstrations, after which the model produces a reasoning or action trace
+R
+q
+R_{q}
+for the new query. If the task is judged successful, the pair
+(
+q
+,
+R
+q
+)
+(q,R_{q})
+, where
+R
+q
+R_{q}
+is the newly generated trace, is appended to the memory store:
+ℳ
+←
+ℳ
+∪
+{
+(
+q
+,
+R
+q
+)
+}
+.
+\mathcal{M}\leftarrow\mathcal{M}\cup\{(q,R_{q})\}.
+This retrieval–write cycle mirrors the operation of frameworks such as MetaGPT’s agents (e.g.,
+DataInterpreter
+), where memory persists across sessions and is stored under shared paths so that multiple invocations of the agent reuse the accumulated successful experiences. Crucially, the agent assumes that retrieved memories are trustworthy and imitates their procedural patterns when solving new tasks.
+3.2
+Attacker’s Objectives
+The adversary
+𝒜
+adv
+\mathcal{A}_{\mathrm{adv}}
+is a malicious user who interacts with the agent only through legitimate input channels such as file uploads, repository notes(e.g. README file),
+
+TERM limitations
+signs can be steered off course, and why securing the memory pipeline should be treated as a first-class concern in future LLM agent architectures.
+8
+Limitations and Future Work
+While our experiments show that
+MemoryGraft
+can reliably induce persistent behavioral drift, the evaluation has several limitations. First, our tests rely on a relatively small set of handcrafted benign and poisoned seeds. Larger and more diverse datasets that reflect a wider range of development workflows, data processing tasks, and documentation styles would allow for a more complete understanding of how broadly the attack generalizes. Establishing benchmark datasets specifically designed for memory poisoning and retrieval drift would also help standardize evaluation across future studies. Second, we focus primarily on aggregate retrieval statistics; more extensive metrics such as retrieval precision and recall, behavioral severity scores, and long-term stability measures would offer a clearer picture of how quickly and strongly an agent becomes compromised. Finally, our attack design is closer to a white-box or semi-white-box setting, in that the attacker knows which documentation files and scripts the agent will ingest and can target those artifacts directly. Exploring how effective
+MemoryGraft
+-style attacks remain under stricter black-box constraints is an important direction for future work.
+Our study focuses on a single agent within MetaGPT, but many MetaGPT workflows involve multiple agents that share or read from the same memory resources. Understanding how contaminated experiences spread across these interconnected components is an important direction for future research. A compromised DataInterpreter, for example, may influence planning, coding, or review agents that draw from the same experience pool. Finally, future work should examine the closed-source version of MetaGPT, which incorporates more advanced agent coordination and memory subsystems. Testing MemoryGraft against this stronger variant will help determine how robust the attack remains under more capable and less transparent agent architectures.
+References
+[1]
+W. Zhong, L. Guo, Q. Gao, H. Ye, and Y. Wang
+(2023)
+MemoryBank: enhancing large language models with long-term memory
+.
+arXiv preprint arXiv:2305.10250
+.
+Cited by:
+§1
+,
+§2
+.
+[2]
+C. Packer, S. Wooders, K. Lin, V. Fang, S. G. Patil, I. Stoica, and J. E. Gonzalez
+(2023)
+MemGPT: towards llms as operating systems
+.
+arXiv preprint arXiv:2310.08560
+.
+Cited by:
+§1
+,
+§2
+.
+[3]
+W. Xu, Z. Liang, K. Mei, H. Gao, J. Tan, and Y. Zhang
+(2025)
+A-mem: agentic memory for llm agents
+.
+arXiv preprint arXiv:2502.12110
+.
+Cited by:
+§1
+,
+§2
+.
+[4]
+H. Sun, Z. Zhang, and S. Zeng
+(2025)
+Preference-aware memory update for long-
+
+## agent_poison_full
+AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2407.12784v1 [cs.LG] 17 Jul 2024
+AgentPoison
+: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases
+Zhaorun Chen
+*
+†
+†
+thanks:
+Correspondence to Zhaorun Chen <zhaorun@uchicago.edu> and Bo Li <bol@uchicago.edu>.
+Affiliation:
+University of Chicago
+Zhen Xiang
+Affiliation:
+University of Illinois, Urbana-Champaign
+Chaowei Xiao
+Affiliation:
+University of Wisconsin, Madison
+Dawn Song
+Affiliation:
+University of California, Berkeley
+Bo Li
+*
+Affiliation:
+University
+
+TERM Abstract
+Song
+Affiliation:
+University of California, Berkeley
+Bo Li
+*
+Affiliation:
+University of Chicago
+Affiliation:
+University of Illinois, Urbana-Champaign
+Abstract
+LLM agents have demonstrated remarkable performance across various applications, primarily due to their advanced capabilities in reasoning, utilizing external knowledge and tools, calling APIs, and executing actions to interact with environments. Current agents typically utilize a
+memory module
+or a retrieval-augmented generation (RAG) mechanism, retrieving past knowledge and instances with similar embeddings from
+knowledge bases
+to inform task planning and execution.
+However, the reliance on unverified knowledge bases raises significant concerns about their safety and trustworthiness.
+To uncover such vulnerabilities, we propose a novel red teaming approach
+AgentPoison
+, the first backdoor attack targeting generic and RAG-based LLM agents by poisoning their long-term memory or RAG knowledge base.
+In particular, we form the trigger generation process as a constrained optimization to optimize backdoor triggers by mapping the triggered instances to a unique embedding space, so as to ensure that whenever a user instruction contains the optimized backdoor trigger, the malicious demonstrations are retrieved from the poisoned memory or knowledge base with high probability.
+In the meantime, benign instructions without the trigger will still maintain normal performance.
+Unlike conventional backdoor attacks,
+AgentPoison
+requires no additional model training or fine-tuning, and the optimized backdoor trigger exhibits superior transferability, in-context coherence, and stealthiness. Extensive experiments demonstrate
+AgentPoison
+’s effectiveness in attacking three types of real-world LLM agents: RAG-based autonomous driving agent, knowledge-intensive QA agent, and healthcare EHRAgent. We inject the poisoning instances into the RAG knowledge base and long-term memories of these agents, respectively, demonstrating the generalization of
+AgentPoison
+.
+On each agent,
+AgentPoison
+achieves an average attack success rate of
+≥
+80
+%
+\geq 80\%
+with minimal impact on benign performance (
+≤
+1
+%
+\leq 1\%
+) with a poison rate
+<
+0.1
+%
+<0.1\%
+. The code and data is available at
+https://github.com/BillChan226/AgentPoison
+.
+1
+Introduction
+Recent advancements in large language models (LLMs) have facilitated the extensive deployment of LLM agents in various applications, including safety-critical applications such as finance
+[
+35
+]
+, healthcare
+[
+1
+,
+25
+,
+31
+,
+27
+,
+20
+]
+, and autonomous driving
+[
+6
+,
+12
+,
+22
+]
+.
+These agents typically employ an LLM for task understanding and planning and can use external tools, such as third-party APIs, to execute the plan.
+The pipeline of LLM a
+
+TERM threat model
+=\text{LLM}(q,\mathcal{E}_{K}(q,\mathcal{D}))
+.
+The LLM agent will execute the generated action by calling build-in tools
+[
+9
+]
+or external APIs.
+3.2
+Threat model
+Assumptions for the attacker
+We follow the standard assumption from previous backdoor attacks against LLMs
+[
+13
+,
+29
+]
+and RAG systems
+[
+39
+,
+41
+]
+.
+We assume that the attacker has partial access to the RAG database of the victim agent and can inject a small number of malicious instances to create a poisoned database
+𝒟
+poison
+​
+(
+x
+t
+)
+=
+𝒟
+clean
+∪
+𝒜
+⁡
+(
+x
+t
+)
+\mathcal{D}_{\text{poison}}(x_{t})=\mathcal{D}_{\text{clean}}\cup\mathcal{A}(x_{t})
+.
+Here,
+𝒜
+⁡
+(
+x
+t
+)
+=
+{
+(
+k
+^
+1
+​
+(
+x
+t
+)
+,
+v
+^
+1
+)
+,
+⋯
+,
+(
+k
+^
+|
+𝒜
+⁡
+(
+x
+t
+)
+|
+​
+(
+x
+t
+)
+,
+v
+^
+|
+𝒜
+⁡
+(
+x
+t
+)
+|
+)
+}
+\mathcal{A}(x_{t})=\{(\hat{k}_{1}(x_{t}),\hat{v}_{1}),\cdots,(\hat{k}_{|\mathcal{A}(x_{t})|}(x_{t}),\hat{v}_{|\mathcal{A}(x_{t})|})\}
+represents the set of adversarial key-value pairs injected by the attacker, where each key here is a benign query injected with a trigger
+x
+t
+x_{t}
+.
+Accordingly, the demonstrations retrieved from the poisoned database for a query
+q
+q
+will be denoted by
+ℰ
+K
+​
+(
+q
+,
+𝒟
+poison
+​
+(
+x
+t
+)
+)
+\mathcal{E}_{K}(q,\mathcal{D}_{\text{poison}}(x_{t}))
+.
+This assumption aligns with practical scenarios where the memory unit of the victim agent is hosted by a third-party retrieval service
+1
+1
+1
+For example:
+https://www.voyageai.com/
+or directly leverages an unverified knowledge base.
+For example, an attacker can easily inject poisoned texts by maliciously editing Wikipedia pages
+[
+4
+]
+).
+Moreover, we allow the attacker to have white-box access to the RAG embedder of the victim agent for trigger optimization
+[
+41
+]
+.
+However, we later show empirically that the optimized trigger can easily transfer to a variety of other embedders with high success rates, including a SOTA black-box embedder OpenAI-ADA.
+Objectives of the attacker
+The attacker has two adversarial goals.
+(a)
+A prescribed adversarial agent output (e.g. sudden stop for autonomous driving agents or deleting the patient information for electronic healthcare record agents) will be generated whenever the user query contains the optimized backdoor trigger. Formally, the attacker aims to maximize
+𝔼
+q
+∼
+π
+q
+​
+[
+𝟙
+​
+(
+LLM
+​
+(
+q
+⊕
+x
+t
+,
+ℰ
+K
+​
+(
+q
+⊕
+x
+t
+,
+𝒟
+poison
+​
+(
+x
+t
+)
+)
+)
+=
+a
+m
+)
+]
+,
+\mathbbm{E}_{{q}\sim\pi_{q}}[\mathbbm{1}(\text{LLM}(q\oplus x_{t},\mathcal{E}_{K}(q\oplus x_{t},\mathcal{D}_{\text{poison}}(x_{t})))=a_{m})],
+(1)
+where
+π
+q
+\pi_{q}
+is the sample distribution of input queries,
+a
+m
+a_{m}
+is the target malicious action,
+𝟙
+​
+(
+⋅
+)
+\mathbbm{1}(\cdot)
+is a logical indicator fuction.
+x
+t
+x_{t}
+denotes the trigger, and
+q
+⊕
+x
+t
+q\oplus x_{t}
+denotes the operation of injecting
+2
+2
+2
+In this work, we do not restrict t
+
+## pgvector
+# pgvector
+
+Open-source vector similarity search for Postgres
+
+Store your vectors with the rest of your data. Supports:
+
+- exact and approximate nearest neighbor search
+- single-precision, half-precision, binary, and sparse vectors
+- L2 distance, inner product, cosine distance, L1 distance, Hamming distance, and Jaccard distance
+- any [language](#languages) with a Postgres client
+
+Plus [ACID](https://en.wikipedia.org/wiki/ACID) compliance, point-in-time recovery, JOINs, and all of the other [great features](https://www.postgresql.org/about/) of Postgres
+
+Have a lot of vectors? Use [quantization](#scaling) to scale
+
+[![Build Status](https://github.com/pgvector/pgvector/actions/workflows/build.yml/badge.svg)](https://github.com/pgvector/pgvector/actions)
+
+## Installation
+
+### Linux and Mac
+
+
+
+TERM filtering
+. `initializing`
+2. `performing k-means`
+3. `assigning tuples`
+4. `loading tuples`
+
+Note: `%` is only populated during the `loading tuples` phase
+
+## Filtering
+
+There are a few ways to index nearest neighbor queries with a `WHERE` clause.
+
+```sql
+SELECT * FROM items WHERE category_id = 123 ORDER BY embedding <-> '[3,1,2]' LIMIT 5;
+```
+
+A good place to start is creating an index on the filter column. This can provide fast, exact nearest neighbor search in many cases. Postgres has a number of [index types](https://www.postgresql.org/docs/current/indexes-types.html) for this: B-tree (default), hash, GiST, SP-GiST, GIN, and BRIN.
+
+```sql
+CREATE INDEX ON items (category_id);
+```
+
+For multiple columns, consider a [multicolumn index](https://www.postgresql.org/docs/current/indexes-multicolumn.html).
+
+```sql
+CREATE INDEX ON items (location_id, category_id);
+```
+
+Exact indexes work well for conditions that match a low percentage of rows. Otherwise, [approximate indexes](#indexing) can work better.
+
+```sql
+CREATE INDEX ON items USING hnsw (embedding vector_l2_ops);
+```
+
+With approximate indexes, filtering is applied *after* the index is scanned. If a condition matches 10% of rows, with HNSW and the default `hnsw.ef_search` of 40, only 4 rows will match on average. For more rows, enable [iterative index scans](#iterative-index-scans), which will automatically scan more of the index when needed.
+
+```sql
+SET hnsw.iterative_scan = strict_order;
+```
+
+If filtering by only a few distinct values, consider [partial indexing](https://www.postgresql.org/docs/current/indexes-partial.html).
+
+```sql
+CREATE INDEX ON items USING hnsw (embedding vector_l2_ops) WHERE (category_id = 123);
+```
+
+If filtering by many different values, consider [partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html).
+
+```sql
+CREATE TABLE items (embedding vector(3), category_id int) PARTITION BY LIST(category_id);
+```
+
+## Multitenancy
+
+For applications with multiple tenants, sharing an approximate index between tenants means vectors from one tenant can affect recall (and speed) for other tenants.
+
+For tenant isolation, use [list partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html) or separate tables.
+
+```sql
+CREATE TABLE items (customer_id int, embedding vector(3)) PARTITION BY LIST(customer_id);
+```
+
+## Iterative Index Scans
+
+With approximate indexes, queries with filtering can return less results since filtering is applied *after* the index is scanned. Starting with 0.8.0, you can enable iterative index scans, which will automatically scan more of the index until enough results are found (or it reaches `hnsw.max_scan_tuples` or `ivfflat.max_probes`).
+
+Iterative scans can use strict or relaxed ordering.
+
+
+
+TERM iterative
+nned. If a condition matches 10% of rows, with HNSW and the default `hnsw.ef_search` of 40, only 4 rows will match on average. For more rows, enable [iterative index scans](#iterative-index-scans), which will automatically scan more of the index when needed.
+
+```sql
+SET hnsw.iterative_scan = strict_order;
+```
+
+If filtering by only a few distinct values, consider [partial indexing](https://www.postgresql.org/docs/current/indexes-partial.html).
+
+```sql
+CREATE INDEX ON items USING hnsw (embedding vector_l2_ops) WHERE (category_id = 123);
+```
+
+If filtering by many different values, consider [partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html).
+
+```sql
+CREATE TABLE items (embedding vector(3), category_id int) PARTITION BY LIST(category_id);
+```
+
+## Multitenancy
+
+For applications with multiple tenants, sharing an approximate index between tenants means vectors from one tenant can affect recall (and speed) for other tenants.
+
+For tenant isolation, use [list partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html) or separate tables.
+
+```sql
+CREATE TABLE items (customer_id int, embedding vector(3)) PARTITION BY LIST(customer_id);
+```
+
+## Iterative Index Scans
+
+With approximate indexes, queries with filtering can return less results since filtering is applied *after* the index is scanned. Starting with 0.8.0, you can enable iterative index scans, which will automatically scan more of the index until enough results are found (or it reaches `hnsw.max_scan_tuples` or `ivfflat.max_probes`).
+
+Iterative scans can use strict or relaxed ordering.
+
+Strict ensures results are in the exact order by distance
+
+```sql
+SET hnsw.iterative_scan = strict_order;
+```
+
+Relaxed allows results to be slightly out of order by distance, but provides better recall
+
+```sql
+SET hnsw.iterative_scan = relaxed_order;
+# or
+SET ivfflat.iterative_scan = relaxed_order;
+```
+
+With relaxed ordering, you can use a [materialized CTE](https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-CTE-MATERIALIZATION) to get strict ordering
+
+```sql
+WITH relaxed_results AS MATERIALIZED (
+    SELECT id, embedding <-> '[1,2,3]' AS distance FROM items WHERE category_id = 123 ORDER BY distance LIMIT 5
+) SELECT * FROM relaxed_results ORDER BY distance + 0;
+```
+
+Note: `+ 0` is needed for Postgres 17+
+
+For queries that filter by distance, use a materialized CTE and place the distance filter outside of it for best performance (due to the [current behavior](https://www.postgresql.org/message-id/flat/CAOdR5yGUoMQ6j7M5hNUXrySzaqZVGf_Ne%2B8fwZMRKTFxU1nbJg%40mail.gmail.com) of the Postgres executor)
+
+```sql
+WITH nearest_results AS MATERIALIZED (
+    SELECT id, embedding <-> '[1,2,3]' AS distance FROM items ORDER B
+
+TERM vacuum
+ber of inverted lists (at the expense of recall).
+
+```sql
+CREATE INDEX ON items USING ivfflat (embedding vector_l2_ops) WITH (lists = 1000);
+```
+
+### Vacuuming
+
+Vacuuming can take a while for HNSW indexes. Speed it up by reindexing first.
+
+```sql
+REINDEX INDEX CONCURRENTLY index_name;
+VACUUM table_name;
+```
+
+## Scaling
+
+For a smaller working set:
+
+1. Use the `halfvec` type instead of `vector` for tables
+2. Use [binary quantization](#binary-quantization) for indexes (with re-ranking for search)
+
+Scale vertically by increasing memory, CPU, and storage on a single instance. Use existing tools to [tune parameters](#tuning) and [monitor performance](#monitoring).
+
+Scale horizontally with [replicas](https://www.postgresql.org/docs/current/hot-standby.html), or use [Citus](https://github.com/citusdata/citus), [PgDog](https://github.com/pgdogdev/pgdog), or another approach for sharding ([example](https://github.com/pgvector/pgvector-python/blob/master/examples/citus/example.py)).
+
+## Monitoring
+
+Use existing tools like [pg_stat_statements](https://www.postgresql.org/docs/current/pgstatstatements.html) or [PgHero](https://github.com/ankane/pghero) to monitor performance.
+
+Monitor recall by comparing results from approximate search with exact search.
+
+```sql
+BEGIN;
+SET LOCAL enable_indexscan = off; -- use exact search
+SELECT ...
+COMMIT;
+```
+
+## Languages
+
+Use pgvector from any language with a Postgres client. You can even generate and store vectors in one language and query them in another.
+
+Language | Libraries / Examples
+--- | ---
+Ada | [pgvector-ada](https://github.com/pgvector/pgvector-ada)
+Algol | [pgvector-algol](https://github.com/pgvector/pgvector-algol)
+C | [pgvector-c](https://github.com/pgvector/pgvector-c)
+C++ | [pgvector-cpp](https://github.com/pgvector/pgvector-cpp)
+C#, F#, Visual Basic | [pgvector-dotnet](https://github.com/pgvector/pgvector-dotnet)
+COBOL | [pgvector-cobol](https://github.com/pgvector/pgvector-cobol)
+Crystal | [pgvector-crystal](https://github.com/pgvector/pgvector-crystal)
+D | [pgvector-d](https://github.com/pgvector/pgvector-d)
+Dart | [pgvector-dart](https://github.com/pgvector/pgvector-dart)
+Elixir | [pgvector-elixir](https://github.com/pgvector/pgvector-elixir)
+Erlang | [pgvector-erlang](https://github.com/pgvector/pgvector-erlang)
+Fortran | [pgvector-fortran](https://github.com/pgvector/pgvector-fortran)
+Gleam | [pgvector-gleam](https://github.com/pgvector/pgvector-gleam)
+Go | [pgvector-go](https://github.com/pgvector/pgvector-go)
+Haskell | [pgvector-haskell](https://github.com/pgvector/pgvector-haskell)
+Java, Kotlin, Groovy, Scala | [pgvector-java](https://github.com/pgvector/pgvector-java)
+JavaScript, TypeScript | [pgvector-node](https://github.com/pgvector/pgvector-node)
+
+
+## postgres_rls
+PostgreSQL: Documentation: 16: 5.8. Row Security Policies
+October 15, 2026:
+PostgreSQL 19 RC 1 Released!
+Documentation
+→
+PostgreSQL 16
+Supported Versions:
+Current
+(
+18
+)
+                        
+                      
+                         /
+17
+/
+16
+/
+15
+/
+14
+Development Versions:
+19
+/
+devel
+Unsupported versions:
+13
+/
+12
+/
+11
+/
+10
+/
+9.6
+/
+9.5
+5.8. Row Security Policies
+Prev
+Up
+Chapter 5. Data Definition
+Home
+Next
+5.8. Row Security Policies
+#
+In addition to the SQL-standard
+privilege system
+available through
+GRANT
+, tables can have
+row security policies
+that restrict, on a per-user basis, which rows can be returned by normal queries or inserted, updated, or deleted by data modification commands. This feature is also known as
+Row-Level Security
+. By default, tables do not have any policie
+
+TERM bypass
+er running the query, although security-definer functions can be used to access data not available to the calling user.
+Superusers and roles with the
+BYPASSRLS
+attribute always bypass the row security system when accessing a table. Table owners normally bypass row security as well, though a table owner can choose to be subject to row security with
+ALTER TABLE ... FORCE ROW LEVEL SECURITY
+.
+Enabling and disabling row security, as well as adding policies to a table, is always the privilege of the table owner only.
+Policies are created using the
+CREATE POLICY
+command, altered using the
+ALTER POLICY
+command, and dropped using the
+DROP POLICY
+command. To enable and disable row security for a given table, use the
+ALTER TABLE
+command.
+Each policy has a name and multiple policies can be defined for a table. As policies are table-specific, each policy for a table must have a unique name. Different tables may have policies with the same name.
+When multiple policies apply to a given query, they are combined using either
+OR
+(for permissive policies, which are the default) or using
+AND
+(for restrictive policies). This is similar to the rule that a given role has the privileges of all roles that they are a member of. Permissive vs. restrictive policies are discussed further below.
+As a simple example, here is how to create a policy on the
+account
+relation to allow only members of the
+managers
+role to access rows, and only rows of their accounts:
+CREATE TABLE accounts (manager text, company text, contact_email text);
+
+ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY account_managers ON accounts TO managers
+    USING (manager = current_user);
+The policy above implicitly provides a
+WITH CHECK
+clause identical to its
+USING
+clause, so that the constraint applies both to rows selected by a command (so a manager cannot
+SELECT
+,
+UPDATE
+, or
+DELETE
+existing rows belonging to a different manager) and to rows modified by a command (so rows belonging to a different manager cannot be created via
+INSERT
+or
+UPDATE
+).
+If no role is specified, or the special user name
+PUBLIC
+is used, then the policy applies to all users on the system. To allow all users to access only their own row in a
+users
+table, a simple policy can be used:
+CREATE POLICY user_policy ON users
+    USING (user_name = current_user);
+This works similarly to the previous example.
+To use a different policy for rows that are being added to the table compared to those rows that are visible, multiple policies can be combined. This pair of policies would allow all users to view all rows in the
+users
+table, but only modify their own:
+CREATE POLICY user_sel_policy ON users
+    FOR SELECT
+    USING (true);
+CREATE POLICY user_mod_policy ON users
+    USING (user_
+
+TERM owner
+LEVEL SECURITY
+), all normal access to the table for selecting rows or modifying rows must be allowed by a row security policy. (However, the table's owner is typically not subject to row security policies.) If no policy exists for the table, a default-deny policy is used, meaning that no rows are visible or can be modified. Operations that apply to the whole table, such as
+TRUNCATE
+and
+REFERENCES
+, are not subject to row security.
+Row security policies can be specific to commands, or to roles, or to both. A policy can be specified to apply to
+ALL
+commands, or to
+SELECT
+,
+INSERT
+,
+UPDATE
+, or
+DELETE
+. Multiple roles can be assigned to a given policy, and normal role membership and inheritance rules apply.
+To specify which rows are visible or modifiable according to a policy, an expression is required that returns a Boolean result. This expression will be evaluated for each row prior to any conditions or functions coming from the user's query. (The only exceptions to this rule are
+leakproof
+functions, which are guaranteed to not leak information; the optimizer may choose to apply such functions ahead of the row-security check.) Rows for which the expression does not return
+true
+will not be processed. Separate expressions may be specified to provide independent control over the rows which are visible and the rows which are allowed to be modified. Policy expressions are run as part of the query and with the privileges of the user running the query, although security-definer functions can be used to access data not available to the calling user.
+Superusers and roles with the
+BYPASSRLS
+attribute always bypass the row security system when accessing a table. Table owners normally bypass row security as well, though a table owner can choose to be subject to row security with
+ALTER TABLE ... FORCE ROW LEVEL SECURITY
+.
+Enabling and disabling row security, as well as adding policies to a table, is always the privilege of the table owner only.
+Policies are created using the
+CREATE POLICY
+command, altered using the
+ALTER POLICY
+command, and dropped using the
+DROP POLICY
+command. To enable and disable row security for a given table, use the
+ALTER TABLE
+command.
+Each policy has a name and multiple policies can be defined for a table. As policies are table-specific, each policy for a table must have a unique name. Different tables may have policies with the same name.
+When multiple policies apply to a given query, they are combined using either
+OR
+(for permissive policies, which are the default) or using
+AND
+(for restrictive policies). This is similar to the rule that a given role has the privileges of all roles that they are a member of. Permissive vs. restrictive policies are discussed further below.
+As a simple ex
+
+## postgres_ranges
+PostgreSQL: Documentation: 16: 8.17. Range Types
+October 15, 2026:
+PostgreSQL 19 RC 1 Released!
+Documentation
+→
+PostgreSQL 16
+Supported Versions:
+Current
+(
+18
+)
+                        
+                      
+                         /
+17
+/
+16
+/
+15
+/
+14
+Development Versions:
+19
+/
+devel
+Unsupported versions:
+13
+/
+12
+/
+11
+/
+10
+/
+9.6
+/
+9.5
+/
+9.4
+/
+9.3
+/
+9.2
+8.17. Range Types
+Prev
+Up
+Chapter 8. Data Types
+Home
+Next
+8.17. Range Types
+#
+8.17.1. Built-in Range and Multirange Types
+8.17.2. Examples
+8.17.3. Inclusive and Exclusive Bounds
+8.17.4. Infinite (Unbounded) Ranges
+8.17.5. Range Input/Output
+8.17.6. Constructing Ranges and Multiranges
+8.17.7. Discrete Range Types
+8.17.8. Defining New Range Types
+8.17.9. Indexing
+8.17.10. Constraints on Ranges
+Range types are data types representing a range 
+
+TERM EXCLUDE
+alues.
+Element types that have the notion of
+“
+infinity
+”
+can use them as explicit bound values. For example, with timestamp ranges,
+[today,infinity)
+excludes the special
+timestamp
+value
+infinity
+, while
+[today,infinity]
+include it, as does
+[today,)
+and
+[today,]
+.
+The functions
+lower_inf
+and
+upper_inf
+test for infinite lower and upper bounds of a range, respectively.
+8.17.5. Range Input/Output
+#
+The input for a range value must follow one of the following patterns:
+(
+lower-bound
+,
+upper-bound
+)
+(
+lower-bound
+,
+upper-bound
+]
+[
+lower-bound
+,
+upper-bound
+)
+[
+lower-bound
+,
+upper-bound
+]
+empty
+The parentheses or brackets indicate whether the lower and upper bounds are exclusive or inclusive, as described previously. Notice that the final pattern is
+empty
+, which represents an empty range (a range that contains no points).
+The
+lower-bound
+may be either a string that is valid input for the subtype, or empty to indicate no lower bound. Likewise,
+upper-bound
+may be either a string that is valid input for the subtype, or empty to indicate no upper bound.
+Each bound value can be quoted using
+"
+(double quote) characters. This is necessary if the bound value contains parentheses, brackets, commas, double quotes, or backslashes, since these characters would otherwise be taken as part of the range syntax. To put a double quote or backslash in a quoted bound value, precede it with a backslash. (Also, a pair of double quotes within a double-quoted bound value is taken to represent a double quote character, analogously to the rules for single quotes in SQL literal strings.) Alternatively, you can avoid quoting and use backslash-escaping to protect all data characters that would otherwise be taken as range syntax. Also, to write a bound value that is an empty string, write
+""
+, since writing nothing means an infinite bound.
+Whitespace is allowed before and after the range value, but any whitespace between the parentheses or brackets is taken as part of the lower or upper bound value. (Depending on the element type, it might or might not be significant.)
+Note
+These rules are very similar to those for writing field values in composite-type literals. See
+Section 8.16.6
+for additional commentary.
+Examples:
+-- includes 3, does not include 7, and does include all points in between
+SELECT '[3,7)'::int4range;
+
+-- does not include either 3 or 7, but includes all points in between
+SELECT '(3,7)'::int4range;
+
+-- includes only the single point 4
+SELECT '[4,4]'::int4range;
+
+-- includes no points (and will be normalized to 'empty')
+SELECT '[4,4)'::int4range;
+The input for a multirange is curly brackets (
+{
+and
+}
+) containing zero or more valid ranges, separated by commas. Whitespace is permitted around the brackets and commas. This i
+
+## gdpr_alt
+Art. 17 GDPR – Right to erasure (‘right to be forgotten’) - General Data Protection Regulation (GDPR)
+Search for:
+General Data Protection Regulation (GDPR)
+Final text of the GDPR including recitals.
+Menu and widgets
+DSGVO
+GDPR
+Recitals
+Key Issues
+AI Act
+Data Act
+Skip to content
+Search for:
+GDPR
+Recitals
+Key Issues
+AI Act
+Data Act
+GDPR
+Chapter 1 (Art. 1 – 4)
+General provisions
+Art. 1
+Subject-matter and objectives
+Art. 2
+Material scope
+Art. 3
+Territorial scope
+Art. 4
+Definitions
+Chapter 2 (Art. 5 – 11)
+Principles
+Art. 5
+Principles relating to processing of personal data
+Art. 6
+Lawfulness of processing
+Art. 7
+Conditions for consent
+Art. 8
+Conditions applicable to child’s consent in relation to information society services
+Art. 9
+Processing of special categories of personal data
+Art. 10
+Proces
+NOT FOUND Article 17
+NOT FOUND exceptions

@@ -1,0 +1,261 @@
+The Hitchhiker’s Guide to Testing Statistical Significance in Natural Language Processing - ACL Anthology
+The Hitchhiker’s Guide to Testing Statistical Significance in Natural Language Processing
+Rotem Dror
+,
+Gili Baumer
+,
+Segev Shlomov
+,
+Roi Reichart
+Correct Metadata for
+Use this form to create a GitHub issue with structured data describing the correction. You will need a GitHub account.
+Once you create that issue, the correction will be reviewed by a staff member.
+⚠️ Mobile Users: Submitting this form to create a new issue will only work with github.com, not the GitHub Mobile app.
+Important
+: The Anthology treat PDFs as authoritative. Please use this form only to correct data
+that is out of line with the PDF. See
+our corrections
+guidelines
+if you need to change the PDF.
+Title
+Adjust the title. Retain tags such as
+<fixed-case>.
+Authors
+Adjust author names and order to match the
+PDF.
+Add Author
+Abstract
+Correct abstract if needed. Retain XML formatting tags such as <tex-math>. You may use <b>...</b> for
+bold
+, <i>...</i> for
+italic
+, <u>...</u> for
+underline
+, <sc>...</sc> for
+small-caps
+, <tt>...<tt> for
+typewriter text
+, <url>...</url> for URLs, <a href=...> for hyperlinks, and <par/> for paragraph breaks.
+Verification against PDF
+Ensure that the new title/authors match the snapshot below. (If there
+is no snapshot or it is too small, consult
+the PDF
+.)
+Authors concatenated from the text boxes above:
+ALL author names match the snapshot above—including
+middle initials, hyphens, and accents.
+Create GitHub issue for staff review
+Abstract
+Statistical significance testing is a standard statistical tool designed to ensure that experimental results are not coincidental. In this opinion/ theoretical paper we discuss the role of statistical significance testing in Natural Language Processing (NLP) research. We establish the fundamental concepts of significance testing and discuss the specific aspects of NLP tasks, experimental setups and evaluation measures that affect the choice of significance tests in NLP research. Based on this discussion we propose a simple practical protocol for statistical significance test selection in NLP setups and accompany this protocol with a brief survey of the most relevant tests. We then survey recent empirical papers published in ACL and TACL during 2017 and show that while our community assigns great value to experimental results, statistical significance testing is often ignored or misused. We conclude with a brief discussion of open issues that should be properly addressed so that this important tool can be applied. in NLP research in a statistically sound manner.
+Anthology ID:
+P18-1128
+Volume:
+Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+Month:
+July
+Year:
+2018
+Address:
+Melbourne, Australia
+Editors:
+Iryna Gurevych
+,
+Yusuke Miyao
+Venue:
+ACL
+SIG:
+Publisher:
+Association for Computational Linguistics
+Note:
+Pages:
+1383–1392
+Language:
+URL:
+https://aclanthology.org/P18-1128/
+DOI:
+10.18653/v1/P18-1128
+Bibkey:
+dror-etal-2018-hitchhikers
+Cite (ACL):
+Rotem Dror, Gili Baumer, Segev Shlomov, and Roi Reichart. 2018.
+The Hitchhiker’s Guide to Testing Statistical Significance in Natural Language Processing
+. In
+Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+, pages 1383–1392, Melbourne, Australia. Association for Computational Linguistics.
+Cite (Informal):
+The Hitchhiker’s Guide to Testing Statistical Significance in Natural Language Processing
+(Dror et al., ACL 2018)
+Copy Citation:
+BibTeX
+Markdown
+MODS XML
+Endnote
+More
+options…
+PDF:
+https://aclanthology.org/P18-1128.pdf
+Presentation:
+P18-1128.Presentation.pdf
+Video:
+https://aclanthology.org/P18-1128.mp4
+PDF
+Cite
+Search
+Presentation
+Video
+Fix data
+Export citation
+BibTeX
+MODS XML
+Endnote
+Preformatted
+@inproceedings{dror-etal-2018-hitchhikers,
+    title = "The Hitchhiker{'}s Guide to Testing Statistical Significance in Natural Language Processing",
+    author = "Dror, Rotem  and
+      Baumer, Gili  and
+      Shlomov, Segev  and
+      Reichart, Roi",
+    editor = "Gurevych, Iryna  and
+      Miyao, Yusuke",
+    booktitle = "Proceedings of the 56th Annual Meeting of the {A}ssociation for {C}omputational {L}inguistics (Volume 1: Long Papers)",
+    month = jul,
+    year = "2018",
+    address = "Melbourne, Australia",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/P18-1128/",
+    doi = "10.18653/v1/P18-1128",
+    pages = "1383--1392",
+    abstract = "Statistical significance testing is a standard statistical tool designed to ensure that experimental results are not coincidental. In this opinion/ theoretical paper we discuss the role of statistical significance testing in Natural Language Processing (NLP) research. We establish the fundamental concepts of significance testing and discuss the specific aspects of NLP tasks, experimental setups and evaluation measures that affect the choice of significance tests in NLP research. Based on this discussion we propose a simple practical protocol for statistical significance test selection in NLP setups and accompany this protocol with a brief survey of the most relevant tests. We then survey recent empirical papers published in ACL and TACL during 2017 and show that while our community assigns great value to experimental results, statistical significance testing is often ignored or misused. We conclude with a brief discussion of open issues that should be properly addressed so that this important tool can be applied. in NLP research in a statistically sound manner."
+}
+Download as
+File
+Copy to Clipboard
+<?xml version="1.0" encoding="UTF-8"?>
+<modsCollection xmlns="http://www.loc.gov/mods/v3">
+<mods ID="dror-etal-2018-hitchhikers">
+    <titleInfo>
+        <title>The Hitchhiker’s Guide to Testing Statistical Significance in Natural Language Processing</title>
+    </titleInfo>
+    <name type="personal">
+        <namePart type="given">Rotem</namePart>
+        <namePart type="family">Dror</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Gili</namePart>
+        <namePart type="family">Baumer</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Segev</namePart>
+        <namePart type="family">Shlomov</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Roi</namePart>
+        <namePart type="family">Reichart</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <originInfo>
+        <dateIssued>2018-07</dateIssued>
+    </originInfo>
+    <typeOfResource>text</typeOfResource>
+    <relatedItem type="host">
+        <titleInfo>
+            <title>Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)</title>
+        </titleInfo>
+        <name type="personal">
+            <namePart type="given">Iryna</namePart>
+            <namePart type="family">Gurevych</namePart>
+            <role>
+                <roleTerm authority="marcrelator" type="text">editor</roleTerm>
+            </role>
+        </name>
+        <name type="personal">
+            <namePart type="given">Yusuke</namePart>
+            <namePart type="family">Miyao</namePart>
+            <role>
+                <roleTerm authority="marcrelator" type="text">editor</roleTerm>
+            </role>
+        </name>
+        <originInfo>
+            <publisher>Association for Computational Linguistics</publisher>
+            <place>
+                <placeTerm type="text">Melbourne, Australia</placeTerm>
+            </place>
+        </originInfo>
+        <genre authority="marcgt">conference publication</genre>
+    </relatedItem>
+    <abstract>Statistical significance testing is a standard statistical tool designed to ensure that experimental results are not coincidental. In this opinion/ theoretical paper we discuss the role of statistical significance testing in Natural Language Processing (NLP) research. We establish the fundamental concepts of significance testing and discuss the specific aspects of NLP tasks, experimental setups and evaluation measures that affect the choice of significance tests in NLP research. Based on this discussion we propose a simple practical protocol for statistical significance test selection in NLP setups and accompany this protocol with a brief survey of the most relevant tests. We then survey recent empirical papers published in ACL and TACL during 2017 and show that while our community assigns great value to experimental results, statistical significance testing is often ignored or misused. We conclude with a brief discussion of open issues that should be properly addressed so that this important tool can be applied. in NLP research in a statistically sound manner.</abstract>
+    <identifier type="citekey">dror-etal-2018-hitchhikers</identifier>
+    <identifier type="doi">10.18653/v1/P18-1128</identifier>
+    <location>
+        <url>https://aclanthology.org/P18-1128/</url>
+    </location>
+    <part>
+        <date>2018-07</date>
+        <extent unit="page">
+            <start>1383</start>
+            <end>1392</end>
+        </extent>
+    </part>
+</mods>
+</modsCollection>
+Download as
+File
+Copy to Clipboard
+%0 Conference Proceedings
+%T The Hitchhiker’s Guide to Testing Statistical Significance in Natural Language Processing
+%A Dror, Rotem
+%A Baumer, Gili
+%A Shlomov, Segev
+%A Reichart, Roi
+%Y Gurevych, Iryna
+%Y Miyao, Yusuke
+%S Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+%D 2018
+%8 July
+%I Association for Computational Linguistics
+%C Melbourne, Australia
+%F dror-etal-2018-hitchhikers
+%X Statistical significance testing is a standard statistical tool designed to ensure that experimental results are not coincidental. In this opinion/ theoretical paper we discuss the role of statistical significance testing in Natural Language Processing (NLP) research. We establish the fundamental concepts of significance testing and discuss the specific aspects of NLP tasks, experimental setups and evaluation measures that affect the choice of significance tests in NLP research. Based on this discussion we propose a simple practical protocol for statistical significance test selection in NLP setups and accompany this protocol with a brief survey of the most relevant tests. We then survey recent empirical papers published in ACL and TACL during 2017 and show that while our community assigns great value to experimental results, statistical significance testing is often ignored or misused. We conclude with a brief discussion of open issues that should be properly addressed so that this important tool can be applied. in NLP research in a statistically sound manner.
+%R 10.18653/v1/P18-1128
+%U https://aclanthology.org/P18-1128/
+%U https://doi.org/10.18653/v1/P18-1128
+%P 1383-1392
+Download as
+File
+Copy to Clipboard
+Markdown (Informal)
+[The Hitchhiker’s Guide to Testing Statistical Significance in Natural Language Processing](https://aclanthology.org/P18-1128/) (Dror et al., ACL 2018)
+The Hitchhiker’s Guide to Testing Statistical Significance in Natural Language Processing
+(Dror et al., ACL 2018)
+ACL
+Rotem Dror, Gili Baumer, Segev Shlomov, and Roi Reichart. 2018.
+The Hitchhiker’s Guide to Testing Statistical Significance in Natural Language Processing
+. In
+Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+, pages 1383–1392, Melbourne, Australia. Association for Computational Linguistics.
+Copy Markdown to
+Clipboard
+Copy ACL to
+Clipboard
+ACL materials are Copyright © 1963–2026 ACL; other materials are copyrighted by their respective copyright holders. Materials prior to 2016 here are licensed under the
+Creative Commons Attribution-NonCommercial-ShareAlike 3.0 International License
+. Permission is granted to make copies for the purposes of teaching and research. Materials published in or after 2016 are licensed on a
+Creative Commons Attribution 4.0 International License
+.
+The ACL Anthology is managed and built by the
+ACL Anthology team
+of volunteers.
+Site last built on 16 October 2026 at 19:41 UTC with
+commit ab54073
+.

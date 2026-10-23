@@ -1,0 +1,26 @@
+zero observed leaks: exact upper limit of the two-sided 95% interval
+   n   closed form 1-0.025^(1/n)   bisection
+  10   0.3085                     0.3085
+  20   0.1684                     0.1684
+  30   0.1157                     0.1157
+  36   0.0974                     0.0974
+  50   0.0711                     0.0711
+ 100   0.0362                     0.0362
+ 200   0.0183                     0.0183
+ 400   0.0092                     0.0092
+
+scenarios needed for a zero-leak result to give an upper limit <= u
+  u = 0.20: n >= 17
+  u = 0.15: n >= 23
+  u = 0.10: n >= 36
+  u = 0.05: n >= 72
+
+illustration of clustering: 12 deletion events per scenario, 0 leaks
+  scenarios= 10 events= 120  scenario-level bound=0.308  event-level bound (independence assumed)=0.030
+  scenarios= 20 events= 240  scenario-level bound=0.168  event-level bound (independence assumed)=0.015
+  scenarios= 40 events= 480  scenario-level bound=0.088  event-level bound (independence assumed)=0.008
+
+one leaking scenario observed: upper limit of the two-sided 95% interval
+  1 of  20 scenarios: 0.249
+  1 of  40 scenarios: 0.132
+  1 of 100 scenarios: 0.054

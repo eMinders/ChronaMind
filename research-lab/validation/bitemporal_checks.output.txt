@@ -1,0 +1,379 @@
+SET
+psql:<stdin>:9: NOTICE:  drop cascades to 11 other objects
+DETAIL:  drop cascades to extension btree_gist
+drop cascades to table bt.memory_version
+drop cascades to function bt.clock_now()
+drop cascades to function bt.guard_update()
+drop cascades to function bt.supersede_single(text,text,text,text,text,text,timestamp with time zone)
+drop cascades to function bt.q_current(text,timestamp with time zone)
+drop cascades to function bt.q_historical(text,timestamp with time zone,timestamp with time zone)
+drop cascades to function bt.q_change(text,tstzrange,timestamp with time zone)
+drop cascades to function bt.q_audit(text,timestamp with time zone,timestamp with time zone)
+drop cascades to function bt.expect(text,text[],text[])
+drop cascades to function bt.expect_error(text,text,text)
+DROP SCHEMA
+CREATE SCHEMA
+SET
+CREATE EXTENSION
+CREATE TABLE
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+== Worked example (Section 7.4): E1 10 Mar, E2 5 Aug, E3 20 Aug ==
+ set_config 
+------------
+ 2026-03-10
+(1 row)
+
+INSERT 0 1
+ set_config 
+------------
+ 2026-08-05
+(1 row)
+
+BEGIN
+ supersede_single 
+------------------
+ 
+(1 row)
+
+COMMIT
+ set_config 
+------------
+ 2026-08-20
+(1 row)
+
+BEGIN
+UPDATE 2
+INSERT 0 1
+INSERT 0 1
+COMMIT
+-- stored rows
+  id  |  content   |                     valid_range                     |                   recorded_range                    
+------+------------+-----------------------------------------------------+-----------------------------------------------------
+ v1   | vegetarian | ["2026-03-10 00:00:00+00",)                         | ["2026-03-10 00:00:00+00","2026-08-05 00:00:00+00")
+ v1p  | vegetarian | ["2026-03-10 00:00:00+00","2026-08-05 00:00:00+00") | ["2026-08-05 00:00:00+00","2026-08-20 00:00:00+00")
+ v2   | eats fish  | ["2026-08-05 00:00:00+00",)                         | ["2026-08-05 00:00:00+00","2026-08-20 00:00:00+00")
+ v1pp | vegetarian | ["2026-03-10 00:00:00+00","2026-07-15 00:00:00+00") | ["2026-08-20 00:00:00+00",)
+ v2p  | eats fish  | ["2026-07-15 00:00:00+00",)                         | ["2026-08-20 00:00:00+00",)
+(5 rows)
+
+ set_config 
+------------
+ 2026-10-01
+(1 row)
+
+-- query predicates on the worked example (reference time 1 Oct)
+                                   expect                                    
+-----------------------------------------------------------------------------
+ PASS  current (t=1 Oct, beta=now)                                    -> v2p
+(1 row)
+
+                                    expect                                    
+------------------------------------------------------------------------------
+ PASS  historical-as-of t=1 Apr, beta=now                             -> v1pp
+(1 row)
+
+                                   expect                                    
+-----------------------------------------------------------------------------
+ PASS  historical-as-of t=20 Jul, beta=now (after the correction)     -> v2p
+(1 row)
+
+                                      expect                                      
+----------------------------------------------------------------------------------
+ PASS  change window [1 Mar, 1 Oct), beta=now                         -> v1pp,v2p
+(1 row)
+
+                                   expect                                   
+----------------------------------------------------------------------------
+ PASS  audit t=1 Apr, beta=1 Jun                                      -> v1
+(1 row)
+
+                                   expect                                   
+----------------------------------------------------------------------------
+ PASS  audit t=1 Jun, beta=1 Jun                                      -> v1
+(1 row)
+
+                                   expect                                   
+----------------------------------------------------------------------------
+ PASS  audit t=10 Aug, beta=10 Aug                                    -> v2
+(1 row)
+
+                                   expect                                    
+-----------------------------------------------------------------------------
+ PASS  audit t=20 Jul, beta=10 Aug (system then believed vegetarian)  -> v1p
+(1 row)
+
+                                   expect                                    
+-----------------------------------------------------------------------------
+ PASS  audit t=20 Jul, beta=25 Aug (after correction)                 -> v2p
+(1 row)
+
+                                     expect                                      
+---------------------------------------------------------------------------------
+ PASS  current at 1 Jun in replay (beta=t=1 Jun) equals audit(1 Jun,1 Jun) -> v1
+(1 row)
+
+                                     expect                                     
+--------------------------------------------------------------------------------
+ PASS  other user sees nothing (user scope)                           -> (none)
+(1 row)
+
+-- exactly one current belief that is currently valid; one that is historical; three replaced beliefs
+                                      expect                                      
+----------------------------------------------------------------------------------
+ PASS  current beliefs (recorded open)                                -> v1pp,v2p
+(1 row)
+
+                                      expect                                       
+-----------------------------------------------------------------------------------
+ PASS  replaced beliefs (recorded closed) = superseded                -> v1,v1p,v2
+(1 row)
+
+                                          expect                                           
+-------------------------------------------------------------------------------------------
+ PASS  current belief about a past state (historical, valid-ended, not superseded) -> v1pp
+(1 row)
+
+== Invariants 2, 3, 4 and the staging rule ==
+                                             expect_error                                             
+------------------------------------------------------------------------------------------------------
+ PASS  inv 4: overlapping believed single-valued row rejected         -> rejected with SQLSTATE 23P01
+(1 row)
+
+ set_config 
+------------
+ 2026-08-20
+(1 row)
+
+                                             expect_error                                             
+------------------------------------------------------------------------------------------------------
+ PASS  inv 2: inserting an empty recorded range rejected by CHECK     -> rejected with SQLSTATE 23514
+(1 row)
+
+                                                         expect_error                                                          
+-------------------------------------------------------------------------------------------------------------------------------
+ PASS  inv 3: closing a belief at its own recorded_from (empty range) rejected by update guard -> rejected with SQLSTATE P0001
+(1 row)
+
+ set_config 
+------------
+ 2026-10-01
+(1 row)
+
+                                             expect_error                                             
+------------------------------------------------------------------------------------------------------
+ PASS  inv 2: recorded range without lower bound rejected             -> rejected with SQLSTATE 23514
+(1 row)
+
+                                             expect_error                                             
+------------------------------------------------------------------------------------------------------
+ PASS  staging rule: active row without recorded range rejected       -> rejected with SQLSTATE 23514
+(1 row)
+
+                                             expect_error                                             
+------------------------------------------------------------------------------------------------------
+ PASS  staging rule: candidate row with a recorded range rejected     -> rejected with SQLSTATE 23514
+(1 row)
+
+ set_config 
+------------
+ 2026-10-01
+(1 row)
+
+                                             expect_error                                             
+------------------------------------------------------------------------------------------------------
+ PASS  inv 3: editing content after insertion rejected                -> rejected with SQLSTATE P0001
+(1 row)
+
+                                             expect_error                                             
+------------------------------------------------------------------------------------------------------
+ PASS  inv 3: editing the lower bound of recorded_range rejected      -> rejected with SQLSTATE P0001
+(1 row)
+
+                                             expect_error                                             
+------------------------------------------------------------------------------------------------------
+ PASS  inv 3: reopening a closed belief rejected                      -> rejected with SQLSTATE P0001
+(1 row)
+
+                                             expect_error                                             
+------------------------------------------------------------------------------------------------------
+ PASS  inv 3: closing at a value other than the clock rejected        -> rejected with SQLSTATE P0001
+(1 row)
+
+                                              expect_error                                              
+--------------------------------------------------------------------------------------------------------
+ PASS  read path: historical query with t after reference time rejected -> rejected with SQLSTATE P0001
+(1 row)
+
+== Staging rows never satisfy any predicate; archived rows are audit-visible only ==
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+                                   expect                                    
+-----------------------------------------------------------------------------
+ PASS  staging rows absent from current                               -> v2p
+(1 row)
+
+                                   expect                                    
+-----------------------------------------------------------------------------
+ PASS  staging rows absent from audit (beta=now, t=now)               -> v2p
+(1 row)
+
+ set_config 
+------------
+ 2026-10-01
+(1 row)
+
+UPDATE 1
+                                     expect                                     
+--------------------------------------------------------------------------------
+ PASS  archived belief excluded from current                          -> (none)
+(1 row)
+
+                                     expect                                     
+--------------------------------------------------------------------------------
+ PASS  archived belief excluded from historical                       -> (none)
+(1 row)
+
+                                   expect                                    
+-----------------------------------------------------------------------------
+ PASS  archived belief still visible to audit                         -> v2p
+(1 row)
+
+UPDATE 1
+== Multi-valued predicates may overlap; staging commit; same-day correction (no empty re-issue) ==
+INSERT 0 1
+INSERT 0 1
+                                    expect                                     
+-------------------------------------------------------------------------------
+ PASS  multi-valued rows coexist and are both current                 -> m1,m2
+(1 row)
+
+ set_config 
+------------
+ 2026-09-02
+(1 row)
+
+                                                        expect_error                                                         
+-----------------------------------------------------------------------------------------------------------------------------
+ PASS  staging: promoting a conflicting candidate without closing the old belief is rejected -> rejected with SQLSTATE 23P01
+(1 row)
+
+BEGIN
+UPDATE 1
+INSERT 0 1
+UPDATE 1
+COMMIT
+ set_config 
+------------
+ 2026-10-01
+(1 row)
+
+                                   expect                                   
+----------------------------------------------------------------------------
+ PASS  after promotion: current = pescatarian (c2)                    -> c2
+(1 row)
+
+                                    expect                                    
+------------------------------------------------------------------------------
+ PASS  after promotion: historical 20 Jul = fish (v2pp)               -> v2pp
+(1 row)
+
+                                      expect                                      
+----------------------------------------------------------------------------------
+ PASS  promotion: recorded_from of c2 is the review time, not the turn time -> c2
+(1 row)
+
+                                   expect                                    
+-----------------------------------------------------------------------------
+ PASS  audit t=10 Sep, beta=1 Sep (hold was not yet a belief)         -> v2p
+(1 row)
+
+== Clock rules: same-day correction (no empty re-issue) and strictly increasing clock ==
+ set_config 
+------------
+ 2026-03-10
+(1 row)
+
+INSERT 0 1
+ set_config 
+------------
+ 2026-03-11
+(1 row)
+
+ supersede_single 
+------------------
+ 
+(1 row)
+
+                                    expect                                     
+-------------------------------------------------------------------------------
+ PASS  no empty re-issue when the new valid_from equals the old one   -> w1,w2
+(1 row)
+
+ set_config 
+------------
+ 2026-10-01
+(1 row)
+
+                                   expect                                   
+----------------------------------------------------------------------------
+ PASS  historical t=10 Mar after same-day correction -> new belief    -> w2
+(1 row)
+
+                                   expect                                   
+----------------------------------------------------------------------------
+ PASS  audit t=10 Mar, beta=10 Mar -> original belief                 -> w1
+(1 row)
+
+ set_config 
+------------
+ 2026-03-11
+(1 row)
+
+                                                    expect_error                                                     
+---------------------------------------------------------------------------------------------------------------------
+ PASS  clock tie: replacing a belief at the same instant it was recorded is rejected -> rejected with SQLSTATE P0001
+(1 row)
+
+         set_config         
+----------------------------
+ 2026-03-11 00:00:00.000001
+(1 row)
+
+ supersede_single 
+------------------
+ 
+(1 row)
+
+ set_config 
+------------
+ 2026-10-01
+(1 row)
+
+                                   expect                                   
+----------------------------------------------------------------------------
+ PASS  strictly increasing clock allows the replacement               -> w3
+(1 row)
+
+== Deletion removes every version of the memory item, including closed beliefs ==
+DELETE 9
+                                     expect                                      
+---------------------------------------------------------------------------------
+ PASS  audit queries find no diet row after deletion (any t, any beta) -> (none)
+(1 row)
+
+                                    expect                                     
+-------------------------------------------------------------------------------
+ PASS  other memory items of the user survive                         -> m1,m2
+(1 row)
+
+ALL ASSERTIONS PASSED

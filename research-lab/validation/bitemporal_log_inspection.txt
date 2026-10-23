@@ -1,0 +1,33 @@
+V4 re-inspection of the V2 saved SQL log (SQL not re-run; file is unchanged from V2, V3, and the earlier V4 patch).
+Re-verified in the V4 finalization session.
+
+Commands (no new SQL executed; only inspection of the saved V2 log and SQL source):
+  grep -c "^PASS\|^ *PASS " proposal_patch_v2/checks/bitemporal_checks.output.txt
+  tail -1 proposal_patch_v2/checks/bitemporal_checks.output.txt
+  wc -l proposal_patch_v2/checks/bitemporal_checks.output.txt
+  md5sum proposal_patch_v2/checks/bitemporal_checks.output.txt
+  md5sum proposal_patch_v2/checks/bitemporal_checks.sql
+
+Results (V4 finalization session):
+  PASS count:
+43
+  Final line:
+ALL ASSERTIONS PASSED
+  Log length (lines):
+379 proposal_patch_v2/checks/bitemporal_checks.output.txt
+  MD5 of log file:
+66a4dae36f20f17d19f3b75d612e61fb  proposal_patch_v2/checks/bitemporal_checks.output.txt
+  MD5 of SQL source:
+9050a08b497a0acc4e5e19d87059e185  proposal_patch_v2/checks/bitemporal_checks.sql
+
+Cross-check against the V3 re-inspection (proposal_patch_v3/checks/bitemporal_log_inspection.txt):
+  V3 recorded PASS count 43, final line 'ALL ASSERTIONS PASSED', log MD5 66a4dae36f20f17d19f3b75d612e61fb,
+  SQL source MD5 9050a08b497a0acc4e5e19d87059e185. The MD5s above must match exactly.
+
+Interpretation:
+  The saved V2 log reports 43 assertions passed and ends with 'ALL ASSERTIONS PASSED'.
+  V4 (both the original patch session and the finalization session) did NOT re-run the SQL.
+  The success claim in the V4 audit, the V4 proposal Section 7.4 'What was executed' paragraph,
+  and invariant 10's reference to it are attributed to this saved V2 log and nothing stronger.
+  The archival-precondition tests T1 - T5 introduced in V4 are NOT exercised by this SQL and
+  remain planned-not-executed in V4 and in the finalization session.

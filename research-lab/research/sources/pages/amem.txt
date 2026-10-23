@@ -1,0 +1,215 @@
+[2502.12110] A-MEM: Agentic Memory for LLM Agents
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Computation and Language
+arXiv:2502.12110
+(cs)
+[Submitted on 17 Feb 2025 (
+v1
+), last revised 8 Oct 2025 (this version, v11)]
+Title:
+A-MEM: Agentic Memory for LLM Agents
+Authors:
+Wujiang Xu
+,
+Zujie Liang
+,
+Kai Mei
+,
+Hang Gao
+,
+Juntao Tan
+,
+Yongfeng Zhang
+View a PDF of the paper titled A-MEM: Agentic Memory for LLM Agents, by Wujiang Xu and Zujie Liang and Kai Mei and Hang Gao and Juntao Tan and Yongfeng Zhang
+View PDF
+HTML (experimental)
+Abstract:
+While large language model (LLM) agents can effectively use external tools for complex real-world tasks, they require memory systems to leverage historical experiences. Current memory systems enable basic storage and retrieval but lack sophisticated memory organization, despite recent attempts to incorporate graph databases. Moreover, these systems' fixed operations and structures limit their adaptability across diverse tasks. To address this limitation, this paper proposes a novel agentic memory system for LLM agents that can dynamically organize memories in an agentic way. Following the basic principles of the Zettelkasten method, we designed our memory system to create interconnected knowledge networks through dynamic indexing and linking. When a new memory is added, we generate a comprehensive note containing multiple structured attributes, including contextual descriptions, keywords, and tags. The system then analyzes historical memories to identify relevant connections, establishing links where meaningful similarities exist. Additionally, this process enables memory evolution - as new memories are integrated, they can trigger updates to the contextual representations and attributes of existing historical memories, allowing the memory network to continuously refine its understanding. Our approach combines the structured organization principles of Zettelkasten with the flexibility of agent-driven decision making, allowing for more adaptive and context-aware memory management. Empirical experiments on six foundation models show superior improvement against existing SOTA baselines. The source code for evaluating performance is available at
+this https URL
+, while the source code of the agentic memory system is available at
+this https URL
+.
+Comments:
+Advances in Neural Information Processing Systems (NeurIPS 2025)
+Subjects:
+Computation and Language (cs.CL)
+; Human-Computer Interaction (cs.HC)
+Cite as:
+arXiv:2502.12110
+[cs.CL]
+(or
+arXiv:2502.12110v11
+[cs.CL]
+for this version)
+https://doi.org/10.48550/arXiv.2502.12110
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Wujiang Xu [
+view email
+]
+[v1]
+Mon, 17 Feb 2025 18:36:14 UTC (603 KB)
+[v2]
+Mon, 3 Mar 2025 04:14:02 UTC (603 KB)
+[v3]
+Tue, 4 Mar 2025 15:09:10 UTC (603 KB)
+[v4]
+Mon, 14 Apr 2025 15:21:49 UTC (603 KB)
+[v5]
+Fri, 18 Apr 2025 17:26:57 UTC (603 KB)
+[v6]
+Sun, 11 May 2025 18:10:25 UTC (2,620 KB)
+[v7]
+Wed, 21 May 2025 05:16:32 UTC (2,629 KB)
+[v8]
+Tue, 27 May 2025 02:44:13 UTC (1,002 KB)
+[v9]
+Mon, 2 Jun 2025 22:21:21 UTC (995 KB)
+[v10]
+Tue, 15 Jul 2025 00:44:52 UTC (600 KB)
+[v11]
+Wed, 8 Oct 2025 01:46:37 UTC (607 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled A-MEM: Agentic Memory for LLM Agents, by Wujiang Xu and Zujie Liang and Kai Mei and Hang Gao and Juntao Tan and Yongfeng Zhang
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CL
+< prev
+|
+next >
+new
+|
+recent
+|
+2025-02
+Change to browse by:
+cs
+cs.HC
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from

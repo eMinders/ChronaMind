@@ -1,0 +1,1505 @@
+                                                     Eywa: Provenance-Grounded Long-Term
+                                                             Memory for AI Agents
+                                                                                      Resham Joshi
+                                                                                     research@eywa.to
+                                                                                       https://eywa.to
+
+
+
+
+arXiv:2605.30771v1 [cs.CL] 29 May 2026
+                                                                     Benchmarks and artifacts: https://eywa.to/research
+
+                                            AI agents that persist across sessions need memory they can retrieve, audit, update, and erase. Ex-
+                                            isting memory systems often collapse source evidence, extracted facts, retrieved context, and answer
+                                            policy into one opaque prompt path, making failures difficult to diagnose: a wrong answer may come
+                                            from missing evidence, unsupported extraction, stale state, retrieval loss, or answer-model behavior.
+                                            We present Eywa, a provenance-grounded memory architecture built around evidence before belief.
+                                            Eywa stores immutable source evidence before deriving canonical facts, validates extracted memo-
+                                            ries against typed signals and source support, and retrieves bounded memory context through a de-
+                                            terministic multi-route read path with zero LLM calls inside retrieval. Retrieved context is returned
+                                            separately from answer instructions, allowing the same memory substrate to be evaluated across
+                                            frontier, budget, and local answer models. Under a frozen, artifact-recorded retrieval configuration,
+                                            Eywa reaches 90.19% judge accuracy on the LoCoMo C1–C4 split with Claude Sonnet 4.6 write
+                                            and QA roles. On LongMemEval-S, it reaches 88.2% retrieval-sufficiency accuracy. On BEAM, a
+                                            700-question technical-memory stress benchmark, it reaches 81.45% mean nugget score and 85.29%
+                                            pass@score≥0.5. Full per-question artifacts, including questions, gold answers, model answers, re-
+                                            trieved context, and labels, are published at https://eywa.to/research.
+
+
+
+
+                                         1. Introduction
+
+                                         Human memory is not merely an archive of facts. It supports self-continuity, social coordination,
+                                         and future-oriented action: autobiographical memory helps people maintain identity, learn from prior
+                                         experience, make decisions, and sustain relationships over time (Conway and Pleydell-Pearce, 2000;
+                                         Bluck et al., 2005; Schacter et al., 2007). Conversation also depends on memory. Speakers build
+                                         common ground by remembering what has already been established with a particular partner, what
+                                         remains uncertain, and what can safely be assumed in later exchanges (Clark and Brennan, 1991). For
+                                         AI agents that interact with users across days, projects, and sessions, the analogous requirement is not
+                                         biological fidelity, but functional continuity: an agent must preserve important past evidence, update
+                                         stale beliefs, retrieve relevant context, and explain why a remembered claim is justified.
+                                         Large language models have made this requirement more visible. Modern LLMs can produce fluent and
+                                         contextually appropriate responses within a prompt, but their native computation is bounded by a finite
+                                         working context. Scaling this window is valuable, and frontier systems such as Gemini 1.5 demonstrate
+                                         impressive long-context retrieval over very large inputs (Gemini Team et al., 2024). Yet a larger window
+                                         is not the same thing as a memory architecture. Transformer attention remains costly at long sequence
+                                         lengths (Dao et al., 2022), and empirical studies show that long-context models can fail to use information
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+reliably when relevant evidence appears in the middle of the prompt or when tasks exceed the model’s
+effective context size (Liu et al., 2024; Hsieh et al., 2024). More importantly, context extension alone
+does not decide what should be stored, what should be revised, what should be forgotten, or how a user
+can audit and erase remembered information.
+Prior work has therefore moved from stateless prompting toward explicit agent memory. Genera-
+tive Agents introduced memory streams, reflection, and planning as core mechanisms for believable
+long-horizon behavior (Park et al., 2023). Reflexion stores verbal feedback to improve later agent
+attempts (Shinn et al., 2023). MemoryBank maintains long-term user memory for conversational
+personalization (Zhong et al., 2024), while MemGPT frames memory management as a virtual-context
+problem in which information is moved between working and archival stores (Packer et al., 2023). Recent
+benchmarks such as LoCoMo and LongMemEval make this problem measurable across multi-session
+dialogue, temporal reasoning, knowledge updates, abstention, and cross-session retrieval (Maharana
+et al., 2024; Wu et al., 2025). Production-oriented and research systems including Mem0, Supermemory,
+Zep/Graphiti, A-MEM, MemoryOS, and graph-based RAG methods further show that external memory,
+temporal structure, and graph organization can improve long-horizon agents (Chhikara et al., 2025; Su-
+permemory, 2026; Rasmussen et al., 2025; Xu et al., 2025; Kang et al., 2025; Jiménez Gutiérrez et al.,
+2024).
+Despite this progress, a practical failure remains under-specified: when a memory-backed answer is
+wrong, it is often unclear which layer failed. The original conversation may have contained the right
+evidence but the extractor may have omitted it. The extractor may have created a plausible but unsupported
+fact. Retrieval may have found the fact but ranked it below the context budget. The answer model may
+have received the evidence and still refused, overgeneralized, or answered for the wrong person. End-
+to-end scores collapse these cases into a single number, making it difficult to improve a system without
+guessing.
+This paper presents Eywa, a provenance-grounded long-term memory architecture for AI agents. Eywa
+is built around the principle of evidence before belief : raw conversational evidence is preserved before
+any LLM-derived fact becomes canonical memory. The write path stores immutable evidence, detects
+typed signals such as dates, entities, decisions, corrections, and hard anchors, and validates extracted facts
+against their source evidence before they are promoted. Canonical facts remain linked to the evidence
+from which they were derived, allowing later inspection, repair, and deletion.
+Provenance establishes source support, not external truth. If a user says something false, ambiguous, or
+sarcastic, Eywa can preserve where the claim came from and whether the extracted belief is supported
+by that source, but world-level truth verification remains outside the memory layer.
+Eywa also separates memory retrieval from answer synthesis. Its read path performs deterministic multi-
+route retrieval over canonical facts, observations, temporal metadata, entity scope, keyword search, and
+vector similarity without LLM calls on the retrieval path. The retrieved evidence is then passed to an
+answer model under an explicit answer policy. This separation makes it possible to measure the memory
+system independently from the model that verbalizes the final response: the same retrieval architecture
+can serve a frontier API model, a small local model, or a stricter refusal policy.
+We evaluate Eywa on LoCoMo C1–C4, LongMemEval-S, and BEAM using role-explicit, trace-
+preserving runs. LongMemEval-S and BEAM test different memory behaviors, so we report them
+under their own protocols rather than reducing them to a single average. Across these settings, the
+central result is not only that Eywa scores well, but that each score can be inspected question by question
+through the evidence, facts, retrieved context, answer, and judge label that produced it.
+
+
+
+
+                                                      2
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+Contributions.
+
+1. A provenance-grounded memory model that separates immutable source evidence from canonical
+   LLM-derived beliefs.
+2. A two-tier write path with typed signal detection and hard-anchor validation for reducing unsupported
+   extracted memories.
+3. A deterministic multi-route read path that retrieves memory context without LLM calls and preserves
+   traceability to source evidence.
+4. A model-separable answer interface showing that the same retrieved evidence can be consumed by
+   hosted frontier, hosted budget, and local models.
+5. A trace-level evaluation protocol that reports write-path, QA, and judge roles separately and preserves
+   per-question provenance for independent inspection.
+
+
+2. Background and Related Work
+
+A recent survey (Hu et al., 2025) organizes agent memory along three axes: forms (token-level, parametric,
+latent), functions (factual, experiential, working), and dynamics (formation, evolution, retrieval). This
+taxonomy is useful because it separates the representation of memory from the operations that maintain
+it. Eywa follows this distinction: it treats memory not as a single store, but as a lifecycle that includes
+evidence capture, fact formation, revision, retrieval, and answer-time use.
+
+
+Long context and retrieval limits. One response to long-horizon interaction is to increase the model’s
+context window. Gemini 1.5 demonstrates that million-token contexts can substantially expand what a
+model can condition on (Gemini Team et al., 2024). At the same time, long context does not remove
+the need for memory management. Attention remains computationally expensive at long sequence
+lengths (Dao et al., 2022), and studies such as Lost in the Middle and RULER show that models can
+still fail to retrieve or use relevant evidence reliably inside long prompts (Liu et al., 2024; Hsieh et al.,
+2024). These findings motivate memory systems that select, structure, and retrieve evidence rather than
+replaying all prior interaction.
+
+
+Experience and reflection memory. Generative Agents introduced a memory stream in which obser-
+vations are retrieved, reflected on, and used for planning (Park et al., 2023). Reflexion stores verbal
+feedback from failed attempts so that later agent behavior can improve without parameter updates (Shinn
+et al., 2023). MemoryBank extends this line to long-term conversational personalization, including mech-
+anisms for updating and forgetting user memories over time (Zhong et al., 2024). These systems establish
+that memory is not just storage; it is an active control surface for behavior over repeated interactions.
+
+
+Hierarchical and operating-system views. MemGPT frames memory management as a virtual-
+context problem, using an operating-system analogy in which information moves between working
+context and archival storage (Packer et al., 2023). MemoryOS develops a related hierarchy with short-
+term, mid-term, and long-term personal memory, together with update and retrieval modules inspired by
+storage management (Kang et al., 2025). These approaches emphasize capacity management: deciding
+what should remain immediately available, what should be compressed or paged out, and what should
+be retrieved later.
+
+
+
+                                                     3
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+Production memory layers. Mem0 presents a practical memory layer for extracting, updating, and re-
+trieving salient conversational memories, with a graph-enhanced variant for relational structure (Chhikara
+et al., 2025). Supermemory exposes an open-source memory engine and hosted API for adding, searching,
+and injecting persistent user context across AI tools, with SDKs, MCP support, and application connec-
+tors (Supermemory, 2026). LangMem provides memory management components for LangGraph-based
+agents (LangChain, 2025). OpenAI’s ChatGPT memory exposes saved-memory and chat-history refer-
+ence controls as a product feature, while its internal memory architecture is not publicly specified (Ope-
+nAI, 2026). This line of work is important because it treats memory as infrastructure that must operate
+under latency, cost, privacy, and product-control constraints.
+
+
+Graph and temporally structured retrieval. Graph-structured memory is a natural fit for multi-hop
+and temporally evolving information. Zep/Graphiti builds a temporally aware knowledge graph with
+a bi-temporal model tracking both real-world validity and system ingestion time (Rasmussen et al.,
+2025). GraphRAG-style methods show how graph structure can support query-focused retrieval and
+summarization over large knowledge sources (Edge et al., 2024). HippoRAG brings a complementary
+perspective from neurobiologically inspired retrieval, using graph structure and hippocampal-indexing
+ideas for long-term memory over knowledge sources (Jiménez Gutiérrez et al., 2024). A-MEM uses a
+Zettelkasten-inspired process in which an LLM creates, links, and evolves memory notes over time (Xu
+et al., 2025). Together, these systems show that relation structure, temporal validity, and memory
+evolution are central to long-term agent behavior.
+
+
+Recent agent-memory architectures. Hindsight organizes agent memory into separate logical net-
+works for world facts, experiences, observations, and opinions, with explicit retain, recall, and reflect
+operations (Latimer et al., 2025). This emphasizes epistemic role separation and profile-conditioned
+reasoning. True Memory argues that extraction at ingestion is the wrong primitive and instead centers
+retrieval over verbatim preserved events (Adler and Zehavi, 2026). Eywa is closest to these systems
+in treating memory as an architecture rather than a vector-store feature. Its distinction is provenance-
+grounded evidence separation: source evidence is stored as the authoritative substrate, while extracted
+facts are validated, revisable indexes over that evidence rather than a lossy replacement for it. Eywa also
+keeps retrieval LLM-free and returns answer policy separately from retrieved memory context.
+
+
+Benchmarks and evaluation. LoCoMo (Maharana et al., 2024) evaluates very long-term conversa-
+tional memory over long, multi-session dialogues. Its public benchmark release includes 10 conversations
+with 1,986 QA questions: 841 single-hop, 282 multi-hop, 321 temporal-reasoning, 96 open-domain-
+knowledge, and 446 adversarial questions. Following the published-result convention used by recent
+memory-system result tables, we report the four non-adversarial categories as the main C1–C4 com-
+parison split. LongMemEval (Wu et al., 2025) tests five core long-term memory abilities: information
+extraction, multi-session reasoning, knowledge updates, temporal reasoning, and abstention. These
+benchmarks are valuable because they expose memory as an end-to-end behavior, but their final-answer
+scores do not by themselves identify whether a failure came from extraction, retrieval, context packing,
+answer policy, or judging.
+
+
+Infrastructure and governance. Memory quality is only one part of a deployable system. Pancake (Hu
+et al., 2026) addresses vector-search throughput for multi-agent workloads through hierarchical caching
+and GPU coordination. Concurrent work on memory governance (Li, 2026) studies constitutional
+frameworks for long-lived digital citizens. These directions are complementary to semantic memory
+architectures because a useful memory system must be accurate, scalable, inspectable, and controllable.
+
+
+                                                    4
+                        Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+Design positioning. Eywa is positioned within this memory-management layer. It makes three archi-
+tectural choices. First, it separates immutable source evidence from canonical LLM-derived beliefs so
+that memories can be audited and repaired. Second, it keeps retrieval deterministic and LLM-free, using
+multiple retrieval routes, temporal metadata, entity scope, and provenance-preserving context packing.
+Third, it separates memory delivery from answer policy, allowing the same memory architecture to
+support local, low-cost, or frontier answer models. The goal is not to replace prior memory systems
+wholesale, but to make the write, read, and answer stages easier to inspect and improve independently.
+
+
+3. Problem Definition and Design Goals
+
+We define long-term agent memory as an external system that transforms an ongoing stream of interaction
+into retrievable, auditable context for future answers. Let a user’s interaction history be a sequence of
+turns
+                                 𝐻𝑢 = {𝑥1 , . . . , 𝑥 𝑛 }, 𝑥𝑖 = (𝑢, 𝑟 𝑖 , 𝑡𝑖 , 𝑠𝑖 ),
+where 𝑢 is the user or tenant scope, 𝑟 𝑖 is the speaker role, 𝑡 𝑖 is the timestamp or session time, and 𝑠𝑖 is the
+raw utterance or event text. A memory system receives 𝐻𝑢 , stores a set of source evidence records 𝐸 𝑢 ,
+derives a set of structured memories or beliefs 𝐵𝑢 , and, for a later query 𝑞, returns a bounded context
+𝐶 (𝑞, 𝑢, 𝑡) that an answer model can use to produce either an answer 𝑎 or an abstention.
+This formulation differs from ordinary document retrieval in four ways. First, the corpus is not static:
+users correct themselves, change preferences, and introduce facts whose validity depends on time. Second,
+the relevant unit is often not a whole document but a small conversational event, preference, decision,
+correction, or relation. Third, answerability depends on user scope and provenance: a fact about one
+person should not answer a question about another, and an extracted claim should remain traceable to its
+source. Fourth, benchmark and product quality depend not only on whether a relevant item can be found,
+but also on whether the answer model uses it under the chosen policy. LoCoMo and LongMemEval
+make these pressures explicit through multi-session reasoning, temporal questions, knowledge updates,
+abstention, and long-range retrieval tasks (Maharana et al., 2024; Wu et al., 2025). Long-context
+evaluations further show why simply appending more history is insufficient: models can fail to use
+evidence reliably as prompts grow or as relevant evidence moves away from favorable positions (Liu
+et al., 2024; Hsieh et al., 2024).
+
+
+Memory objects.       Eywa separates three objects that are often collapsed in memory systems.
+
+1. Evidence is immutable source material: the original user turn, assistant proposal, observation,
+   timestamp, role, and metadata. Evidence may be sensitive and must remain deletable by user scope.
+2. Signals are typed detections over evidence, such as people, organizations, places, dates, versions,
+   URLs, decisions, corrections, approvals, rejections, or other hard anchors.
+3. Beliefs are LLM-derived memories that may be canonical profile facts, episodic observations, tempo-
+   ral events, or relations. A belief is valid only to the extent that it is supported by one or more evidence
+   records.
+
+The central invariant is that evidence precedes belief. A system may revise or delete a canonical belief,
+but it should not silently mutate the raw source from which that belief was derived. This invariant
+supports auditing, repair, user erasure, and reproducible failure analysis.
+
+
+
+
+                                                       5
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+Failure taxonomy. For a memory-backed answer, an error can originate at several layers. Treating
+all of them as a single final-answer failure hides the actual engineering problem. We therefore use the
+following taxonomy throughout the paper. The first seven rows describe system-level failures; the final
+row describes an evaluation-layer failure in which the metric, rather than the memory system, is the
+source of disagreement.
+
+Failure mode            Definition                                       Observable symptom
+Coverage gap            The source conversation contained the in-        No route can retrieve the answer because
+                        formation, but the memory store does not         the store lacks the needed support.
+                        contain supporting evidence or a derived
+                        belief.
+Grounding gap           A derived belief is not supported by its         The memory store contains a plausible but
+                        source evidence, or a hard value such as         source-inconsistent claim.
+                        a date, version, amount, URL, or name was
+                        changed.
+Revision gap            A newer correction, preference change, or        The system returns both outdated and cur-
+                        superseding event is not applied when re-        rent facts, or chooses the outdated one.
+                        trieving current state.
+Scope gap               A memory from the wrong user, speaker,           The answer is semantically related but be-
+                        person, or entity is used.                       longs to someone else.
+Temporal gap            The memory is relevant but selected under        The answer ignores before/after, date range,
+                        the wrong time constraint, ordering, or va-      recency, or historical-state wording.
+                        lidity window.
+Retrieval gap           The needed belief exists but is not retrieved,   The database has the answer but the answer
+                        is ranked too low, or is removed by context      model never sees it.
+                        packing.
+Synthesis gap           The answer model receives sufficient evi-        Trace shows supporting context present, but
+                        dence but refuses, overgeneralizes, omits        final answer is wrong.
+                        list items, or produces the wrong natural-
+                        language answer.
+Measurement gap         The system answer is semantically sup-           Token F1 and LLM judge disagree.
+                        ported, but the scoring metric does not
+                        credit it, or credits an unhelpful refusal.
+
+
+Table 1: Failure and evaluation modes for long-term agent memory. The taxonomy is used to separate
+extraction, retrieval, answer-policy, and metric errors.
+
+
+This taxonomy is intentionally operational. It mirrors the indexing, retrieval, and reading decomposition
+used in LongMemEval (Wu et al., 2025), but adds provenance, revision, scope, temporal validity, and
+measurement distinctions that are important for production memory systems.
+
+
+Design goals. A production memory system should satisfy the following goals. Some goals are related,
+but we keep them separate because they fail independently in practice: a system can preserve evidence
+but alter a hard value, retrieve relevant facts but violate entity scope, or deliver the right evidence to an
+answer model that still refuses.
+
+1. Faithful write path. The system should capture conversational evidence before deriving beliefs, and
+   derived beliefs should remain linked to source evidence.
+2. Grounded extraction. The system should distinguish soft semantic claims from hard anchors whose
+   values must match the source text exactly.
+
+                                                        6
+                      Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+3. Revision awareness. The system should represent updates, corrections, rejections, approvals, and
+   superseding facts rather than treating all memories as flat, timeless assertions.
+4. Scoped retrieval. Retrieval should respect user, speaker, person, role, and time constraints, because
+   many memory failures are wrong-scope failures rather than missing-knowledge failures.
+5. Bounded context delivery. The read path should select and order a small amount of high-value
+   context under a token budget instead of replaying the full history.
+6. Model separability. Memory delivery should be separable from answer synthesis so that a local
+   model, hosted model, strict policy, or inference-permissive policy can use the same retrieved context.
+7. Auditability and erasure. Every answerable memory should be traceable to evidence, and every
+   evidence record should remain removable by user scope.
+8. Diagnostic evaluation. Evaluation should report not only final answer quality, but also whether the
+   failure came from coverage, grounding, retrieval, synthesis, or metric behavior.
+
+
+Non-goals. Eywa does not attempt to make the answer model omniscient, to infer unsupported facts,
+or to store every token forever. It also does not claim that external memory replaces long-context models.
+Instead, Eywa treats long-context capability as one possible consumer of a better memory substrate. The
+memory layer is responsible for preserving, validating, retrieving, and explaining evidence; the answer
+model is responsible for verbalizing that evidence under a chosen policy.
+
+
+
+
+                                                    7
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+4. System Architecture
+
+Eywa is built around three separations: evidence from belief, retrieval from answering, and policy from
+memory. The memory system does not ask an answer model to decide what should be remembered
+at query time. It first captures source evidence, derives validated beliefs from that evidence, retrieves
+a bounded set of support, and returns both memory context and separate answer instructions to the
+downstream model. This turns long-term memory from opaque prompt state into an auditable system
+boundary.
+
+
+
+
+Figure 1: Overview of the Eywa memory pipeline. The write path captures immutable evidence and
+typed signals before validated memories are persisted. The read path later retrieves bounded, provenance-
+grounded context for the answer model.
+
+
+The loop begins when user messages routed into memory enter Tier 0 as immutable evidence and typed
+signals. Tier 1 proposes memories, validates them against the captured source, and writes accepted facts
+with source metadata or evidence links. At read time, deterministic retrieval routes select a bounded
+support set from the memory store. Because reads and writes share the same provenance substrate, an
+answer can be traced back to the evidence that produced the retrieved memory.
+
+
+4.1. Write Path: Evidence Before Belief
+
+The write path operates in two tiers:
+
+
+Tier 0: Immutable capture. Every user turn routed to the evidence pipeline is stored as an immutable
+evidence row. A signal detector extracts typed anchors (dates, entities, monetary values, version numbers,
+identifiers, URLs, IP addresses, percentages, and quoted strings) without any LLM call. These signals
+become the deterministic validation substrate against which extracted facts are checked.
+
+
+
+
+                                                    8
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+Tier 1: Validated extraction. An LLM extracts candidate facts 𝐹ˆ = { 𝑓ˆ1 , . . . , 𝑓ˆ𝑛 } from the evidence
+window. Each candidate is aligned against Tier 0 evidence through a validation function 𝑉:
+
+                 𝑉 ( 𝑓ˆ, E, S) = 𝑉support ( 𝑓ˆ, E) ∧ 𝑉hard ( 𝑓ˆ, S) ∧ 𝑉subject ( 𝑓ˆ, E) ∧ 𝑉act ( 𝑓ˆ, S)    (1)
+
+where E is the aligned evidence window and S is the Tier 0 signal set. 𝑉support requires lexical and fuzzy
+overlap with supporting source text, 𝑉hard verifies deterministic values such as dates, monetary values,
+quoted strings, identifiers, URLs, IP addresses, and percentages, 𝑉subject checks that the claimed subject
+appears in the support window or known entities, and 𝑉act preserves negation and uncertainty from
+memory-act signals. Thus hard anchors are a guardrail, not the whole validator. In a 143-sample two-tier
+audit, 67.4% of candidate facts contained no hard anchor; these candidates were still checked by support
+overlap, subject, and polarity rules. The same audit rejected 11 of 132 candidate facts, most commonly
+for insufficient source overlap or invented hard values. Validated facts are eligible for canonical write;
+failed candidates are rejected or marked for repair. In the two-tier write path, each accepted canonical
+fact 𝑓 retains a provenance link ℓ( 𝑓 ) → 𝑒 to its source evidence row 𝑒.
+
+
+4.2. Extraction Is an Index, Not the Memory
+
+Eywa does not assume that LLM extraction can anticipate every future query. The authoritative memory
+substrate is the immutable evidence store. Extracted canonical facts are compact, queryable, and revisable
+beliefs linked back to that evidence; they make retrieval efficient, but they do not replace the source.
+If a fact is missing, stale, or wrong, the source evidence remains inspectable and can support repair,
+re-extraction, deletion, or a deeper provenance-rescue path.
+This distinction is central to the architecture. Extraction-only systems risk making the extracted item the
+only durable memory object: if a detail is discarded before the query is known, retrieval cannot recover
+it later. Eywa instead treats extraction as an auditable index over preserved evidence. The default read
+path retrieves compact facts for speed, while audit and benchmark traces can expose the source evidence
+behind those facts. Thus the system can be evaluated both as a practical retrieval layer and as a verifiable
+memory substrate.
+
+
+4.3. Memory Representation and Provenance
+
+Eywa represents memory as a provenance graph rather than a flat fact table: evidence records are
+immutable roots, signals are typed annotations over evidence, canonical facts and observations are
+derived beliefs, and provenance metadata connects beliefs back to the source material that supports them.
+The implementation realizes this graph over SQLite tables, LanceDB vector indexes, SQLite full-text
+keyword indexes, and graph relations, but the invariant is representation-independent: raw evidence is
+never rewritten, while candidate or derived beliefs can be accepted, repaired, superseded, or rejected as
+new evidence arrives.
+In the local-first implementation reported here, SQLite is the authoritative store for evidence, facts,
+lifecycle status, and provenance metadata. The vector index and graph checkpoint are idempotent
+projections used for retrieval speed and relational traversal. They are not treated as independent sources
+of truth: if a projection drifts, the expected repair path is projection rebuild or startup reconciliation from
+SQLite. A transactional outbox or background reconciler is the appropriate extension for multi-process
+deployments, but it is not required for the deliberate single-process local-first configuration evaluated in
+this paper.
+
+
+
+
+                                                           9
+                      Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+      Object       Mutability    Producer                  Role
+      Evidence     Immutable     Conversation ingest       Raw text with role, user, time, and session
+                                                           metadata.
+      Signals      Append-only   Deterministic detectors   Dates, entities, anchors, and memory acts
+                                                           extracted from evidence.
+      Candidates   Transient     Extractor                 Proposed canonical or observation memo-
+                                                           ries before validation.
+      Beliefs      Revisable     Validator / writer        Durable facts used by retrieval, with lifecy-
+                                                           cle and scope metadata.
+      Links        Append-only   Persistence layer         Provenance edges or source metadata from
+                                                           beliefs to evidence and supporting signals.
+
+Table 2: Eywa memory object model. Evidence is immutable; beliefs are derived and can carry lifecycle
+state.
+
+
+4.4. Extraction Modes
+
+Eywa exposes extraction mode as an architectural choice because different memory tasks require different
+recall and precision tradeoffs:
+
+• Canonical: Durable profile facts (“Alice prefers dark mode”) with entity typing and lifecycle tracking.
+• Observation: High-recall episodic facts (“Alice mentioned going to a pride parade on July 3, 2023”)
+  that preserve event-level detail.
+• Hybrid: Both paths run for the same user turn. This is the recommended high-recall deployment
+  mode.
+• Structured technical extraction: Domain-neutral technical memories such as implementation de-
+  tails, library versions, schema details, configuration choices, negative claims, milestones, and metric
+  summaries. These extracted facts are typed separately from profile and episodic memories so the read
+  path can retrieve them without treating code, system design, or benchmark-analysis facts as ordinary
+  user preferences.
+
+Canonical extraction supports stable preferences, identity, and current-state memory. Observation ex-
+traction supports episodic recall, temporal questions, and open-domain questions where the answer
+depends on a specific event rather than a durable profile fact. Structured technical extraction preserves
+implementation-level detail that would otherwise be lost in a conversational summary, including exact
+tool names, versions, configuration parameters, dates, counts, and explicit “not implemented” or “not
+using” claims. Hybrid extraction lets the read path choose between compact canonical state, detailed
+episodic evidence, and typed technical memories without forcing a single memory representation to
+serve every question type.
+
+
+
+
+                                                      10
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+4.5. Read Path: Multi-Route Deterministic Retrieval
+
+
+
+
+Figure 2: Eywa read path. The query planner is deterministic (no LLM call). Retrieval and support
+channels contribute candidates with query-shape rule weights. Answer instructions flow from the planner
+directly, never mixed with memory context.
+
+
+The read path (fig. 2) uses zero LLM calls inside memory retrieval. In this paper, “zero-LLM read”
+means no LLM call occurs between receiving a query and returning retrieved memory context: planning,
+retrieval, fusion, and context packing are deterministic. It does not mean the whole answer pipeline is
+LLM-free, because the downstream QA model may still be an LLM, and it does not mean memories
+were written without LLMs. A deterministic query planner analyzes the question’s shape (exact, recom-
+mendation, inference, count, interval, boolean, list, or factoid), together with temporal and entity cues.
+It then assigns query-shape rule weights to the active retrieval and support channels:
+
+• Vector (𝑅𝑣 ): Embedding cosine similarity: 𝑠 𝑣 (𝑞, 𝑓 ) = cos(e𝑞 , e 𝑓 ).
+• Keyword (𝑅 𝑘 ): SQLite FTS5 BM25 lexical matching with optional query expansion for synonyms
+  and inflections.
+• Temporal (𝑅𝑡 ): Date-range queries over fact validity windows: { 𝑓 | 𝑓 .valid_from ≤ 𝑡end ∧
+  ( 𝑓 .valid_until = ⊥ ∨ 𝑓 .valid_until ≥ 𝑡start )}.
+• Entity/graph (𝑅𝑔 ): Entity-scoped retrieval traversing the knowledge graph from extracted query
+  entities.
+• Support channels: Bounded raw-episode rescue for exact or episodic questions and entity-scoped
+  inference support for questions that require cautious reasoning from related facts.
+
+The planner is a hand-coded rule table, not a learned classifier and not an LLM call. Table 3 shows the
+main rules used in the reported LoCoMo runs; unmatched questions use the configured default channels,
+usually vector and keyword search.
+
+
+
+
+                                                     11
+                           Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+Configuration boundary. The reported traces use frozen configurations whose route weights, retrieval
+budgets, answer policies, and enabled rescue paths are recorded with the artifacts. This boundary is
+reproducibility bookkeeping: it states exactly what was run and prevents silent configuration drift across
+result tables. No gold answers, rubric nuggets, judge labels, or benchmark scores are provided to the
+retrieval path or answer model. The retrieval routes described here are generic memory mechanisms
+rather than answer templates: the writer stores typed facts, and the reader retrieves those typed facts
+under the same deterministic query planner for ordinary user data.
+
+Query signal                 Main weights                                        Additional behavior
+Inference / causal           inference support 2.0; entity 2.0; vector 1.5       Pull up to 120 facts for the asked per-
+                                                                                 son and return up to 8 deduplicated
+                                                                                 support facts.
+Contradiction / update       keyword 2.0; temporal 2.0; vector 1.5; entity 1.5   Include superseded facts so current
+                                                                                 and prior claims can be compared.
+Multi-session / relation     graph 3.0; entity 2.0; vector 1.5                   Expand graph traversal depth for
+                                                                                 cross-session evidence.
+Summary / recap              entity 2.5; keyword 2.0; graph 1.5                  Use all configured channels and a
+                                                                                 larger context budget.
+Explicit date bound          temporal 3.0; keyword 2.0; entity 2.0               Parse date ranges and filter by fact
+                                                                                 validity windows.
+List / aggregation           entity 3.0; vector 1.5; keyword 1.5                 Enable raw-episode rescue for list,
+                                                                                 count, exact, interval, and recom-
+                                                                                 mendation questions.
+
+
+Table 3: Deterministic query-planner rules. Values are channel weights used by weighted RRF; omitted
+channels use the base weight or are inactive for that query.
+
+
+Each route 𝑅𝑐 returns a ranked list of candidate facts. Candidates are fused using weighted reciprocal
+rank fusion (RRF) (Cormack et al., 2009):
+                                                ∑︁        𝑤𝑐
+                                     RRF( 𝑓 ) =                                                    (2)
+                                                𝑐∈ C
+                                                     𝑘 + rank 𝑐( 𝑓 )
+
+
+where C is the set of active channels, rank𝑐 ( 𝑓 ) is the rank of fact 𝑓 in channel 𝑐 (or ∞ if absent), and 𝑘
+is a smoothing constant. The default configuration uses 𝑘 = 20.
+
+
+Post-fusion filters.       After RRF scoring, two deterministic filters adjust rankings:
+Person demotion: If the query targets person 𝑝, facts whose scope_entity ≠ 𝑝 receive a demotion
+factor 𝛿 𝑝 = 0.05:
+                           (
+                    ′        RRF( 𝑓 )       if 𝑓 .scope_entity = 𝑝 or unscoped
+                   𝑠 (𝑓) =                                                                   (3)
+                             RRF( 𝑓 ) · 𝛿 𝑝 otherwise
+
+Preservation floor: If fact 𝑓 is already a high-ranked candidate and matches the asked person and
+temporal window, it cannot drop below rank 𝑟 min = 25 after reranking, preventing validated candidates
+from being buried by noisy high-scoring candidates.
+The preservation floor is a packing-protection mechanism, not a truth-resolution mechanism. It is
+applied after active-state filtering, so it assumes the write path has already marked outdated state facts as
+superseded. In this sense, preservation is lifecycle-trusting: it protects active candidates from reranking
+
+                                                           12
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+loss, but it does not decide which of two active state facts is the current truth. Eywa’s intended invariant
+is that each mutable state slot has at most one active fact for a given user_id, scope_entity, and
+fact_type; stale values should be handled by write-time supersession rather than by read-time filtering.
+
+
+Route preservation and rescue. When a top-ranked candidate from a single route also matches the
+asked person, time window, and query terms, Eywa preserves a bounded number of those candidates even
+if later reranking would bury them. Exact, list, count, interval, and recommendation-shaped questions
+may also activate raw-episode rescue. This channel searches the original episode FTS index, reranks up
+to 24 candidate episodes by query-term overlap, speaker match, and lexical score, and returns up to 6
+short excerpt facts capped at 8 source lines and roughly 1,300 characters. Inference support is separate:
+it activates only for inference, causal, or supported-reasoning queries with a resolved person, retrieves
+up to 120 facts for that person, embeds fact plus source text, scores candidates by 0.7 cosine similarity
+and 0.3 lexical overlap, and returns up to 8 deduplicated support facts.
+
+
+Context packing. The final ranked list is packed into a context string C𝑞 under a configured token
+budget 𝐵. Facts are grouped by entity when possible and then packed in ranked order; diversity or
+temporal ordering modes are used for summary, ordering, and time-range queries. The packing function
+is:
+                              C𝑞 = Pack(top-𝐾 ({ 𝑓 | 𝑠′ ( 𝑓 ) > 0}) , 𝐵)                          (4)
+
+
+4.6. Answer Policy Separation and Traceability
+
+The ReadResult returned by the memory system contains two distinct fields:
+
+• context: The retrieved memory evidence, formatted for the answer model.
+• answer_instructions: Policy text that tells the answer model how to use the evidence. This is not
+  injected into the memory context.
+
+Three answer modes are available:
+
+strict:         Answer only from direct evidence. Safest for small or low-capability models that tend to
+                hallucinate when given license to infer.
+balanced:       Allow clear implications from one strong memory or multiple consistent memories,
+                without outside knowledge.
+advanced:       Allow cautious reasoning and ordinary common-knowledge bridges when retrieved mem-
+                ories provide specific support. Designed for strong-reasoning models.
+
+This separation is critical because the same retrieval architecture can produce different outcomes depend-
+ing on the answer model and policy. A local 3B model in advanced mode may hallucinate; a frontier
+model in strict mode may refuse despite adequate evidence. The answer policy makes this a product
+decision rather than an architectural limitation.
+Formally, the ReadResult can be summarized as:
+                                                                            
+                                ReadResult(𝑞) = C𝑞 , I𝜋 , 𝐹𝑞 , 𝐷 𝑞 , 𝑡 ms                                  (5)
+
+where C𝑞 is the packed context string, I𝜋 is the answer instruction text for policy 𝜋 ∈ {strict, balanced,
+advanced}, 𝐹𝑞 is the set of rendered fact identifiers, 𝐷 𝑞 contains route counts, route errors, and query-plan
+diagnostics, and 𝑡ms is the retrieval latency.
+
+                                                     13
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+The same structure makes failures diagnosable. If support is absent from the memory store, the issue is
+a coverage or extraction gap. If support exists but does not reach C𝑞 , the issue is retrieval, ranking, or
+packing. If support reaches C𝑞 but the answer is wrong or refused, the issue is answer policy or model
+capability. If the answer is semantically supported but scored wrong, the issue is measurement. This
+trace connects the failure taxonomy in table 1 to concrete system artifacts rather than treating benchmark
+errors as a single undifferentiated score.
+
+
+5. Evaluation
+
+Eywa is evaluated as an inspectable memory system rather than as a single end-to-end prompt. For
+each benchmark question, the trace preserves the question, gold answer or rubric, retrieved context,
+answer instructions, model answer, judge label or score, and run configuration. This lets aggregate
+benchmark scores be read together with the artifacts that produced them, rather than as opaque final
+numbers. LoCoMo, LongMemEval-S, and BEAM are therefore used as complementary probes of
+different memory behaviors rather than averaged into one leaderboard number. LoCoMo tests long-
+horizon conversational recall and reasoning; LongMemEval-S tests retrieval sufficiency across memory
+categories; BEAM stresses technical memory, updates, ordering, abstention, and rubric-level partial
+credit.
+
+
+5.1. Benchmark Setup
+
+We report three completed benchmark families in this version: LoCoMo, LongMemEval-S, and BEAM.
+LoCoMo and LongMemEval-S are reported with their own judge-accuracy or retrieval-sufficiency pro-
+tocols. BEAM uses a rubric-nugget protocol, so we report it separately as raw mean nugget score plus
+pass@score≥0.5 rather than mixing it into the LoCoMo comparison table.
+
+
+LoCoMo. LoCoMo (Maharana et al., 2024) evaluates very long-term conversational memory over 10
+multi-session conversations. The public release contains 1,986 QA questions across five categories: 841
+single-hop, 282 multi-hop, 321 temporal reasoning, 96 open-domain knowledge, and 446 adversarial
+questions. For headline comparison, we follow the published result-table convention and report the
+non-adversarial C1–C4 split only: 1,540 answerable questions across single-hop, multi-hop, temporal,
+and open-domain categories. We report each LoCoMo run by three model roles:
+
+• Write-path model: the model used to extract or validate memories during ingestion.
+• QA model: the model that receives Eywa’s retrieved context and answer instructions.
+• Judge model: the model that scores final answers with the benchmark judge prompt.
+
+We report C1–C4 judge accuracy as the primary LoCoMo metric. We report official-style token F1 only
+where the corresponding trace export retained it. The adversarial C5 subset is useful for safety analysis,
+but it is not included in the headline LoCoMo comparison tables in this paper version.
+We distinguish two result types. Write–QA aligned runs use the same model family for writing memory
+and answering questions, with GPT-4o used as the judge. These are the primary LoCoMo results because
+they avoid mixing a strong extractor with a weak answerer, or vice versa. Cross-role diagnostic runs
+intentionally mix write and QA roles to isolate a specific system question; for example, running Qwen3
+32B as the QA model over a Sonnet-written memory store measures how much a stronger write path
+
+
+
+                                                    14
+                        Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+helps a smaller answer model. All LoCoMo rows in the main tables use frozen, artifact-recorded run
+configurations whose retrieved contexts and scoring labels are preserved with the public traces.
+
+
+LongMemEval-S. LongMemEval-S (Wu et al., 2025) is a 500-question benchmark designed around
+five core abilities: information extraction, multi-session reasoning, knowledge updates, temporal rea-
+soning, and abstention. The released question-type labels further distinguish single-session user, single-
+session assistant, single-session preference, multi-session, temporal-reasoning, and knowledge-update
+cases; abstention questions are marked by question id. The LongMemEval-S run reported here uses
+GPT-4o for the write path, QA, and judging over a 3,200-token retrieval budget. Because LongMemEval
+uses different tasks and a different binary judge protocol, we report it separately from the LoCoMo
+comparison tables.
+
+
+BEAM. BEAM is a technical-memory stress suite used in this paper to test detailed recall, updates,
+ordering, abstention, and multi-session synthesis. It contains 35 conversations and 700 rubric-scored
+questions across 10 categories. Because BEAM is introduced here rather than inherited as an estab-
+lished public leaderboard, we treat it as a stress evaluation and report it separately from LoCoMo and
+LongMemEval-S. The accompanying research release is intended to include the conversations, ques-
+tions, rubric nuggets, retrieved contexts, model answers, and judge outputs so that readers can inspect
+the benchmark at the question level. The run reported here uses Kimi K2.5 hybrid ingestion, Claude
+Sonnet 4.6 for QA, and Claude Sonnet 4.6 for rubric judging over Eywa’s retrieved context. BEAM
+questions are scored by rubric nuggets rather than a single exact answer, so we report the raw mean
+nugget score, pass@score≥0.5, pass@score≥0.8, and perfect-score counts. The 0.5 threshold is a coarse
+sufficiency threshold rather than a claim of exact correctness; higher thresholds are included to expose
+partial-answer behavior.
+
+
+Baseline numbers. For context, we include published or artifact-reported C1–C4 scores from other
+systems evaluated on LoCoMo (Adler and Zehavi, 2026; Latimer et al., 2025; Vectorize, 2025; Li
+et al., 2025; MemTensor, 2025). The closest external headline rows in this literature context are True
+Memory Pro and Hindsight Gemini-3, but their protocols differ from Eywa’s trace-preserving runs: True
+Memory reports a semantic-judge mean without this table’s category breakdown, while Hindsight uses a
+different model and judge protocol. The remaining external rows are taken from the MemOS evaluation
+artifact. These numbers are therefore provided as literature context rather than a controlled head-to-head
+reproduction; direct comparison is limited by differences in extraction models, answer models, judge
+prompts, judge model versions, retrieval budgets, and reported trace formats.
+
+Benchmark       Questions / split         Model roles                         Retrieval budget          Metric and artifact
+LoCoMo          1,540 C1–C4 ques-         Write and QA roles vary by run;     Frozen        artifact-   Judge accuracy; per-question
+                tions from 10 conversa-   aligned runs use the same family;   recorded     retrieval    artifacts include question, gold
+                tions                     judge is GPT-4o                     configuration; trace      answer, model answer, re-
+                                                                              stores packed context     trieved context, and label.
+LongMemEval-S   500 questions across      GPT-4o write, QA, and judge         3,200 tokens              Retrieval-sufficiency judge ac-
+                released question-type                                                                  curacy; failure buckets re-
+                buckets                                                                                 tained for diagnostic analysis.
+BEAM            700      rubric-scored    Kimi K2.5 write; Claude Sonnet      Deep technical re-        Mean nugget score plus
+                questions across 35       4.6 QA; Claude Sonnet 4.6 rubric    trieval profile used      pass@score≥0.5;              per-
+                technical-memory          judge                               for the canonical run     question rubric,         answer,
+                conversations                                                                           score, and retrieved context
+                                                                                                        retained.
+
+
+Table 4: Evaluation protocol summary. Reported metrics are not averaged across benchmarks because
+LoCoMo, LongMemEval-S, and BEAM use different scoring conventions.
+
+                                                             15
+                          Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+Reproducibility artifacts. The accompanying research bundle publishes per-question traces rather
+than only aggregate scores. For the reported runs, artifacts include the benchmark question, gold
+answer or rubric nuggets, retrieved context, model answer, scoring label or nugget score, and the
+result file used to compute the table. Public-facing artifacts are intended to be accessible from https:
+//eywa.to/research, making Eywa’s benchmark claims independently inspectable at the question
+level.
+
+
+5.2. LoCoMo Results
+
+Run                                                            Write        QA             Judge      Correct / total    Accuracy
+Claude Sonnet 4.6                                              Sonnet 4.6   Sonnet 4.6     GPT-4o       1,389 / 1,540       90.19%
+GPT-4o                                                         GPT-4o       GPT-4o         GPT-4o       1,367 / 1,540       88.77%
+Kimi K2.5                                                      Kimi K2.5    Kimi K2.5      GPT-4o       1,295 / 1,540       84.09%
+
+
+Table 5: Measured Eywa LoCoMo C1–C4 write–QA aligned runs under frozen artifact-recorded config-
+urations. All rows use GPT-4o as judge and are therefore the main LoCoMo comparison rows.
+
+
+Table 5 summarizes the current measured LoCoMo results using role-normalized reporting. These write–
+QA aligned runs are the main comparison because they keep judge protocol fixed while changing the
+model family used to write and answer over memory. The gap between rows shows that final benchmark
+quality depends on extraction quality, answer-model reasoning, and judging, not only on the retrieval
+substrate.
+The full per-question Sonnet 4.6 LoCoMo result, including questions, gold answers, model answers,
+retrieved context, and pass/fail labels, is published at https://eywa.to/research.
+
+LoCoMo trace                                                                             Mean context tokens     Median        p95
+Sonnet 4.6 write + Sonnet 4.6 QA                                                                        4,257       4,338    5,975
+Qwen3 32B write + Qwen3 32B QA                                                                          3,177       3,223    4,407
+
+
+Table 6: Retrieved-memory context footprint for two LoCoMo C1–C4 traces. Counts are artifact-
+recorded memory-context tokens supplied to the QA model and exclude question text, answer instructions,
+answer generation, and judge calls.
+
+
+Run                                Roles                               Result                       Purpose
+Qwen3 32B full cycle               Write: Qwen3 32B; QA: Qwen3 32B;    1,064 / 1,540 = 69.09%       Same-family diagnostic base-
+                                   scoring: dashboard reviewed state                                line for the Qwen3 32B write
+                                                                                                    and answer loop. The gap to
+                                                                                                    the Sonnet-written memory row
+                                                                                                    isolates write-path quality as a
+                                                                                                    material factor.
+Qwen3 32B on Sonnet memory         Write: Sonnet 4.6; QA: Qwen3 32B;   1,227 / 1,540 = 79.68%       Measures whether a smaller
+                                   scoring: reviewed QA pass                                        answer model benefits from
+                                                                                                    a stronger write path. Not
+                                                                                                    a leaderboard-comparable GPT-
+                                                                                                    4o-judge row.
+
+
+Table 7: LoCoMo Qwen3 32B diagnostic runs. These diagnostics isolate model-role effects and are
+reported separately from GPT-4o-judged write–QA aligned comparisons.
+
+
+The Qwen3 32B diagnostic shows that write-path quality and evidence organization materially affect
+
+                                                            16
+                         Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+smaller answer models, while the remaining C3 weakness reflects answer-model reasoning rather than
+simple memory absence.
+
+            Run                             C1 Multi-hop       C2 Temporal    C3 Reasoning    C4 Single-hop
+            Claude Sonnet 4.6                        93.97%        89.41%          78.13%          90.61%
+            GPT-4o                                   88.65%        88.47%          82.29%          89.66%
+            Kimi K2.5                                87.59%        81.31%          77.08%          84.78%
+            Qwen3 32B full cycle                     57.09%        68.85%          30.21%          77.65%
+            Qwen3 32B on Sonnet memory               84.04%        79.75%          41.67%          82.52%
+
+
+Table 8: LoCoMo category accuracy by model configuration. The Qwen3 32B rows are diagnostic
+dashboard-reviewed runs and are not GPT-4o-judged comparison rows; their overall pass rates are
+reported in table 7.
+
+
+Table 8 shows two effects. First, Eywa remains strong across answer-model regimes: even the weaker
+Qwen3 32B answer model remains competitive on single-hop and temporal recall when it reads a Sonnet-
+written memory store. Second, C3 open-domain reasoning is the most model-sensitive category. This is
+expected: many C3 questions require inference over retrieved evidence, so the memory layer can surface
+the relevant facts while a smaller answer model may still fail to connect them.
+The Qwen3 32B diagnostics separate write-path quality from answer-model quality. When Qwen3 32B
+writes and answers over its own memory store, the reviewed C1–C4 pass rate is 1,064 / 1,540 = 69.09%.
+When the same Qwen3 32B answer model reads a Sonnet-written memory store, the reviewed pass rate
+rises to 1,227 / 1,540 = 79.68%. We therefore report these rows as diagnostics rather than controlled
+GPT-4o-judged leaderboard rows.
+The Kimi and Qwen configurations are important for deployment: the same retrieval architecture remains
+useful outside a single frontier-model setup. This supports Eywa’s product thesis that high-quality
+memory should not require an LLM call on every read, while still leaving room for stronger write or
+answer models when applications need multi-hop or open-domain reasoning.
+
+                  Method                Single-hop     Multi-hop   Temporal    Open-domain     Overall
+                  True Memory Pro†              –             –           –               –     93.00%
+                  Hindsight Gemini-3‡      86.17%        70.83%      83.80%          95.12%     89.61%
+                  MemOS                    81.09%        67.49%      75.18%          55.90%     75.80%
+                  memobase                 73.12%        64.65%      81.20%          53.12%     72.01%
+                  Mem0                     73.33%        58.75%      52.34%          45.83%     64.57%
+                  MIRIX                    68.22%        54.26%      68.54%          46.88%     64.33%
+                  Zep                      66.23%        52.12%      54.82%          33.33%     59.22%
+                  MemU                     66.34%        63.12%      27.10%          50.00%     56.55%
+                  Supermemory              67.30%        51.12%      31.77%          42.67%     55.34%
+
+
+Table 9: External LoCoMo C1–C4 literature context from recent memory-system result tables. Sources:
+True Memory Pro from Adler and Zehavi (2026); Hindsight from Latimer et al. (2025); Vectorize
+(2025); remaining rows from the MemOS evaluation artifact (Li et al., 2025; MemTensor, 2025). Eywa’s
+measured rows are reported separately in tables 5 and 8. † True Memory reports a 3-run semantic-judge
+mean and does not provide this table’s category breakdown. ‡ Hindsight’s category labels are mapped
+to the same four LoCoMo categories, but its model and judge protocol differ. External rows are not
+controlled reproductions and should not be read as a single leaderboard.
+
+
+
+
+                                                              17
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+5.3. LongMemEval-S Results
+
+                             Question type                 Questions    Judge
+                             Knowledge update                    78     96.2%
+                             Multi-session                      133     84.2%
+                             Single-session assistant            56     73.2%
+                             Single-session preference           30     90.0%
+                             Single-session user                 70    100.0%
+                             Temporal reasoning                 133     87.2%
+                             Overall                            500     88.2%
+
+  Table 10: LongMemEval-S full 500-question GPT-4o retrieval-sufficiency result by question type.
+
+
+Table 10 shows a second benchmark setting with GPT-4o used consistently across write-path, QA,
+and judge roles. Eywa is strongest on direct user-memory questions and knowledge updates, while
+assistant-memory, multi-session, and temporal-reasoning questions remain harder.
+
+                           Failure bucket                                 Count
+                           Fact not retrieved                                   27
+                           Candidate lost before final context                  12
+                           Fact not extracted                                   12
+                           Assembly required across multiple memories            7
+                           Packed evidence not used by answer model              1
+                           Total remaining failures                             59
+
+                  Table 11: LongMemEval-S remaining failures after GPT-4o judging.
+
+
+Table 11 shows that the remaining LongMemEval errors are no longer dominated by simple single-fact
+lookup. The largest residual bucket is retrieval coverage, followed by context-selection loss and extraction
+gaps. This gives Eywa a concrete improvement path for the next iteration.
+
+
+5.4. BEAM Results
+
+BEAM is reported as a stress evaluation rather than a LoCoMo-style comparison. Each question is judged
+against rubric nuggets, so a partial answer can receive partial credit. Table 12 reports the completed
+35-conversation, 700-question canonical run, using Kimi K2.5 hybrid ingestion and Claude Sonnet 4.6
+for both QA and rubric judging.
+
+
+
+
+                                                      18
+                           Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+                      BEAM category               N    Mean score   Pass@0.5    Pass@0.8     Perfect
+                      Abstention                  70      92.86%      65 / 70     65 / 70     65 / 70
+                      Contradiction resolution    70      93.21%      70 / 70     52 / 70     52 / 70
+                      Event ordering              70      79.49%      60 / 70     50 / 70     39 / 70
+                      Information extraction      70      81.43%      58 / 70     55 / 70     53 / 70
+                      Instruction following       70      76.67%      58 / 70     48 / 70     48 / 70
+                      Knowledge update            70      70.00%      49 / 70     49 / 70     49 / 70
+                      Multi-session reasoning     70      87.77%      63 / 70     58 / 70     57 / 70
+                      Preference following        70      79.05%      60 / 70     48 / 70     48 / 70
+                      Summarization               70      64.07%      49 / 70     38 / 70     28 / 70
+                      Temporal reasoning          70      90.00%      65 / 70     61 / 70     61 / 70
+                      Overall                    700      81.45%    597 / 700   524 / 700   500 / 700
+
+
+Table 12: BEAM technical-memory stress result by rubric category under the deep technical retrieval
+profile; configuration is recorded in the artifacts. Mean score is the average rubric-nugget score; pass@0.5,
+pass@0.8, and perfect-score counts are shown separately because BEAM allows partial credit.
+
+
+The BEAM result is useful because it stresses detailed technical recall, update handling, ordering,
+abstention, and multi-session synthesis in a format that exposes partial failures. Eywa is strongest
+on contradiction resolution, abstention, temporal reasoning, multi-session reasoning, and information
+extraction. Summarization and knowledge update remain the clearest next memory-improvement targets,
+but the rubric view shows that knowledge update is no longer a collapse point.
+
+
+Operational metrics. Eywa’s default memory read path uses no LLM calls before the answer model
+receives context. On a stress memory store with 6,320 facts, 250 episodes, and 14,585 fact-entity
+links, the default interactive retrieval profile returns assembled context in roughly 150–200 ms. The
+system can optionally perform deeper provenance assembly for audit and benchmark diagnostics, but the
+product-facing path is the fast LLM-free retrieval profile reported in Table 13.
+
+Retrieval mode               What it does                                                               Observed latency
+Hot vector search            In-memory vector index lookup before full context assembly.                  1–3 ms internal
+Vector returned context      Vector-only retrieval with assembled returned context.                          148–171 ms
+Interactive retrieval        Vector plus keyword retrieval with entity, temporal, and lifecycle              198–200 ms
+                             filters.
+Startup / initialization     Loads stores, graph checkpoint, and hot vector index.                           823–885 ms
+
+
+Table 13: Default LLM-free retrieval latency on the stress memory store. Latencies exclude answer
+generation and judging.
+
+
+For debugging and audit workflows, Eywa can also assemble deeper provenance context from raw
+evidence. That diagnostic path is intentionally separate from the default interactive retrieval profile and
+motivates future work on source-text indexing and evidence-chunk storage.
+Zep/Graphiti also preserves provenance through temporal graph structure. Eywa’s provenance claim is
+narrower: raw evidence is stored separately from derived beliefs, and two-tier canonical writes maintain
+explicit evidence-to-fact links so a retrieved fact can be traced back to the source turn and supporting
+signals. Observation-mode facts additionally retain source text and episode metadata.
+
+
+Closest-system contrast. Eywa is closest in spirit to systems that combine extraction, retrieval, and
+temporal structure, but it draws the system boundary differently. Compared with Zep/Graphiti, Eywa
+emphasizes immutable source evidence as a first-class object separate from graph-derived beliefs and
+
+                                                             19
+                           Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+answer instructions. Compared with Mem0-style drop-in memory, Eywa treats extraction as an index
+over preserved evidence rather than as the memory itself. Compared with A-MEM-style note enrichment,
+Eywa spends model work on the write path but keeps retrieval deterministic and LLM-free. Compared
+with leaderboard-style memory reports, Eywa’s evaluation claim is tied to per-question traces that expose
+the retrieved context and judge outcome behind each aggregate score.
+
+System             Read LLM        Write LLM              Provenance        Temporal            Retrieval          Policy split
+Mem0               n.s.            multi-stage            n.s.              n.s.                hybrid             n.s.
+Mem0𝑔              n.s.            multi-stage + graph    n.s.              partial             graph + semantic   n.s.
+Supermemory†       n.s.            n.s.                   partial           partial             API/RAG            n.s.
+Zep/Graphiti       n.s.            LLM extraction         graph-linked      bi-temporal         graph search       n.s.
+A-MEM              n.s.            multi-step             note-linked       n.s.                cosine             n.s.
+MemoryOS           n.s.            LLM update/summarize   n.s.              n.s.                tiered             n.s.
+MemGPT             tool-mediated   tool-mediated          n.s.              n.s.                tool-call          n.s.
+Eywa               0               1                      evidence-linked   temporal      meta- 4-route            separated
+                                                                            data
+n.s. = not publicly specified in the cited paper or documentation reviewed here. Sources: Mem0 and Mem0𝑔 from Chhikara
+ et al. (2025); Supermemory from public product documentation (Supermemory, 2026); Zep/Graphiti from Rasmussen et al.
+ (2025); A-MEM from Xu et al. (2025); MemoryOS from Kang et al. (2025); MemGPT from Packer et al. (2023). External
+write/read fields are qualitative public-source summaries rather than measured call counts, and pipeline stages are not directly
+                  comparable across papers and product docs. Provenance semantics differ across systems.
+
+Table 14: Architectural context for agent memory systems. The table summarizes public claims and
+papers; it is not a controlled implementation audit. Eywa’s row reports the implementation used in this
+paper’s artifacts.
+
+
+5.5. Refusal-Aware Evaluation
+
+In our evaluation harness, the official-style LoCoMo F1 scorer can award credit when the model refuses
+and the gold answer text is not found verbatim in the retrieved context. This behavior is useful for
+adversarial questions, but it can inflate scores for answerable categories when a model abstains instead
+of using paraphrased or indirect evidence.
+We define refusal-aware F1. Let 𝑦ˆ be the system prediction, 𝑦 ∗ the gold answer, and cat(𝑞) the question
+category:                                    (
+                                               F1( 𝑦ˆ , 𝑦 ∗ ) if ¬refusal( 𝑦ˆ )
+                              RA-F1(𝑞) =                                                               (6)
+                                               0              otherwise
+This metric measures whether the system actually answers, not whether it avoids answering. For
+answerable categories, refusal-aware F1 assigns zero to non-adversarial refusals.
+We keep this metric in the trace format because it is useful for engineering analysis, especially on
+open-domain inference questions where abstention can hide answer-model weakness. It is not used
+as the primary headline score in this version; the reported LoCoMo and LongMemEval-S results use
+role-explicit judge accuracy or retrieval-sufficiency accuracy, BEAM uses rubric-nugget scoring, and
+token-level F1 is reported separately where available.
+
+
+5.6. Model Separation
+
+The role-normalized runs in Tables 5 and 7 demonstrate the value of model separation. The same
+retrieval architecture serves frontier, budget, and smaller answer-model regimes, while the trace format
+keeps write-path quality and answer-model behavior distinguishable. The Qwen diagnostics are especially
+
+                                                               20
+                      Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+
+Figure 3: Diagnostic funnel used for trace audits. The funnel is a method for localizing errors, not an
+additional benchmark score.
+
+useful because they show the difference between a weak write path and a weak answerer over a stronger
+memory store.
+This validates the design choice: rather than building the answer model’s capability into the memory
+system, Eywa returns the same evidence and lets operators choose the right model for their constraints.
+Privacy-sensitive deployments can run entirely local. Cost-sensitive deployments can use a budget API.
+Performance-critical deployments can use a frontier model. The memory layer does not need to change.
+
+
+5.7. Diagnostic Analysis
+
+Eywa records enough trace information to localize failures after a run: which facts were retrieved by
+each route, which survived fusion and packing, what answer instructions were provided, and whether the
+judge accepted the final answer. This makes benchmark errors inspectable rather than forcing all failures
+into a single score.
+The current diagnostics show two signals. First, the same memory substrate remains usable across
+several model choices, which supports separating memory delivery from answer synthesis. Second, C3
+open-domain questions remain the most difficult answerable LoCoMo category because many require
+inference over retrieved evidence rather than direct fact recall. We therefore treat C3 as the main target
+for future profile synthesis and inference-support improvements.
+
+
+6. Discussion
+
+Memory as infrastructure. The central implication of Eywa is that long-term memory should be
+treated as infrastructure rather than as prompt decoration. A production agent may change answer models,
+
+
+                                                   21
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+deployment targets, privacy requirements, or product policies over time, but its memory substrate should
+remain inspectable and reusable. Eywa’s separation of evidence, beliefs, retrieval, and answer policy
+gives this substrate a stable interface: the write path preserves and validates what was said, the read path
+returns bounded evidence, and the answer model verbalizes that evidence under a chosen policy.
+
+
+Why provenance matters for adoption. Users do not experience memory failures as benchmark errors.
+They experience them as broken trust: the agent remembers the wrong person, forgets a recent event,
+repeats stale information, or cannot explain where a claim came from. Provenance turns these failures
+into inspectable system states. If a fact is wrong, the source turn can be checked. If a user requests
+erasure, evidence can be deleted by user scope. If a benchmark answer fails, the trace can distinguish
+extraction, retrieval, packing, answer-policy, and judging errors. This is the difference between a memory
+feature and a memory system.
+
+
+Local-first does not mean weak memory. The Kimi K2.5 and Qwen3 32B runs are important because
+they show that useful memory is not restricted to one frontier-only deployment pattern. This does not
+eliminate the value of stronger write or answer models. It does show that the memory layer can carry
+a large part of the system behavior, allowing users to choose between local privacy, low operating cost,
+and frontier reasoning without replacing the memory store.
+
+
+Zero-LLM reads change the cost model. Many agent systems place LLM calls on both write and
+read paths. Eywa makes a different tradeoff: spend intelligence when memory is written, then serve
+memory through deterministic retrieval at read time. This is attractive for products because reads are
+often far more frequent than writes. A user may ask many questions over the same memory store, and
+each query should not require an additional memory-planning model call before the answer model is
+invoked. Deterministic reads also make latency, caching, and debugging easier to reason about.
+
+
+Open source as a trust requirement. Memory is a sensitive layer: it stores personal preferences,
+work history, relationships, plans, and sometimes private facts. For this reason, the core memory system
+should be inspectable, portable, and usable without a hosted dependency. Eywa’s open-source direction
+follows from the architecture itself. The strongest version of the system is not a locked feature tier; it is
+a shared substrate that developers can run locally, audit, extend, and connect to whichever answer model
+their deployment requires. Managed services can add scale, collaboration, analytics, and enterprise
+controls, but the core memory capability should remain genuinely useful on its own.
+
+
+Refusal-aware evaluation in practice. We do not argue that refusals are always wrong. On C5
+(adversarial), refusals are the correct answer. We argue that non-adversarial refusals should not receive
+credit in aggregate metrics, because they indicate the system failed to answer a question it should have
+been able to answer. Separately tracking refusal rates alongside accuracy gives operators a clearer picture
+of system behavior, especially when the same memory evidence is consumed by models with different
+reasoning and safety profiles.
+
+
+7. Threats to Validity
+
+The benchmark results in this paper should be interpreted through their protocols rather than as a single
+universal score. LoCoMo C1–C4 accuracy, LongMemEval-S retrieval-sufficiency accuracy, and BEAM
+
+
+                                                     22
+                      Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+rubric-nugget scoring measure different behaviors and are not averaged. Published competitor rows
+also differ in extraction models, answer models, judge prompts, judge model versions, retrieval budgets,
+and whether they report strict matching, semantic judging, or rubric scoring. We therefore use external
+numbers as context, not as a controlled head-to-head reproduction.
+Model roles are another source of variation. Eywa reports write-path, QA, and judge models explicitly
+because a stronger extractor, a stronger answer model, or a more permissive judge can all move final
+accuracy. The write–QA aligned LoCoMo rows are the main comparison rows because they share GPT-
+4o judging. Qwen3 32B diagnostics are reported separately and should not be read as equivalent to the
+GPT-4o-judged comparison rows.
+The reported aggregate percentages also omit formal uncertainty estimates in this version. LoCoMo has
+only 10 conversations, so question-level percentages can overstate certainty if many errors are correlated
+within a conversation. Future versions should include confidence intervals, conversation-level bootstrap,
+and paired tests such as McNemar or paired bootstrap where two systems answer the same questions.
+Finally, C5 adversarial LoCoMo questions are excluded from the headline C1–C4 comparison split,
+following the comparison convention used by recent result tables, but they remain important for safety and
+false-premise behavior. BEAM uses partial-credit rubric nuggets, so its mean score and pass thresholds
+expose different failure modes than binary judged accuracy. Because BEAM is introduced here, it should
+be read as a public stress-test contribution once released, not as an independently established community
+benchmark. These protocol boundaries are why the paper publishes per-question artifacts rather than
+asking readers to trust aggregate numbers alone.
+
+
+8. Limitations
+
+1. Extraction model dependency: Our main results use LoCoMo memory stores created with high-
+   recall extraction configurations. We report several model regimes, including Qwen-based runs, but
+   we have not performed an exhaustive sweep over local extractors, answer models, retrieval budgets,
+   and judge prompts.
+2. Benchmark coverage: We report the standard LoCoMo C1–C4 comparison split, a full
+   LongMemEval-S run, and a full BEAM run. BEAM uses nugget scoring rather than simple judge
+   accuracy, so it is reported as a separate stress evaluation instead of being averaged into the LoCoMo
+   comparison table.
+3. Benchmark configuration: No gold answers, rubric nuggets, judge labels, or benchmark scores are
+   provided to Eywa at retrieval or answer time. Reported runs use frozen configurations whose route
+   weights, retrieval budgets, answer policies, and enabled rescue paths are preserved with the trace
+   artifacts.
+4. BEAM validation: BEAM is introduced in this paper as a technical-memory stress suite. The release
+   is intended to include conversations, questions, rubric nuggets, retrieved contexts, model answers, and
+   judge outputs, but this version does not yet report independent human validation of BEAM rubrics,
+   inter-annotator agreement, or external baseline reproductions.
+5. Model roles: We report write-path, QA, and judge models explicitly. Write–QA aligned runs reduce
+   role ambiguity, but they are still not controlled head-to-head comparisons against external systems.
+6. Judge validity: The main LoCoMo rows use GPT-4o judging, and the canonical BEAM run uses
+   Claude Sonnet 4.6 as both QA model and rubric judge. We publish traces and prompts for inspection,
+   but we have not yet reported multi-judge agreement, blinded human audit, or judge-disagreement
+   analysis.
+
+                                                   23
+                        Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+ 7. Ablations and significance: This version reports completed system runs and diagnostic failures, but
+    not a full ablation suite over canonical-only, observation-only, hybrid extraction, raw rescue, entity
+    routing, temporal routing, graph traversal, preservation floors, or answer-policy modes. It also does
+    not include confidence intervals or statistical significance tests for the LoCoMo gaps.
+ 8. Planner and hyperparameters: Query-shape rules, channel weights, 𝑘 = 20, 𝛿 𝑝 = 0.05, and
+    𝑟 min = 25 are fixed hand-coded configuration values selected from diagnostic runs, not learned
+    parameters. We report route and post-fusion diagnostics, but not a full sensitivity sweep over these
+    constants.
+ 9. Intent routing: The evaluated read path uses deterministic query-shape rules. Exemplar-based
+    multilingual intent routing is ongoing shadow-mode work and is not claimed as part of the reported
+    benchmark configuration.
+10. State supersession invariant: The preservation floor relies on the write path to keep mutable state
+    clean. If two conflicting state facts remain active because a fact key was missing or contradiction
+    detection did not fire, preservation may protect the lexically stronger stale candidate. Production
+    deployments should enforce and periodically audit the invariant that each user_id, scope_entity,
+    and mutable fact_type has at most one active state fact.
+11. Projection consistency: The local-first implementation treats SQLite as authoritative and LanceDB
+    plus graph state as idempotent projections. This avoids claiming an atomic distributed transaction
+    across all stores. Projection rebuild and startup reconciliation are deliberate parts of the evaluated
+    single-process design; hosted multi-process deployment is a separate systems extension rather than a
+    claim made by the current implementation.
+12. Signal detector coverage: Hard anchors are sparse in conversational memories. In the 143-sample
+    two-tier audit, 67.4% of candidate facts had no hard anchor; in the LoCoMo observation database
+    used for the main run, only 59 of 2,541 persisted facts contained a hard anchor in the fact text. Eywa
+    therefore treats hard-anchor checks as one guardrail inside a broader support validator, not as proof
+    that every zero-anchor fact is semantically verified. We have not yet measured token-level recall for
+    every detector type.
+13. Adversarial safety: The adversarial LoCoMo C5 subset is not included in the headline comparison
+    tables in this version. Safety and false-premise handling remain partly policy-dependent and should
+    be reported separately in deployment evaluations.
+14. Revision evaluation: Eywa represents corrections, rejections, approvals, and superseding facts in
+    the write path, but LoCoMo does not isolate revision handling as a dedicated category. A targeted
+    update-and-supersession benchmark is needed to evaluate this capability directly.
+15. Latency: Reported retrieval latencies describe the default interactive read path and exclude answer
+    and judge generation. Diagnostic provenance assembly over raw evidence is available for audit
+    workflows, but it is not the default product retrieval profile. Latency may differ under production
+    hardware, cache state, and database size.
+16. Scale and erasure: The evaluated system is local-first and single-process. We describe evidence
+    deletion and projection rebuild as architectural requirements, but do not yet report end-to-end erasure
+    tests across projections, logs, traces, backups, or hosted multi-tenant deployments. Scale results
+    beyond the reported stress store are future systems work.
+
+
+
+
+                                                    24
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+9. Future Work
+
+Eywa’s evaluated deployment profile is local-first and single-process: SQLite is the authoritative store,
+while the vector index and graph state are rebuildable idempotent projections. Extending this design
+to horizontally scaled hosted infrastructure requires explicit distributed-systems work: an outbox or
+projection journal, background reconciliation, stronger cross-process locking, and operational monitoring
+for projection drift. This is future work, not a hidden assumption behind the reported benchmark results.
+Additional future work includes source-evidence FTS, evidence-chunk storage for audit workflows, sen-
+sitivity sweeps for route weights and preservation floors, a factorial model-role matrix, multi-judge and
+human-audit subsets, C5/refusal-rate tables, ablations for retrieval routes and answer policies, relational-
+query evaluation for multi-person questions, documented deployment-profile runs, and targeted bench-
+marks for mutable-state supersession.
+
+
+10. Conclusion
+
+Eywa demonstrates that separating evidence capture from canonical fact writing, and memory delivery
+from answer policy, produces a memory system that is both accurate and auditable. Across LoCoMo,
+LongMemEval-S, and BEAM, the reported runs show that the same memory substrate can serve different
+answer-model regimes while preserving traceability to the evidence behind each answer. The diagnostic
+traces show where errors arise across extraction, retrieval, packing, answer policy, and judging, making
+further improvement a measurable engineering process rather than guesswork.
+The refusal-aware analysis exposes a systematic inflation risk in official-style LoCoMo scoring, particu-
+larly on inference-heavy C3 questions where abstention can hide answer-model weakness. We encourage
+future memory system papers to report refusal rates and refusal-aware metrics alongside accuracy.
+Eywa is designed to run on local hardware and to be released as an inspectable memory substrate. Its
+direction is to become a practical default memory layer for AI agents: auditable enough for research,
+useful enough for local-first deployment, and structured enough to grow into production and hosted
+settings with additional systems validation. Project and benchmark artifacts are intended to be published
+at https://eywa.to.
+
+
+References
+Joshua Adler and Guy Zehavi. Storage is not memory: A retrieval-centered architecture for agent recall.
+  arXiv preprint, 2026. doi: 10.48550/arXiv.2605.04897. URL https://arxiv.org/abs/2605.
+  04897.
+
+Susan Bluck, Nicole Alea, Tilmann Habermas, and David C. Rubin. A TALE of three functions:
+  The self-reported uses of autobiographical memory. Social Cognition, 23(1):91–117, 2005. doi:
+  10.1521/soco.23.1.91.59198. URL https://doi.org/10.1521/soco.23.1.91.59198.
+
+Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0: Building
+  production-ready AI agents with scalable long-term memory. arXiv preprint, 2025. doi: 10.48550/
+  arXiv.2504.19413. URL https://arxiv.org/abs/2504.19413.
+
+Herbert H. Clark and Susan E. Brennan. Grounding in communication. In Lauren B. Resnick, John M.
+  Levine, and Stephanie D. Teasley, editors, Perspectives on Socially Shared Cognition, pages 127–149.
+
+
+                                                    25
+                     Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+  American Psychological Association, Washington, DC, 1991. doi: 10.1037/10096-006. URL
+  https://doi.org/10.1037/10096-006.
+
+Martin A. Conway and Christopher W. Pleydell-Pearce. The construction of autobiographical memories
+ in the self-memory system. Psychological Review, 107(2):261–288, 2000. doi: 10.1037/0033-295X.
+ 107.2.261. URL https://doi.org/10.1037/0033-295X.107.2.261.
+
+Gordon V. Cormack, Charles L. A. Clarke, and Stefan Buettcher. Reciprocal rank fusion outperforms
+  condorcet and individual rank learning methods. In Proceedings of the 32nd International ACM
+ SIGIR Conference on Research and Development in Information Retrieval, pages 758–759, 2009. doi:
+ 10.1145/1571941.1572114. URL https://doi.org/10.1145/1571941.1572114.
+
+Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. FlashAttention: Fast and
+  memory-efficient exact attention with IO-awareness. In Advances in Neural Information Processing
+  Systems, volume 35, 2022. URL https://papers.nips.cc/paper_files/paper/2022/hash/
+  67d57c32e20fd0a7a302cb81d36e40d5-Abstract-Conference.html.
+
+Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody, Steven Truitt, Dasha
+  Metropolitansky, Robert Osazuwa Ness, and Jonathan Larson. From local to global: A graph RAG
+  approach to query-focused summarization. arXiv preprint, 2024. doi: 10.48550/arXiv.2404.
+  16130. URL https://arxiv.org/abs/2404.16130.
+
+Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell, Libin Bai, Anmol Gulati, Garrett Tanzer,
+  Damien Vincent, Zhufeng Pan, Shibo Wang, et al. Gemini 1.5: Unlocking multimodal understanding
+  across millions of tokens of context. arXiv preprint, 2024. doi: 10.48550/arXiv.2403.05530.
+  URL https://arxiv.org/abs/2403.05530.
+
+Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang,
+  and Boris Ginsburg. RULER: What’s the real context size of your long-context language models?
+  In First Conference on Language Modeling, 2024. doi: 10.48550/arXiv.2404.06654. URL
+  https://openreview.net/forum?id=kIoBbc76Sy.
+
+Yuyang Hu, Shichun Liu, Yanwei Yue, Guibin Zhang, et al. Memory in the age of AI agents. arXiv
+  preprint, 2025. doi: 10.48550/arXiv.2512.13564. URL https://arxiv.org/abs/2512.
+  13564.
+
+Zhengding Hu, Zaifeng Pan, Prabhleen Kaur, Vibha Murthy, Zhongkai Yu, Yue Guan, Zhen Wang, Steven
+  Swanson, and Yufei Ding. Pancake: Hierarchical memory system for multi-agent LLM serving. arXiv
+  preprint, 2026. doi: 10.48550/arXiv.2602.21477. URL https://arxiv.org/abs/2602.
+  21477.
+
+Bernal Jiménez Gutiérrez, Yiheng Shu, Yu Gu, Michihiro Yasunaga, and Yu Su.       Hip-
+  poRAG: Neurobiologically inspired long-term memory for large language models. In Ad-
+  vances in Neural Information Processing Systems, volume 37, 2024. doi: 10 . 52202 /
+  079017-1902. URL https://proceedings.neurips.cc/paper_files/paper/2024/hash/
+  6ddc001d07ca4f319af96a3024f6dbd1-Abstract-Conference.html.
+
+Jiazheng Kang, Mingming Ji, Zhe Zhao, and Ting Bai. Memory OS of AI agent. arXiv preprint, 2025.
+   doi: 10.48550/arXiv.2506.06326. URL https://arxiv.org/abs/2506.06326.
+
+LangChain. LangMem: Memory management for LLM-based agents. https : / / github . com /
+  langchain-ai/langmem, 2025. Open-source memory layer for LangGraph agents. Accessed 2026-
+  05-27.
+
+
+                                               26
+                     Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+Chris Latimer, Nicoló Boschi, Andrew Neeser, Chris Bartholomew, Gaurav Srivastava, Xuan Wang, and
+  Naren Ramakrishnan. Hindsight is 20/20: Building agent memory that retains, recalls, and reflects.
+  arXiv preprint, 2025. doi: 10.48550/arXiv.2512.12818. URL https://arxiv.org/abs/2512.
+  12818.
+Zhenghui Li. Memory as ontology: A constitutional memory architecture for persistent digital citizens.
+  arXiv preprint, 2026. doi: 10.48550/arXiv.2603.04740. URL https://arxiv.org/abs/2603.
+  04740.
+Zhiyu Li, Chenyang Xi, Chunyu Li, Ding Chen, Boyu Chen, Shichao Song, Simin Niu, Hanyu Wang,
+  Jiawei Yang, Chen Tang, Qingchen Yu, Jihao Zhao, Yezhaohui Wang, Peng Liu, Zehao Lin, Pengyuan
+  Wang, Jiahao Huo, Tianyi Chen, Kai Chen, Kehang Li, Zhen Tao, Huayi Lai, Hao Wu, Bo Tang,
+  Zhengren Wang, Zhaoxin Fan, Ningyu Zhang, Linfeng Zhang, Junchi Yan, Mingchuan Yang, Tong
+  Xu, Wei Xu, Huajun Chen, Haofen Wang, Hongkang Yang, Wentao Zhang, Zhi-Qin John Xu, Siheng
+  Chen, and Feiyu Xiong. MemOS: A memory OS for AI system. arXiv preprint, 2025. doi: 10.
+  48550/arXiv.2507.03724. URL https://arxiv.org/abs/2507.03724.
+Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and
+  Percy Liang. Lost in the middle: How language models use long contexts. Transactions of the
+  Association for Computational Linguistics, 12:157–173, 2024. doi: 10.1162/tacl_a_00638. URL
+  https://aclanthology.org/2024.tacl-1.9/.
+Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Mohit Bansal, Francesco Barbieri, and Yuwei Fang.
+  Evaluating very long-term conversational memory of LLM agents. In Proceedings of the 62nd Annual
+  Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 13851–
+ 13870. Association for Computational Linguistics, 2024. doi: 10.18653/v1/2024.acl-long.747.
+  URL https://aclanthology.org/2024.acl-long.747/.
+MemTensor. MemOS evaluation results. https://huggingface.co/datasets/MemTensor/MemOS_
+ eval_result, 2025. Benchmark result artifact for MemOS and compared memory systems. Accessed
+ 2026-05-27.
+OpenAI.     OpenAI memory.       https : / / help . openai . com / en / articles /
+  8983136-what-is-memory, 2026. ChatGPT memory help documentation. Accessed 2026-05-27.
+Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G. Patil, Ion Stoica, and Joseph E.
+  Gonzalez. MemGPT: Towards LLMs as operating systems. arXiv preprint, 2023. doi: 10.48550/
+  arXiv.2310.08560. URL https://arxiv.org/abs/2310.08560.
+Joon Sung Park, Joseph C. O’Brien, Carrie J. Cai, Meredith Ringel Morris, Percy Liang, and Michael S.
+  Bernstein. Generative agents: Interactive simulacra of human behavior. In Proceedings of the
+  36th Annual ACM Symposium on User Interface Software and Technology, pages 1–22, 2023. doi:
+  10.1145/3586183.3606763. URL https://doi.org/10.1145/3586183.3606763.
+Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais, Jack Ryan, and Daniel Chalef. Zep: A temporal
+  knowledge graph architecture for agent memory. arXiv preprint, 2025. doi: 10.48550/arXiv.2501.
+  13956. URL https://arxiv.org/abs/2501.13956.
+Daniel L. Schacter, Donna Rose Addis, and Randy L. Buckner. Remembering the past to imagine the
+  future: The prospective brain. Nature Reviews Neuroscience, 8(9):657–661, 2007. doi: 10.1038/
+  nrn2213. URL https://doi.org/10.1038/nrn2213.
+Noah Shinn, Federico Cassano, Edward Berman, Ashwin Gopinath, Karthik Narasimhan, and Shunyu
+ Yao. Reflexion: Language agents with verbal reinforcement learning. arXiv preprint, 2023. doi:
+  10.48550/arXiv.2303.11366. URL https://arxiv.org/abs/2303.11366.
+
+                                                 27
+                       Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+Supermemory. Supermemory: Memory api for ai applications. https://supermemory.ai, 2026.
+  Product documentation and open-source repository: https : / / github . com / supermemoryai /
+  supermemory. Accessed 2026-05-27.
+
+Vectorize.  Hindsight benchmark results.   https : / / github . com / vectorize-io /
+  hindsight-benchmarks, 2025. LoCoMo benchmark result tables for Hindsight. Accessed 2026-05-
+  27.
+
+Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, and Dong Yu. Long-
+  MemEval: Benchmarking chat assistants on long-term interactive memory.     In Interna-
+  tional Conference on Learning Representations, 2025. doi: 10 . 48550 / arXiv . 2410 .
+  10813. URL https : / / proceedings . iclr . cc / paper _ files / paper / 2025 / hash /
+  d813d324dbf0598bbdc9c8e79740ed01-Abstract-Conference.html.
+
+Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. A-MEM: Agentic
+ memory for LLM agents. In Advances in Neural Information Processing Systems, 2025. doi: 10.
+ 48550/arXiv.2502.12110. URL https://arxiv.org/abs/2502.12110.
+
+Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. MemoryBank: Enhancing large
+ language models with long-term memory. In Proceedings of the AAAI Conference on Artificial
+ Intelligence, volume 38, pages 19724–19731, 2024. doi: 10.1609/aaai.v38i17.29946. URL
+ https://ojs.aaai.org/index.php/AAAI/article/view/29946. Issue 17.
+
+
+
+A. Trace Fields
+
+Field                  Purpose
+Question metadata      Conversation id, category, question text, gold answer, and evidence identifiers when pro-
+                       vided by the benchmark.
+Retrieved candidates   Per-route candidate facts, route ranks, fused scores, entity scope, temporal metadata, and
+                       source channels.
+Packed context         Final context delivered to the answer model, with fact identifiers preserved for provenance
+                       inspection.
+Answer policy          The selected policy mode and generated answer instructions, stored separately from mem-
+                       ory context.
+Model output           Raw answer text, refusal flag, F1 score, refusal-aware F1 score, judge label, and judge
+                       rationale when available.
+Latency                Read-path timing separate from answer and judge generation.
+
+
+                           Table 15: Trace fields saved for benchmark auditing.
+
+
+
+
+                                                       28
+                      Eywa: Provenance-Grounded Long-Term Memory for AI Agents
+
+
+
+B. Implementation Details
+
+Component          Implementation
+Canonical store    SQLite (WAL mode), single-writer lock
+Vector index       LanceDB + hot in-memory index
+Graph store        RustworkX (serialized, not thread-safe)
+Keyword search     BM25 with query expansion
+Embeddings         ONNX Runtime (local, no API call)
+Extraction LLM     Configurable (GPT-4o-mini, Qwen, and other supported models)
+Signal detection   Rule-based (regex + spaCy NER)
+Query planner      Deterministic (no LLM call)
+
+                                 Table 16: Eywa technology stack.
+
+
+
+
+                                                29
+

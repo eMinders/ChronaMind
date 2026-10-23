@@ -1,0 +1,290 @@
+Evaluating Very Long-Term Conversational Memory of LLM Agents - ACL Anthology
+Evaluating Very Long-Term Conversational Memory of
+LLM
+Agents
+Adyasha Maharana
+,
+Dong-Ho Lee
+,
+Sergey Tulyakov
+,
+Mohit Bansal
+,
+Francesco Barbieri
+,
+Yuwei Fang
+Correct Metadata for
+Use this form to create a GitHub issue with structured data describing the correction. You will need a GitHub account.
+Once you create that issue, the correction will be reviewed by a staff member.
+⚠️ Mobile Users: Submitting this form to create a new issue will only work with github.com, not the GitHub Mobile app.
+Important
+: The Anthology treat PDFs as authoritative. Please use this form only to correct data
+that is out of line with the PDF. See
+our corrections
+guidelines
+if you need to change the PDF.
+Title
+Adjust the title. Retain tags such as
+<fixed-case>.
+Authors
+Adjust author names and order to match the
+PDF.
+Add Author
+Abstract
+Correct abstract if needed. Retain XML formatting tags such as <tex-math>. You may use <b>...</b> for
+bold
+, <i>...</i> for
+italic
+, <u>...</u> for
+underline
+, <sc>...</sc> for
+small-caps
+, <tt>...<tt> for
+typewriter text
+, <url>...</url> for URLs, <a href=...> for hyperlinks, and <par/> for paragraph breaks.
+Verification against PDF
+Ensure that the new title/authors match the snapshot below. (If there
+is no snapshot or it is too small, consult
+the PDF
+.)
+Authors concatenated from the text boxes above:
+ALL author names match the snapshot above—including
+middle initials, hyphens, and accents.
+Create GitHub issue for staff review
+Abstract
+Existing works on long-term open-domain dialogues focus on evaluating model responses within contexts spanning no more than five chat sessions. Despite advancements in long-context large language models (LLMs) and retrieval augmented generation (RAG) techniques, their efficacy in very long-term dialogues remains unexplored. To address this research gap, we introduce a machine-human pipeline to generate high-quality, very long-term dialogues by leveraging LLM-based agent architectures and grounding their dialogues on personas and temporal event graphs. Moreover, we equip each agent with the capability of sharing and reacting to images. The generated conversations are verified and edited by human annotators for long-range consistency and grounding to the event graphs. Using this pipeline, we collect LoCoMo, a dataset of very long-term conversations, each encompassing 600 turns and 16K tokens on avg., over up to 32 sessions. Based on LoCoMo, we present a comprehensive evaluation benchmark to measure long-term memory in models, encompassing question answering, event summarization, and multi-modal dialogue generation tasks. Our experimental results indicate that LLMs exhibit challenges in understanding lengthy conversations and comprehending long-range temporal and causal dynamics within dialogues. Employing strategies like long-context LLMs or RAG can offer improvements but these models still substantially lag behind human performance.
+Anthology ID:
+2024.acl-long.747
+Volume:
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+Month:
+August
+Year:
+2024
+Address:
+Bangkok, Thailand
+Editors:
+Lun-Wei Ku
+,
+Andre Martins
+,
+Vivek Srikumar
+Venue:
+ACL
+SIG:
+Publisher:
+Association for Computational Linguistics
+Note:
+Pages:
+13851–13870
+Language:
+URL:
+https://aclanthology.org/2024.acl-long.747/
+DOI:
+10.18653/v1/2024.acl-long.747
+Bibkey:
+maharana-etal-2024-evaluating
+Cite (ACL):
+Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Mohit Bansal, Francesco Barbieri, and Yuwei Fang. 2024.
+Evaluating Very Long-Term Conversational Memory of LLM Agents
+. In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+, pages 13851–13870, Bangkok, Thailand. Association for Computational Linguistics.
+Cite (Informal):
+Evaluating Very Long-Term Conversational Memory of LLM Agents
+(Maharana et al., ACL 2024)
+Copy Citation:
+BibTeX
+Markdown
+MODS XML
+Endnote
+More
+options…
+PDF:
+https://aclanthology.org/2024.acl-long.747.pdf
+PDF
+Cite
+Search
+Fix data
+Export citation
+BibTeX
+MODS XML
+Endnote
+Preformatted
+@inproceedings{maharana-etal-2024-evaluating,
+    title = "Evaluating Very Long-Term Conversational Memory of {LLM} Agents",
+    author = "Maharana, Adyasha  and
+      Lee, Dong-Ho  and
+      Tulyakov, Sergey  and
+      Bansal, Mohit  and
+      Barbieri, Francesco  and
+      Fang, Yuwei",
+    editor = "Ku, Lun-Wei  and
+      Martins, Andre  and
+      Srikumar, Vivek",
+    booktitle = "Proceedings of the 62nd Annual Meeting of the {A}ssociation for {C}omputational {L}inguistics (Volume 1: Long Papers)",
+    month = aug,
+    year = "2024",
+    address = "Bangkok, Thailand",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2024.acl-long.747/",
+    doi = "10.18653/v1/2024.acl-long.747",
+    pages = "13851--13870",
+    abstract = "Existing works on long-term open-domain dialogues focus on evaluating model responses within contexts spanning no more than five chat sessions. Despite advancements in long-context large language models (LLMs) and retrieval augmented generation (RAG) techniques, their efficacy in very long-term dialogues remains unexplored. To address this research gap, we introduce a machine-human pipeline to generate high-quality, very long-term dialogues by leveraging LLM-based agent architectures and grounding their dialogues on personas and temporal event graphs. Moreover, we equip each agent with the capability of sharing and reacting to images. The generated conversations are verified and edited by human annotators for long-range consistency and grounding to the event graphs. Using this pipeline, we collect LoCoMo, a dataset of very long-term conversations, each encompassing 600 turns and 16K tokens on avg., over up to 32 sessions. Based on LoCoMo, we present a comprehensive evaluation benchmark to measure long-term memory in models, encompassing question answering, event summarization, and multi-modal dialogue generation tasks. Our experimental results indicate that LLMs exhibit challenges in understanding lengthy conversations and comprehending long-range temporal and causal dynamics within dialogues. Employing strategies like long-context LLMs or RAG can offer improvements but these models still substantially lag behind human performance."
+}
+Download as
+File
+Copy to Clipboard
+<?xml version="1.0" encoding="UTF-8"?>
+<modsCollection xmlns="http://www.loc.gov/mods/v3">
+<mods ID="maharana-etal-2024-evaluating">
+    <titleInfo>
+        <title>Evaluating Very Long-Term Conversational Memory of LLM Agents</title>
+    </titleInfo>
+    <name type="personal">
+        <namePart type="given">Adyasha</namePart>
+        <namePart type="family">Maharana</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Dong-Ho</namePart>
+        <namePart type="family">Lee</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Sergey</namePart>
+        <namePart type="family">Tulyakov</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Mohit</namePart>
+        <namePart type="family">Bansal</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Francesco</namePart>
+        <namePart type="family">Barbieri</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Yuwei</namePart>
+        <namePart type="family">Fang</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <originInfo>
+        <dateIssued>2024-08</dateIssued>
+    </originInfo>
+    <typeOfResource>text</typeOfResource>
+    <relatedItem type="host">
+        <titleInfo>
+            <title>Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)</title>
+        </titleInfo>
+        <name type="personal">
+            <namePart type="given">Lun-Wei</namePart>
+            <namePart type="family">Ku</namePart>
+            <role>
+                <roleTerm authority="marcrelator" type="text">editor</roleTerm>
+            </role>
+        </name>
+        <name type="personal">
+            <namePart type="given">Andre</namePart>
+            <namePart type="family">Martins</namePart>
+            <role>
+                <roleTerm authority="marcrelator" type="text">editor</roleTerm>
+            </role>
+        </name>
+        <name type="personal">
+            <namePart type="given">Vivek</namePart>
+            <namePart type="family">Srikumar</namePart>
+            <role>
+                <roleTerm authority="marcrelator" type="text">editor</roleTerm>
+            </role>
+        </name>
+        <originInfo>
+            <publisher>Association for Computational Linguistics</publisher>
+            <place>
+                <placeTerm type="text">Bangkok, Thailand</placeTerm>
+            </place>
+        </originInfo>
+        <genre authority="marcgt">conference publication</genre>
+    </relatedItem>
+    <abstract>Existing works on long-term open-domain dialogues focus on evaluating model responses within contexts spanning no more than five chat sessions. Despite advancements in long-context large language models (LLMs) and retrieval augmented generation (RAG) techniques, their efficacy in very long-term dialogues remains unexplored. To address this research gap, we introduce a machine-human pipeline to generate high-quality, very long-term dialogues by leveraging LLM-based agent architectures and grounding their dialogues on personas and temporal event graphs. Moreover, we equip each agent with the capability of sharing and reacting to images. The generated conversations are verified and edited by human annotators for long-range consistency and grounding to the event graphs. Using this pipeline, we collect LoCoMo, a dataset of very long-term conversations, each encompassing 600 turns and 16K tokens on avg., over up to 32 sessions. Based on LoCoMo, we present a comprehensive evaluation benchmark to measure long-term memory in models, encompassing question answering, event summarization, and multi-modal dialogue generation tasks. Our experimental results indicate that LLMs exhibit challenges in understanding lengthy conversations and comprehending long-range temporal and causal dynamics within dialogues. Employing strategies like long-context LLMs or RAG can offer improvements but these models still substantially lag behind human performance.</abstract>
+    <identifier type="citekey">maharana-etal-2024-evaluating</identifier>
+    <identifier type="doi">10.18653/v1/2024.acl-long.747</identifier>
+    <location>
+        <url>https://aclanthology.org/2024.acl-long.747/</url>
+    </location>
+    <part>
+        <date>2024-08</date>
+        <extent unit="page">
+            <start>13851</start>
+            <end>13870</end>
+        </extent>
+    </part>
+</mods>
+</modsCollection>
+Download as
+File
+Copy to Clipboard
+%0 Conference Proceedings
+%T Evaluating Very Long-Term Conversational Memory of LLM Agents
+%A Maharana, Adyasha
+%A Lee, Dong-Ho
+%A Tulyakov, Sergey
+%A Bansal, Mohit
+%A Barbieri, Francesco
+%A Fang, Yuwei
+%Y Ku, Lun-Wei
+%Y Martins, Andre
+%Y Srikumar, Vivek
+%S Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+%D 2024
+%8 August
+%I Association for Computational Linguistics
+%C Bangkok, Thailand
+%F maharana-etal-2024-evaluating
+%X Existing works on long-term open-domain dialogues focus on evaluating model responses within contexts spanning no more than five chat sessions. Despite advancements in long-context large language models (LLMs) and retrieval augmented generation (RAG) techniques, their efficacy in very long-term dialogues remains unexplored. To address this research gap, we introduce a machine-human pipeline to generate high-quality, very long-term dialogues by leveraging LLM-based agent architectures and grounding their dialogues on personas and temporal event graphs. Moreover, we equip each agent with the capability of sharing and reacting to images. The generated conversations are verified and edited by human annotators for long-range consistency and grounding to the event graphs. Using this pipeline, we collect LoCoMo, a dataset of very long-term conversations, each encompassing 600 turns and 16K tokens on avg., over up to 32 sessions. Based on LoCoMo, we present a comprehensive evaluation benchmark to measure long-term memory in models, encompassing question answering, event summarization, and multi-modal dialogue generation tasks. Our experimental results indicate that LLMs exhibit challenges in understanding lengthy conversations and comprehending long-range temporal and causal dynamics within dialogues. Employing strategies like long-context LLMs or RAG can offer improvements but these models still substantially lag behind human performance.
+%R 10.18653/v1/2024.acl-long.747
+%U https://aclanthology.org/2024.acl-long.747/
+%U https://doi.org/10.18653/v1/2024.acl-long.747
+%P 13851-13870
+Download as
+File
+Copy to Clipboard
+Markdown (Informal)
+[Evaluating Very Long-Term Conversational Memory of LLM Agents](https://aclanthology.org/2024.acl-long.747/) (Maharana et al., ACL 2024)
+Evaluating Very Long-Term Conversational Memory of LLM Agents
+(Maharana et al., ACL 2024)
+ACL
+Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Mohit Bansal, Francesco Barbieri, and Yuwei Fang. 2024.
+Evaluating Very Long-Term Conversational Memory of LLM Agents
+. In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+, pages 13851–13870, Bangkok, Thailand. Association for Computational Linguistics.
+Copy Markdown to
+Clipboard
+Copy ACL to
+Clipboard
+ACL materials are Copyright © 1963–2026 ACL; other materials are copyrighted by their respective copyright holders. Materials prior to 2016 here are licensed under the
+Creative Commons Attribution-NonCommercial-ShareAlike 3.0 International License
+. Permission is granted to make copies for the purposes of teaching and research. Materials published in or after 2016 are licensed on a
+Creative Commons Attribution 4.0 International License
+.
+The ACL Anthology is managed and built by the
+ACL Anthology team
+of volunteers.
+Site last built on 16 October 2026 at 19:41 UTC with
+commit ab54073
+.

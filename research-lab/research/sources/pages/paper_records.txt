@@ -1,0 +1,2893 @@
+
+### memgpt
+[2310.08560] MemGPT: Towards LLMs as Operating Systems
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Artificial Intelligence
+arXiv:2310.08560
+(cs)
+[Submitted on 12 Oct 2023 (
+v1
+), last revised 12 Feb 2024 (this version, v2)]
+Title:
+MemGPT: Towards LLMs as Operating Systems
+Authors:
+Charles Packer
+,
+Sarah Wooders
+,
+Kevin Lin
+,
+Vivian Fang
+,
+Shishir G. Patil
+,
+Ion Stoica
+,
+Joseph E. Gonzalez
+View a PDF of the paper titled MemGPT: Towards LLMs as Operating Systems, by Charles Packer and 6 other authors
+View PDF
+HTML (experimental)
+Abstract:
+Large language models (LLMs) have revolutionized AI, but are constrained by limited context windows, hindering their utility in tasks like extended conversations and document analysis. To enable using context beyond limited context windows, we propose virtual context management, a technique drawing inspiration from hierarchical memory systems in traditional operating systems that provide the appearance of large memory resources through data movement between fast and slow memory. Using this technique, we introduce MemGPT (Memory-GPT), a system that intelligently manages different memory tiers in order to effectively provide extended context within the LLM's limited context window, and utilizes interrupts to manage control flow between itself and the user. We evaluate our OS-inspired design in two domains where the limited context windows of modern LLMs severely handicaps their performance: document analysis, where MemGPT is able to analyze large documents that far exceed the underlying LLM's context window, and multi-session chat, where MemGPT can create conversational agents that remember, reflect, and evolve dynamically through long-term interactions with their users. We release MemGPT code and data for our experiments at
+this https URL
+.
+Comments:
+Code and data available at
+this https URL
+Subjects:
+Artificial Intelligence (cs.AI)
+Cite as:
+arXiv:2310.08560
+[cs.AI]
+(or
+arXiv:2310.08560v2
+[cs.AI]
+for this version)
+https://doi.org/10.48550/arXiv.2310.08560
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Charles Packer [
+view email
+]
+[v1]
+Thu, 12 Oct 2023 17:51:32 UTC (391 KB)
+[v2]
+Mon, 12 Feb 2024 18:59:46 UTC (419 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled MemGPT: Towards LLMs as Operating Systems, by Charles Packer and 6 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.AI
+< prev
+|
+next >
+new
+|
+recent
+|
+2023-10
+Change to browse by:
+cs
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+2 blog links
+(
+what is this?
+)
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### generative_agents
+[2304.03442] Generative Agents: Interactive Simulacra of Human Behavior
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Human-Computer Interaction
+arXiv:2304.03442
+(cs)
+[Submitted on 7 Apr 2023 (
+v1
+), last revised 6 Aug 2023 (this version, v2)]
+Title:
+Generative Agents: Interactive Simulacra of Human Behavior
+Authors:
+Joon Sung Park
+,
+Joseph C. O'Brien
+,
+Carrie J. Cai
+,
+Meredith Ringel Morris
+,
+Percy Liang
+,
+Michael S. Bernstein
+View a PDF of the paper titled Generative Agents: Interactive Simulacra of Human Behavior, by Joon Sung Park and 5 other authors
+View PDF
+HTML (experimental)
+Abstract:
+Believable proxies of human behavior can empower interactive applications ranging from immersive environments to rehearsal spaces for interpersonal communication to prototyping tools. In this paper, we introduce generative agents--computational software agents that simulate believable human behavior. Generative agents wake up, cook breakfast, and head to work; artists paint, while authors write; they form opinions, notice each other, and initiate conversations; they remember and reflect on days past as they plan the next day. To enable generative agents, we describe an architecture that extends a large language model to store a complete record of the agent's experiences using natural language, synthesize those memories over time into higher-level reflections, and retrieve them dynamically to plan behavior. We instantiate generative agents to populate an interactive sandbox environment inspired by The Sims, where end users can interact with a small town of twenty five agents using natural language. In an evaluation, these generative agents produce believable individual and emergent social behaviors: for example, starting with only a single user-specified notion that one agent wants to throw a Valentine's Day party, the agents autonomously spread invitations to the party over the next two days, make new acquaintances, ask each other out on dates to the party, and coordinate to show up for the party together at the right time. We demonstrate through ablation that the components of our agent architecture--observation, planning, and reflection--each contribute critically to the believability of agent behavior. By fusing large language models with computational, interactive agents, this work introduces architectural and interaction patterns for enabling believable simulations of human behavior.
+Subjects:
+Human-Computer Interaction (cs.HC)
+; Artificial Intelligence (cs.AI); Machine Learning (cs.LG)
+Cite as:
+arXiv:2304.03442
+[cs.HC]
+(or
+arXiv:2304.03442v2
+[cs.HC]
+for this version)
+https://doi.org/10.48550/arXiv.2304.03442
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Joon Sung Park [
+view email
+]
+[v1]
+Fri, 7 Apr 2023 01:55:19 UTC (34,149 KB)
+[v2]
+Sun, 6 Aug 2023 00:21:19 UTC (12,955 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled Generative Agents: Interactive Simulacra of Human Behavior, by Joon Sung Park and 5 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.HC
+< prev
+|
+next >
+new
+|
+recent
+|
+2023-04
+Change to browse by:
+cs
+cs.AI
+cs.LG
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+4 blog links
+(
+what is this?
+)
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### memorybank
+MemoryBank: Enhancing Large Language Models with Long-Term Memory
+							| Proceedings of the AAAI Conference on Artificial Intelligence
+Open Menu
+Proceedings of the AAAI Conference on Artificial Intelligence
+MemoryBank: Enhancing Large Language Models with Long-Term Memory
+Authors
+Wanjun Zhong
+Sun Yat-sen University
+Lianghong Guo
+Sun Yat-sen University
+Qiqi Gao
+Harbin Institute of Technology
+He Ye
+KTH Royal Institute of Technology
+Yanlin Wang
+Sun Yat-sen University
+DOI:
+https://doi.org/10.1609/aaai.v38i17.29946
+Keywords:
+NLP: (Large) Language Models, 											HAI: Emotional Intelligence, 											NLP: Applications, 											NLP: Conversational AI/Dialog Systems, 											NLP: Generation
+Abstract
+Large Language Models (LLMs) have drastically reshaped our interactions with artificial intelligence (AI) systems, showcasing impressive performance across an extensive array of tasks. Despite this, a notable hindrance remains—the deficiency of a long-term memory mechanism within these models. This shortfall becomes increasingly evident in situations demanding sustained interaction, such as personal companion systems, psychological counseling, and secretarial assistance. Recognizing the necessity for long-term memory, we propose MemoryBank, a novel memory mechanism tailored for LLMs. MemoryBank enables the models to summon relevant memories, continually evolve through continuous memory updates, comprehend, and adapt to a user's personality over time by synthesizing information from previous interactions. To mimic anthropomorphic behaviors and selectively preserve memory, MemoryBank incorporates a memory updating mechanism, inspired by the Ebbinghaus Forgetting Curve theory. This mechanism permits the AI to forget and reinforce memory based on time elapsed and the relative significance of the memory, thereby offering a more human-like memory mechanism and enriched user experience. MemoryBank is versatile in accommodating both closed-source models like ChatGPT and open-source models such as ChatGLM. To validate MemoryBank's effectiveness, we exemplify its application through the creation of an LLM-based chatbot named SiliconFriend in a long-term AI Companion scenario. Further tuned with psychological dialog data, SiliconFriend displays heightened empathy and discernment in its interactions. Experiment involves both qualitative analysis with real-world user dialogs and quantitative analysis with simulated dialogs. In the latter, ChatGPT acts as multiple users with diverse characteristics and generates long-term dialog contexts covering a wide array of topics. The results of our analysis reveal that SiliconFriend, equipped with MemoryBank, exhibits a strong capability for long-term companionship as it can provide emphatic response, recall relevant memories and understand user personality.
+Downloads
+PDF
+Published
+2024-03-24
+How to Cite
+Zhong, W., Guo, L., Gao, Q., Ye, H., & Wang, Y. (2024). MemoryBank: Enhancing Large Language Models with Long-Term Memory.
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+38
+(17), 19724–19731. https://doi.org/10.1609/aaai.v38i17.29946
+More Citation Formats
+ACM
+ACS
+APA
+ABNT
+Chicago
+Harvard
+IEEE
+MLA
+Turabian
+Vancouver
+Download Citation
+Endnote/Zotero/Mendeley (RIS)
+BibTeX
+Issue
+Vol. 38 No. 17: AAAI-24 Technical Tracks 17
+Section
+AAAI Technical Track on Natural Language Processing II
+Information
+For Readers
+For Authors
+For Librarians
+Part of the
+PKP Publishing Services Network
+Copyright © 2024, Association for the Advancement of Artificial Intelligence
+
+### zep
+[2501.13956] Zep: A Temporal Knowledge Graph Architecture for Agent Memory
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Computation and Language
+arXiv:2501.13956
+(cs)
+[Submitted on 20 Jan 2025]
+Title:
+Zep: A Temporal Knowledge Graph Architecture for Agent Memory
+Authors:
+Preston Rasmussen
+,
+Pavlo Paliychuk
+,
+Travis Beauvais
+,
+Jack Ryan
+,
+Daniel Chalef
+View a PDF of the paper titled Zep: A Temporal Knowledge Graph Architecture for Agent Memory, by Preston Rasmussen and 4 other authors
+View PDF
+HTML (experimental)
+Abstract:
+We introduce Zep, a novel memory layer service for AI agents that outperforms the current state-of-the-art system, MemGPT, in the Deep Memory Retrieval (DMR) benchmark. Additionally, Zep excels in more comprehensive and challenging evaluations than DMR that better reflect real-world enterprise use cases. While existing retrieval-augmented generation (RAG) frameworks for large language model (LLM)-based agents are limited to static document retrieval, enterprise applications demand dynamic knowledge integration from diverse sources including ongoing conversations and business data. Zep addresses this fundamental limitation through its core component Graphiti -- a temporally-aware knowledge graph engine that dynamically synthesizes both unstructured conversational data and structured business data while maintaining historical relationships. In the DMR benchmark, which the MemGPT team established as their primary evaluation metric, Zep demonstrates superior performance (94.8% vs 93.4%). Beyond DMR, Zep's capabilities are further validated through the more challenging LongMemEval benchmark, which better reflects enterprise use cases through complex temporal reasoning tasks. In this evaluation, Zep achieves substantial results with accuracy improvements of up to 18.5% while simultaneously reducing response latency by 90% compared to baseline implementations. These results are particularly pronounced in enterprise-critical tasks such as cross-session information synthesis and long-term context maintenance, demonstrating Zep's effectiveness for deployment in real-world applications.
+Comments:
+12 pages, 3 tables
+Subjects:
+Computation and Language (cs.CL)
+; Artificial Intelligence (cs.AI); Information Retrieval (cs.IR)
+Cite as:
+arXiv:2501.13956
+[cs.CL]
+(or
+arXiv:2501.13956v1
+[cs.CL]
+for this version)
+https://doi.org/10.48550/arXiv.2501.13956
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Preston Rasmussen [
+view email
+]
+[v1]
+Mon, 20 Jan 2025 16:52:48 UTC (22 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled Zep: A Temporal Knowledge Graph Architecture for Agent Memory, by Preston Rasmussen and 4 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CL
+< prev
+|
+next >
+new
+|
+recent
+|
+2025-01
+Change to browse by:
+cs
+cs.AI
+cs.IR
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### mem0
+[2504.19413] Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Computation and Language
+arXiv:2504.19413
+(cs)
+[Submitted on 28 Apr 2025]
+Title:
+Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory
+Authors:
+Prateek Chhikara
+,
+Dev Khant
+,
+Saket Aryan
+,
+Taranjeet Singh
+,
+Deshraj Yadav
+View a PDF of the paper titled Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory, by Prateek Chhikara and 4 other authors
+View PDF
+HTML (experimental)
+Abstract:
+Large Language Models (LLMs) have demonstrated remarkable prowess in generating contextually coherent responses, yet their fixed context windows pose fundamental challenges for maintaining consistency over prolonged multi-session dialogues. We introduce Mem0, a scalable memory-centric architecture that addresses this issue by dynamically extracting, consolidating, and retrieving salient information from ongoing conversations. Building on this foundation, we further propose an enhanced variant that leverages graph-based memory representations to capture complex relational structures among conversational elements. Through comprehensive evaluations on LOCOMO benchmark, we systematically compare our approaches against six baseline categories: (i) established memory-augmented systems, (ii) retrieval-augmented generation (RAG) with varying chunk sizes and k-values, (iii) a full-context approach that processes the entire conversation history, (iv) an open-source memory solution, (v) a proprietary model system, and (vi) a dedicated memory management platform. Empirical results show that our methods consistently outperform all existing memory systems across four question categories: single-hop, temporal, multi-hop, and open-domain. Notably, Mem0 achieves 26% relative improvements in the LLM-as-a-Judge metric over OpenAI, while Mem0 with graph memory achieves around 2% higher overall score than the base configuration. Beyond accuracy gains, we also markedly reduce computational overhead compared to full-context method. In particular, Mem0 attains a 91% lower p95 latency and saves more than 90% token cost, offering a compelling balance between advanced reasoning capabilities and practical deployment constraints. Our findings highlight critical role of structured, persistent memory mechanisms for long-term conversational coherence, paving the way for more reliable and efficient LLM-driven AI agents.
+Subjects:
+Computation and Language (cs.CL)
+; Artificial Intelligence (cs.AI)
+Cite as:
+arXiv:2504.19413
+[cs.CL]
+(or
+arXiv:2504.19413v1
+[cs.CL]
+for this version)
+https://doi.org/10.48550/arXiv.2504.19413
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Prateek Chhikara [
+view email
+]
+[v1]
+Mon, 28 Apr 2025 01:46:35 UTC (946 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory, by Prateek Chhikara and 4 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CL
+< prev
+|
+next >
+new
+|
+recent
+|
+2025-04
+Change to browse by:
+cs
+cs.AI
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### rag
+[2005.11401] Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Computation and Language
+arXiv:2005.11401
+(cs)
+[Submitted on 22 May 2020 (
+v1
+), last revised 12 Apr 2021 (this version, v4)]
+Title:
+Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks
+Authors:
+Patrick Lewis
+,
+Ethan Perez
+,
+Aleksandra Piktus
+,
+Fabio Petroni
+,
+Vladimir Karpukhin
+,
+Naman Goyal
+,
+Heinrich Küttler
+,
+Mike Lewis
+,
+Wen-tau Yih
+,
+Tim Rocktäschel
+,
+Sebastian Riedel
+,
+Douwe Kiela
+View a PDF of the paper titled Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks, by Patrick Lewis and 11 other authors
+View PDF
+HTML (experimental)
+Abstract:
+Large pre-trained language models have been shown to store factual knowledge in their parameters, and achieve state-of-the-art results when fine-tuned on downstream NLP tasks. However, their ability to access and precisely manipulate knowledge is still limited, and hence on knowledge-intensive tasks, their performance lags behind task-specific architectures. Additionally, providing provenance for their decisions and updating their world knowledge remain open research problems. Pre-trained models with a differentiable access mechanism to explicit non-parametric memory can overcome this issue, but have so far been only investigated for extractive downstream tasks. We explore a general-purpose fine-tuning recipe for retrieval-augmented generation (RAG) -- models which combine pre-trained parametric and non-parametric memory for language generation. We introduce RAG models where the parametric memory is a pre-trained seq2seq model and the non-parametric memory is a dense vector index of Wikipedia, accessed with a pre-trained neural retriever. We compare two RAG formulations, one which conditions on the same retrieved passages across the whole generated sequence, the other can use different passages per token. We fine-tune and evaluate our models on a wide range of knowledge-intensive NLP tasks and set the state-of-the-art on three open domain QA tasks, outperforming parametric seq2seq models and task-specific retrieve-and-extract architectures. For language generation tasks, we find that RAG models generate more specific, diverse and factual language than a state-of-the-art parametric-only seq2seq baseline.
+Comments:
+Accepted at NeurIPS 2020
+Subjects:
+Computation and Language (cs.CL)
+; Machine Learning (cs.LG)
+Cite as:
+arXiv:2005.11401
+[cs.CL]
+(or
+arXiv:2005.11401v4
+[cs.CL]
+for this version)
+https://doi.org/10.48550/arXiv.2005.11401
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Patrick Lewis [
+view email
+]
+[v1]
+Fri, 22 May 2020 21:34:34 UTC (698 KB)
+[v2]
+Mon, 7 Dec 2020 16:23:06 UTC (767 KB)
+[v3]
+Mon, 29 Mar 2021 10:12:16 UTC (767 KB)
+[v4]
+Mon, 12 Apr 2021 15:42:18 UTC (767 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks, by Patrick Lewis and 11 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CL
+< prev
+|
+next >
+new
+|
+recent
+|
+2020-05
+Change to browse by:
+cs
+cs.LG
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+13 blog links
+(
+what is this?
+)
+DBLP
+- CS Bibliography
+listing
+|
+bibtex
+Ethan Perez
+Aleksandra Piktus
+Fabio Petroni
+Vladimir Karpukhin
+Naman Goyal
+…
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### lost_middle
+Lost in the Middle: How Language Models Use Long Contexts - ACL Anthology
+Lost in the Middle: How Language Models Use Long Contexts
+Nelson F. Liu
+,
+Kevin Lin
+,
+John Hewitt
+,
+Ashwin Paranjape
+,
+Michele Bevilacqua
+,
+Fabio Petroni
+,
+Percy Liang
+Correct Metadata for
+Use this form to create a GitHub issue with structured data describing the correction. You will need a GitHub account.
+Once you create that issue, the correction will be reviewed by a staff member.
+⚠️ Mobile Users: Submitting this form to create a new issue will only work with github.com, not the GitHub Mobile app.
+Important
+: The Anthology treat PDFs as authoritative. Please use this form only to correct data
+that is out of line with the PDF. See
+our corrections
+guidelines
+if you need to change the PDF.
+Title
+Adjust the title. Retain tags such as
+<fixed-case>.
+Authors
+Adjust author names and order to match the
+PDF.
+Add Author
+Abstract
+Correct abstract if needed. Retain XML formatting tags such as <tex-math>. You may use <b>...</b> for
+bold
+, <i>...</i> for
+italic
+, <u>...</u> for
+underline
+, <sc>...</sc> for
+small-caps
+, <tt>...<tt> for
+typewriter text
+, <url>...</url> for URLs, <a href=...> for hyperlinks, and <par/> for paragraph breaks.
+Verification against PDF
+Ensure that the new title/authors match the snapshot below. (If there
+is no snapshot or it is too small, consult
+the PDF
+.)
+Authors concatenated from the text boxes above:
+ALL author names match the snapshot above—including
+middle initials, hyphens, and accents.
+Create GitHub issue for staff review
+Abstract
+While recent language models have the ability to take long contexts as input, relatively little is known about how well they use longer context. We analyze the performance of language models on two tasks that require identifying relevant information in their input contexts: multi-document question answering and key-value retrieval. We find that performance can degrade significantly when changing the position of relevant information, indicating that current language models do not robustly make use of information in long input contexts. In particular, we observe that performance is often highest when relevant information occurs at the beginning or end of the input context, and significantly degrades when models must access relevant information in the middle of long contexts, even for explicitly long-context models. Our analysis provides a better understanding of how language models use their input context and provides new evaluation protocols for future long-context language models.
+Anthology ID:
+2024.tacl-1.9
+Volume:
+Transactions of the Association for Computational Linguistics, Volume 12
+Month:
+Year:
+2024
+Address:
+Cambridge, MA
+Venue:
+TACL
+SIG:
+Publisher:
+MIT Press
+Note:
+Pages:
+157–173
+Language:
+URL:
+https://aclanthology.org/2024.tacl-1.9/
+DOI:
+10.1162/tacl_a_00638
+Bibkey:
+liu-etal-2024-lost
+Cite (ACL):
+Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024.
+Lost in the Middle: How Language Models Use Long Contexts
+.
+Transactions of the Association for Computational Linguistics
+, 12:157–173.
+Cite (Informal):
+Lost in the Middle: How Language Models Use Long Contexts
+(Liu et al., TACL 2024)
+Copy Citation:
+BibTeX
+Markdown
+MODS XML
+Endnote
+More
+options…
+PDF:
+https://aclanthology.org/2024.tacl-1.9.pdf
+PDF
+Cite
+Search
+Fix data
+Export citation
+BibTeX
+MODS XML
+Endnote
+Preformatted
+@article{liu-etal-2024-lost,
+    title = "Lost in the Middle: How Language Models Use Long Contexts",
+    author = "Liu, Nelson F.  and
+      Lin, Kevin  and
+      Hewitt, John  and
+      Paranjape, Ashwin  and
+      Bevilacqua, Michele  and
+      Petroni, Fabio  and
+      Liang, Percy",
+    journal = "Transactions of the Association for Computational Linguistics",
+    volume = "12",
+    year = "2024",
+    address = "Cambridge, MA",
+    publisher = "MIT Press",
+    url = "https://aclanthology.org/2024.tacl-1.9/",
+    doi = "10.1162/tacl_a_00638",
+    pages = "157--173",
+    abstract = "While recent language models have the ability to take long contexts as input, relatively little is known about how well they use longer context. We analyze the performance of language models on two tasks that require identifying relevant information in their input contexts: multi-document question answering and key-value retrieval. We find that performance can degrade significantly when changing the position of relevant information, indicating that current language models do not robustly make use of information in long input contexts. In particular, we observe that performance is often highest when relevant information occurs at the beginning or end of the input context, and significantly degrades when models must access relevant information in the middle of long contexts, even for explicitly long-context models. Our analysis provides a better understanding of how language models use their input context and provides new evaluation protocols for future long-context language models."
+}
+Download as
+File
+Copy to Clipboard
+<?xml version="1.0" encoding="UTF-8"?>
+<modsCollection xmlns="http://www.loc.gov/mods/v3">
+<mods ID="liu-etal-2024-lost">
+    <titleInfo>
+        <title>Lost in the Middle: How Language Models Use Long Contexts</title>
+    </titleInfo>
+    <name type="personal">
+        <namePart type="given">Nelson</namePart>
+        <namePart type="given">F</namePart>
+        <namePart type="family">Liu</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Kevin</namePart>
+        <namePart type="family">Lin</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">John</namePart>
+        <namePart type="family">Hewitt</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Ashwin</namePart>
+        <namePart type="family">Paranjape</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Michele</namePart>
+        <namePart type="family">Bevilacqua</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Fabio</namePart>
+        <namePart type="family">Petroni</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <name type="personal">
+        <namePart type="given">Percy</namePart>
+        <namePart type="family">Liang</namePart>
+        <role>
+            <roleTerm authority="marcrelator" type="text">author</roleTerm>
+        </role>
+    </name>
+    <originInfo>
+        <dateIssued>2024</dateIssued>
+    </originInfo>
+    <typeOfResource>text</typeOfResource>
+    <genre authority="bibutilsgt">journal article</genre>
+    <relatedItem type="host">
+        <titleInfo>
+            <title>Transactions of the Association for Computational Linguistics</title>
+        </titleInfo>
+        <originInfo>
+            <issuance>continuing</issuance>
+            <publisher>MIT Press</publisher>
+            <place>
+                <placeTerm type="text">Cambridge, MA</placeTerm>
+            </place>
+        </originInfo>
+        <genre authority="marcgt">periodical</genre>
+        <genre authority="bibutilsgt">academic journal</genre>
+    </relatedItem>
+    <abstract>While recent language models have the ability to take long contexts as input, relatively little is known about how well they use longer context. We analyze the performance of language models on two tasks that require identifying relevant information in their input contexts: multi-document question answering and key-value retrieval. We find that performance can degrade significantly when changing the position of relevant information, indicating that current language models do not robustly make use of information in long input contexts. In particular, we observe that performance is often highest when relevant information occurs at the beginning or end of the input context, and significantly degrades when models must access relevant information in the middle of long contexts, even for explicitly long-context models. Our analysis provides a better understanding of how language models use their input context and provides new evaluation protocols for future long-context language models.</abstract>
+    <identifier type="citekey">liu-etal-2024-lost</identifier>
+    <identifier type="doi">10.1162/tacl_a_00638</identifier>
+    <location>
+        <url>https://aclanthology.org/2024.tacl-1.9/</url>
+    </location>
+    <part>
+        <date>2024</date>
+        <detail type="volume"><number>12</number></detail>
+        <extent unit="page">
+            <start>157</start>
+            <end>173</end>
+        </extent>
+    </part>
+</mods>
+</modsCollection>
+Download as
+File
+Copy to Clipboard
+%0 Journal Article
+%T Lost in the Middle: How Language Models Use Long Contexts
+%A Liu, Nelson F.
+%A Lin, Kevin
+%A Hewitt, John
+%A Paranjape, Ashwin
+%A Bevilacqua, Michele
+%A Petroni, Fabio
+%A Liang, Percy
+%J Transactions of the Association for Computational Linguistics
+%D 2024
+%V 12
+%I MIT Press
+%C Cambridge, MA
+%F liu-etal-2024-lost
+%X While recent language models have the ability to take long contexts as input, relatively little is known about how well they use longer context. We analyze the performance of language models on two tasks that require identifying relevant information in their input contexts: multi-document question answering and key-value retrieval. We find that performance can degrade significantly when changing the position of relevant information, indicating that current language models do not robustly make use of information in long input contexts. In particular, we observe that performance is often highest when relevant information occurs at the beginning or end of the input context, and significantly degrades when models must access relevant information in the middle of long contexts, even for explicitly long-context models. Our analysis provides a better understanding of how language models use their input context and provides new evaluation protocols for future long-context language models.
+%R 10.1162/tacl_a_00638
+%U https://aclanthology.org/2024.tacl-1.9/
+%U https://doi.org/10.1162/tacl_a_00638
+%P 157-173
+Download as
+File
+Copy to Clipboard
+Markdown (Informal)
+[Lost in the Middle: How Language Models Use Long Contexts](https://aclanthology.org/2024.tacl-1.9/) (Liu et al., TACL 2024)
+Lost in the Middle: How Language Models Use Long Contexts
+(Liu et al., TACL 2024)
+ACL
+Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024.
+Lost in the Middle: How Language Models Use Long Contexts
+.
+Transactions of the Association for Computational Linguistics
+, 12:157–173.
+Copy Markdown to
+Clipboard
+Copy ACL to
+Clipboard
+ACL materials are Copyright © 1963–2026 ACL; other materials are copyrighted by their respective copyright holders. Materials prior to 2016 here are licensed under the
+Creative Commons Attribution-NonCommercial-ShareAlike 3.0 International License
+. Permission is granted to make copies for the purposes of teaching and research. Materials published in or after 2016 are licensed on a
+Creative Commons Attribution 4.0 International License
+.
+The ACL Anthology is managed and built by the
+ACL Anthology team
+of volunteers.
+Site last built on 16 October 2026 at 19:41 UTC with
+commit ab54073
+.
+
+### longmemeval
+[2410.10813] LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Computation and Language
+arXiv:2410.10813
+(cs)
+[Submitted on 14 Oct 2024 (
+v1
+), last revised 4 Mar 2025 (this version, v2)]
+Title:
+LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory
+Authors:
+Di Wu
+,
+Hongwei Wang
+,
+Wenhao Yu
+,
+Yuwei Zhang
+,
+Kai-Wei Chang
+,
+Dong Yu
+View a PDF of the paper titled LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory, by Di Wu and 5 other authors
+View PDF
+HTML (experimental)
+Abstract:
+Recent large language model (LLM)-driven chat assistant systems have integrated memory components to track user-assistant chat histories, enabling more accurate and personalized responses. However, their long-term memory capabilities in sustained interactions remain underexplored. We introduce LongMemEval, a comprehensive benchmark designed to evaluate five core long-term memory abilities of chat assistants: information extraction, multi-session reasoning, temporal reasoning, knowledge updates, and abstention. With 500 meticulously curated questions embedded within freely scalable user-assistant chat histories, LongMemEval presents a significant challenge to existing long-term memory systems, with commercial chat assistants and long-context LLMs showing a 30% accuracy drop on memorizing information across sustained interactions. We then present a unified framework that breaks down the long-term memory design into three stages: indexing, retrieval, and reading. Built upon key experimental insights, we propose several memory design optimizations including session decomposition for value granularity, fact-augmented key expansion for indexing, and time-aware query expansion for refining the search scope. Extensive experiments show that these optimizations greatly improve both memory recall and downstream question answering on LongMemEval. Overall, our study provides valuable resources and guidance for advancing the long-term memory capabilities of LLM-based chat assistants, paving the way toward more personalized and reliable conversational AI. Our benchmark and code are publicly available at
+this https URL
+.
+Comments:
+ICLR 2025
+Subjects:
+Computation and Language (cs.CL)
+Cite as:
+arXiv:2410.10813
+[cs.CL]
+(or
+arXiv:2410.10813v2
+[cs.CL]
+for this version)
+https://doi.org/10.48550/arXiv.2410.10813
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Di Wu [
+view email
+]
+[v1]
+Mon, 14 Oct 2024 17:59:44 UTC (944 KB)
+[v2]
+Tue, 4 Mar 2025 22:19:41 UTC (427 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory, by Di Wu and 5 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CL
+< prev
+|
+next >
+new
+|
+recent
+|
+2024-10
+Change to browse by:
+cs
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### poisonedrag
+PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models | USENIX
+Back to USENIX
+Sign In
+Conferences
+Attend
+Registration Information
+Registration Discounts
+Grant Opportunities
+Venue, Hotel, and Travel
+Schedule
+Technical Sessions
+Cycle 1 Accepted Papers
+Activities
+Poster Session
+Participate
+Call for Papers
+Submission Policies and Instructions
+Reviewing Model
+Ethics Guidelines
+Call for Artifacts
+Enigma Track Call for Participation
+Call for Posters
+Mentorship Event
+Instructions for Presenters and Authors
+Sponsors
+Exhibitor Services
+About
+Symposium Organizers
+Past Symposia
+Conference Policies
+Code of Conduct
+Questions
+PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models
+Wei Zou and Runpeng Geng,
+Pennsylvania State University;
+Binghui Wang,
+Illinois Institute of Technology;
+Jinyuan Jia,
+Pennsylvania State University
+Large language models (LLMs) have achieved remarkable success due to their exceptional generative capabilities. Despite their success, they also have inherent limitations such as a lack of up-to-date knowledge and hallucination. Retrieval-Augmented Generation (RAG) is a state-of-the-art technique to mitigate these limitations. The key idea of RAG is to ground the answer generation of an LLM on external knowledge retrieved from a knowledge database. Existing studies mainly focus on improving the accuracy or efficiency of RAG, leaving its security largely unexplored. We aim to bridge the gap in this work. We find that the knowledge database in a RAG system introduces a new and practical attack surface. Based on this attack surface, we propose PoisonedRAG, the first knowledge corruption attack to RAG, where an attacker could inject a few malicious texts into the knowledge database of a RAG system to induce an LLM to generate an attacker-chosen target answer for an attacker-chosen target question. We formulate knowledge corruption attacks as an optimization problem, whose solution is a set of malicious texts. Depending on the background knowledge (e.g., black-box and white-box settings) of an attacker on a RAG system, we propose two solutions to solve the optimization problem, respectively. Our results show PoisonedRAG could achieve a 90% attack success rate when injecting five malicious texts for each target question into a knowledge database with millions of texts. We also evaluate several defenses and our results show they are insufficient to defend against PoisonedRAG, highlighting the need for new defenses.
+Category:
+Short Presentation
+Open Access Media
+USENIX is committed to Open Access to the research presented at our events. Papers and proceedings are freely available to everyone once the event begins. Any video, audio, and/or slides that are posted after the event are also free and open to everyone.
+Support USENIX
+and our commitment to Open Access.
+BibTeX
+@inproceedings {307726,
+author = {Wei Zou and Runpeng Geng and Binghui Wang and Jinyuan Jia},
+title = {{PoisonedRAG}: Knowledge Corruption Attacks to {Retrieval-Augmented} Generation of Large Language Models},
+booktitle = {34th USENIX Security Symposium (USENIX Security 25)},
+year = {2025},
+isbn = {978-1-939133-52-6},
+address = {Seattle, WA},
+pages = {3827--3844},
+url = {https://www.usenix.org/conference/usenixsecurity25/presentation/zou-poisonedrag},
+publisher = {USENIX Association},
+month = aug
+}
+Download
+Zou PDF
+Zou (Prepublication) PDF
+Attend
+Registration Information
+Registration Discounts
+Grant Opportunities
+Venue, Hotel, and Travel
+Schedule
+Technical Sessions
+Cycle 1 Accepted Papers
+Activities
+Poster Session
+Participate
+Call for Papers
+Submission Policies and Instructions
+Reviewing Model
+Ethics Guidelines
+Call for Artifacts
+Enigma Track Call for Participation
+Call for Posters
+Mentorship Event
+Instructions for Presenters and Authors
+Sponsors
+Exhibitor Services
+About
+Symposium Organizers
+Past Symposia
+Conference Policies
+Code of Conduct
+Questions
+Youtube
+Privacy Policy
+Contact Us
+© USENIX
+EIN 13-3055038
+
+### judge
+[2306.05685] Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Computation and Language
+arXiv:2306.05685
+(cs)
+[Submitted on 9 Jun 2023 (
+v1
+), last revised 24 Dec 2023 (this version, v4)]
+Title:
+Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena
+Authors:
+Lianmin Zheng
+,
+Wei-Lin Chiang
+,
+Ying Sheng
+,
+Siyuan Zhuang
+,
+Zhanghao Wu
+,
+Yonghao Zhuang
+,
+Zi Lin
+,
+Zhuohan Li
+,
+Dacheng Li
+,
+Eric P. Xing
+,
+Hao Zhang
+,
+Joseph E. Gonzalez
+,
+Ion Stoica
+View a PDF of the paper titled Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena, by Lianmin Zheng and 12 other authors
+View PDF
+HTML (experimental)
+Abstract:
+Evaluating large language model (LLM) based chat assistants is challenging due to their broad capabilities and the inadequacy of existing benchmarks in measuring human preferences. To address this, we explore using strong LLMs as judges to evaluate these models on more open-ended questions. We examine the usage and limitations of LLM-as-a-judge, including position, verbosity, and self-enhancement biases, as well as limited reasoning ability, and propose solutions to mitigate some of them. We then verify the agreement between LLM judges and human preferences by introducing two benchmarks: MT-bench, a multi-turn question set; and Chatbot Arena, a crowdsourced battle platform. Our results reveal that strong LLM judges like GPT-4 can match both controlled and crowdsourced human preferences well, achieving over 80% agreement, the same level of agreement between humans. Hence, LLM-as-a-judge is a scalable and explainable way to approximate human preferences, which are otherwise very expensive to obtain. Additionally, we show our benchmark and traditional benchmarks complement each other by evaluating several variants of LLaMA and Vicuna. The MT-bench questions, 3K expert votes, and 30K conversations with human preferences are publicly available at
+this https URL
+.
+Comments:
+NeurIPS 2023 Datasets and Benchmarks Track
+Subjects:
+Computation and Language (cs.CL)
+; Artificial Intelligence (cs.AI)
+Cite as:
+arXiv:2306.05685
+[cs.CL]
+(or
+arXiv:2306.05685v4
+[cs.CL]
+for this version)
+https://doi.org/10.48550/arXiv.2306.05685
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Lianmin Zheng [
+view email
+]
+[v1]
+Fri, 9 Jun 2023 05:55:52 UTC (1,667 KB)
+[v2]
+Wed, 12 Jul 2023 01:42:26 UTC (1,708 KB)
+[v3]
+Sun, 15 Oct 2023 06:42:51 UTC (1,914 KB)
+[v4]
+Sun, 24 Dec 2023 02:01:34 UTC (1,711 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena, by Lianmin Zheng and 12 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CL
+< prev
+|
+next >
+new
+|
+recent
+|
+2023-06
+Change to browse by:
+cs
+cs.AI
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### amem
+[2502.12110] A-MEM: Agentic Memory for LLM Agents
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Computation and Language
+arXiv:2502.12110
+(cs)
+[Submitted on 17 Feb 2025 (
+v1
+), last revised 8 Oct 2025 (this version, v11)]
+Title:
+A-MEM: Agentic Memory for LLM Agents
+Authors:
+Wujiang Xu
+,
+Zujie Liang
+,
+Kai Mei
+,
+Hang Gao
+,
+Juntao Tan
+,
+Yongfeng Zhang
+View a PDF of the paper titled A-MEM: Agentic Memory for LLM Agents, by Wujiang Xu and Zujie Liang and Kai Mei and Hang Gao and Juntao Tan and Yongfeng Zhang
+View PDF
+HTML (experimental)
+Abstract:
+While large language model (LLM) agents can effectively use external tools for complex real-world tasks, they require memory systems to leverage historical experiences. Current memory systems enable basic storage and retrieval but lack sophisticated memory organization, despite recent attempts to incorporate graph databases. Moreover, these systems' fixed operations and structures limit their adaptability across diverse tasks. To address this limitation, this paper proposes a novel agentic memory system for LLM agents that can dynamically organize memories in an agentic way. Following the basic principles of the Zettelkasten method, we designed our memory system to create interconnected knowledge networks through dynamic indexing and linking. When a new memory is added, we generate a comprehensive note containing multiple structured attributes, including contextual descriptions, keywords, and tags. The system then analyzes historical memories to identify relevant connections, establishing links where meaningful similarities exist. Additionally, this process enables memory evolution - as new memories are integrated, they can trigger updates to the contextual representations and attributes of existing historical memories, allowing the memory network to continuously refine its understanding. Our approach combines the structured organization principles of Zettelkasten with the flexibility of agent-driven decision making, allowing for more adaptive and context-aware memory management. Empirical experiments on six foundation models show superior improvement against existing SOTA baselines. The source code for evaluating performance is available at
+this https URL
+, while the source code of the agentic memory system is available at
+this https URL
+.
+Comments:
+Advances in Neural Information Processing Systems (NeurIPS 2025)
+Subjects:
+Computation and Language (cs.CL)
+; Human-Computer Interaction (cs.HC)
+Cite as:
+arXiv:2502.12110
+[cs.CL]
+(or
+arXiv:2502.12110v11
+[cs.CL]
+for this version)
+https://doi.org/10.48550/arXiv.2502.12110
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Wujiang Xu [
+view email
+]
+[v1]
+Mon, 17 Feb 2025 18:36:14 UTC (603 KB)
+[v2]
+Mon, 3 Mar 2025 04:14:02 UTC (603 KB)
+[v3]
+Tue, 4 Mar 2025 15:09:10 UTC (603 KB)
+[v4]
+Mon, 14 Apr 2025 15:21:49 UTC (603 KB)
+[v5]
+Fri, 18 Apr 2025 17:26:57 UTC (603 KB)
+[v6]
+Sun, 11 May 2025 18:10:25 UTC (2,620 KB)
+[v7]
+Wed, 21 May 2025 05:16:32 UTC (2,629 KB)
+[v8]
+Tue, 27 May 2025 02:44:13 UTC (1,002 KB)
+[v9]
+Mon, 2 Jun 2025 22:21:21 UTC (995 KB)
+[v10]
+Tue, 15 Jul 2025 00:44:52 UTC (600 KB)
+[v11]
+Wed, 8 Oct 2025 01:46:37 UTC (607 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled A-MEM: Agentic Memory for LLM Agents, by Wujiang Xu and Zujie Liang and Kai Mei and Hang Gao and Juntao Tan and Yongfeng Zhang
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CL
+< prev
+|
+next >
+new
+|
+recent
+|
+2025-02
+Change to browse by:
+cs
+cs.HC
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### memos
+[2507.03724] MemOS: A Memory OS for AI System
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Computation and Language
+arXiv:2507.03724
+(cs)
+[Submitted on 4 Jul 2025 (
+v1
+), last revised 3 Dec 2025 (this version, v4)]
+Title:
+MemOS: A Memory OS for AI System
+Authors:
+Zhiyu Li
+,
+Chenyang Xi
+,
+Chunyu Li
+,
+Ding Chen
+,
+Boyu Chen
+,
+Shichao Song
+,
+Simin Niu
+,
+Hanyu Wang
+,
+Jiawei Yang
+,
+Chen Tang
+,
+Qingchen Yu
+,
+Jihao Zhao
+,
+Yezhaohui Wang
+,
+Peng Liu
+,
+Zehao Lin
+,
+Pengyuan Wang
+,
+Jiahao Huo
+,
+Tianyi Chen
+,
+Kai Chen
+,
+Kehang Li
+,
+Zhen Tao
+,
+Huayi Lai
+,
+Hao Wu
+,
+Bo Tang
+,
+Zhengren Wang
+,
+Zhaoxin Fan
+,
+Ningyu Zhang
+,
+Linfeng Zhang
+,
+Junchi Yan
+,
+Mingchuan Yang
+,
+Tong Xu
+,
+Wei Xu
+,
+Huajun Chen
+,
+Haofen Wang
+,
+Hongkang Yang
+,
+Wentao Zhang
+,
+Zhi-Qin John Xu
+,
+Siheng Chen
+,
+Feiyu Xiong
+View a PDF of the paper titled MemOS: A Memory OS for AI System, by Zhiyu Li and 38 other authors
+View PDF
+HTML (experimental)
+Abstract:
+Large Language Models (LLMs) have become an essential infrastructure for Artificial General Intelligence (AGI), yet their lack of well-defined memory management systems hinders the development of long-context reasoning, continual personalization, and knowledge
+this http URL
+models mainly rely on static parameters and short-lived contextual states, limiting their ability to track user preferences or update knowledge over extended
+this http URL
+Retrieval-Augmented Generation (RAG) introduces external knowledge in plain text, it remains a stateless workaround without lifecycle control or integration with persistent
+this http URL
+work has modeled the training and inference cost of LLMs from a memory hierarchy perspective, showing that introducing an explicit memory layer between parameter memory and external retrieval can substantially reduce these costs by externalizing specific knowledge. Beyond computational efficiency, LLMs face broader challenges arising from how information is distributed over time and context, requiring systems capable of managing heterogeneous knowledge spanning different temporal scales and sources. To address this challenge, we propose MemOS, a memory operating system that treats memory as a manageable system resource. It unifies the representation, scheduling, and evolution of plaintext, activation-based, and parameter-level memories, enabling cost-efficient storage and retrieval. As the basic unit, a MemCube encapsulates both memory content and metadata such as provenance and versioning. MemCubes can be composed, migrated, and fused over time, enabling flexible transitions between memory types and bridging retrieval with parameter-based learning. MemOS establishes a memory-centric system framework that brings controllability, plasticity, and evolvability to LLMs, laying the foundation for continual learning and personalized modeling.
+Comments:
+36 pages, 10 figures, 5 tables
+Subjects:
+Computation and Language (cs.CL)
+Cite as:
+arXiv:2507.03724
+[cs.CL]
+(or
+arXiv:2507.03724v4
+[cs.CL]
+for this version)
+https://doi.org/10.48550/arXiv.2507.03724
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Zhiyu Li [
+view email
+]
+[v1]
+Fri, 4 Jul 2025 17:21:46 UTC (4,416 KB)
+[v2]
+Tue, 8 Jul 2025 14:30:24 UTC (4,295 KB)
+[v3]
+Tue, 5 Aug 2025 07:11:37 UTC (4,295 KB)
+[v4]
+Wed, 3 Dec 2025 03:19:27 UTC (3,879 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled MemOS: A Memory OS for AI System, by Zhiyu Li and 38 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CL
+< prev
+|
+next >
+new
+|
+recent
+|
+2025-07
+Change to browse by:
+cs
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### memoryos
+[2506.06326] Memory OS of AI Agent
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Artificial Intelligence
+arXiv:2506.06326
+(cs)
+[Submitted on 30 May 2025]
+Title:
+Memory OS of AI Agent
+Authors:
+Jiazheng Kang
+,
+Mingming Ji
+,
+Zhe Zhao
+,
+Ting Bai
+View a PDF of the paper titled Memory OS of AI Agent, by Jiazheng Kang and 2 other authors
+View PDF
+HTML (experimental)
+Abstract:
+Large Language Models (LLMs) face a crucial challenge from fixed context windows and inadequate memory management, leading to a severe shortage of long-term memory capabilities and limited personalization in the interactive experience with AI agents. To overcome this challenge, we innovatively propose a Memory Operating System, i.e., MemoryOS, to achieve comprehensive and efficient memory management for AI agents. Inspired by the memory management principles in operating systems, MemoryOS designs a hierarchical storage architecture and consists of four key modules: Memory Storage, Updating, Retrieval, and Generation. Specifically, the architecture comprises three levels of storage units: short-term memory, mid-term memory, and long-term personal memory. Key operations within MemoryOS include dynamic updates between storage units: short-term to mid-term updates follow a dialogue-chain-based FIFO principle, while mid-term to long-term updates use a segmented page organization strategy. Our pioneering MemoryOS enables hierarchical memory integration and dynamic updating. Extensive experiments on the LoCoMo benchmark show an average improvement of 49.11% on F1 and 46.18% on BLEU-1 over the baselines on GPT-4o-mini, showing contextual coherence and personalized memory retention in long conversations. The implementation code is open-sourced at
+this https URL
+.
+Subjects:
+Artificial Intelligence (cs.AI)
+Cite as:
+arXiv:2506.06326
+[cs.AI]
+(or
+arXiv:2506.06326v1
+[cs.AI]
+for this version)
+https://doi.org/10.48550/arXiv.2506.06326
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Jiazheng Kang [
+view email
+]
+[v1]
+Fri, 30 May 2025 15:36:51 UTC (772 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled Memory OS of AI Agent, by Jiazheng Kang and 2 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.AI
+< prev
+|
+next >
+new
+|
+recent
+|
+2025-06
+Change to browse by:
+cs
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### agent_poison
+[2407.12784] AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Machine Learning
+arXiv:2407.12784
+(cs)
+[Submitted on 17 Jul 2024]
+Title:
+AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases
+Authors:
+Zhaorun Chen
+,
+Zhen Xiang
+,
+Chaowei Xiao
+,
+Dawn Song
+,
+Bo Li
+View a PDF of the paper titled AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases, by Zhaorun Chen and 4 other authors
+View PDF
+HTML (experimental)
+Abstract:
+LLM agents have demonstrated remarkable performance across various applications, primarily due to their advanced capabilities in reasoning, utilizing external knowledge and tools, calling APIs, and executing actions to interact with environments. Current agents typically utilize a memory module or a retrieval-augmented generation (RAG) mechanism, retrieving past knowledge and instances with similar embeddings from knowledge bases to inform task planning and execution. However, the reliance on unverified knowledge bases raises significant concerns about their safety and trustworthiness. To uncover such vulnerabilities, we propose a novel red teaming approach AgentPoison, the first backdoor attack targeting generic and RAG-based LLM agents by poisoning their long-term memory or RAG knowledge base. In particular, we form the trigger generation process as a constrained optimization to optimize backdoor triggers by mapping the triggered instances to a unique embedding space, so as to ensure that whenever a user instruction contains the optimized backdoor trigger, the malicious demonstrations are retrieved from the poisoned memory or knowledge base with high probability. In the meantime, benign instructions without the trigger will still maintain normal performance. Unlike conventional backdoor attacks, AgentPoison requires no additional model training or fine-tuning, and the optimized backdoor trigger exhibits superior transferability, in-context coherence, and stealthiness. Extensive experiments demonstrate AgentPoison's effectiveness in attacking three types of real-world LLM agents: RAG-based autonomous driving agent, knowledge-intensive QA agent, and healthcare EHRAgent. On each agent, AgentPoison achieves an average attack success rate higher than 80% with minimal impact on benign performance (less than 1%) with a poison rate less than 0.1%.
+Comments:
+22 pages, 13 figures, 7 tables
+Subjects:
+Machine Learning (cs.LG)
+; Cryptography and Security (cs.CR); Information Retrieval (cs.IR)
+Cite as:
+arXiv:2407.12784
+[cs.LG]
+(or
+arXiv:2407.12784v1
+[cs.LG]
+for this version)
+https://doi.org/10.48550/arXiv.2407.12784
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Zhaorun Chen [
+view email
+]
+[v1]
+Wed, 17 Jul 2024 17:59:47 UTC (6,842 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases, by Zhaorun Chen and 4 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.LG
+< prev
+|
+next >
+new
+|
+recent
+|
+2024-07
+Change to browse by:
+cs
+cs.CR
+cs.IR
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+IArxiv recommender toggle
+IArxiv Recommender
+(
+What is IArxiv?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from
+
+### memorygraft
+[2512.16962] MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Cryptography and Security
+arXiv:2512.16962
+(cs)
+[Submitted on 18 Dec 2025]
+Title:
+MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval
+Authors:
+Saksham Sahai Srivastava
+,
+Haoyu He
+View a PDF of the paper titled MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval, by Saksham Sahai Srivastava and Haoyu He
+View PDF
+HTML (experimental)
+Abstract:
+Large Language Model (LLM) agents increasingly rely on long-term memory and Retrieval-Augmented Generation (RAG) to persist experiences and refine future performance. While this experience learning capability enhances agentic autonomy, it introduces a critical, unexplored attack surface, i.e., the trust boundary between an agent's reasoning core and its own past. In this paper, we introduce MemoryGraft. It is a novel indirect injection attack that compromises agent behavior not through immediate jailbreaks, but by implanting malicious successful experiences into the agent's long-term memory. Unlike traditional prompt injections that are transient, or standard RAG poisoning that targets factual knowledge, MemoryGraft exploits the agent's semantic imitation heuristic which is the tendency to replicate patterns from retrieved successful tasks. We demonstrate that an attacker who can supply benign ingestion-level artifacts that the agent reads during execution can induce it to construct a poisoned RAG store where a small set of malicious procedure templates is persisted alongside benign experiences. When the agent later encounters semantically similar tasks, union retrieval over lexical and embedding similarity reliably surfaces these grafted memories, and the agent adopts the embedded unsafe patterns, leading to persistent behavioral drift across sessions. We validate MemoryGraft on MetaGPT's DataInterpreter agent with GPT-4o and find that a small number of poisoned records can account for a large fraction of retrieved experiences on benign workloads, turning experience-based self-improvement into a vector for stealthy and durable compromise. To facilitate reproducibility and future research, our code and evaluation data are available at
+this https URL
+.
+Comments:
+14 pages, 1 figure, includes appendix
+Subjects:
+Cryptography and Security (cs.CR)
+; Artificial Intelligence (cs.AI); Machine Learning (cs.LG)
+Cite as:
+arXiv:2512.16962
+[cs.CR]
+(or
+arXiv:2512.16962v1
+[cs.CR]
+for this version)
+https://doi.org/10.48550/arXiv.2512.16962
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Saksham Srivastava [
+view email
+]
+[v1]
+Thu, 18 Dec 2025 08:34:40 UTC (4,904 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval, by Saksham Sahai Srivastava and Haoyu He
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CR
+< prev
+|
+next >
+new
+|
+recent
+|
+2025-12
+Change to browse by:
+cs
+cs.AI
+cs.LG
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from

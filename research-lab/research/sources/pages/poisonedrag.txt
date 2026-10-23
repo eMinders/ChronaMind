@@ -1,0 +1,95 @@
+PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models | USENIX
+Back to USENIX
+Sign In
+Conferences
+Attend
+Registration Information
+Registration Discounts
+Grant Opportunities
+Venue, Hotel, and Travel
+Schedule
+Technical Sessions
+Cycle 1 Accepted Papers
+Activities
+Poster Session
+Participate
+Call for Papers
+Submission Policies and Instructions
+Reviewing Model
+Ethics Guidelines
+Call for Artifacts
+Enigma Track Call for Participation
+Call for Posters
+Mentorship Event
+Instructions for Presenters and Authors
+Sponsors
+Exhibitor Services
+About
+Symposium Organizers
+Past Symposia
+Conference Policies
+Code of Conduct
+Questions
+PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models
+Wei Zou and Runpeng Geng,
+Pennsylvania State University;
+Binghui Wang,
+Illinois Institute of Technology;
+Jinyuan Jia,
+Pennsylvania State University
+Large language models (LLMs) have achieved remarkable success due to their exceptional generative capabilities. Despite their success, they also have inherent limitations such as a lack of up-to-date knowledge and hallucination. Retrieval-Augmented Generation (RAG) is a state-of-the-art technique to mitigate these limitations. The key idea of RAG is to ground the answer generation of an LLM on external knowledge retrieved from a knowledge database. Existing studies mainly focus on improving the accuracy or efficiency of RAG, leaving its security largely unexplored. We aim to bridge the gap in this work. We find that the knowledge database in a RAG system introduces a new and practical attack surface. Based on this attack surface, we propose PoisonedRAG, the first knowledge corruption attack to RAG, where an attacker could inject a few malicious texts into the knowledge database of a RAG system to induce an LLM to generate an attacker-chosen target answer for an attacker-chosen target question. We formulate knowledge corruption attacks as an optimization problem, whose solution is a set of malicious texts. Depending on the background knowledge (e.g., black-box and white-box settings) of an attacker on a RAG system, we propose two solutions to solve the optimization problem, respectively. Our results show PoisonedRAG could achieve a 90% attack success rate when injecting five malicious texts for each target question into a knowledge database with millions of texts. We also evaluate several defenses and our results show they are insufficient to defend against PoisonedRAG, highlighting the need for new defenses.
+Category:
+Short Presentation
+Open Access Media
+USENIX is committed to Open Access to the research presented at our events. Papers and proceedings are freely available to everyone once the event begins. Any video, audio, and/or slides that are posted after the event are also free and open to everyone.
+Support USENIX
+and our commitment to Open Access.
+BibTeX
+@inproceedings {307726,
+author = {Wei Zou and Runpeng Geng and Binghui Wang and Jinyuan Jia},
+title = {{PoisonedRAG}: Knowledge Corruption Attacks to {Retrieval-Augmented} Generation of Large Language Models},
+booktitle = {34th USENIX Security Symposium (USENIX Security 25)},
+year = {2025},
+isbn = {978-1-939133-52-6},
+address = {Seattle, WA},
+pages = {3827--3844},
+url = {https://www.usenix.org/conference/usenixsecurity25/presentation/zou-poisonedrag},
+publisher = {USENIX Association},
+month = aug
+}
+Download
+Zou PDF
+Zou (Prepublication) PDF
+Attend
+Registration Information
+Registration Discounts
+Grant Opportunities
+Venue, Hotel, and Travel
+Schedule
+Technical Sessions
+Cycle 1 Accepted Papers
+Activities
+Poster Session
+Participate
+Call for Papers
+Submission Policies and Instructions
+Reviewing Model
+Ethics Guidelines
+Call for Artifacts
+Enigma Track Call for Participation
+Call for Posters
+Mentorship Event
+Instructions for Presenters and Authors
+Sponsors
+Exhibitor Services
+About
+Symposium Organizers
+Past Symposia
+Conference Policies
+Code of Conduct
+Questions
+Youtube
+Privacy Policy
+Contact Us
+© USENIX
+EIN 13-3055038

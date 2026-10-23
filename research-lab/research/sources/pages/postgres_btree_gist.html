@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+ <head>
+  <title>PostgreSQL: Documentation: 16: F.9. btree_gist — GiST operator classes with B-tree behavior</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta http-equiv="Content-Type" content="text/xhtml; charset=utf-8" />
+   
+  <meta name="theme-color" content="#336791"/>
+  <meta name="copyright" content="The PostgreSQL Global Development Group" />
+  <meta property="og:url" content="https://www.postgresql.org/docs/16/btree-gist.html" />
+  <meta property="og:type" content="article" />
+
+  <meta property="article:published_time" content="2026-08-13T12:52:44.176831" />
+  <meta property="og:image" content="https://www.postgresql.org/media/img/about/press/elephant.png" />
+  <meta property="og:title" content="F.9. btree_gist — GiST operator classes with B-tree behavior" />
+  <meta property="og:description" content="F.9.&amp;nbsp;btree_gist — GiST operator classes with B-tree behavior # F.9.1. Example Usage F.9.2. Authors btree_gist provides GiST index operator classes …" />
+  <meta property="og:site_name" content="PostgreSQL Documentation" />
+  <link href="/media/css/fontawesome.css?5cdc3ede" rel="stylesheet">
+  <link rel="stylesheet" href="/media/css/bootstrap-4.4.1.min.css">
+  <link rel="shortcut icon" href="/favicon.ico" />
+  
+  <link rel="stylesheet" type="text/css" href="/dyncss/base.css?5cdc3ede">
+
+  <script src="/media/js/theme.js?5cdc3ede"></script>
+
+  
+
+
+  <link rel="canonical" href="https://www.postgresql.org/docs/current/btree-gist.html" />
+
+
+  </head>
+  <body>
+    <div class="container-fluid">
+      <div class="row justify-content-md-center">
+        <div class="col">
+          <!-- Header -->
+          <nav class="navbar navbar-expand-lg navbar-light bg-light">
+            <a class="navbar-brand p-0" href="/">
+              <img class="logo" src="/media/img/about/press/elephant.png" alt="PostgreSQL Elephant Logo">
+            </a>
+            <input type="checkbox" id="navbar-toggler" aria-controls="pgNavbar" aria-expanded="false" aria-label="Toggle navigation">
+            <label for="navbar-toggler" id="navbar-toggler-label" class="navbar-toggler" tabindex="0"><span class="navbar-toggler-icon"></span></label>
+            <div class="navbar-collapse" id="pgNavbar">
+              <ul class="navbar-nav mr-auto">
+                <li class="nav-item p-2"><a href="/" title="Home">Home</a></li>
+                <li class="nav-item p-2"><a href="/about/" title="About">About</a></li>
+                <li class="nav-item p-2"><a href="/download/" title="Download">Download</a></li>
+                <li class="nav-item p-2"><a href="/docs/" title="Documentation">Documentation</a></li>
+                <li class="nav-item p-2"><a href="/community/" title="Community">Community</a></li>
+                <li class="nav-item p-2"><a href="/developer/" title="Developers">Developers</a></li>
+                <li class="nav-item p-2"><a href="/support/" title="Support">Support</a></li>
+                <li class="nav-item p-2"><a href="/about/donate/" title="Donate">Donate</a></li>
+                <li class="nav-item p-2"><a href="/account/" title="Your account">Your account</a></li>
+              </ul>
+              <form role="search" method="get" action="/search/">
+                <div class="input-group">
+                  <input id="q" name="q" type="text" size="20" maxlength="255" accesskey="s"  class="form-control" placeholder="Search for...">
+                  <span class="input-group-btn">
+                    <button class="btn btn-default" type="submit"><i class="fas fa-search"></i></button>
+                  </span>
+                </div><!-- /input-group -->
+              </form>
+              <form id="form-theme" class="form-inline d-none">
+                <button id="btn-theme" class="btn btn-default ml-1" type="button"></button>
+              </form>
+            </div>
+          </nav>
+        </div>
+      </div>
+      <div class="row justify-content-center pg-shout-box">
+        <div class="col text-white text-center">October 15, 2026: <a href="/about/news/postgresql-19-rc-1-released-3409/">PostgreSQL 19 RC 1 Released!</a>
+
+</div>
+      </div>
+    </div>
+    
+    <div class="container-fluid margin">
+      <div class="row">
+        <div id="pgContentWrap" class="col-11">
+          <div class="row">
+            <div class="col-md-6 mb-2">
+              <div class="row">
+                <div class="col">
+                  <div>
+                    <a href="/docs/" title="Documentation">Documentation</a> &rarr; <a href="/docs/16/index.html">PostgreSQL 16</a>
+                  </div>
+                </div>
+              </div>
+              
+                <div class="row">
+                  <div class="col">
+                    Supported Versions:
+                      
+                        
+                        
+                          <a href="/docs/current/btree-gist.html" title="PostgreSQL 18 - F.9. btree_gist — GiST operator classes with B-tree behavior" >Current</a>
+                          (<a href="/docs/18/btree-gist.html" title="PostgreSQL 18 - F.9. btree_gist — GiST operator classes with B-tree behavior" >18</a>)
+                        
+                      
+                         / 
+                        
+                          <a href="/docs/17/btree-gist.html" title="PostgreSQL 17 - F.9. btree_gist — GiST operator classes with B-tree behavior" >17</a>
+                        
+                      
+                         / 
+                        
+                          <a href="/docs/16/btree-gist.html" title="PostgreSQL 16 - F.9. btree_gist — GiST operator classes with B-tree behavior" class="docs-version-selected">16</a>
+                        
+                      
+                         / 
+                        
+                          <a href="/docs/15/btree-gist.html" title="PostgreSQL 15 - F.9. btree_gist — GiST operator classes with B-tree behavior" >15</a>
+                        
+                      
+                         / 
+                        
+                          <a href="/docs/14/btree-gist.html" title="PostgreSQL 14 - F.9. btree_gist — GiST operator classes with B-tree behavior" >14</a>
+                        
+                      
+                  </div>
+                </div>
+              
+              
+                <div class="row">
+                  <div class="col">
+                    Development Versions:
+                    
+                      
+                      <a href="/docs/19/btree-gist.html" title="PostgreSQL 19 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">19</a>
+                    
+                       / 
+                      <a href="/docs/devel/btree-gist.html" title="PostgreSQL devel - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">devel</a>
+                    
+                  </div>
+                </div>
+              
+              
+                <div class="row">
+                  <div class="col-12">
+                    Unsupported versions:
+                    
+                      
+                      <a href="/docs/13/btree-gist.html" title="PostgreSQL 13 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">13</a>
+                    
+                       / 
+                      <a href="/docs/12/btree-gist.html" title="PostgreSQL 12 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">12</a>
+                    
+                       / 
+                      <a href="/docs/11/btree-gist.html" title="PostgreSQL 11 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">11</a>
+                    
+                       / 
+                      <a href="/docs/10/btree-gist.html" title="PostgreSQL 10 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">10</a>
+                    
+                       / 
+                      <a href="/docs/9.6/btree-gist.html" title="PostgreSQL 9.6 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">9.6</a>
+                    
+                       / 
+                      <a href="/docs/9.5/btree-gist.html" title="PostgreSQL 9.5 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">9.5</a>
+                    
+                       / 
+                      <a href="/docs/9.4/btree-gist.html" title="PostgreSQL 9.4 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">9.4</a>
+                    
+                       / 
+                      <a href="/docs/9.3/btree-gist.html" title="PostgreSQL 9.3 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">9.3</a>
+                    
+                       / 
+                      <a href="/docs/9.2/btree-gist.html" title="PostgreSQL 9.2 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">9.2</a>
+                    
+                       / 
+                      <a href="/docs/9.1/btree-gist.html" title="PostgreSQL 9.1 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">9.1</a>
+                    
+                       / 
+                      <a href="/docs/9.0/btree-gist.html" title="PostgreSQL 9.0 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">9.0</a>
+                    
+                       / 
+                      <a href="/docs/8.4/btree-gist.html" title="PostgreSQL 8.4 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">8.4</a>
+                    
+                       / 
+                      <a href="/docs/8.3/btree-gist.html" title="PostgreSQL 8.3 - F.9. btree_gist — GiST operator classes with B-tree behavior"  rel="nofollow">8.3</a>
+                    
+                  </div>
+                </div>
+              
+            </div>
+            <div class="col-md-6 col-lg-5 offset-lg-1">
+              <form id="docSearchForm" role="search" method="get" action="/search/">
+                <input type="hidden" name="u" value="/docs/16/" />
+                <div class="input-group">
+                  <input type="text" id="q" name="q" class="form-control" placeholder="Search the documentation for..."/>
+                  <span class="input-group-btn">
+                    <button class="btn btn-default" type="submit"><i class="fas fa-search"></i></button>
+                  </span>
+                </div><!-- /input-group -->
+              </form>
+            </div>
+          </div>
+
+          <div id="docContent">
+            <div class="navheader">
+  <table width="100%" summary="Navigation header">
+    <tr>
+      <th colspan="5" align="center">F.9.&nbsp;btree_gist — GiST operator classes with B-tree behavior</th>
+    </tr>
+    <tr>
+      <td width="10%" align="left"><a accesskey="p" href="btree-gin.html" title="F.8.&nbsp;btree_gin — GIN operator classes with B-tree behavior">Prev</a>&nbsp;</td>
+      <td width="10%" align="left"><a accesskey="u" href="contrib.html" title="Appendix&nbsp;F.&nbsp;Additional Supplied Modules and Extensions">Up</a></td>
+      <th width="60%" align="center">Appendix&nbsp;F.&nbsp;Additional Supplied Modules and Extensions</th>
+      <td width="10%" align="right"><a accesskey="h" href="index.html" title="PostgreSQL 16.15 Documentation">Home</a></td>
+      <td width="10%" align="right">&nbsp;<a accesskey="n" href="citext.html" title="F.10.&nbsp;citext — a case-insensitive character string type">Next</a></td>
+    </tr>
+  </table>
+  <hr />
+</div>
+<div class="sect1" id="BTREE-GIST">
+  <div class="titlepage">
+    <div>
+      <div>
+        <h2 class="title" style="clear: both">F.9.&nbsp;btree_gist — GiST operator classes with B-tree behavior <a href="#BTREE-GIST" class="id_link">#</a></h2>
+      </div>
+    </div>
+  </div>
+  <div class="toc">
+    <dl class="toc">
+      <dt><span class="sect2"><a href="btree-gist.html#BTREE-GIST-EXAMPLE-USAGE">F.9.1. Example Usage</a></span></dt>
+      <dt><span class="sect2"><a href="btree-gist.html#BTREE-GIST-AUTHORS">F.9.2. Authors</a></span></dt>
+    </dl>
+  </div><a id="id-1.11.7.19.2" class="indexterm" name="id-1.11.7.19.2"></a>
+  <p><code class="filename">btree_gist</code> provides GiST index operator classes that implement B-tree equivalent behavior for the data types <code class="type">int2</code>, <code class="type">int4</code>, <code class="type">int8</code>, <code class="type">float4</code>, <code class="type">float8</code>, <code class="type">numeric</code>, <code class="type">timestamp with time zone</code>, <code class="type">timestamp without time zone</code>, <code class="type">time with time zone</code>, <code class="type">time without time zone</code>, <code class="type">date</code>, <code class="type">interval</code>, <code class="type">oid</code>, <code class="type">money</code>, <code class="type">char</code>, <code class="type">varchar</code>, <code class="type">text</code>, <code class="type">bytea</code>, <code class="type">bit</code>, <code class="type">varbit</code>, <code class="type">macaddr</code>, <code class="type">macaddr8</code>, <code class="type">inet</code>, <code class="type">cidr</code>, <code class="type">uuid</code>, <code class="type">bool</code> and all <code class="type">enum</code> types.</p>
+  <p>In general, these operator classes will not outperform the equivalent standard B-tree index methods, and they lack one major feature of the standard B-tree code: the ability to enforce uniqueness. However, they provide some other features that are not available with a B-tree index, as described below. Also, these operator classes are useful when a multicolumn GiST index is needed, wherein some of the columns are of data types that are only indexable with GiST but other columns are just simple data types. Lastly, these operator classes are useful for GiST testing and as a base for developing other GiST operator classes.</p>
+  <p>In addition to the typical B-tree search operators, <code class="filename">btree_gist</code> also provides index support for <code class="literal">&lt;&gt;</code> (<span class="quote">“<span class="quote">not equals</span>”</span>). This may be useful in combination with an <a class="link" href="sql-createtable.html#SQL-CREATETABLE-EXCLUDE">exclusion constraint</a>, as described below.</p>
+  <p>Also, for data types for which there is a natural distance metric, <code class="filename">btree_gist</code> defines a distance operator <code class="literal">&lt;-&gt;</code>, and provides GiST index support for nearest-neighbor searches using this operator. Distance operators are provided for <code class="type">int2</code>, <code class="type">int4</code>, <code class="type">int8</code>, <code class="type">float4</code>, <code class="type">float8</code>, <code class="type">timestamp with time zone</code>, <code class="type">timestamp without time zone</code>, <code class="type">time without time zone</code>, <code class="type">date</code>, <code class="type">interval</code>, <code class="type">oid</code>, and <code class="type">money</code>.</p>
+  <p>This module is considered <span class="quote">“<span class="quote">trusted</span>”</span>, that is, it can be installed by non-superusers who have <code class="literal">CREATE</code> privilege on the current database.</p>
+  <div class="sect2" id="BTREE-GIST-EXAMPLE-USAGE">
+    <div class="titlepage">
+      <div>
+        <div>
+          <h3 class="title">F.9.1.&nbsp;Example Usage <a href="#BTREE-GIST-EXAMPLE-USAGE" class="id_link">#</a></h3>
+        </div>
+      </div>
+    </div>
+    <p>Simple example using <code class="literal">btree_gist</code> instead of <code class="literal">btree</code>:</p>
+    <pre class="programlisting">
+CREATE TABLE test (a int4);
+-- create index
+CREATE INDEX testidx ON test USING GIST (a);
+-- query
+SELECT * FROM test WHERE a &lt; 10;
+-- nearest-neighbor search: find the ten entries closest to "42"
+SELECT *, a &lt;-&gt; 42 AS dist FROM test ORDER BY a &lt;-&gt; 42 LIMIT 10;
+</pre>
+    <p>Use an <a class="link" href="sql-createtable.html#SQL-CREATETABLE-EXCLUDE">exclusion constraint</a> to enforce the rule that a cage at a zoo can contain only one kind of animal:</p>
+    <pre class="programlisting">
+=&gt; CREATE TABLE zoo (
+  cage   INTEGER,
+  animal TEXT,
+  EXCLUDE USING GIST (cage WITH =, animal WITH &lt;&gt;)
+);
+
+=&gt; INSERT INTO zoo VALUES(123, 'zebra');
+INSERT 0 1
+=&gt; INSERT INTO zoo VALUES(123, 'zebra');
+INSERT 0 1
+=&gt; INSERT INTO zoo VALUES(123, 'lion');
+ERROR:  conflicting key value violates exclusion constraint "zoo_cage_animal_excl"
+DETAIL:  Key (cage, animal)=(123, lion) conflicts with existing key (cage, animal)=(123, zebra).
+=&gt; INSERT INTO zoo VALUES(124, 'lion');
+INSERT 0 1
+</pre>
+  </div>
+  <div class="sect2" id="BTREE-GIST-AUTHORS">
+    <div class="titlepage">
+      <div>
+        <div>
+          <h3 class="title">F.9.2.&nbsp;Authors <a href="#BTREE-GIST-AUTHORS" class="id_link">#</a></h3>
+        </div>
+      </div>
+    </div>
+    <p>Teodor Sigaev (<code class="email">&lt;<a class="email" href="mailto:teodor@stack.net">teodor@stack.net</a>&gt;</code>), Oleg Bartunov (<code class="email">&lt;<a class="email" href="mailto:oleg@sai.msu.su">oleg@sai.msu.su</a>&gt;</code>), Janko Richter (<code class="email">&lt;<a class="email" href="mailto:jankorichter@yahoo.de">jankorichter@yahoo.de</a>&gt;</code>), and Paul Jungwirth (<code class="email">&lt;<a class="email" href="mailto:pj@illuminatedcomputing.com">pj@illuminatedcomputing.com</a>&gt;</code>). See <a class="ulink" href="http://www.sai.msu.su/~megera/postgres/gist/" target="_top">http://www.sai.msu.su/~megera/postgres/gist/</a> for additional information.</p>
+  </div>
+</div>
+<div class="navfooter">
+  <hr />
+  <table width="100%" summary="Navigation footer">
+    <tr>
+      <td width="40%" align="left"><a accesskey="p" href="btree-gin.html" title="F.8.&nbsp;btree_gin — GIN operator classes with B-tree behavior">Prev</a>&nbsp;</td>
+      <td width="20%" align="center"><a accesskey="u" href="contrib.html" title="Appendix&nbsp;F.&nbsp;Additional Supplied Modules and Extensions">Up</a></td>
+      <td width="40%" align="right">&nbsp;<a accesskey="n" href="citext.html" title="F.10.&nbsp;citext — a case-insensitive character string type">Next</a></td>
+    </tr>
+    <tr>
+      <td width="40%" align="left" valign="top">F.8.&nbsp;btree_gin — GIN operator classes with B-tree behavior&nbsp;</td>
+      <td width="20%" align="center"><a accesskey="h" href="index.html" title="PostgreSQL 16.15 Documentation">Home</a></td>
+      <td width="40%" align="right" valign="top">&nbsp;F.10.&nbsp;citext — a case-insensitive character string type</td>
+    </tr>
+  </table>
+</div>
+
+          </div>
+          
+            <div id="docComments">
+              <h2>Submit correction</h2>
+              <p>
+              If you see anything in the documentation that is not correct, does not match
+              your experience with the particular feature or requires further clarification,
+              please use
+              <a href="/account/comments/new/16/btree-gist.html/" rel="nofollow">this form</a>
+              to report a documentation issue.
+              </p>
+            </div>
+          
+        </div> <!-- pgContentWrap -->
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer id="footer">
+      <!-- Copyright -->
+      <div class="container">
+        <a href="/about/policies/">Policies</a> |
+        <a href="/about/policies/coc/">Code of Conduct</a> |
+        <a href="/about/">About PostgreSQL</a> |
+        <a href="/about/contact/">Contact</a><br/>
+        <p>Copyright &copy; 1996-2026 The PostgreSQL Global Development Group</p>
+      </div>
+    </footer>
+    <script src="/media/js/main.js?5cdc3ede"></script>
+
+  </body>
+</html>

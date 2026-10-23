@@ -1,0 +1,296 @@
+Art. 17 GDPR – Right to erasure (‘right to be forgotten’) - General Data Protection Regulation (GDPR)
+Search for:
+General Data Protection Regulation (GDPR)
+Final text of the GDPR including recitals.
+Menu and widgets
+DSGVO
+GDPR
+Recitals
+Key Issues
+AI Act
+Data Act
+Skip to content
+Search for:
+GDPR
+Recitals
+Key Issues
+AI Act
+Data Act
+GDPR
+Chapter 1 (Art. 1 – 4)
+General provisions
+Art. 1
+Subject-matter and objectives
+Art. 2
+Material scope
+Art. 3
+Territorial scope
+Art. 4
+Definitions
+Chapter 2 (Art. 5 – 11)
+Principles
+Art. 5
+Principles relating to processing of personal data
+Art. 6
+Lawfulness of processing
+Art. 7
+Conditions for consent
+Art. 8
+Conditions applicable to child’s consent in relation to information society services
+Art. 9
+Processing of special categories of personal data
+Art. 10
+Processing of personal data relating to criminal convictions and offences
+Art. 11
+Processing which does not require identification
+Chapter 3 (Art. 12 – 23)
+Rights of the data subject
+Art. 12
+Transparent information, communication and modalities for the exercise of the rights of the data subject
+Art. 13
+Information to be provided where personal data are collected from the data subject
+Art. 14
+Information to be provided where personal data have not been obtained from the data subject
+Art. 15
+Right of access by the data subject
+Art. 16
+Right to rectification
+Art. 17
+Right to erasure (‘right to be forgotten’)
+Art. 18
+Right to restriction of processing
+Art. 19
+Notification obligation regarding rectification or erasure of personal data or restriction of processing
+Art. 20
+Right to data portability
+Art. 21
+Right to object
+Art. 22
+Automated individual decision-making, including profiling
+Art. 23
+Restrictions
+Chapter 4 (Art. 24 – 43)
+Controller and processor
+Art. 24
+Responsibility of the controller
+Art. 25
+Data protection by design and by default
+Art. 26
+Joint controllers
+Art. 27
+Representatives of controllers or processors not established in the Union
+Art. 28
+Processor
+Art. 29
+Processing under the authority of the controller or processor
+Art. 30
+Records of processing activities
+Art. 31
+Cooperation with the supervisory authority
+Art. 32
+Security of processing
+Art. 33
+Notification of a personal data breach to the supervisory authority
+Art. 34
+Communication of a personal data breach to the data subject
+Art. 35
+Data protection impact assessment
+Art. 36
+Prior consultation
+Art. 37
+Designation of the data protection officer
+Art. 38
+Position of the data protection officer
+Art. 39
+Tasks of the data protection officer
+Art. 40
+Codes of conduct
+Art. 41
+Monitoring of approved codes of conduct
+Art. 42
+Certification
+Art. 43
+Certification bodies
+Chapter 5 (Art. 44 – 50)
+Transfers of personal data to third countries or international organisations
+Art. 44
+General principle for transfers
+Art. 45
+Transfers on the basis of an adequacy decision
+Art. 46
+Transfers subject to appropriate safeguards
+Art. 47
+Binding corporate rules
+Art. 48
+Transfers or disclosures not authorised by Union law
+Art. 49
+Derogations for specific situations
+Art. 50
+International cooperation for the protection of personal data
+Chapter 6 (Art. 51 – 59)
+Independent supervisory authorities
+Art. 51
+Supervisory authority
+Art. 52
+Independence
+Art. 53
+General conditions for the members of the supervisory authority
+Art. 54
+Rules on the establishment of the supervisory authority
+Art. 55
+Competence
+Art. 56
+Competence of the lead supervisory authority
+Art. 57
+Tasks
+Art. 58
+Powers
+Art. 59
+Activity reports
+Chapter 7 (Art. 60 – 76)
+Cooperation and consistency
+Art. 60
+Cooperation between the lead supervisory authority and the other supervisory authorities concerned
+Art. 61
+Mutual assistance
+Art. 62
+Joint operations of supervisory authorities
+Art. 63
+Consistency mechanism
+Art. 64
+Opinion of the Board
+Art. 65
+Dispute resolution by the Board
+Art. 66
+Urgency procedure
+Art. 67
+Exchange of information
+Art. 68
+European Data Protection Board
+Art. 69
+Independence
+Art. 70
+Tasks of the Board
+Art. 71
+Reports
+Art. 72
+Procedure
+Art. 73
+Chair
+Art. 74
+Tasks of the Chair
+Art. 75
+Secretariat
+Art. 76
+Confidentiality
+Chapter 8 (Art. 77 – 84)
+Remedies, liability and penalties
+Art. 77
+Right to lodge a complaint with a supervisory authority
+Art. 78
+Right to an effective judicial remedy against a supervisory authority
+Art. 79
+Right to an effective judicial remedy against a controller or processor
+Art. 80
+Representation of data subjects
+Art. 81
+Suspension of proceedings
+Art. 82
+Right to compensation and liability
+Art. 83
+General conditions for imposing administrative fines
+Art. 84
+Penalties
+Chapter 9 (Art. 85 – 91)
+Provisions relating to specific processing situations
+Art. 85
+Processing and freedom of expression and information
+Art. 86
+Processing and public access to official documents
+Art. 87
+Processing of the national identification number
+Art. 88
+Processing in the context of employment
+Art. 89
+Safeguards and derogations relating to processing for archiving purposes in the public interest, scientific or historical research purposes or statistical purposes
+Art. 90
+Obligations of secrecy
+Art. 91
+Existing data protection rules of churches and religious associations
+Chapter 10 (Art. 92 – 93)
+Delegated acts and implementing acts
+Art. 92
+Exercise of the delegation
+Art. 93
+Committee procedure
+Chapter 11 (Art. 94 – 99)
+Final provisions
+Art. 94
+Repeal of Directive 95/46/EC
+Art. 95
+Relationship with Directive 2002/58/EC
+Art. 96
+Relationship with previously concluded Agreements
+Art. 97
+Commission reports
+Art. 98
+Review of other Union legal acts on data protection
+Art. 99
+Entry into force and application
+Imprint | Privacy Policy | Liability
+Art. 17 GDPR
+Right to erasure (‘right to be forgotten’)
+The data subject shall have the right to obtain from the controller the erasure of personal data concerning him or her without undue delay and the controller shall have the obligation to erase personal data without undue delay where one of the following grounds applies:
+the personal data are no longer necessary in relation to the purposes for which they were collected or otherwise processed;
+the data subject withdraws consent on which the processing is based according to point (a) of
+Article 6
+(1), or point (a) of
+Article 9
+(2), and where there is no other legal ground for the processing;
+the data subject objects to the processing pursuant to
+Article 21
+(1) and there are no overriding legitimate grounds for the processing, or the data subject objects to the processing pursuant to
+Article 21
+(2);
+the personal data have been unlawfully processed;
+the personal data have to be erased for compliance with a legal obligation in Union or Member State law to which the controller is subject;
+the personal data have been collected in relation to the offer of information society services referred to in
+Article 8
+(1).
+Where the controller has made the personal data public and is obliged pursuant to paragraph 1 to erase the personal data, the controller, taking account of available technology and the cost of implementation, shall take reasonable steps, including technical measures, to inform controllers which are processing the personal data that the data subject has requested the erasure by such controllers of any links to, or copy or replication of, those personal data.
+Paragraphs 1 and 2 shall not apply to the extent that processing is necessary:
+for exercising the right of freedom of expression and information;
+for compliance with a legal obligation which requires processing by Union or Member State law to which the controller is subject or for the performance of a task carried out in the public interest or in the exercise of official authority vested in the controller;
+for reasons of public interest in the area of public health in accordance with points (h) and (i) of
+Article 9
+(2) as well as
+Article 9
+(3);
+for archiving purposes in the public interest, scientific or historical research purposes or statistical purposes in accordance with
+Article 89
+(1) in so far as the right referred to in paragraph 1 is likely to render impossible or seriously impair the achievement of the objectives of that processing; or
+for the establishment, exercise or defence of legal claims.
+Suitable Recitals
+(
+65
+) Right of Rectification and Erasure
+(
+66
+) Right to be Forgotten
+←
+Art. 16 GDPR
+Art. 18 GDPR
+→
+GDPR
+Table of contents
+Report error
+Logo
+We are a consulting company specialised in the fields of data protection, information security and IT forensics.
+CTA
+Learn more
+Follow us:
+XING
+|
+LinkedIn
+Rate us:
+Please wait...
