@@ -21,3 +21,9 @@ wheels/
 
 # Reports
 evals/reports/
+
+# IDE / Agent configs
+.claude/
+.cursor/
+.vscode/
+.agents/
