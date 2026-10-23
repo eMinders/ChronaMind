@@ -1,0 +1,21 @@
+AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases
+NeurIPS Proceedings
+Search
+AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases
+Zhaorun Chen, Zhen Xiang, Chaowei Xiao, Dawn Song, Bo Li
+Advances in Neural Information Processing Systems 37  (NeurIPS 2024)
+Main Conference Track
+Bibtex
+Paper
+Abstract
+LLM agents have demonstrated remarkable performance across various applications, primarily due to their advanced capabilities in reasoning, utilizing external knowledge and tools, calling APIs, and executing actions to interact with environments. Current agents typically utilize a memory module or a retrieval-augmented generation (RAG) mechanism, retrieving past knowledge and instances with similar embeddings from knowledge bases to inform task planning and execution. However, the reliance on unverified knowledge bases raises significant concerns about their safety and trustworthiness. To uncover such vulnerabilities, we propose a novel red teaming approach AgentPoison, the first backdoor attack targeting generic and RAG-based LLM agents by poisoning their long-term memory orRAG knowledge base. In particular, we form the trigger generation process as a constrained optimization to optimize backdoor triggers by mapping the triggered instances to a unique embedding space, so as to ensure that whenever a user instruction contains the optimized backdoor trigger, the malicious demonstrations are retrieved from the poisoned memory or knowledge base with high probability. In the meantime, benign instructions without the trigger will still maintain normal performance. Unlike conventional backdoor attacks, AgentPoison requires no additional model training or fine-tuning, and the optimized backdoor trigger exhibits superior transferability, resilience, and stealthiness. Extensive experiments demonstrate AgentPoison's effectiveness in attackingthree types of real-world LLM agents: RAG-based autonomous driving agent, knowledge-intensive QA agent, and healthcare EHRAgent. We inject the poisoning instances into the RAG knowledge base and long-term memories of these agents, respectively, demonstrating the generalization of AgentPoison. On each agent, AgentPoison achieves an average attack success rate of $\ge$ 80% with minimalimpact on benign performance ($\le$ 1%) with a poison rate < 0.1%. The code and data is available at https://github.com/BillChan226/AgentPoison.
+DOI
+10.52202/079017-4136
+Name Change Policy
+×
+Requests for name changes in the electronic proceedings will be accepted with no questions asked.  However name changes may cause bibliographic tracking issues.  Authors are asked to consider this carefully and discuss it with their co-authors prior to requesting a name change in the electronic proceedings.
+Use the "Report an Issue" link to request a name change.
+Report an Issue
+|
+Name Change Policy
+Do not remove: This comment is monitored to verify that the site is working properly

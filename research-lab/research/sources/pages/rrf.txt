@@ -1,0 +1,127 @@
+         Reciprocal Rank Fusion outperforms Condorcet and
+                 individual Rank Learning Methods
+
+                      G. V. Cormack                                     C. L. A. Clarke                       Stefan Büttcher
+                University of Waterloo                            University of Waterloo                         Google
+               Waterloo, Ontario, Canada                         Waterloo, Ontario, Canada                   Redmond, WA, USA
+
+
+
+ABSTRACT                                                                             lower-ranked documents does not vanish as it would were,
+Reciprocal Rank Fusion (RRF), a simple method for com-                               say, an exponential function used. The constant k mitigates
+bining the document rankings from multiple IR systems,                               the impact of high rankings by outlier systems.
+consistently yields better results than any individual sys-                            Condorcet Fuse combines rankings by sorting the doc-
+tem, and better results than the standard method Condorcet                           uments according to the pairwise relation r(d1 ) < r(d2 ),
+Fuse. This result is demonstrated by using RRF to combine                            which is determined for each (d1 , d2 ) by majority vote among
+the results of several TREC experiments, and to build a                              the input rankings. CombMNZ requires for each r a corre-
+meta-learner that ranks the LETOR 3 dataset better than                              sponding scoring function sr : D → R and a cutoff rank c
+any previously reported method.                                                      which all contribute to the CombMNZ score:
+                                                                                                                                       X
+                                                                                      CMNZscore(d ∈ D) = |{r ∈ R|r(d) ≤ c}| ·                 sr (d) .
+Categories and Subject Descriptors: H.3.3 [Informa-                                                                                 {r|r(d)≤c}
+tion Search and Retrieval]:retrieval models
+General Terms: Experimentation, Measurement                                             We conducted four pilot experiments, each combining the
+Keywords: fusion, aggregation, ranking                                               results of 30 configurations of Wumpus Search applied to
+                                                                                     four different TREC collections. The results of the first,
+                                                                                     shown in table 1, indicated that k = 60 was near-optimal,
+1.     RECIPROCAL RANK FUSION                                                        but that the choice was not critical. The results also showed,
+   While supervised learning-to-rank methods have garnered                           somewhat unexpectedly, that RRF bested competing ap-
+much attention of late, unsupervised methods are attractive                          proaches, as well as more sophisticated learning methods
+because they require no training examples. In the search                             whose investigation was the original impetus for our work.
+for such a method we came up with Reciprocal Rank Fu-                                   We repeated our experiment with four sets of submissions
+sion (RRF) to serve as a baseline. We found that RRF,                                to TREC tasks; the particular sets were selected because
+when used to combine the results of IR methods (including                            they have been used in previous metaranking evaluation.
+learning to rank), almost invariably improved on the best                            It is worthy of note that, while our pilot runs used ex-
+of the combined results. We also found that RRF consis-                              actly the same set of Wumpus configurations to generate
+tently equaled or bettered other methods we tried, includ-                           the individual rankings on different datasets, the individual
+ing established metaranking standards Condorcet Fuse and                             rankings in these experiments were exactly those submitted
+CombMNZ (cf. [4]).                                                                   by TREC participants. Table 2 shows the RRF result, as
+   RRF simply sorts the documents according to a naive                               well as the best individual, Condorcet and CombMNZ re-
+scoring formula. Given a set D of documents to be ranked                             sults. The MAP score for RRF exceeds that of Condorcet
+and a set of rankings R, each a permutation on 1..|D|, we                            Fuse in all cases, and CombMNZ in all but one. RRF also
+compute                                                                              outperforms the best ranking in each experiment, with the
+                                                                                     exception of TREC 9, where the best ranking was derived
+                                             X      1                                using a human-in-the-loop. RRF outperforms the next-best
+                RRFscore(d ∈ D) =                         ,
+                                             r∈R
+                                                 k + r(d)                            ranking, which was automated.
+                                                                                        The pilot and TREC experiments indicate that RRF out-
+where k = 60 was fixed during a pilot investigation and                              performs Condorcet, CombMNZ and the best system by 4%
+not altered during subsequent validation. Our intuition in                           to 5% on average. We use a simple sign test to establish sig-
+choosing this formula derived from fact that while highly-                           nificance. Discounting the first pilot run, RRF outperformed
+ranked documents are more important, the importance of                               Condorcet all 7 times (p ≈ 0.008), outperformed CombMNZ
+                                                                                     6 of 7 times (p ≈ .04), and outperformed the best individual
+Permission to make digital or hard copies of all or part of this work for            result either 6 or 7 times (0.008 ≤ p ≤ 0.04), depending on
+personal or classroom use is granted without fee provided that copies are            whether or not the manual result is considered. Thus all
+not made or distributed for profit or commercial advantage and that copies           measured differences are significant.
+bear this notice and the full citation on the first page. To copy otherwise, to         Our final experiment used the sample learning results
+republish, to post on servers or to redistribute to lists, requires prior specific
+                                                                                     supplied with the LETOR 31 dataset, as well as a logis-
+permission and/or a fee.
+SIGIR’09, July 19–23, 2009, Boston, Massachusetts, USA.                              1
+Copyright 2009 ACM 978-1-60558-483-6/09/07 ...$5.00.                                     research.microsoft.com/en-us/um/beijing/projects/letor
+              k       0       10      20       30        40      50        60      70      80       90     100     500
+            M AP    .2072   .2123   .2134    .2139     .2138   .2144     .2145   .2146   .2147    .2145   .2142   .2098
+
+                                    method     Best individual     Condorcet       CombMNZ
+                                    M AP            .2016            .2074           .2039
+Table 1: Pilot results. Effect of k on MAP for RR Fusion of 30 model system results on TREC topics 351-400.
+Results of best model system and competing fusion methods shown for comparison. Similar results were seen
+for the same systems applied to three other test collections.
+
+                                                                     Method
+                             Collection        RRF      Best individual Condorcet          CombMNZ
+                            TREC Robust       .3686          .3586         .3652              .3575
+                              TREC 3           .4350         .4226         .4256             .4381
+                              TREC 5          .3394          .3165         .3213              .3237
+                              TREC 9          .2830      .3519 (.2801)     .2750              .2671
+Table 2: MAP scores for fusion of submitted runs for TREC 3, TREC 5 and TREC 9 ad hoc tasks, plus
+TREC 2004 Robust track.
+
+                            method                M APmethod              M APRRF − M APmethod          p
+                              RRF             0.6051 (0.58 - 0.63)                    –                 –
+                           Condorcet          0.5917 (0.56 - 0.62)          0.0134 (0.00 - 0.02)      .004
+                           CombMNZ            0.6107 (0.58 - 0.64)           -0.0056 (-0.01 - 0)       .2
+                           ListNet [1]        0.5846 (0.56 - 0.61)          0.0205 (0.01 - 0.03)      .001
+                              LGD             0.5837 (0.56 - 0.61)          0.0214 (0.01 - 0.04)      .003
+                        AdaRank-MAP [6]       0.5778 (0.55 - 0.61)          0.0273 (0.01 - 0.04)      .000
+                          RankSVM [3]         0.5737 (0.55 - 0.60)          0.0314 (0.02 - 0.04)      .000
+                         RankBoost [2]        0.5622 (0.53 - 0.59)          0.0429 (0.03 - 0.06)      .000
+Table 3: Individual rankings and fusion for 583,850 document-query pairs in LETOR 3 corpus. MAP score
+for each method, plus difference between fusion and individual MAP score with 95% confidence limits.
+
+
+tic gradient descent method (LGD) which we are develop-                of individual system by the sum of a binary quantization of
+ing. For the purpose of analysis, we combined the seven sets           each rank. It is perhaps not surprising that its results have
+of document-query pairs into one and computed an overall               higher variance, ranging from insubstantially better than
+MAP score. We also computed the difference between RRF                 RRF to substantially worse than Condorcet. We conjecture
+and individual MAP scores, 95% confidence intervals, and               that this effect is due to the fact that, by happenstance,
+p-value (likelihood under the null hypothesis that the dif-            some scores are more amenable than others.
+ference is 0). Table 3 shows these results. RRF betters all               To our knowledge, no reported result matches or exceeds
+individual rankings (p < .003), the best by a margin of 0.02           the performance of the meta-learner formed by applying fu-
+(4%); Condorcet is inferior to RRF (p ≈ .004) while appar-             sion to the LETOR baseline rank learning methods. So the
+ently bettering the individual rankings (p ≈ .2). CombMNZ              meta-learner constitutes the best known method, and the re-
+edges RRF by a small margin (p ≈ .2). None of the mea-                 sult raises the lower bound of what is known to be learnable
+sured differences among the baseline systems is significant.           from the dataset. This latter question is a matter of some
+                                                                       interest, as the MAP scores for LETOR 3 approach the 65%
+2.   DISCUSSION                                                        considered achievable with human-adjudicated relevance [5].
+  For brevity, we report MAP as the measure of system per-
+formance. P @k, R-precision, and N DCG yield comparable                References
+results.                                                               [1] Cao, Z., Qin, T., Liu, T.-Y., Tsai, M.-F., and Li,
+  RRF is simpler and more effective than Condorcet Fuse,                   H. Learning to rank: from pairwise approach to listwise
+while sharing the valuable property that it combines ranks                 approach. In ICML ’07 (2007).
+without regard to the arbitrary scores returned by partic-             [2] Freund, Y., Iyer, R., Schapire, R. E., and
+ular ranking methods [4]. RRF requires no special voting                   Singer, Y. An efficient boosting algorithm for
+algorithm or global information; ranks may be computed                     combining preferences. JMLR 4 (2003).
+and summed one system at a time, avoiding the necessity of             [3] Joachims, T. Optimizing search engines using
+keeping all rankings in memory. We conjecture that RRF                     clickthrough data. In KDD ’02 (2002).
+outperforms Condorcet because it is better able to harness             [4] Montague, M., and Aslam, J. A. Condorcet fusion
+diversity within individual rankings. One or two systems                   for improved retrieval. In CIKM (2002).
+that rank a document highly can substantially improve its
+                                                                       [5] Voorhees, E. M., and Harman, D. K., Eds. TREC -
+rank relative to the more popular documents. With Con-
+                                                                           Experiment and Evaluation in IR. MIT Press, 2005.
+dorcet, a simple majority of weak preferences may overrule
+substantially stronger ones.                                           [6] Xu, J., and Li, H. Adarank: a boosting algorithm for
+  CombMNZ multiplies the sum of the uncalibrated scores                    information retrieval. In SIGIR ’07 (2007).
+

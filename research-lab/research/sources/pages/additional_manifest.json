@@ -1,0 +1,98 @@
+[
+  {
+    "key": "zep_full",
+    "url": "https://arxiv.org/html/2501.13956",
+    "status": 200,
+    "length": 44596
+  },
+  {
+    "key": "mem0_full",
+    "url": "https://arxiv.org/html/2504.19413",
+    "status": 200,
+    "length": 73057
+  },
+  {
+    "key": "amem_full",
+    "url": "https://arxiv.org/html/2502.12110",
+    "status": 200,
+    "length": 88098
+  },
+  {
+    "key": "memos_full",
+    "url": "https://arxiv.org/html/2507.03724",
+    "status": 200,
+    "length": 140661
+  },
+  {
+    "key": "memoryos_full",
+    "url": "https://arxiv.org/html/2506.06326",
+    "status": 200,
+    "length": 38085
+  },
+  {
+    "key": "memorygraft_full",
+    "url": "https://arxiv.org/html/2512.16962",
+    "status": 200,
+    "length": 57652
+  },
+  {
+    "key": "longmemeval_full",
+    "url": "https://arxiv.org/html/2410.10813",
+    "status": 200,
+    "length": 102315
+  },
+  {
+    "key": "agent_poison_full",
+    "url": "https://arxiv.org/html/2407.12784",
+    "status": 200,
+    "length": 81609
+  },
+  {
+    "key": "lme_v2",
+    "url": "https://raw.githubusercontent.com/xiaowu0162/LongMemEval-V2/main/README.md",
+    "status": 200,
+    "length": 9708
+  },
+  {
+    "key": "locomo_license_actual",
+    "url": "https://raw.githubusercontent.com/snap-research/locomo/main/LICENSE.txt",
+    "status": 200,
+    "length": 19343
+  },
+  {
+    "key": "lme_data_card",
+    "url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/raw/main/README.md",
+    "status": 200,
+    "length": 626
+  },
+  {
+    "key": "locomo_data",
+    "url": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json",
+    "status": 200,
+    "length": 2805274
+  },
+  {
+    "key": "search_bing",
+    "url": "https://www.bing.com/search?q=2026+long+term+agent+memory+benchmark+arxiv",
+    "status": 200,
+    "length": 2861
+  },
+  {
+    "key": "search_ddg",
+    "url": "https://html.duckduckgo.com/html/?q=2026+LLM+agent+memory+benchmark",
+    "status": 202,
+    "length": 288
+  },
+  {
+    "key": "gdpr_official",
+    "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32016R0679",
+    "status": 202,
+    "length": 0
+  },
+  {
+    "key": "iclr_lme",
+    "url": "https://openreview.net/forum?id=pZiyCaVuti",
+    "status": 200,
+    "length": 266
+  }
+]

@@ -1,0 +1,184 @@
+[2512.16962] MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Cryptography and Security
+arXiv:2512.16962
+(cs)
+[Submitted on 18 Dec 2025]
+Title:
+MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval
+Authors:
+Saksham Sahai Srivastava
+,
+Haoyu He
+View a PDF of the paper titled MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval, by Saksham Sahai Srivastava and Haoyu He
+View PDF
+HTML (experimental)
+Abstract:
+Large Language Model (LLM) agents increasingly rely on long-term memory and Retrieval-Augmented Generation (RAG) to persist experiences and refine future performance. While this experience learning capability enhances agentic autonomy, it introduces a critical, unexplored attack surface, i.e., the trust boundary between an agent's reasoning core and its own past. In this paper, we introduce MemoryGraft. It is a novel indirect injection attack that compromises agent behavior not through immediate jailbreaks, but by implanting malicious successful experiences into the agent's long-term memory. Unlike traditional prompt injections that are transient, or standard RAG poisoning that targets factual knowledge, MemoryGraft exploits the agent's semantic imitation heuristic which is the tendency to replicate patterns from retrieved successful tasks. We demonstrate that an attacker who can supply benign ingestion-level artifacts that the agent reads during execution can induce it to construct a poisoned RAG store where a small set of malicious procedure templates is persisted alongside benign experiences. When the agent later encounters semantically similar tasks, union retrieval over lexical and embedding similarity reliably surfaces these grafted memories, and the agent adopts the embedded unsafe patterns, leading to persistent behavioral drift across sessions. We validate MemoryGraft on MetaGPT's DataInterpreter agent with GPT-4o and find that a small number of poisoned records can account for a large fraction of retrieved experiences on benign workloads, turning experience-based self-improvement into a vector for stealthy and durable compromise. To facilitate reproducibility and future research, our code and evaluation data are available at
+this https URL
+.
+Comments:
+14 pages, 1 figure, includes appendix
+Subjects:
+Cryptography and Security (cs.CR)
+; Artificial Intelligence (cs.AI); Machine Learning (cs.LG)
+Cite as:
+arXiv:2512.16962
+[cs.CR]
+(or
+arXiv:2512.16962v1
+[cs.CR]
+for this version)
+https://doi.org/10.48550/arXiv.2512.16962
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Saksham Srivastava [
+view email
+]
+[v1]
+Thu, 18 Dec 2025 08:34:40 UTC (4,904 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled MemoryGraft: Persistent Compromise of LLM Agents via Poisoned Experience Retrieval, by Saksham Sahai Srivastava and Haoyu He
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.CR
+< prev
+|
+next >
+new
+|
+recent
+|
+2025-12
+Change to browse by:
+cs
+cs.AI
+cs.LG
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from

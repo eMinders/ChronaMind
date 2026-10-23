@@ -1,0 +1,56 @@
+[
+  {
+    "key": "judge_neurips",
+    "url": "https://papers.nips.cc/paper_files/paper/2023/hash/91f18a1287b398d378ef22505bf41832-Abstract-Datasets_and_Benchmarks.html",
+    "status": 200,
+    "bytes": 10436
+  },
+  {
+    "key": "rag_neurips",
+    "url": "https://papers.nips.cc/paper/2020/hash/6b493230205f780e1bc26945df7481e5-Abstract.html",
+    "status": 200,
+    "bytes": 10881
+  },
+  {
+    "key": "park_doi",
+    "url": "https://api.crossref.org/works/10.1145/3586183.3606763",
+    "status": 200,
+    "bytes": 27549
+  },
+  {
+    "key": "dror",
+    "url": "https://aclanthology.org/P18-1128/",
+    "status": 200,
+    "bytes": 42423
+  },
+  {
+    "key": "bm25_pdf",
+    "url": "https://www.staff.city.ac.uk/~sbrp622/papers/foundations_bm25_review.pdf",
+    "status": 200,
+    "bytes": 423997
+  },
+  {
+    "key": "gdpr_pdf",
+    "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=CELEX:32016R0679",
+    "status": 202,
+    "bytes": 0
+  },
+  {
+    "key": "snodgrass_page",
+    "url": "https://www2.cs.arizona.edu/~rts/tdbbook.pdf",
+    "status": 200,
+    "bytes": 5003142
+  },
+  {
+    "key": "amem_openreview",
+    "url": "https://api2.openreview.net/notes?content.arxiv_id=2502.12110",
+    "status": 429,
+    "bytes": 162
+  },
+  {
+    "key": "lme_hf_api",
+    "url": "https://huggingface.co/api/datasets/xiaowu0162/longmemeval-cleaned",
+    "status": 200,
+    "bytes": 1128
+  }
+]

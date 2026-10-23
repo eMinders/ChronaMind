@@ -1,0 +1,12 @@
+# Full-text retrieval manifest (17 Oct 2026). Source: https://arxiv.org/pdf/<id>; text via pdftotext -layout.
+# PDFs were removed after extraction to keep the directory small; sha256 lets the same files be re-fetched and compared.
+2602.17692  pdf_sha256=ee82ded4ac135c9928bf13a07b708d9d703a266daf24b3bf7631551b9bebe3be  pdf_bytes=3206323  txt_words=7143
+2605.30771  pdf_sha256=62dc72af3ddd569486d8b2e5ffb2fd42046c9ccb16feb175110793869867b396  pdf_bytes=3814687  txt_words=12445
+2606.06240  pdf_sha256=a023c0daece0d767a2c7100ab556bbdda4c6e90edf2c31e5e17e8360ef857904  pdf_bytes=1427813  txt_words=36106
+2606.18829  pdf_sha256=b86e2dbbd0b66922898b7bd4e694c79f41845552255460549e96be16fe895feb  pdf_bytes=1752241  txt_words=13601
+2607.01935  pdf_sha256=05f52b2c29d916aff3424b7ce950b71adad54533e7bf1362bb2f544071910e18  pdf_bytes=1585523  txt_words=12546
+2607.18975  pdf_sha256=7ca60ba388914f6deb6c5e30f430c8be1d77af38e3df87b0179e1a851c8dc6a7  pdf_bytes=1808256  txt_words=25902
+2607.21962  pdf_sha256=fa7a1a1f3fbb3d5624e288a7b46dcb3fbfce2740b14b32fa1a37cda70c1682a8  pdf_bytes=516693  txt_words=11716
+2607.23929  pdf_sha256=70a55fada7121a5d47fae3185fd09dca18d69826020dcb165323c044c65b1944  pdf_bytes=848643  txt_words=5366
+2607.26520  pdf_sha256=71621f7af12364385c83708fdf710897fbe535d98f2dcc0ec6d2858f335fb8a3  pdf_bytes=215229  txt_words=3571
+2608.16813  pdf_sha256=3abaa504e5b6c4e6640d4ddee660d756963b5413e750fce98b65a70a35ae29d3  pdf_bytes=453102  txt_words=7298

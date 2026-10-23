@@ -1,0 +1,720 @@
+                                                    Agentic Unlearning: When LLM Agent Meets Machine Unlearning
+                                          Bin Wang1 , Fan Wang2 , Pingping Wang1 , Jinyu Cong1 , Yang Yu4 , Yilong Yin2 and Zhongyi
+                                                                                   Han2∗ , Benzheng Wei1,3∗
+                                             1
+                                               Center for Medical Artificial Intelligence, Shandong University of Traditional Chinese Medicine,
+                                                                                        Qingdao, China
+                                                                  2
+                                                                    School of Software, Shandong University, Jinan, China
+                                           3
+                                             School of Medical Information Engineering, Shandong University of Traditional Chinese Medicine,                  BACKFLOW
+                                                                                                                                                            (Recontamination)
+
+                                                                                          Jinan, China
+                                                               4
+                                                                 Shandong Huazhi Talent Technology Co., Ltd., Jinan, China
+
+
+
+
+arXiv:2602.17692v2 [cs.LG] 28 Feb 2026
+                                                                  Abstract                                      TRADITIONAL LLM UNLEARNING           AGENTIC UNLEARNING
+                                                                                                                       (Stateless Model)            (Memory-Augmented Agent)
+
+                                              In this paper, we introduce agentic unlearning                                                                    BACKFLOW
+                                                                                                                                                              (Recontamination)
+                                              which removes specified information from both                                     Parameter-only
+                                                                                                                                Deletion
+                                                                                                                                                            Generation & Storage
+                                              model parameters and persistent memory in agents
+                                                                                                                                                    Agent         Synchronized
+                                              with closed-loop interaction. Existing unlearning                            LLM                      Model         Bidirectional    Persistent
+                                                                                                                                          Output                   Forgetting       Memory
+                                                                                                               Input                                 (θ)
+                                              methods target parameters alone, leaving two crit-               Query
+                                                                                                                        Parameters
+                                                                                                                                         Response                                     (M)
+                                                                                                                            (θ)                                 Retrieval (RAG)
+                                              ical gaps: (i) parameter-memory backflow, where
+                                              retrieval reactivates parametric remnants or mem-                                                                  BACKFLOW
+                                                                                                                                                               (Recontamination)
+                                              ory artifacts reintroduce sensitive content, and (ii)
+                                              the absence of a unified strategy that covers both
+                                              parameter and memory pathways. We present Syn-               Figure 1: Traditional unlearning (left) targets model parameters (θ)
+                                              chronized Backflow Unlearning (SBU), a frame-                only. Agentic unlearning (right) must address both parameters and
+                                                                                                           memory to prevent backflow recontamination (red arrows). Syn-
+                                              work that unlearns jointly across parameter and              chronized bidirectional forgetting is required.
+                                              memory pathways. The memory pathway performs
+                                              dependency closure-based unlearning that prunes
+                                              isolated entities while logically invalidating shared
+                                              artifacts. The parameter pathway employs stochas-            external memory stores (indices, summaries, embeddings,
+                                              tic reference alignment to guide model outputs to-           caches). Recent studies confirm that such dual retention
+                                              ward a high-entropy prior. These pathways are                leads to unintended disclosure of protected health informa-
+                                              integrated via a synchronized dual-update proto-             tion during interaction [Carlini et al., 2021; Seh et al., 2020;
+                                              col, forming a closed-loop mechanism where mem-              Montano et al., 2022; Yan et al., 2025], creating compliance
+                                              ory unlearning and parametric suppression rein-              challenges under HIPAA and GDPR.
+                                              force each other to prevent cross-pathway recon-                Machine unlearning provides a principled mechanism for
+                                              tamination. Experiments on medical QA bench-                 data removal [Liu et al., 2025], yet existing LLM unlearn-
+                                              marks show that SBU reduces traces of targeted pri-          ing methods [Liu et al., 2025; Geng et al., 2025; Yao et
+                                              vate information across both pathways with limited           al., 2024b; Pawelczyk et al., 2024] are designed for state-
+                                              degradation on retained data.                                less models and focus on model-internal forgetting (either pa-
+                                                                                                           rameter updates or inference-time interventions), without ad-
+                                                                                                           dressing deletion from the persistent external memories (vec-
+                                         1   Introduction                                                  tor stores, summaries, interaction logs) that govern memory-
+                                         Large Language Model (LLM) agents with persistent mem-            augmented agents [Zhong et al., 2024; Packer et al., 2024]. In
+                                         ory are transforming high-stakes domains such as healthcare,      memory-augmented agents, however, forgotten content per-
+                                         enabling longitudinal patient monitoring, multi-turn diagnos-     sists as indices, summaries, and derived artifacts; deletion
+                                         tic reasoning, and personalized clinical support [Abbasian et     requests therefore trigger repeated recontamination through
+                                         al., 2023; Shi et al., 2024; Tu et al., 2025]. Their ability      the retrieval-generation loop, a phenomenon we term back-
+                                         to write, retrieve, and update context across sessions makes      flow. Even if gradient-based unlearning successfully scrubs
+                                         them far more capable than stateless models. However, this        patient data from model weights, the retrieval mechanism
+                                         capability introduces a critical privacy risk: sensitive infor-   may still access residual traces in memory, causing the model
+                                         mation now persists in two places: model parameters and           to re-learn the forgotten information at inference time. Con-
+                                                                                                           versely, clearing memory alone cannot guarantee that para-
+                                           ∗                                                               metric knowledge is absent, since retrieval prompts may re-
+                                             Corresponding     authors:       hanzhongyicn@gmail.com,
+                                         wbz99@sina.cn                                                     activate forgotten traces encoded in the weights. This bidirec-
+tional amplification makes isolated unlearning strategies fun-            dependency-aware memory unlearning.
+damentally insufficient for memory-augmented agents. This               • Experiments demonstrate that SBU prevents backflow,
+creates a backflow loop: a sensitive fact written to exter-               improving privacy by 24.8% while maintaining >90%
+nal memory is later retrieved into the context, influences the            accuracy across benchmarks.
+agent’s behavior, and is then written back into new memories
+or re-encoded into the model during subsequent updates. Pa-
+rameter unlearning alone does not break this loop; memory
+                                                                    2     Related work
+can reintroduce the deleted content.                                2.1    Machine Unlearning
+   Existing LLM unlearning methods, whether optimization-           Machine unlearning has gained widespread attention [Xu et
+based [Ilharco et al., 2023; Yao et al., 2024b; Jia et al., 2024;   al., 2023], driven by emerging data privacy concerns and
+Zhang et al., 2024] or prompt-based [Pawelczyk et al., 2024;        the pursuit of model robustness. Unlearning was first ex-
+Thaker et al., 2024; Liu et al., 2024], are insufficient for        plored under partitioning data into disjoint sets to impose
+memory-augmented agents. Developed for stateless models,            re-training only on the shards on which forgetting has been
+they ignore the memory hierarchy inherent to agent architec-        requested [Bourtoule et al., 2021]. To relieve the burden
+tures. This hierarchy typically involves short-term memory          of full retraining for the affected shard, a method has been
+(STM) as a transient buffer and long-term memory (LTM)              proposed [Neel et al., 2021] that achieves statistical equiva-
+for persistent storage. Because these methods target only           lence between the post-deletion state and the state that would
+parameters or ephemeral contexts, they fail to sanitize per-        have existed without deletion. Forget-and-relearn [Zhou et
+sistent memory stores and cannot prevent the backflow de-           al., 2022] removes undesirable features and then enforces
+scribed above. Meanwhile, memory-oriented work focuses              learning good ones. Deviating from retraining, gradient as-
+on retrieval augmentation rather than auditable, dependency-        cent (GA) has been utilized [Jang et al., 2023] instead of
+consistent deletion, leaving residual artifacts that enable de-     gradient descent to achieve targeted unlearning with only a
+layed re-exposure of sensitive information. This fundamen-          few parameter updates. GA serves as a practical unlearning
+tal gap motivates us to formulate agentic unlearning, a             strategy in LLMs [Yao et al., 2024a], efficiently intervening
+new paradigm that extends traditional LLM unlearning to             with token probabilities, making undesirable generations im-
+memory-augmented agents (Figure 1). Unlike traditional un-          probable. Incorporating well-suited loss functions and data-
+learning that targets only model parameters, agentic unlearn-       adaptive LoRA initializations helps resolve GA instabilities
+ing must jointly govern both parametric knowledge and per-          in LoRA-based unlearning [Cha et al., 2025]. These methods
+sistent external memory to prevent cross-pathway recontami-         assume stateless models and target only parametric knowl-
+nation. To the best of our knowledge, this work is the first to     edge or ephemeral context, leaving the retrieval-write loop in
+formally define and address the agentic unlearning problem          memory-augmented agents uncontrolled. When forgotten in-
+for memory-augmented LLM agents.                                    formation can be retrieved from external memory or regener-
+   To address these privacy challenges, we propose Synchro-         ated and re-stored, parameter-only unlearning cannot prevent
+nized Backflow Unlearning (SBU), a dual-pathway frame-              cross-pathway recontamination.
+work designed to prevent information backflow. SBU coordi-
+nates two pathways operating in tandem. The parameter path-         2.2    Privacy Persistence in Agent Memory
+way uses stochastic reference alignment to guide model out-         Prior agent long-term memory work optimizes retention,
+puts toward a high-entropy prior, suppressing implicit knowl-       retrieval, and latency, while auditable forgetting remains
+edge without catastrophic forgetting. The memory pathway            lacking. MemoryBank improves persona via importance
+performs dependency-aware deletion, using a blocklist and           and time-weighted retention but lacks a verifiable redac-
+dependency graph to purge explicit records and their derived        tion loop [Zhong et al., 2024]. Mem0 offers a production
+artifacts. These pathways are integrated via a synchronized         memory layer, yet deletion and audit consistency is dele-
+protocol where memory unlearning is executed first. This se-        gated to the application [Chhikara et al., 2025]. Virtual con-
+quence ensures the parameter update occurs on a sanitized           text and hierarchical scheduling mitigate context limits but
+retrieval context, preventing the model from re-encoding the        do not govern edits or deletes of external memory [Packer
+information it is meant to forget. This design breaks the re-       et al., 2024]. Graph-augmented retrieval improves corpus-
+contamination loop by ensuring neither the model’s parame-          level organization, not per-user provenance and derivative-
+ters nor its memory retains residuals capable of regenerating       consistent deletion [Edge et al., 2025]. Multi-agent orches-
+forgotten content. The result is a closed-loop system that pro-     tration and experience replay aid collaboration and robust-
+vides robust and verifiable agentic unlearning. All operations      ness but do not provide auditable forgetting [Wu et al., 2024;
+are logged in a tamper-evident audit log for verifiability.         Shinn et al., 2023]. Risk and memory-management studies
+   We summarize our main contributions as follows:                  highlight privacy and error propagation and propose utility-
+                                                                    based add versus delete policies, but stop short of end-to-end
+   • We are the first to define and study agentic unlearn-
+                                                                    invariants [DeChant, 2025; Xiong et al., 2025]. A key sur-
+     ing, identifying its core challenge as parameter-memory
+                                                                    vey treats forgetting as first-class and separates parameter un-
+     backflow: a recontamination loop that renders existing,
+                                                                    learning from context deletion, but leaves integrated, trace-
+     parameter-only unlearning methods ineffective.
+                                                                    able realizations open.
+   • To resolve this, we propose SBU, a dual-pathway                   Most work pursues stronger retrieval or better organiza-
+     protocol that synchronizes parameter unlearning with           tion, but lacks auditable, dependency-consistent deletion in-
+variants. Naively deleting all derived artifacts risks destroy-     reflections (R). Our unlearning guarantees depend on the
+ing shared artifacts, while these methods do not coordinate         graph structure over {M, S, R, K}, not on the specific con-
+with parameter-side unlearning. We propose a dual-pathway           tent of any memory layer. Full implementation details are
+framework that enforces dependency-consistent deletion in           provided in the supplementary material.
+memory while minimizing exposure in parameters.                        As illustrated in Figure 2a, each memory is represented
+                                                                    as a node in a dependency graph G = (V, E), where nodes
+3     Method                                                        v ∈ V include raw memories, derived summaries, reflections,
+We define agentic unlearning as the task of removing infor-         and knowledge graph entities; edges E encode derivation re-
+mation from a memory-augmented agent. This is challenging           lationships. Each node maintains a reference counter r(v)
+because information is stored dually in explicit memory and         tracking how many nodes depend on it. A persistent block-
+implicit parameters. Deleting only explicit memory is insuf-        list B stores identifiers of deleted memories, enabling O(1)
+ficient, as the model can regenerate forgotten content from its     membership checks to prevent re-exposure. Memory contents
+parameters—a recontamination loop we term backflow. We              are indexed via hybrid search combining symbolic keyword
+propose Synchronized Backflow Unlearning (SBU), a dual-             matching and dense vector retrieval, with the blocklist en-
+pathway framework that prevents this by synchronizing un-           forced at retrieval boundaries. This provenance-aware rep-
+learning across both representations (Figure 2). The follow-        resentation enables the memory unlearning pathway to prop-
+ing subsections detail the problem formulation, memory ar-          agate deletions through dependency chains while preserving
+chitecture, and the two unlearning pathways.                        shared artifacts.
+
+3.1   Agentic Unlearning                                            3.2   Synchronized Backflow Unlearning (SBU)
+Agentic unlearning is the process of removing specified in-         Memory Unlearning
+formation from an LLM agent that uses both its internal pa-         To address deleting memories without destroying shared arti-
+rameters and an evolving external memory. Formally, we de-          facts, we introduce a dependency-aware unlearning pathway.
+fine an agent as A = (πθ , M, r, w), where πθ maps inter-           Derived artifacts aggregate multiple sources; naively delet-
+action history to responses, M is the memory, and r, w are          ing descendants would break shared artifacts. Our approach
+functions for memory retrieval and writing. At each turn, the       prunes artifacts supported exclusively by forgotten data while
+agent updates its memory Mt+1 = w(Mt , mt ), making fu-             preserving those with remaining valid sources. Implementa-
+ture responses dependent on this evolving state. The objective      tion details on data structures and cryptographic verification
+is to transform a trained agent A into an unlearned agent A′        are provided in the supplementary material.
+that satisfies four properties: (i) it does not reveal the target      Formalization. Let M denote the set of raw episodic mem-
+information Dtgt under adaptive interaction; (ii) its memory        ories, S the set of semantic summaries, R the set of reflec-
+contains no artifacts derived from Dtgt ; (iii) it is prevented     tions, and K the set of knowledge graph nodes. We de-
+from rewriting Dtgt back into memory; while (iv) its utility        fine a dependency graph G = (V, E) over the vertex set
+on retained data is preserved.                                      V = M ∪ S ∪ R ∪ K. For a deletion request DF ⊆ M ,
+   The primary challenge that distinguishes agentic unlearn-        we define the dependency closure as
+ing from standard LLM unlearning is a closed-loop problem
+we term information backflow. This issue arises because             Dep(DF ) = {v ∈ (S∪R∪K) | ∃m ∈ DF such that m ⇝ v in G},
+even after information is removed from the agent’s mem-                                                                  (2)
+ory (M), residual knowledge can persist in the model’s pa-          where m ⇝ v denotes reachability in the dependency graph.
+rameters (πθ ). This parametric residue can then be used to         The unlearning operation updates the blocked set B ′ = B ∪
+regenerate the forgotten content during subsequent interac-         DF and excludes B ′ from retrieval, then removes M ′ = M \
+tions, which is written back into memory and reverses the           DF , S ′ = S \ Dep(DF ), R′ = R \ Dep(DF ), K ′ = K \
+unlearning. Furthermore, derived artifacts in memory (e.g.,         Dep(DF ), with postcondition DF ∩M ′ = ∅ and Dep(DF )∩
+summaries, knowledge graph entities) may aggregate mul-             (S ′ ∪ R′ ∪ K ′ ) = ∅.
+tiple sources, requiring dependency-aware deletion to avoid            To realize the dependency-aware deletion described above,
+destroying shared artifacts. Consequently, existing unlearn-        Figure 2b illustrates the unified memory unlearning pipeline
+ing methods are insufficient as they are designed for state-        executed on each forget request for target memories DF ⊆
+less models and only target parameters, ignoring this critical      M . First, target memory IDs are immediately added to a per-
+memory-parameter feedback loop.                                     sistent blocked set B ← B ∪ DF , enabling O(1) hash-set
+                                                                    membership checks per candidate during retrieval. Then, the
+Memory Architecture                                                 system traverses the dependency graph from target memories
+To enable propagatable and verifiable deletion, SBU models          to derived artifacts (reflections, summaries, KG nodes), using
+memory as a dependency graph with reference counting and            reference counting to distinguish exclusively-dependent arti-
+blocklist enforcement. Our prototype organizes memory into          facts from shared ones. Reflections are marked as outdated,
+multiple layers. We denote the overall memory store as              reference counts are decremented for shared entities, and
+                                                                    zero-reference nodes are batch-removed, ensuring that shared
+       M = Mepi ∪ Msem ∪ Mrefl ∪ Mproc ∪ Mext ,              (1)
+                                                                    artifacts depending on retained memories are preserved. Fi-
+          epi
+where M contains episodic dialogue traces (formalized as            nally, the target memories are deleted from storage along with
+M ), Msem stores semantic summaries (S), and Mrefl stores           their vector representations. To control vector-index stale-
+(a) Multi-Layer Agent Memory Architecture                                      (b) Memory Unlearning                                                  (c) Weight Unlearning
+                               Knowledge Graph
+                                                                                               ④ Deletion Set Z
+                               G=(V,E) + External ℳext       Hybrid                               (Zero-reference)
+                                                             Indexing
+                                                                                                       ③ Reference Decrease
+              Procedural ℳ proc                                                                                r(v)←max(r(v)-Δ(v),0)
+                                                              Sparse
+                                                             Keywords
+      Semantic ℳsem               Reflection ℳ ref
+      (Summaries)               (Failure cases, Rules)         FAISS
+
+
+
+                                                              Dense                                                                                             Parameters θ
+                Episodic ℳepi                                 FAISS                                                                        DF                                         DR
+                    (Raw Dialogue, τ)                                                 Episodic ℳ epi
+                                                                                                                   ②
+                                                                                                                Derived
+     External ℳ ext                     Abstraction &                                                          Consistency
+                                        Reflection Engines
+                                                              Skip-list                                              Tracing
+                                                                                                                                                   Phase A:                Phase B:
+                                                                                                                                                       ➔
+              Interaction Traces                                                                                                                Memory Unlearning       Weight Unlearning
+                      (Q&A Turns)                                         Forget Set DF      ① Instant Blocking
+                                                                                                 (Skip-list, mi=0)
+                                                                                                                                                           Unified Optimization
+
+
+Figure 2: Overview of the proposed Synchronized Backflow Unlearning (SBU) framework. The framework adopts a dual-pathway design
+integrating the Memory Unlearning pathway (retrieval-storage) with the Parameter Unlearning pathway (parameters).
+
+
+ness, the system periodically rebuilds the vector index when                                                     trates the parameter unlearning pathway, which operates as a
+|B| exceeds threshold τ = 100.                                                                                   KL-to-random scheme. Instead of performing gradient ascent
+   Complexity. Retrieval incurs O(k · r) filtering overhead                                                      on the forget set, we introduce a frozen reference model fθ0
+beyond base ANN search, where k is the top-k parameter                                                           that is randomly initialized and encourage the current model
+and r ≈ 2–3 is the oversampling factor to maintain result                                                        fθ to match this random-like distribution on the forget set,
+quality. Offline vector-index reconstruction has O(N · d)                                                        while preserving performance on the retain set. Let DF and
+complexity (N active memories, d=1536 embedding dimen-                                                           DR denote the forget and retain sets, and let pθ (· | x) and
+sion), amortized to O(N · d/τ ) per deletion. Cleanup adds                                                       pθ0 (· | x) be the output token distributions of the student
+O(|Vvis | + |Evis |) graph traversal cost for visited nodes and                                                  and reference models with an optional temperature T . The
+edges in the dependency subgraph.                                                                                parameter-level objective is:
+   Consistency. The pathway maintains two invariants. In-                                                                              Lweight (θ) = LD        2 DF
+                                                                                                                                                      CE + λF T LKL ,
+                                                                                                                                                       R
+                                                                                                                                                                                            (3)
+variant 1 (Blocking completeness): For retrieval paths con-
+sulting the blocked set, no memory m ∈ B appears in results.                                                     where LD CE = E(x,y)∈DR [CE(y, fθ (x))] is the cross-entropy
+                                                                                                                           R
+
+
+Invariant 2 (Dependency consistency): Derived artifacts de-                                                      loss on the retain set, and LD
+                                                                                                                                              KL = Ex∈DF [KL(pθ ∥ pθ0 )] is
+                                                                                                                                               F
+
+pending on deleted memories are marked as outdated or have                                                       the KL divergence on the forget set; here λF > 0 balances
+their reference counts decremented accordingly. All dele-                                                        retention and forgetting, and
+tion operations are logged in a tamper-evident write-ahead                                                            pθ = softmax(zθ /T ), pθ0 = softmax(zθ0 /T ),           (4)
+log with hash-chain verification; see the supplementary ma-
+terial for details.                                                                                              with zθ and zθ0 denoting the pre-softmax logits. On retain
+                                                                                                                 samples, the model is trained with standard cross-entropy
+Parameter Unlearning                                                                                             to maintain utility, whereas on forget samples, the KL term
+To prevent parametric recontamination where residual                                                             drives the output distribution towards that of a randomly ini-
+weights regenerate forgotten content, we introduce an                                                            tialized model, effectively erasing fine-grained information
+Entropy-Regularized Parameter Unlearning pathway. Mem-                                                           while keeping the logits in a high-entropy regime. In practice,
+ory deletion alone cannot prevent backflow because the base                                                      we implement this objective in a mixed-batch trainer: each
+model can regenerate forgotten content and the agent can re-                                                     mini-batch contains both retain and forget samples tagged
+store it as new memory; parameter unlearning closes this loop                                                    with a factor flag, and the total loss is computed as a weighted
+by making the model’s distribution on forget queries inten-                                                      sum of cross-entropy (for retain samples) and KL divergence
+tionally non-informative. GA maximizes loss on forget data,                                                      (for forget samples). An alternative approach would be to di-
+but tends to produce incorrect predictions and causes large                                                      rectly maximize the entropy of the output distribution on the
+parameter drift that damages retain performance. NPO ad-                                                         forget set. However, our KL-to-random scheme provides a
+justs relative preferences between outputs, but is designed for                                                  more stable learning target by aligning to a structured high-
+preference tuning rather than complete knowledge removal.                                                        entropy prior from a reference model, rather than forcing the
+Our approach instead aligns the model’s output distribution                                                      output towards a perfectly uniform distribution, which can
+on forget queries to a high-entropy prior, making the model                                                      risk over-unlearning and damaging model capabilities.
+maximally uncertain rather than confidently wrong, which                                                         Unified Optimization
+better preserves critical medical knowledge on the retain set.                                                   SBU coordinates memory and parameter updates to prevent
+   To realize this parameter-level deletion, Figure 2c illus-                                                    recontamination. Given a deletion request DF , we execute
+  Algorithm 1: SBU                                                   values near 1 indicate under-unlearning, near 0 indicate over-
+   Input: Forget set DF , retain set DR , model fθ , reference
+                                                                     unlearning. We normalize MIA = 1 − 2|A − 0.5| ∈ [0, 1].
+          fθ0 , temperature T , coefficient λF , iterations Tmax .      Baselines. We compare two categories of baselines.
+   Output: Updated model θ∗ and memory system.                       Parameter-level baselines include: (1) Gradient Ascent (GA),
+ 1 for t = 1 to Tmax do                                              which optimizes −LCE on the forget set; (2) NPO [Zhang et
+ 2   A. Memory Unlearning:
+                                                                     al., 2024], which uses negative preference optimization; (3)
+ 3   Block targets: B ← B ∪ DF .                                     Sequential LoRA [Premptis et al., 2025]/Retrain, which fine-
+ 4   Prune dependency closure C ← Dep(DF ).                          tunes with data chunking; (4) Adapter Merging [Xu et al.,
+ 5   Delete DF and vectors.                                          2025], which merges adapters via TIES; (5) Original Model
+ 6   Rebuild index if |B| > τ .                                      as reference. Memory-side baselines fix LLM parameters and
+ 7   Archive logs.                                                   only modify memory: (1) Naive Deletion removes target en-
+ 8   B. Parameter Unlearning:                                        tries; (2) Re-indexing rebuilds vector indices; (3) Retraining
+ 9   for each mini-batch (BR , BF ) from (DR , DF ) do               Oracle reconstructs memory from the retain set.
+        Compute LCE = |B1R | (x,y)∈BR CE(y, fθ (x)).                    Unlearning model. We use II-Medical-8B [Internet,
+                                P
+10
+11      Compute LKL = |B1F | x∈BF KL(pθ ∥ pθ0 ).
+                                P                                    2025], a medical LLM built on Qwen3-8B and fine-tuned on
+12      Update θ ← θ − η∇θ (LCE + λF T 2 LKL ).                      medical QA datasets to enhance domain-specific reasoning.
+13   end for                                                         The integration of external memory improves performance
+14 end for                                                           across all benchmarks, as shown in Table 1.
+15 C. Output:
+16 Output updated θ∗ , cleaned memory, and audit records.            Table 1: Accuracy (%) comparison of II-Medical-8B with and with-
+                                                                     out memory mechanism.
+
+
+ both pathways sequentially: (1) block and remove target data        Model           MedQA ↑ MedMCQA ↑ MedReason ↑ Avg. ↑
+ from retrieval, then (2) update model parameters to suppress        II-Medical-8B     78.39        84.71         70.00       77.70
+ the deleted content. The memory pathway first adds the re-          + Memory          88.00        87.67         87.67       87.78
+ quest to the blocklist, B ← B ∪ DF , to prevent further re-
+ trieval exposure, then removes items in the dependency clo-
+                                                                        Implementation Details.       We use OpenAI’s text-
+ sure Dep(DF ) to eliminate derived artifacts. The parame-
+                                                                     embedding-ada-002 to encode memories into 1536-
+ ter pathway then minimizes Lweight to suppress parametric
+                                                                     dimensional vectors. The memory system stores 2000 entries
+ dependence on the deleted content. This order ensures that
+                                                                     and retrieves top-5 via hybrid search, combining semantic
+ parameter optimization operates on a clean retrieval context,
+                                                                     similarity (weight 0.7) and keyword matching (weight 0.3).
+ preventing gradients from re-encoding the target. The process
+                                                                     We report mean and standard deviation over 3 runs, with best
+ repeats for incremental requests, with periodic index com-
+                                                                     in bold and second-best underlined.
+ paction when |B| > τ .
+                                                                     4.2   Main Results
+ 4     Experiment
+                                                                     Results on Medical QA Benchmarks. Table 2 presents
+ 4.1    Setup                                                        the primary results on MedQA (QF=100). Conventional
+ Dataset Summary. We evaluate on three medical QA bench-             parameter-efficient baselines exhibit a critical vulnerability:
+ marks: (1) MedMCQA [Pal et al., 2022] contains ∼183k                while Sequential LoRA preserves utility (test: 88.67%), it
+ multiple-choice questions from AIIMS/NEET-PG entrance               fails to mask data membership, yielding a MIA Score of
+ exams, spanning 2,400 topics across 21 medical subjects;            0.717, scarcely better than the Original model (0.727). In
+ (2) MedQA [Jin et al., 2021] contains ∼10k multiple-choice          contrast, SBU achieves a MIA Score of 0.895, represent-
+ questions from professional board exams; (3) MedRea-                ing a 24.8% improvement in privacy protection, while main-
+ son [Wu et al., 2025] contains ∼33k question-answer pairs           taining test accuracy (92.50%) and generalization (90.50%).
+ from seven datasets targeting open-ended generation; we use         On MedMCQA (QF=100, Supplementary Table 2), SBU
+ only the pairs and exclude reasoning annotations. We conduct        achieves test/gen of 92.33%/92.00% with a MIA Score of
+ experiments with two forget set sizes: QF=100 and QF=1000.          0.973. On MedReason (QF=100, Supplementary Table 3),
+    Evaluation Metrics. We evaluate unlearning with four             SBU reaches test/gen of 87.00%/89.00% with MIA Score of
+ metrics. (1) Accuracy on the Forget Set measures removal            0.891. In contrast, methods that optimize forget aggressively
+ of targeted knowledge; lower indicates successful forgetting.       exhibit catastrophic over-unlearning. For example, NPO at-
+ (2) Accuracy on the Test Set measures generalization to un-         tains the lowest forget (74.00%) but suffers severe general-
+ seen samples from the same distribution. (3) Generalization         ization collapse (gen: 41.67%), highlighting that surgical un-
+ (Gen.) measures retained capability on held-out QA bench-           learning requires preserving capability while removing mem-
+ marks; higher accuracy indicates better preservation of gen-        bership signals. This is because baselines only modify LLM
+ eral medical knowledge. (4) Membership Inference Attack             parameters while leaving the memory bank unchanged, al-
+ (MIA) score assesses unlearning from a privacy perspective.         lowing privacy leakage to persist through retrieval.
+ We compute the area under the ROC curve A from loss dis-               Scalability and Resilience. When the forget set increases
+ tributions of member vs. non-member data: A ≈ 0.5 is ideal,         to 1000 (Supplementary Table 1), baseline privacy metrics
+                        Table 2: Performance comparison of different unlearning methods on MedQA (QF=100)
+
+                                                      Accuracy (%)                                                         Domain (%)                                                 Privacy Metrics
+   Method
+                                                 Forget ↓          Test ↑                                                    Gen. ↑               MIA AUC →0.5                                                                                      MIA Score ↑
+   Sequential LoRA [Premptis et al., 2025]      89.33±2.31    88.67±1.15                                                   87.00±2.65               0.642±0.0004                                                                                  0.7167±0.0081
+   Sequential Retrain [Premptis et al., 2025]   91.33±3.06    89.67±4.18                                                   88.00±3.47               0.636±0.0006                                                                                  0.7287±0.0110
+   GA                                           89.00±4.24    87.00±4.24                                                   89.50±2.12                0.618±0.038                                                                                  0.7640±0.0750
+   NPO [Zhang et al., 2024]                     90.00±5.29    87.67±6.05                                                   88.33±2.31               0.637±0.0006                                                                                  0.7267±0.0110
+   Adapter Merging [Xu et al., 2025]            91.33±1.15    88.00±3.65                                                   89.34±0.58               0.636±0.0006                                                                                  0.7287±0.0110
+   Origin                                       89.33±2.04    91.00±3.54                                                   87.33±3.09                0.637±0.000                                                                                  0.7267±0.0110
+   Ours                                         73.00±1.41    92.50±2.12                                                   90.50±0.71               0.552±0.0009                                                                                 0.8953±0.0181
+
+                      Table 3: Performance comparison of different unlearning methods on MedMCQA (QF=1000)
+
+                                                      Accuracy (%)                                                         Domain (%)                                                 Privacy Metrics
+   Method
+                                                 Forget ↓          Test ↑                                                    Gen. ↑               MIA AUC →0.5                                                                                      MIA Score ↑
+   Sequential LoRA [Premptis et al., 2025]      76.67±7.93    87.67±4.88                                                   89.00±2.83              0.5080±0.0071                                                                                  0.9840±0.0141
+   Sequential Retrain [Premptis et al., 2025]   90.00±2.00    88.00±2.55                                                   88.67±1.85              0.5090±0.0057                                                                                  0.9820±0.0111
+   GA                                           87.33±3.06    88.67±2.53                                                   87.67±1.77              0.5080±0.0200                                                                                  0.9840±0.0040
+   NPO [Zhang et al., 2024]                     86.00±8.72    87.00±4.40                                                   83.00±5.50              0.5090±0.0458                                                                                  0.9820±0.0092
+   Adapter Merging [Xu et al., 2025]            88.67±3.06    88.67±1.72                                                   85.33±3.88              0.5087±0.0513                                                                                  0.9827±0.0103
+   Origin                                       89.00±1.41    88.00±0.71                                                   90.00±0.71              0.5490±0.0180                                                                                  0.9020±0.0361
+   Ours                                         71.33±7.02    89.33±1.53                                                   89.00±1.00             0.5000±0.0265                                                                                  0.9960±0.0020
+
+
+stagnate (MIA Score ≈ 0.62), whereas SBU achieves 0.802               (a)                                                                                                                           (b)
+                                                                                            20.0                                                                                                                       35
+
+
+
+
+                                                                      qf100 Runtime (minutes)                                                                       qf1000 Runtime (minutes)
+                                                                                                                                                                                                                                                                         32GB Limit
+while maintaining test/gen at 90.83%/89.67%. On MedM-                                                                                                          100
+
+
+
+
+                                                                                                                                                                                               GPU Memory Usage (GB)
+                                                                                                                  qf100
+                                                                                                                  qf1000
+                                                                                                                                                                                                                                          28.3
+                                                                                           17.5                                                                                                                        30
+                                                                                                                                                                                                                                                                            22.6      23.8
+                                                                                                                                                               80
+CQA (QF=1000, Table 3), SBU reaches a MIA Score of                                         15.0
+                                                                                           12.5
+                                                                                                                                                                                                                       25
+                                                                                                                                                                                                                                                   18.0
+                                                                                                                                                                                                                                                          16.9
+                                                                                                                                                                                                                                                                  19.7
+                                                                                                                                                               60                                                      20
+0.996. On MedReason (QF=1000, Supplementary Table 4),                                           10.0
+                                                                                                7.5                                                            40                                                      15
+SBU achieves a MIA Score of 0.990 while preserving gen at                                       5.0                                                                                                                    10
+                                                                                                                                                               20
+89.80%, whereas NPO collapses to gen 62.33%.                                                    2.5                                                                                                                    5                Mean
+                                                                                                                                                                                                                                        Median
+                                                                                                0.0                                                            0
+   Efficiency and Privacy Analysis. We evaluate the compu-                                                 igi
+                                                                                                              n        l
+                                                                                                                              al                  ter     rs
+                                                                                                                                                                                                                       0
+                                                                                                                                                                                                                                 igi
+                                                                                                                                                                                                                                    n
+                                                                                                                                                                                                                                         tia
+                                                                                                                                                                                                                                            l     tia
+                                                                                                                                                                                                                                                     l
+                                                                                                                                                                                                                                                            GA      O   pte
+                                                                                                                                                                                                                                                                           r
+                                                                                                                                                                                                                                                                                         rs
+                                                                                                                    tia            GA                                                                                       Or         en n     en A              NP Ada rge           Ou
+                                                                                                      Or          en n     nti               O  ap
+                                                                                                                                           NP Ad erge   Ou                                                                           qu trai equ LoR
+tational overhead of our method in Figure 3. SBU maintains                                                      qu trai que RA                                                                                                     Se Re      S                        Me
+                                                                                                              Se Re Se Lo                       M
+
+lower GPU memory usage compared to baselines (Figure 3b)
+and scales well as the forget set size increases (Figure 3a). We     Figure 3: Computational efficiency. (a) Runtime vs. forget set size
+further validate the effectiveness of privacy erasure in Fig-        for QF100 and QF1000. (b) GPU memory usage during training.
+ure 4. The MIA scores show that SBU achieves minimal                 Red diamonds indicate the mean; dashed line marks device capacity.
+divergence between member and non-member distributions,
+confirming that the unlearning process effectively eliminates         (a) Before Unlearning                                             After Unlearning
+                                                                                                                                                               (b)                                                                      Perfect privacy
+                                                                                                                                                                                                          10
+
+
+
+
+                                                                                                                                                                                 |Δ(mia_score)| (×10⁻5)
+distinguishable membership traces from the model’s output                                          Forget                               Retain                                                                8
+                                                                                                   Retain                               Other
+across both pathways.                                                                              Other
+                                                                                                                                                                                                              6
+
+   Memory-side Forgetting Analysis. We examine the effect                                                                                                                                                     4
+
+of our memory unlearning pathway on the external memory                                                                                                                                                       2
+
+system. As shown in Table 4, for MedQA with QF=100, the                                                                                                                                                       0
+                                                                                                                                                                                                                            igi
+                                                                                                                                                                                                                               n
+                                                                                                                                                                                                                                   tia
+                                                                                                                                                                                                                                      l
+                                                                                                                                                                                                                                             al                     O     ter           rs
+                                                                                                                                                                                                                       Or        en n     nti             GA     NP     ap e          Ou
+                                                                                                                                                                                                                               qu trai  ue A                          Ad erg
+memory accuracy on the forget set drops from 78% to 14%                                                                                                                                                                      Se Re Seq LoR                              M
+
+after unlearning, while the memory accuracy on the retain
+set slightly increases from 54% to 56%. This indicates that          Figure 4: Privacy and memory analysis. (a) Memory embeddings
+the memory pathway effectively suppresses exposure of for-           before and after unlearning. (b) Privacy metric |∆(MIA score)|
+gotten samples without harming retrieval quality on retained         (×10−5 ); lower is better.
+knowledge. Figure 4b visualizes this effect, showing that
+forget-related memories are removed while retained memory            and Mem-Only (memory unlearning with frozen parame-
+geometry remains largely unchanged.                                  ters). As shown in Table 6, removing the memory pathway
+                                                                     leads to a noticeable degradation in MIA-based privacy met-
+4.3   Ablation Studies                                               rics. In contrast, the Mem-Only variant underperforms on
+Effect of the parameter and memory pathways. We eval-                forget and test set accuracies, despite some privacy improve-
+uate each pathway’s contribution by comparing SBU with               ment. Ours suppresses the membership inference attack with-
+two variants: w/o Mem (parameter-level unlearning only)              out sacrificing retain set accuracy, demonstrating that param-
+  Table 4: Memory accuracy (%) before and after memory unlearning.                                                                                                                                  Table 5: Ablation Study: Memory-side Unlearning Strategies on
+                                                                                                                                                                                                    MedMCQA (Forget Size = 100)
+                                                MedQA                                          MedMCQA                                                  MedReason
+                                                                                                                                                                                                    Method              Forget Acc ↓   Retain Acc ↑   Test Acc ↑   MIA AUC →0.5     MIA Score ↑
+                                   Forget ↓ Retain ↑ Forget ↓ Retain ↑ Forget ↓ Retain ↑                                                                                                            Naı̈ve Deletion      88.33±2.08     88.00±1.00    89.67±1.15    0.5467±0.0150   0.9067±0.0300
+                                                                                                                                                                                                    Re-indexing          82.67±3.51     88.33±1.53    89.33±1.53    0.5180±0.0120   0.9640±0.0240
+     Before                              78.0                    54.0                       84.0                              92.0                   68.0                           64.0            Retraining Oracle    72.00±4.00     89.00±1.00    89.67±0.58    0.5020±0.0080   0.9920±0.0160
+
+     After                               14.0                    56.0                       30.0                              90.0                   26.0                           64.0            Ours                71.33±7.02     89.33±1.53     89.00±1.00    0.5000±0.0265   0.9960±0.0020
+
+
+
+
+                                                                                                                                                                                                    hibits a narrow effective range, with moderate values (1.0–
+
+
+Test - Forget (%)
+                       20                                                             5                                90                                                                    82.5
+                                                                                                                                                                                                    2.0) performing best, whereas high temperature (T =4.0)
+                                                                                                        Test Acc (%)
+                                                                                                                       85                                                                    80.0
+                        10                                                                                             80                                                                    77.5
+                         0
+                                                                                      0                                75
+                                                                                                                       70                                                                    75.0
+                                                                                                                                                                                                    destabilizes optimization and drops test accuracy to 68%.
+                       −10                                                                                                                                                                   72.5
+                       −20
+                                                                                      −5                               65
+                                                                                                                       60                                                                    70.0      Memory-side unlearning analysis. Rebuilding the vec-
+                                                                                                                        55                                                                   67.5
+                        4.0
+                           3.5                                                  3.0
+                                                                                      −10
+                                                                                                                        4.0
+                                                                                                                           3.5                                                     3.0
+                                                                                                                                                                                             65.0   tor index improves privacy (MIA AUC: 0.5467 → 0.5180)
+                        τ ( 3.0                                           2.5                                                                                                2.5
+                           tem 2.5                                 2.0                                                  τ ( 3.0                                        2.0                          but remains above the Retraining Oracle (0.5020) and the
+                                                                1.5                                                        tem 2.5                                  1.5
+                               pe 2.0                                   t)                                                     pe 2.0                                        t)
+                                 rat 1.5
+                                                          1.0        igh                                                                                      1.0         igh
+                                                    0.5            we                                                            rat 1.5                0.5             we                          ideal 0.5 (Table 5). Ours aligns with the Oracle in both util-
+                                                               (kl_                                                                                                 (kl_
+                                    ur 1.0       0.0                                                                                ur            0.0
+                                      e  )                λF                                                                          e)                       λF
+                                                                                                                                                                                                    ity (0.9960 vs. 0.9920) and privacy verification (MIA AUC:
+  Figure 5: Visualization of hyperparameter sensitivity, showing the                                                                                                                                0.5000 vs. 0.5020), without system reconstruction.
+  interaction between λF and T .                                                                                                                                                                       Agent Loop evaluation. To demonstrate unlearning within
+                                                                                                                                                                                                    an interactive loop, rather than a one-time procedure on a
+                       (a) Memory Unlearning Timeline                                          DELETE                                                                                               static dataset, we design an Agent Loop evaluation (Fig-
+                        Q: Burst suppression on EEG?
+                                                                                                                                                                                                    ure 6(a)) with four stages: Store, Query, Delete, and Probe.
+                                                                        User asks about EEG                        Test: Burst suppression?
+                         A: Anoxic encephalopathy                             Retrieves Q1                                    NOT recall
+                                                                                                                                                                                                    The agent stores medical Q&A pairs (T1–T2), retrieves mem-
+                                                                                                                                                                              Store Q&A
+                                                                                                                                                                                                    ories to answer user queries (T3), processes a deletion re-
+                                                                                                                                                                              Query/Retrieve        quest (T4), and is probed for verification (T5–T6). As shown
+                                                                                                                                                                              Delete
+                                                                                                                                                                              Probe Test            in Figure 6(b), the Forget Set retrieval hit rate drops from
+                                         Q: Emphysematous cholecystitis                                                          Test: Emphysematous cholecystitis
+                                                                                                                                                                                                    100% to 0% while the Retain Set remains accessible. Fig-
+                                                                                               DELETE Q1
+                                                                                                                                           caused by ?
+                                                   caused by?
+                                           A: Clostridium perfringens
+                                                                                           ( Burst suppression )
+                                                                                                                                               recall
+                                                                                                                                                                                                    ure 6(c) further confirms that summary updates and depen-
+                                                                                                                                                                                                    dency cleanup prevent indirect leakage through derived con-
+                                     1                 2                         3
+                                                                                            Turn
+                                                                                                     4                           5                 6                                                tent. Finally, a diagnostic case study (see the supplementary
+                                             (b) Retrieval Hit Rate                                                    (c) Summary Updates & Dependency Cleanup                                     material) shows single-pathway unlearning can suffer from
+                                                                                                                2.5
+                100%
+                                                                                                                          Dependency Cleanup Ratio
+                                                                                                                          Summary Update Count
+                                                                                                                                                                                                    cross-pathway backflow, whereas our dual-pathway design
+                                                                                                                2.0
+                                                                                                                                                                                                    suppresses backflow and enables genuine agentic unlearning.
+
+  Retrieval Hit Rate
+                                                                                                Count / Ratio
+                       80%
+                                                                                                                1.5
+                       60%
+                                                           DELETE                                               1.0                                             DELETE                                   Table 6: Ablation study on parameter and memory pathways.
+                       40%
+
+                       20%                                                                                      0.5
+                              Forget Set (Q1)
+                       0%     Retain Set (Q2)
+                                                                                                                0.0                                                                                     Method          Forget ↓ Test ↑ Gen. ↑ MIA AUC MIA Score ↑
+                               1         2         3                4           5          6                              1          2        3               4              5           6
+                                                       Turn                                                                                        Turn
+                                                                                                                                                                                                        w/o Mem           74.33        91.00 89.00                 0.583            0.834
+                                                                                                                                                                                                        Mem-Only          85.67        88.33 86.67                 0.621            0.758
+  Figure 6: Agent Loop evaluation. (a) Timeline. Q1 (Forget) is
+                                                                                                                                                                                                        Ours              73.00        92.50 90.50                 0.552            0.895
+  deleted at T4; Q2 (Retain) persists. (b) Retrieval hit rate. Forget
+  drops to 0% post-deletion; Retain is stable. (c) Summary updates
+  and dependency cleanup ratio.
+                                                                                                                                                                                                    5      Conclusion
+  eter updates and memory governance are complementary.                                                                                                                                             We study agentic unlearning for LLM agents with external
+     Hyperparameter sensitivity analysis. We evaluate 34 con-                                                                                                                                       memory, and identify parameter-memory backflow: a recon-
+  figurations on MedMCQA to study the sensitivity of parame-                                                                                                                                        tamination loop between model weights and retrieved data.
+  ter unlearning to λF , temperature T , and entropy fallback, as                                                                                                                                   We propose the Synchronized Backflow Unlearning (SBU)
+  visualized in Figure 5. The optimal configuration (λF =1.5,                                                                                                                                       framework that integrates parameter and memory unlearn-
+  T =2.0, with entropy fallback) achieves 90% test accuracy                                                                                                                                         ing via a synchronized dual-pathway protocol. The param-
+  while reducing forget accuracy to 68%, demonstrating effec-                                                                                                                                       eter path optimizes a KL divergence objective to guide out-
+  tive knowledge removal without compromising utility. Our                                                                                                                                          puts to a high-entropy prior. The memory path uses depen-
+  analysis reveals that entropy fallback is critical for preserv-                                                                                                                                   dency closure to prune isolated data while logically invalidat-
+  ing general capabilities, improving test accuracy from 78%                                                                                                                                        ing shared artifacts. Together, they form a closed-loop sys-
+  to 90% and reducing forget accuracy from 80% to 68% un-                                                                                                                                           tem preventing re-activation. Experiments on medical QA
+  der identical λF and T settings. The forgetting coefficient                                                                                                                                       datasets demonstrate that SBU outperforms existing base-
+  λF controls forgetting-utility trade-off: values below 0.5 fail                                                                                                                                   lines in forgetting private information across both pathways,
+  to induce sufficient forgetting (forget accuracy 86%); exces-                                                                                                                                     while preserving high fidelity on the retention set and main-
+  sive values (λF ≥3.0) cause test degradation (66%) despite                                                                                                                                        taining computational overhead. A limitation of our current
+  stronger forgetting (forget accuracy 64%). Temperature ex-                                                                                                                                        approach is that dependency tracking may not fully capture
+cross-agent information flow in shared knowledge graphs.          [Internet, 2025] Intelligent Internet. Ii-medical-8b: Medical
+Future work will explore unlearning protocols specifically           reasoning model, 2025.
+tailored for multi-agent collaborative environments.              [Jang et al., 2023] Joel Jang, Dongkeun Yoon, Sohee Yang,
+                                                                     Sungmin Cha, Moontae Lee, Lajanugen Logeswaran, and
+Ethical Statement                                                    Minjoon Seo. Knowledge unlearning for mitigating pri-
+This work uses publicly available medical QA datasets                vacy risks in language models. In Proceedings of the 61st
+(MedQA, MedMCQA, MedReason) that do not contain real                 Annual Meeting of the Association for Computational Lin-
+patient identifiers. No real patient data was collected or pro-      guistics (Volume 1: Long Papers), pages 14389–14408,
+cessed. Deployment in clinical settings would require addi-          2023.
+tional regulatory review and institutional approval.              [Jia et al., 2024] Jinghan Jia, Yihua Zhang, Yimeng Zhang,
+                                                                     Jiancheng Liu, Bharat Runwal, James Diffenderfer,
+References                                                           Bhavya Kailkhura, and Sijia Liu. SOUL: Unlocking the
+[Abbasian et al., 2023] Mahyar Abbasian, Iman Azimi,                 power of second-order optimization for LLM unlearn-
+   Amir M. Rahmani, and Ramesh Jain. Conversational                  ing. In Proceedings of the 2024 Conference on Empirical
+   health agents: A personalized llm-powered agent frame-            Methods in Natural Language Processing, pages 4276–
+   work. arXiv preprint arXiv:2310.02374, 2023.                      4292, Miami, Florida, USA, November 2024. Association
+[Bourtoule et al., 2021] Lucas Bourtoule, Varun Chan-                for Computational Linguistics.
+   drasekaran, Christopher A. Choquette-Choo, Hengrui Jia,        [Jin et al., 2021] Di Jin, Eileen Pan, Nassim Oufattole, Wei-
+   Adelin Travers, Baiwu Zhang, David Lie, and Nicolas               Hung Weng, Hanyi Fang, and Peter Szolovits. What dis-
+   Papernot. Machine unlearning. In 2021 IEEE Symposium              ease does this patient have? a large-scale open domain
+   on Security and Privacy (SP), pages 141–159. IEEE,                question answering dataset from medical exams. Applied
+   2021.                                                             Sciences, 11(14):6421, 2021.
+[Carlini et al., 2021] Nicholas Carlini, Florian Tramer, Eric     [Liu et al., 2024] Chris Liu, Yaxuan Wang, Jeffrey Flani-
+   Wallace, Matthew Jagielski, Ariel Herbert-Voss, Kather-           gan, and Yang Liu. Large language model unlearning via
+   ine Lee, Adam Roberts, Tom Brown, Dawn Song, Ul-                  embedding-corrupted prompts. Advances in Neural Infor-
+   far Erlingsson, et al. Extracting training data from large        mation Processing Systems, 37:118198–118266, 2024.
+   language models. In 30th USENIX Security Symposium
+   (USENIX Security 21), pages 2633–2650, 2021.                   [Liu et al., 2025] Sijia Liu, Yuanshun Yao, Jinghan Jia,
+                                                                     Stephen Casper, Nathalie Baracaldo, Peter Hase, Yuguang
+[Cha et al., 2025] Sungmin Cha, Sungjun Cho, Dasol
+                                                                     Yao, Chris Yuhao Liu, Xiaojun Xu, Hang Li, Kush R.
+   Hwang, and Moontae Lee. Towards robust and parameter-             Varshney, Mohit Bansal, Sanmi Koyejo, and Yang Liu.
+   efficient knowledge unlearning for LLMs. In The Thir-             Rethinking machine unlearning for large language mod-
+   teenth International Conference on Learning Representa-           els. Nature Machine Intelligence, 7:181–194, 2025.
+   tions, 2025.
+                                                                  [Montano et al., 2022] Isabel Herrera Montano, Jose
+[Chhikara et al., 2025] Prateek Chhikara, Dev Khant, Saket
+                                                                     Javier Garcia Aranda, Juan Ramos Diaz, Sergio Molina
+   Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0: Build-
+                                                                     Cardin, Isabel De la Torre Dı́ez, and Joel JPC Rodrigues.
+   ing production-ready ai agents with scalable long-term
+                                                                     Survey of techniques on data leakage protection and
+   memory, 2025.
+                                                                     methods to address the insider threat. Cluster Computing,
+[DeChant, 2025] Chad DeChant. Episodic memory in AI                  25(6):4289–4302, 2022.
+   agents poses risks that should be studied and mitigated.
+   In 2025 IEEE Conference on Secure and Trustworthy Ma-          [Neel et al., 2021] Seth Neel, Aaron Roth, and Saeed
+   chine Learning (SaTML), 2025.                                     Sharifi-Malvajerdi. Descent-to-delete: Gradient-based
+                                                                     methods for machine unlearning. In Algorithmic Learn-
+[Edge et al., 2025] Darren Edge, Ha Trinh, Newman Cheng,             ing Theory, pages 931–962. PMLR, 2021.
+   Joshua Bradley, Alex Chao, Apurva Mody, Steven Tru-
+   itt, Dasha Metropolitansky, Robert Osazuwa Ness, and           [Packer et al., 2024] Charles Packer, Sarah Wooders, Kevin
+   Jonathan Larson. From local to global: A graph rag ap-            Lin, Vivian Fang, Shishir G. Patil, Ion Stoica, and
+   proach to query-focused summarization, 2025.                      Joseph E. Gonzalez. Memgpt: Towards llms as operating
+[Geng et al., 2025] Jiahui Geng, Qing Li, Herbert                    systems, 2024.
+   Woisetschlaeger, Zongxiong Chen, Fengyu Cai, Yuxia             [Pal et al., 2022] Ankit Pal, Logesh Kumar Umapathi, and
+   Wang, Preslav Nakov, Hans-Arno Jacobsen, and Fakhri               Malaikannan Sankarasubbu. Medmcqa: A large-scale
+   Karray. A comprehensive survey of machine unlearning              multi-subject multi-choice dataset for medical domain
+   techniques for large language models, 2025.                       question answering. In Proceedings of the Conference
+[Ilharco et al., 2023] Gabriel Ilharco, Marco Tulio Ribeiro,         on Health, Inference, and Learning, volume 174 of Pro-
+   Mitchell Wortsman, Suchin Gururangan, Ludwig Schmidt,             ceedings of Machine Learning Research, pages 248–260.
+   Hannaneh Hajishirzi, and Ali Farhadi. Editing mod-                PMLR, 2022.
+   els with task arithmetic. In International Conference on       [Pawelczyk et al., 2024] Martin Pawelczyk, Seth Neel, and
+   Learning Representations, 2023.                                   Himabindu Lakkaraju. In-context unlearning: Language
+   models as few-shot unlearners. In Proceedings of the 41st      [Xu et al., 2023] Heng Xu, Tianqing Zhu, Lefeng Zhang,
+   International Conference on Machine Learning, volume             Wanlei Zhou, and Philip S. Yu. Machine unlearning: A
+   235 of Proceedings of Machine Learning Research, pages           survey. ACM Computing Surveys, 2023.
+   40034–40050. PMLR, 2024.                                       [Xu et al., 2025] Haoming Xu, Shuxun Wang, Yanqiu Zhao,
+[Premptis et al., 2025] Iraklis Premptis, Maria Lymperaiou,         Yi Zhong, Ziyan Jiang, Ningyuan Zhao, Shumin Deng,
+   Giorgos Filandrianos, Orfeas Menis Mastromichalakis,             Huajun Chen, and Ningyu Zhang. ZJUKLAB at SemEval-
+   Athanasios Voulodimos, and Giorgos Stamou. AILS-                 2025 task 4: Unlearning via model merging. In Proceed-
+   NTUA at SemEval-2025 task 4: Parameter-efficient un-             ings of the 19th International Workshop on Semantic Eval-
+   learning for large language models using data chunk-             uation (SemEval-2025), pages 566–574, Vienna, Austria,
+   ing. In Proceedings of the 19th International Workshop           July 2025. Association for Computational Linguistics.
+   on Semantic Evaluation (SemEval-2025), Vienna, Austria,        [Yan et al., 2025] Biwei Yan, Kun Li, Minghui Xu, Yueyan
+   2025. Association for Computational Linguistics.                 Dong, Yue Zhang, Zhaochun Ren, and Xiuzhen Cheng.
+[Seh et al., 2020] Adil Hussain Seh, Mohammad Zarour,               On protecting the data privacy of large language mod-
+   Mamdouh Alenezi, Amal Krishna Sarkar, Alka Agrawal,              els (LLMs) and LLM agents: A literature review. High-
+   Rajeev Kumar, and Raees Ahmad Khan. Healthcare data              Confidence Computing, 5(2), 2025.
+   breaches: insights and implications. Healthcare, 8(2):133,     [Yao et al., 2024a] Jin Yao, Eli Chien, Minxin Du, Xinyao
+   2020.                                                            Niu, Tianhao Wang, Zezhou Cheng, and Xiang Yue. Ma-
+[Shi et al., 2024] Wenqi Shi, Ran Xu, Yuchen Zhuang, Yue            chine unlearning of pre-trained large language models.
+   Yu, Jieyu Zhang, Hang Wu, Yuanda Zhu, Joyce C. Ho,               In Proceedings of the 62nd Annual Meeting of the Asso-
+   Carl Yang, and May Dongmei Wang. Ehragent: Code em-              ciation for Computational Linguistics (Volume 1: Long
+   powers large language models for few-shot complex tabu-          Papers), pages 8403–8419, Bangkok, Thailand, August
+   lar reasoning on electronic health records. In Proceedings       2024. Association for Computational Linguistics.
+   of the 2024 Conference on Empirical Methods in Natural         [Yao et al., 2024b] Yuanshun Yao, Xiaojun Xu, and Yang
+   Language Processing, pages 22315–22339, 2024.                    Liu. Large language model unlearning. Advances in Neu-
+[Shinn et al., 2023] Noah Shinn, Federico Cassano, Edward           ral Information Processing Systems, 37:105425–105475,
+   Berman, Ashwin Gopinath, Karthik Narasimhan, and                 2024.
+   Shunyu Yao. Reflexion: Language agents with verbal re-         [Zhang et al., 2024] Ruiqi Zhang, Licong Lin, Yu Bai, and
+   inforcement learning. In Advances in Neural Information          Song Mei. Negative preference optimization: From catas-
+   Processing Systems, volume 36, 2023.                             trophic collapse to effective unlearning. arXiv preprint
+[Thaker et al., 2024] Pratiksha Thaker, Yash Maurya,                arXiv:2404.05868, 2024.
+   Shengyuan Hu, Zhiwei Steven Wu, and Virginia Smith.            [Zhong et al., 2024] Wanjun Zhong, Lianghong Guo, Qiqi
+   Guardrail baselines for unlearning in LLMs. In ICLR              Gao, He Ye, and Yanlin Wang. Memorybank: Enhancing
+   Workshop on Secure and Trustworthy Large Language                large language models with long-term memory. In Pro-
+   Models (SeT-LLM), 2024.                                          ceedings of the AAAI Conference on Artificial Intelligence,
+[Tu et al., 2025] Tao Tu, Anil Palepu, Mike Schaekermann,           volume 38, pages 19724–19731, 2024.
+   Khaled Saab, Jan Freyberg, Ryutaro Tanno, Amy Wang,            [Zhou et al., 2022] Hattie Zhou, Ankit Vani, Hugo
+   Brenna Li, Mohamed Amin, Nenad Tomasev, et al. To-               Larochelle, and Aaron C. Courville. Fortuitous forgetting
+   wards conversational diagnostic artificial intelligence. Na-     in connectionist networks. In The Tenth International
+   ture, 642, April 2025.                                           Conference on Learning Representations, 2022.
+[Wu et al., 2024] Qingyun Wu, Gagan Bansal, Jieyu Zhang,
+   Yiran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun
+   Zhang, Shaokun Zhang, Jiale Liu, Ahmed Hassan Awadal-
+   lah, Ryen W White, Doug Burger, and Chi Wang. Auto-
+   Gen: Enabling next-gen LLM applications via multi-agent
+   conversation framework. In COLM, 2024.
+[Wu et al., 2025] Juncheng Wu, Wenlong Deng, Xingxuan
+   Li, Sheng Liu, Taomian Mi, Yifan Peng, Ziyang Xu,
+   Yi Liu, Hyunjin Cho, Chang-In Choi, Yihan Cao, Hui Ren,
+   Xiang Li, Xiaoxiao Li, and Yuyin Zhou. Medreason: Elic-
+   iting factual medical reasoning steps in llms via knowledge
+   graphs, 2025.
+[Xiong et al., 2025] Zidi Xiong, Yuping Lin, Wenya Xie,
+   Pengfei He, Zirui Liu, Jiliang Tang, Himabindu Lakkaraju,
+   and Zhen Xiang. How memory management impacts llm
+   agents: An empirical study of experience-following be-
+   havior, 2025.
+

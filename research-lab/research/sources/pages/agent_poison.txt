@@ -1,0 +1,193 @@
+[2407.12784] AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases
+Skip to main content
+Search arXiv
+Press Enter to search ·
+Advanced search
+Computer Science > Machine Learning
+arXiv:2407.12784
+(cs)
+[Submitted on 17 Jul 2024]
+Title:
+AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases
+Authors:
+Zhaorun Chen
+,
+Zhen Xiang
+,
+Chaowei Xiao
+,
+Dawn Song
+,
+Bo Li
+View a PDF of the paper titled AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases, by Zhaorun Chen and 4 other authors
+View PDF
+HTML (experimental)
+Abstract:
+LLM agents have demonstrated remarkable performance across various applications, primarily due to their advanced capabilities in reasoning, utilizing external knowledge and tools, calling APIs, and executing actions to interact with environments. Current agents typically utilize a memory module or a retrieval-augmented generation (RAG) mechanism, retrieving past knowledge and instances with similar embeddings from knowledge bases to inform task planning and execution. However, the reliance on unverified knowledge bases raises significant concerns about their safety and trustworthiness. To uncover such vulnerabilities, we propose a novel red teaming approach AgentPoison, the first backdoor attack targeting generic and RAG-based LLM agents by poisoning their long-term memory or RAG knowledge base. In particular, we form the trigger generation process as a constrained optimization to optimize backdoor triggers by mapping the triggered instances to a unique embedding space, so as to ensure that whenever a user instruction contains the optimized backdoor trigger, the malicious demonstrations are retrieved from the poisoned memory or knowledge base with high probability. In the meantime, benign instructions without the trigger will still maintain normal performance. Unlike conventional backdoor attacks, AgentPoison requires no additional model training or fine-tuning, and the optimized backdoor trigger exhibits superior transferability, in-context coherence, and stealthiness. Extensive experiments demonstrate AgentPoison's effectiveness in attacking three types of real-world LLM agents: RAG-based autonomous driving agent, knowledge-intensive QA agent, and healthcare EHRAgent. On each agent, AgentPoison achieves an average attack success rate higher than 80% with minimal impact on benign performance (less than 1%) with a poison rate less than 0.1%.
+Comments:
+22 pages, 13 figures, 7 tables
+Subjects:
+Machine Learning (cs.LG)
+; Cryptography and Security (cs.CR); Information Retrieval (cs.IR)
+Cite as:
+arXiv:2407.12784
+[cs.LG]
+(or
+arXiv:2407.12784v1
+[cs.LG]
+for this version)
+https://doi.org/10.48550/arXiv.2407.12784
+Focus to learn more
+arXiv-issued DOI via DataCite
+Submission history
+From: Zhaorun Chen [
+view email
+]
+[v1]
+Wed, 17 Jul 2024 17:59:47 UTC (6,842 KB)
+Full-text links:
+Access Paper:
+View a PDF of the paper titled AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases, by Zhaorun Chen and 4 other authors
+View PDF
+HTML (experimental)
+TeX Source
+view license
+Current browse context:
+cs.LG
+< prev
+|
+next >
+new
+|
+recent
+|
+2024-07
+Change to browse by:
+cs
+cs.CR
+cs.IR
+References & Citations
+NASA ADS
+Google Scholar
+Semantic Scholar
+export BibTeX citation
+Loading...
+BibTeX formatted citation
+×
+loading...
+Data provided by:
+Bookmark
+Bibliographic Tools
+Bibliographic and Citation Tools
+Bibliographic Explorer Toggle
+Bibliographic Explorer
+(
+What is the Explorer?
+)
+Connected Papers Toggle
+Connected Papers
+(
+What is Connected Papers?
+)
+Litmaps Toggle
+Litmaps
+(
+What is Litmaps?
+)
+scite.ai Toggle
+scite Smart Citations
+(
+What are Smart Citations?
+)
+Code, Data, Media
+Code, Data and Media Associated with this Article
+alphaXiv Toggle
+alphaXiv
+(
+What is alphaXiv?
+)
+Links to Code Toggle
+CatalyzeX Code Finder for Papers
+(
+What is CatalyzeX?
+)
+DagsHub Toggle
+DagsHub
+(
+What is DagsHub?
+)
+GotitPub Toggle
+Gotit.pub
+(
+What is GotitPub?
+)
+Huggingface Toggle
+Hugging Face
+(
+What is Huggingface?
+)
+ScienceCast Toggle
+ScienceCast
+(
+What is ScienceCast?
+)
+Demos
+Demos
+Replicate Toggle
+Replicate
+(
+What is Replicate?
+)
+Spaces Toggle
+Hugging Face Spaces
+(
+What is Spaces?
+)
+Spaces Toggle
+TXYZ.AI
+(
+What is TXYZ.AI?
+)
+Related Papers
+Recommenders and Search Tools
+Link to Influence Flower
+Influence Flower
+(
+What are Influence Flowers?
+)
+Core recommender toggle
+CORE Recommender
+(
+What is CORE?
+)
+IArxiv recommender toggle
+IArxiv Recommender
+(
+What is IArxiv?
+)
+Author
+Venue
+Institution
+Topic
+About arXivLabs
+arXivLabs: experimental projects with community collaborators
+arXivLabs is a framework that allows collaborators to develop and share new arXiv features directly on our website.
+Both individuals and organizations that work with arXivLabs have embraced and accepted our values of openness, community, excellence, and user data privacy. arXiv is committed to these values and only works with partners that adhere to them.
+Have an idea for a project that will add value for arXiv's community?
+Learn more about arXivLabs
+.
+Which authors of this paper are endorsers?
+|
+Disable MathJax
+(
+What is MathJax?
+)
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+Major funding support from

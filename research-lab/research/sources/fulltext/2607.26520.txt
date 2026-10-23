@@ -1,0 +1,291 @@
+                                                A Graph-Native Bitemporal Memory Store for
+                                                         Conversational AI Agents
+                                                                           Alp Niksarli                                        Gopesh Baheti
+                                                                        Davidson College                                     Davidson College
+                                                                     alniksarli@davidson.edu                               gobaheti@davidson.edu
+
+
+
+                                            Abstract—Conversational AI agents commonly lack persistent         The architecture we describe is designed around this principle:
+                                         memory across sessions. The obvious fixes like injecting full chat    Neo4j with Bolt over localhost is the default deployment target,
+                                         histories into the context window, or delegating to a third-party     and the implementation works against Neo4j Aura (cloud-
+                                         memory service, either exhaust the model’s context budget or send
+                                         personal data through infrastructure the user does not control.       managed) only because that is what we had available for
+                                         We describe a memory store that avoids both problems: an agent-       testing.
+                                         local Neo4j property graph augmented with HNSW vector indexes            Beyond the deployment question, memory systems for
+                                         and a full bitemporal data model. Each memory is stored as            conversational agents face several harder problems. Standard
+                                         an immutable identity node linked to versioned content nodes          vector stores assume static embeddings: an update overwrites
+                                         carrying two closed-open time intervals—valid time (when the fact
+                                                                                                               the prior vector and the old state is gone. For many personal
+
+
+
+
+arXiv:2607.26520v1 [cs.DB] 29 Jul 2026
+                                         was true in the world) and transaction time (when the database
+                                         recorded it). This design supports point-in-time semantic retrieval   agent use cases this is wrong. If a user told the agent they take
+                                         without physically overwriting history. Semantic edges between        no medication in January and then mentioned a new prescription
+                                         related memories are maintained automatically at write time           in March, both facts are historically interesting: what was true
+                                         using cosine similarity over 1024-dimensional embeddings. We          then, and what is true now, are different questions. A plain
+                                         evaluate the system on LongMemEval, a 500-question benchmark
+                                         spanning six question types designed to stress long-term memory.      key-value or mutable vector store cannot distinguish them.
+                                         Across 60 sampled questions, the current-state semantic search           We address this limitation with a bitemporal schema built on
+                                         path achieves 46.7% R@10 overall, rising to 80% on knowledge-         top of Neo4j’s native HNSW vector indexing infrastructure. Our
+                                         update questions. The time-travel path yields 80% R@10 on             contributions are twofold: (1) an identity/version schema that
+                                         knowledge-update but decreases recall on temporal-reasoning           enables temporal queries in Cypher while preserving efficient
+                                         questions (50% → 37.5%), a consequence of post-filter dilution
+                                         that points directly to a concrete design improvement. We discuss     vector retrieval, and (2) a dual-index design that supports
+                                         what these results reveal about the limits of pure retrieval for      both low-latency access to the current state and retrieval
+                                         different question types and what each failure mode suggests for      over complete historical records without duplicating data. We
+                                         future work.                                                          evaluate the system using LongMemEval [4] rather than a
+                                                                                                               synthetic benchmark, which provides a more realistic view of
+                                                                I. I NTRODUCTION                               both the strengths and limitations of retrieval-based memory
+                                            Most deployed conversational agents operate without durable        systems.
+                                         memory. Each session starts cold, and the agent has no access to
+                                                                                                                                    II. R ELATED W ORK
+                                         what the user said a week ago unless the application developer
+                                         explicitly provides it. The naive solution of prepending the          A. Agent Memory Paradigms
+                                         entire conversation history to every prompt, works only at               Prior work generally divides LLM agent memory into three
+                                         small scale. Token costs grow linearly with history length, and       categories: parametric memory stored in model weights, in-
+                                         the model’s ability to attend to relevant context degrades when       context memory maintained within the prompt window, and
+                                         the window is crowded with irrelevant turns [1].                      retrieval-augmented memory that pulls information from exter-
+                                            Third-party AI memory services (Mem0, Zep, LangChain’s             nal storage [2]. In practice, common in-context methods—such
+                                         ConversationSummaryMemory) address this by maintain-                  as LangChain’s ConversationBufferMemory or direct
+                                         ing an external retrieval index. The agent queries it each turn       system-prompt injection—work well only up to a certain
+                                         and injects only the retrieved snippets into the context window.      scale, after which larger context windows begin to introduce
+                                         This is sensible engineering, but it moves a record of everything     higher latency and weaker coherence. Summarization-based
+                                         the user has said to a service the user does not control. For         approaches [3] help reduce context length by compressing
+                                         agents that handle health notes, financial information, or private    conversation history, but this process inevitably removes
+                                         correspondence, the privacy cost is real.                             details that cannot later be recovered. MemGPT [3] addressed
+                                            A local-first design sidesteps this. If the memory store is        this limitation with a paging-style architecture that shifts
+                                         the agent’s own database, i.e. running on the same machine            information between an in-context “main memory” and external
+                                         or in a managed instance owned by the developer, retrieval            storage. However, its retrieval mechanism still relies on a
+                                         latency is low and no personal data leaves the user’s sphere.         flat vector index without explicit temporal organization. Our
+approach is complementary to MemGPT: the paging framework while the actual data is stored in separate :MemoryVersion
+it proposes could operate on top of the temporally structured nodes. Each time a memory is updated, a new version node
+storage system we introduce.                                      is created and linked to the same identity node, rather than
+   Additionally, third-party systems such as Mem0 and Zep overwriting the previous one. This allows the system to preserve
+provide managed memory APIs with automated extraction and full history while keeping relationships fixed on the identity
+retrieval capabilities. While these services are practical and level.
+technically capable, they require user conversations to be trans-    Two node types are used:
+mitted to external servers. For privacy-sensitive applications       • :Memory {id} — this is a persistent identity node. It
+where conversational data must remain within a controlled en-          is never updated or deleted and serves as the anchor for
+vironment, this requirement makes such approaches unsuitable.          both RELATED TO edges and the HAS VERSION
+                                                                       chain.
+B. Vector Databases                                                  • :MemoryVersion {...} — this node stores the ac-
+   Pinecone, Weaviate, Chroma, and Qdrant all support approx-          tual content, including the embedding, category, tags, and
+imate nearest-neighbor retrieval over dense embeddings using           four temporal timestamps. When the version is the current
+variants of HNSW [5]. Despite their differences, these systems         one, it also carries the :CurrentVersion label.
+generally assume that each document corresponds to a single          The schema uses two relationship types:
+current embedding that reflects its latest/current state. Some       • HAS_VERSION — links a memory node to each of its
+platforms include limited lifecycle support—such as soft deletes       content versions.
+in Weaviate or basic version tracking in Qdrant—but none             • RELATED_TO — stores semantic similarity between
+provide a fully bitemporal query model capable of answering            memories and is created automatically at write time.
+questions such as: “Which version of this fact was valid at
+time t1 , according to the database state at time t2 ?” Although                                       :MemoryVersion
+                                                                                         HAS VERSION
+Neo4j’s vector indexing infrastructure is less optimized for                                             :CurrentVersion (tx to=null)
+
+raw throughput than specialized vector databases, its property             :Memory
+graph model and Cypher query language make bitemporal
+                                                                                                       :MemoryVersion
+representations significantly easier to express and query.                               HAS VERSION
+                                                                                                             (closed) (tx to=t )
+                                                                                                                         1
+
+C. Graph-Based Retrieval
+                                                                   Fig. 1. One Memory identity node with two content versions. The live
+   GraphRAG [6] and related work suggest that traversing version carries :CurrentVersion; the closed version retains its content
+knowledge graphs can improve retrieval by exposing rela- and embedding permanently for time-travel queries.
+tionships that aren’t explicit in the original query. In our
+case, the graph layer is more limited in scope: we maintain B. Bitemporal Model
+RELATED_TO edges between memory identity nodes whenever           Each MemoryVersion node stores two notions of time:
+a new embedding is sufficiently similar to an existing one valid time and transaction time. Valid time represents when a
+(cosine similarity ≥ 0.75). This effectively gives the agent a fact was true in the real world, while transaction time records
+get_related_memories operation, where following an when that fact was stored or modified in the database. Together,
+edge is often cheaper and more stable than reformulating the these timestamps allow the system to distinguish between when
+query and re-ranking results.                                  something happened and when the system learned about it.
+                                                                  Each dimension is represented as a closed-open interval:
+D. Temporal Databases
+   Bitemporal database theory distinguishes between valid                  Valid time: [ valid_from, valid_to )
+time (when a fact is true in the real world) and transaction             Transaction time:     [ tx_from, tx_to )
+time (when it is recorded in the database) [7]. SQL:2011              A NULL upper bound indicates that the interval is still open.
+introduced support for this model through period predicates        Valid time is provided by the caller and typically corresponds
+and FOR SYSTEM_TIME AS OF queries, but these features              to when the memory was observed or extracted (e.g., the
+remain underused in most application-level databases. To our       timestamp of the conversation session). Transaction time is
+knowledge, a full two-axis temporal model has not yet been         assigned internally by the database: tx_from records when
+applied to a vector-indexed document store for LLM agent           the version was written, and tx_to is set when that version
+memory systems.                                                    is later updated or deleted.
+                    III. S YSTEM D ESIGN                              On update_memory, the current version is closed
+                                                                   by setting its tx_to timestamp and removing the
+A. Data Model                                                      :CurrentVersion label. A new version is then created
+  The schema separates identity from content so that memories      with tx_from = now. On delete_memory, both tx_to
+can change over time without rewriting the graph structure         and valid_to are closed on the active version. No versions
+(Fig. 1). Concretely, each memory is stored as a stable            are physically removed, which preserves the full history of the
+:Memory node that only represents the memory’s identity,           memory for temporal queries.
+C. Dual-Index Retrieval                                              •   Graph-based access: get_related_memories,
+   The system uses two separate HNSW vector indexes depend-              get_memory_history
+ing on the type of search being performed.                             The as_of_semantic_search tool adds a simple time
+     a) Current-state          retrieval:      The         index   filter using a valid_at timestamp. This lets the agent ask
+current_version_embedding only contains nodes                      questions about past states of memory. For example, a query
+labeled :CurrentVersion. When a memory is updated,                 like “what did I tell you about my diet last spring?” is translated
+the old version loses this label and the new version receives      into a specific date range, and the system returns only memory
+it. As a result, searches on this index only return the latest     versions whose valid-time interval includes that date.
+version of each memory.
+                                                                   C. Storing User Messages Only
+     b) Historical      retrieval:     The    second      index,
+memory_version_embedding, includes all versions of                    The system indexes only user messages and ignores assistant
+each memory, including older ones. To bound scan cost, the         responses (i.e., any turn where role != "user"). This is
+system over-fetches 10 × k candidates from the vector index,       a design choice based on the assumption that assistant outputs
+then post-filters them using the valid-time and transaction-time   can be regenerated, while user inputs are the original source
+conditions to keep only the versions that were active at the       of information.
+requested time with a query like below:                               This design works well for user-centered memory retrieval,
+                                                                   but it also means the system cannot answer questions about
+WHERE ($valid_at IS NULL OR (
+    v.valid_from <= $valid_at AND                                  what the assistant previously said, since those responses are
+   (v.valid_to IS NULL OR v.valid_to > $valid_at)))                not stored. This limitation shows up in evaluation tasks that
+  AND ($tx_at IS NULL OR (                                         require recalling assistant-generated content.
+    v.tx_from <= $tx_at AND
+   (v.tx_to IS NULL OR v.tx_to > $tx_at)))
+                                                                   D. Automatic Edge Construction
+    Composite     B-tree     indexes    on     (valid_from,      Each time a save_memory or update_memory
+valid_to) and (tx_from, tx_to) accelerate this call is made, we run a small follow-up query against
+filtering step. The over-fetch factor of 10 is a deliberate current_version_embedding to retrieve the top-5 most
+tradeoff whose consequences are discussed in §V.              similar memories using cosine similarity (with a cutoff of
+                                                              ≥ 0.75). We then add or update RELATED_TO edges between
+                     IV. I MPLEMENTATION                      the corresponding identity nodes using those similarity scores.
+A. Technology Stack                                              This adds one extra ANN lookup per write, but in practice
+    The backend uses Neo4j 5.27 Aura Enterprise for the this overhead is small because writes happen much less often
+main deployment, with local development targeting Neo4j than reads in the agent loop. We chose a threshold of 0.75 for
+Community via the default bolt://localhost:7687 cosine similarity as lower values (around 0.7 or below) tended
+endpoint. The Python layer connects to the database using to connect memories that were only loosely related and made
+Neo4j’s official neo4j driver over the Bolt protocol.         the graph noisier when we were testing.
+    For embeddings, we use Amazon Titan Embed Text
+                                                              E. Legacy Data Migration
+v2 (amazon.titan-embed-text-v2:0) through AWS
+Bedrock, which produces 1024-dimensional, unit-normalized        On startup, _ensure_schema verifies that the required
+vectors. The agent is powered by Anthropic’s Claude, and can  indexes   exist. It removes any legacy flat index and creates
+be done either through the direct API or via AWS Bedrock. The the B-tree  and HNSW indexes used by our current system. It
+model source can be switched at runtime using an environment  also runs  _migrate_legacy_memories              to update older
+variable.                                                     stored memories.
+                                                                 Older entries stored memory content directly on the
+B. Agent Tool-Use Loop                                        :Memory node without embeddings. During migration, these
+    The agent uses Claude’s built-in tool-use loop, where the entries are converted to the current structure by creating
+model decides which tools to call during a conversation. At a :MemoryVersion:CurrentVersion node, generating
+each step, it outputs a tool_use request, the system executes an embedding from the original text, and removing the raw
+the requested operation on the memory store, and then returns content from the identity node.
+the result as a tool_result. The model then continues            This migration runs once during initialization and has no
+reasoning with this new information.                          effect on subsequent runs.
+    The system exposes nine memory-related tools, grouped
+below by their purpose:                                                               V. E VALUATION
+    • Write operations: save_memory, update_memory,           A. Benchmark and Protocol
+      delete_memory                                              We evaluated our implementation on LongMemEval [4],
+    • Current-state         retrieval:        get_memories, a 500-question benchmark built from synthetic multi-session
+      search_memories, semantic_search_memories conversations. The questions on this benchmark fall into six
+    • Time-aware retrieval: as_of_semantic_search             types: single-session user statements (ss-user), assistant outputs
+(ss-asst), inferred preferences (ss-pref ), facts spread across valid_at. This is correct temporal behavior—the memory
+sessions (multi-session), date arithmetic (temporal-reasoning), did not yet exist at the point in time the question specifies—and
+and facts that changed over time (knowledge-update).            it is treated as a correct empty result, not a miss. Those two
+   For each example, we clear the database and ingest all user examples are excluded from the 37.5% denominator.
+turns with at least 20 characters, setting valid_from to the       For the remaining eight examples, the current-state path
+session date. We then retrieve answers using two retrieval scored 5/8 = 62.5% while time-travel scored 3/8 = 37.5%.
+modes. The default mode uses vector similarity search with The time-travel path performs worse despite having access to
+the top-10 results (Strategy 2). For temporal-reasoning and the same or more data. The cause is the over-fetch strategy:
+knowledge-update questions, we additionally use a time-aware to allow post-filtering, we pull 10 × k = 100 candidates from
+retrieval mode that filters results by valid_at (Strategy 1). A the full-history HNSW index. Many of those candidates are
+hit requires ≥50% token overlap with the ground-truth answer. older versions of memories that pass ANN scoring but fail the
+We sample 10 examples per type (60 total, seed=42).             temporal filter, and the survivors are re-ranked by similarity
+   Results are reported using R@k (recall at k), which measures without any recency signal. The result is that the target answer
+whether the correct answer appears within the top k retrieved sometimes drops below position 10 in the filtered set, even
+results.                                                        though it would have been in the top 5 under the current-state
+                                                                path. This is a concrete, reproducible failure mode of the over-
+B. Results
+                                                                fetch design rather than a problem with the temporal model
+                                                                itself.
+                               TABLE I
+  L ONG M EM E VAL RESULTS . R@k = S TRATEGY 2 ( CURRENT- STATE ).         F. Knowledge Update
+ R@10t = S TRATEGY 1 ( TIME - TRAVEL ), REPORTED ONLY FOR THE TWO
+TYPES WHERE IT RUNS . S TRATEGY 1 RETURNED ZERO CANDIDATES FOR                Both strategies achieve 80% R@10. In these cases, the
+SOME TEMPORAL - REASONING QUESTIONS ; THOSE ARE EXCLUDED FROM              updated values were still valid at the question time, so time-
+                THE R@10 t DENOMINATOR ( SEE §V-E).
+                                                                           travel retrieval returned the same results as current-state
+        Question Type         N    R@1    R@5    R@10     R@10t            search. The two missed cases required combining values across
+                                                                           multiple sessions rather than retrieving a single updated fact.
+        single-session-user   10   70.0   90.0    90.0      —
+        knowledge-update      10   40.0   80.0    80.0     80.0
+                                                                           G. Multi-Session
+        temporal-reasoning    10   50.0   50.0    50.0     37.5†
+        multi-session         10   0.0    30.0    30.0      —                 At 30% R@10 and 0% R@1, multi-session is the weakest
+        single-session-asst   10    0.0   20.0    20.0      —              non-structural category. Most ground-truth answers require
+        single-session-pref   10    0.0   10.0    10.0      —
+                                                                           counting events across multiple sessions (e.g., “how many
+        Overall               60   26.7   46.7    46.7      —
+                                                                           farmers market trips did you take?”). These cannot be answered
+  † Computed over 8 non-null results; 2 correctly returned empty (§V-E).
+                                                                           by retrieval alone. The 30% that succeed are cases where the
+                                                                           answer is explicitly stated in a single user message.
+C. Single-Session User Statements                                                               VI. C ONCLUSION
+   At 90% R@10 this is the strongest category. Questions ask               A. Summary
+about things the user said directly, and the corpus is the user’s
+own words, so semantic search finds them reliably. Notably,            In this project we implemented a conversational memory
+R@5 equals R@10 for every question type, meaning every              store on Neo4j that combines vector-based similarity search
+hit found in the top 10 was already present in the top 5—the        with a bitemporal data model and automatic graph linking
+1024-dimensional Titan embeddings consistently rank correct         between related memories. The main components of the system
+matches highly when they exist in the corpus.                       are: (1) separating identity nodes from versioned memory data
+                                                                    so that temporal queries can be expressed directly in Cypher
+D. Single-Session Assistant and Preference Types                    while still supporting HNSW search; (2) using Neo4j labels
+   Both low scores reflect indexing choices, not retrieval quality. to support both a fast “current state” view and a full history
+ss-asst (20%) fails because we only index user turns (§IV-C), i.e. view over the same data; and (3) adding composite B-tree
+the assistant’s recommendations are never stored. ss-pref (10%) indexes over the bitemporal interval columns to speed up
+performs poorly because the correct answers are synthetic multi- filtered queries.
+sentence summaries that do not appear directly in any user             We evaluated the system using LongMemEval. It performs
+message, so they cannot be retrieved exactly through search well on direct factual recall (about 90% on user-statement
+alone.                                                              questions and 80% on knowledge-updates). It is less reliable
+                                                                    on tasks that require combining information across multiple
+E. Temporal Reasoning and the Dilution Effect                       sessions, inferring user preferences, or recalling indirect
+   Current-state search achieves 50% R@10, while time-travel assistant-generated content. We also found that time-based
+search achieves 37.5%. Two of the ten examples produced null retrieval can pull in too much unrelated context, which hurts
+for R@10t rather than false: Strategy 1 returned zero results performance on temporal reasoning tasks. This highlights a
+because the relevant session’s date fell after the question’s trade-off between retrieving more information and keeping
+results focused, and it is an actionable finding rather than a
+fundamental limit of the temporal model.
+B. Future Directions
+   Re-ranking after filtering. To reduce noise in temporal
+reasoning, we can re-rank retrieved memories after filtering
+by combining cosine similarity with closeness to valid_at,
+instead of relying only on the initial vector search score.
+   Event aggregation during ingestion. For questions that
+involve counting across sessions, we likely need to process
+events at ingestion time by extracting entities and updating
+counter nodes in the graph. This would store totals directly
+instead of relying only on raw text.
+   Indexing assistant messages. Supporting recall of assistant-
+generated content requires also indexing assistant turns during
+ingestion. These can be tagged separately from user messages
+and handled differently at retrieval time using the existing
+category field.
+                                R EFERENCES
+[1] N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and
+    P. Liang, “Lost in the Middle: How Language Models Use Long Contexts,”
+    Transactions of the Association for Computational Linguistics, vol. 12,
+    pp. 157–173, 2024.
+[2] P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. Küttler,
+    M. Lewis, W. Yih, T. Rocktäschel, S. Riedel, and D. Kiela, “Retrieval-
+    Augmented Generation for Knowledge-Intensive NLP Tasks,” Advances
+    in Neural Information Processing Systems (NeurIPS), 2020.
+[3] C. Packer, S. Wooders, K. Lin, V. Fang, S. Patil, I. Stoica, and J. Gonzalez,
+    “MemGPT: Towards LLMs as Operating Systems,” arXiv:2310.08560,
+    2023.
+[4] D. Wu, J. He, T. Khot, and S. Rao, “LongMemEval: Benchmarking Chat
+    Assistants on Long-Term Interactive Memory,” International Conference
+    on Learning Representations (ICLR), 2025.
+[5] Y. A. Malkov and D. A. Yashunin, “Efficient and Robust Approximate
+    Nearest Neighbor Search Using Hierarchical Navigable Small World
+    Graphs,” IEEE Transactions on Pattern Analysis and Machine Intelligence,
+    vol. 42, no. 4, pp. 824–836, 2020.
+[6] D. Edge, H. Trinh, N. Cheng, J. Bradley, A. Chao, A. Mody, S. Truitt,
+    and J. Larson, “From Local to Global: A Graph RAG Approach to Query-
+    Focused Summarization,” arXiv:2404.16130, 2024.
+[7] R. T. Snodgrass, Developing Time-Oriented Database Applications in
+    SQL. Morgan Kaufmann, 1999.
+

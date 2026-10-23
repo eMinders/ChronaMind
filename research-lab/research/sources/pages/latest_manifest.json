@@ -1,0 +1,62 @@
+[
+  {
+    "key": "lme_v2_paper",
+    "url": "https://arxiv.org/abs/2605.12493",
+    "status": 200
+  },
+  {
+    "key": "lme_v2_full",
+    "url": "https://arxiv.org/html/2605.12493",
+    "status": 200
+  },
+  {
+    "key": "memoryos_acl",
+    "url": "https://aclanthology.org/2025.emnlp-main.1318/",
+    "status": 200
+  },
+  {
+    "key": "gdpr_uk",
+    "url": "https://www.legislation.gov.uk/eur/2016/679/article/17/data.html",
+    "status": 200
+  },
+  {
+    "key": "amem_proceedings",
+    "url": "https://papers.nips.cc/paper_files/paper/2025/hash/5df7a07dc9f9e962a51b4fc7de2f6390-Abstract-Conference.html",
+    "status": 404
+  },
+  {
+    "key": "memgpt_letta",
+    "url": "https://raw.githubusercontent.com/letta-ai/letta/main/README.md",
+    "status": 200
+  },
+  {
+    "key": "rrf_acm",
+    "url": "https://dl.acm.org/doi/10.1145/1571941.1572114",
+    "status": 403
+  },
+  {
+    "key": "graphiti_commit",
+    "url": "https://api.github.com/repos/getzep/graphiti/commits?per_page=1",
+    "status": 200
+  },
+  {
+    "key": "mem0_commit",
+    "url": "https://api.github.com/repos/mem0ai/mem0/commits?per_page=1",
+    "status": 200
+  },
+  {
+    "key": "locomo_commit",
+    "url": "https://api.github.com/repos/snap-research/locomo/commits?per_page=1",
+    "status": 200
+  },
+  {
+    "key": "lme_commit",
+    "url": "https://api.github.com/repos/xiaowu0162/LongMemEval/commits?per_page=1",
+    "status": 200
+  },
+  {
+    "key": "lme_v2_commit",
+    "url": "https://api.github.com/repos/xiaowu0162/LongMemEval-V2/commits?per_page=1",
+    "status": 200
+  }
+]

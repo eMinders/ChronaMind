@@ -1,0 +1,308 @@
+[
+  {
+    "key": "memgpt",
+    "requested_url": "https://arxiv.org/abs/2310.08560",
+    "final_url": "https://arxiv.org/abs/2310.08560",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.092886+00:00",
+    "file": "memgpt.txt",
+    "sha256": "695dbd9bd36ba7c4ed261d14561895a614316ac064e90b521d86a42bc9e3ac30"
+  },
+  {
+    "key": "generative_agents",
+    "requested_url": "https://arxiv.org/abs/2304.03442",
+    "final_url": "https://arxiv.org/abs/2304.03442",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.092085+00:00",
+    "file": "generative_agents.txt",
+    "sha256": "90e57e735c3f7b58a428c94723ffb65106b29aef9064b209d29da42de2192a73"
+  },
+  {
+    "key": "memorybank",
+    "requested_url": "https://ojs.aaai.org/index.php/AAAI/article/view/29946",
+    "final_url": "https://ojs.aaai.org/index.php/AAAI/article/view/29946",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.443337+00:00",
+    "file": "memorybank.txt",
+    "sha256": "01e314054d131c50b86add0c077d07dabe346860f3e3add3b9438d0d4f2291cb"
+  },
+  {
+    "key": "locomo_paper",
+    "requested_url": "https://aclanthology.org/2024.acl-long.747/",
+    "final_url": "https://aclanthology.org/2024.acl-long.747/",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.529786+00:00",
+    "file": "locomo_paper.txt",
+    "sha256": "8560ca304b0770636470688698a6b36cc373759a4d2e1eae8a3737447b66be26"
+  },
+  {
+    "key": "locomo_repo",
+    "requested_url": "https://raw.githubusercontent.com/snap-research/locomo/main/README.md",
+    "final_url": "https://raw.githubusercontent.com/snap-research/locomo/main/README.md",
+    "http_status": 404,
+    "retrieved_utc": "2026-10-16T21:02:02.092838+00:00",
+    "file": "locomo_repo.txt",
+    "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed"
+  },
+  {
+    "key": "locomo_license",
+    "requested_url": "https://raw.githubusercontent.com/snap-research/locomo/main/LICENSE",
+    "final_url": "https://raw.githubusercontent.com/snap-research/locomo/main/LICENSE",
+    "http_status": 404,
+    "retrieved_utc": "2026-10-16T21:02:02.074879+00:00",
+    "file": "locomo_license.txt",
+    "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed"
+  },
+  {
+    "key": "zep",
+    "requested_url": "https://arxiv.org/abs/2501.13956",
+    "final_url": "https://arxiv.org/abs/2501.13956",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.113716+00:00",
+    "file": "zep.txt",
+    "sha256": "7ac5e10c7643b57fb6aa5615429ad18b6be53e79548bad2aca9e2a8250987abc"
+  },
+  {
+    "key": "graphiti_readme",
+    "requested_url": "https://raw.githubusercontent.com/getzep/graphiti/main/README.md",
+    "final_url": "https://raw.githubusercontent.com/getzep/graphiti/main/README.md",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.119026+00:00",
+    "file": "graphiti_readme.txt",
+    "sha256": "e0beb0d34b53e25e72c22d68bd951c34a1dfdc1b4454fd821ecc29f3552708de"
+  },
+  {
+    "key": "graphiti_license",
+    "requested_url": "https://raw.githubusercontent.com/getzep/graphiti/main/LICENSE",
+    "final_url": "https://raw.githubusercontent.com/getzep/graphiti/main/LICENSE",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.112342+00:00",
+    "file": "graphiti_license.txt",
+    "sha256": "2825300b20d7b951209835a4a331f29e24725a39d65168e4b831df53aa372650"
+  },
+  {
+    "key": "mem0",
+    "requested_url": "https://arxiv.org/abs/2504.19413",
+    "final_url": "https://arxiv.org/abs/2504.19413",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.074802+00:00",
+    "file": "mem0.txt",
+    "sha256": "dd4feeb5f8a0361db856d80e9e6ea82a604fe553670b5ca7da87fc4803f6b273"
+  },
+  {
+    "key": "mem0_readme",
+    "requested_url": "https://raw.githubusercontent.com/mem0ai/mem0/main/README.md",
+    "final_url": "https://raw.githubusercontent.com/mem0ai/mem0/main/README.md",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.501127+00:00",
+    "file": "mem0_readme.txt",
+    "sha256": "f72db3426438dbdf6879a2b50583fbee8e7e2dde5d01308c6295bcd09fd3db86"
+  },
+  {
+    "key": "mem0_license",
+    "requested_url": "https://raw.githubusercontent.com/mem0ai/mem0/main/LICENSE",
+    "final_url": "https://raw.githubusercontent.com/mem0ai/mem0/main/LICENSE",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.548741+00:00",
+    "file": "mem0_license.txt",
+    "sha256": "0bbcbe931c353293a2fafce08326181dfeea0e568c566afd4ce8337a70f5e219"
+  },
+  {
+    "key": "rag",
+    "requested_url": "https://arxiv.org/abs/2005.11401",
+    "final_url": "https://arxiv.org/abs/2005.11401",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.435907+00:00",
+    "file": "rag.txt",
+    "sha256": "d5927668ee12e2aa808a22e6005619cab75524573e141a79e45581db8bd84e7b"
+  },
+  {
+    "key": "lost_middle",
+    "requested_url": "https://aclanthology.org/2024.tacl-1.9/",
+    "final_url": "https://aclanthology.org/2024.tacl-1.9/",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.892292+00:00",
+    "file": "lost_middle.txt",
+    "sha256": "688fa328305282df4049977c083a52a116dfe1dde6cee26a5a398472238ef696"
+  },
+  {
+    "key": "longmemeval",
+    "requested_url": "https://arxiv.org/abs/2410.10813",
+    "final_url": "https://arxiv.org/abs/2410.10813",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.435935+00:00",
+    "file": "longmemeval.txt",
+    "sha256": "16980841a84cbc54ee33fd7c88bab6db03425e9a29e971ddd923c2dab85ac188"
+  },
+  {
+    "key": "longmemeval_repo",
+    "requested_url": "https://raw.githubusercontent.com/xiaowu0162/LongMemEval/main/README.md",
+    "final_url": "https://raw.githubusercontent.com/xiaowu0162/LongMemEval/main/README.md",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.484195+00:00",
+    "file": "longmemeval_repo.txt",
+    "sha256": "c4ff45676683d9e2f7cf7d9099d26426f14635ec110dbb1da818d1019a142573"
+  },
+  {
+    "key": "longmemeval_license",
+    "requested_url": "https://raw.githubusercontent.com/xiaowu0162/LongMemEval/main/LICENSE",
+    "final_url": "https://raw.githubusercontent.com/xiaowu0162/LongMemEval/main/LICENSE",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.470823+00:00",
+    "file": "longmemeval_license.txt",
+    "sha256": "d3c4b9aa54759df6ded337978a6f3b55b75615e5e4525c3b82d7e2627d4b9732"
+  },
+  {
+    "key": "bm25",
+    "requested_url": "https://www.nowpublishers.com/article/Details/INR-019",
+    "final_url": "https://www.emerald.com/ftinr/article/4/1-2/1/1326508/The-Probabilistic-Relevance-Framework-BM25-and",
+    "http_status": 403,
+    "retrieved_utc": "2026-10-16T21:02:03.041358+00:00",
+    "file": "bm25.txt",
+    "sha256": "05f8bdf19ca64ec98ac31c13061fb810966197580390f0688c67e092c21b5a3f"
+  },
+  {
+    "key": "snodgrass",
+    "requested_url": "https://www2.cs.arizona.edu/~rts/tdbbook.pdf",
+    "final_url": "https://www2.cs.arizona.edu/~rts/tdbbook.pdf",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:08.240462+00:00",
+    "file": "snodgrass.pdf",
+    "sha256": "63e7657d379daf3df56a3a404c78555fab8f1238db388eacf0570710cf8e7108"
+  },
+  {
+    "key": "rrf",
+    "requested_url": "https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf",
+    "final_url": "https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:04.800739+00:00",
+    "file": "rrf.pdf",
+    "sha256": "5c1f9f1fe0d80f67d82041bbe151ea17437bc7a7d9a920564cf122d1b09eafb5"
+  },
+  {
+    "key": "poisonedrag",
+    "requested_url": "https://www.usenix.org/conference/usenixsecurity25/presentation/zou",
+    "final_url": "https://www.usenix.org/conference/usenixsecurity25/presentation/zou-poisonedrag",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.391936+00:00",
+    "file": "poisonedrag.txt",
+    "sha256": "3c479dc5099911fdfb5411b33b881aee042f1ce44aa9dc7987c0425c2fa39f8c"
+  },
+  {
+    "key": "gdpr",
+    "requested_url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj/eng",
+    "final_url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj/eng",
+    "http_status": 202,
+    "retrieved_utc": "2026-10-16T21:02:02.690076+00:00",
+    "file": "gdpr.txt",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "key": "judge",
+    "requested_url": "https://arxiv.org/abs/2306.05685",
+    "final_url": "https://arxiv.org/abs/2306.05685",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.784573+00:00",
+    "file": "judge.txt",
+    "sha256": "34ad51e02cf83592bcd79f109f2b700965229a2dafbd9fcb0cce16b98c1ca5c7"
+  },
+  {
+    "key": "postgres_ranges",
+    "requested_url": "https://www.postgresql.org/docs/16/rangetypes.html",
+    "final_url": "https://www.postgresql.org/docs/16/rangetypes.html",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.980409+00:00",
+    "file": "postgres_ranges.txt",
+    "sha256": "340dce199522c96412a0f4e151846da99a0bf57a1a5ce059485aea244c1d9400"
+  },
+  {
+    "key": "postgres_rls",
+    "requested_url": "https://www.postgresql.org/docs/16/ddl-rowsecurity.html",
+    "final_url": "https://www.postgresql.org/docs/16/ddl-rowsecurity.html",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:02.949284+00:00",
+    "file": "postgres_rls.txt",
+    "sha256": "3e101bf76304eec7629481b427690e197d76ea1d1ace77b1a5d4acb946afea8d"
+  },
+  {
+    "key": "postgres_fts",
+    "requested_url": "https://www.postgresql.org/docs/16/textsearch-controls.html",
+    "final_url": "https://www.postgresql.org/docs/16/textsearch-controls.html",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.114142+00:00",
+    "file": "postgres_fts.txt",
+    "sha256": "79a8fed6cae73445f9a8cc634e3164db193505795f7a538e247d2b1e0ac44e53"
+  },
+  {
+    "key": "pgvector",
+    "requested_url": "https://raw.githubusercontent.com/pgvector/pgvector/master/README.md",
+    "final_url": "https://raw.githubusercontent.com/pgvector/pgvector/master/README.md",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.142553+00:00",
+    "file": "pgvector.txt",
+    "sha256": "19cebadeeb8d3181d01ef00399674ec41bd2f0363850cdccc7685d4260c5a1c6"
+  },
+  {
+    "key": "amem",
+    "requested_url": "https://arxiv.org/abs/2502.12110",
+    "final_url": "https://arxiv.org/abs/2502.12110",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.207518+00:00",
+    "file": "amem.txt",
+    "sha256": "9820948f221dd64ca28415c57ed22300114a36c58636829dfe19e02600744d21"
+  },
+  {
+    "key": "memos",
+    "requested_url": "https://arxiv.org/abs/2507.03724",
+    "final_url": "https://arxiv.org/abs/2507.03724",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.240264+00:00",
+    "file": "memos.txt",
+    "sha256": "489740e1b8fc13f367024725425e47766c9fb66ab3351f050639bfbf4b8622ae"
+  },
+  {
+    "key": "memoryos",
+    "requested_url": "https://arxiv.org/abs/2506.06326",
+    "final_url": "https://arxiv.org/abs/2506.06326",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.293963+00:00",
+    "file": "memoryos.txt",
+    "sha256": "00b95bc82317b135e96d07c9f4e89889d210ed904efb72e96ac605c0db6d7f96"
+  },
+  {
+    "key": "agent_poison",
+    "requested_url": "https://arxiv.org/abs/2407.12784",
+    "final_url": "https://arxiv.org/abs/2407.12784",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.322593+00:00",
+    "file": "agent_poison.txt",
+    "sha256": "75bb72271b63a85a97636bf65e259e4fc8a44c5e6d5bfcc12bcb4f93c008c4ab"
+  },
+  {
+    "key": "memorygraft",
+    "requested_url": "https://arxiv.org/abs/2512.16962",
+    "final_url": "https://arxiv.org/abs/2512.16962",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.442401+00:00",
+    "file": "memorygraft.txt",
+    "sha256": "12dc454c28ecee0a4247eb24a2527e20e22bf27487a51cca0bf0bc1f75109208"
+  },
+  {
+    "key": "locomo_eval",
+    "requested_url": "https://raw.githubusercontent.com/snap-research/locomo/main/task_eval/evaluation.py",
+    "final_url": "https://raw.githubusercontent.com/snap-research/locomo/main/task_eval/evaluation.py",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.562788+00:00",
+    "file": "locomo_eval.txt",
+    "sha256": "8e3be5d57ff2ff9ec5cd05939592f468c5f3f1fd95d13e431932bdf6bf0fd6fd"
+  },
+  {
+    "key": "lme_eval",
+    "requested_url": "https://raw.githubusercontent.com/xiaowu0162/LongMemEval/main/src/evaluation/evaluate_qa.py",
+    "final_url": "https://raw.githubusercontent.com/xiaowu0162/LongMemEval/main/src/evaluation/evaluate_qa.py",
+    "http_status": 200,
+    "retrieved_utc": "2026-10-16T21:02:03.605940+00:00",
+    "file": "lme_eval.txt",
+    "sha256": "ecce9c4c79dc89d99534ac17b383a5cbb5b9f0c69ee98adaf0684742e3d95251"
+  }
+]

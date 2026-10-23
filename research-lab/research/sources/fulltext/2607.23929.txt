@@ -1,0 +1,504 @@
+                                              MemTX: Transactional Belief Commit for Stateful Agent Memory
+
+                                                                 Xiaoyang Li1 Yiqi Wang2 Haohui Lu3                              Zhi Chen1 Mo Li4
+                                                                         Pingan Song1 Mingkai Zheng5                             Taotao Cai1
+                                                             1 University of Southern Queensland         2 Griffith University      3 The University of Sydney
+                                                                      4 Liaoning University      5 Southern University of Science and Technology
+
+
+
+
+                                         Abstract                                                                      This design conflates two events that deployments must
+                                                                                                                    keep apart: recording an observation and committing a belief.
+                                         LLM agents increasingly coordinate through persistent                      The gap surfaces as recurring state corruption. A polluted
+                                         shared memory: one agent’s write becomes another agent’s                   tool result is summarized into a profile that keeps justifying a
+                                         premise, and eventually a tool call with real side effects.                wrong refund after the source is corrected [Chen et al., 2024,
+                                         Current agent memory systems treat every accepted write                    Dash et al., 2026]. A stale write arriving after a correction
+                                         as immediately actionable truth, so a polluted tool result, a              silently overrides it [Chao et al., 2026]. A private record para-
+
+
+
+
+arXiv:2607.23929v2 [cs.AI] 28 Jul 2026
+                                         stale update, or a teammate’s half-finished note can silently              phrased into a shared scope escapes its permission. In each
+                                         drive an irreversible action. We argue that a memory write                 case an unvalidated or already invalidated memory reaches
+                                         is not a belief commit. We present MemTX, a transactional                  an irreversible tool call, converting a recoverable data er-
+                                         belief-commit protocol. Each record carries evidence, per-                 ror into an unrecoverable action. We organize these failures
+                                         missions, provenance, and validity. Writes are staged inside               into six families used throughout: tool-result pollution, stale
+                                         snapshot-isolated transactions and admitted by a validate-                 late writes, dirty reads of tentative state, semantic conflict,
+                                         and-commit pipeline, irreversible tool calls are gated on                  permission laundering, and cascading-rollback failures.
+                                         in-flight belief state, and retracting a belief triggers typed                Recent work imports database machinery into agent sys-
+                                         cascading repair of its derived records and tool side effects.             tems, from write-time contradiction resolution and semantic
+                                         Two invariants, action-safety gating and cascade-repair com-               transactions around tool effects to transactional execution un-
+                                         pleteness, are machine-checked by property-based testing                   der information-flow labels and shared-memory governance
+                                         and bounded exhaustive enumeration of 5.5 million proto-                   benchmarks, but stops short of the action boundary: correct-
+                                         col states, with zero violations. Across five backbones from               ness ends once the write is accepted. None of these systems
+                                         three model families, MemTX leads all eight baselines with                 tracks whether a belief has matured enough to be acted upon,
+                                         paired-McNemar significance on four backbones and statis-                  and none repairs what a retracted belief has contaminated.
+                                         tically ties the best baseline on the fifth and strongest, while           §2 verifies both axes against each system’s full text. Cor-
+                                         remaining the only method with zero downstream harm on                     rectness must instead extend to action time and, because
+                                         every backbone. Backbone capability does not substitute for                agents act while validating, to repair after the fact. Table 1
+                                         commit discipline.                                                         positions MemTX against the closest systems along seven
+                                                                                                                    criteria spanning staged lifecycle, maturity-scoped visibil-
+                                                                                                                    ity, write-time adjudication, permission propagation to de-
+                                                                                                                    rived records, typed cascade repair, action gating, and multi-
+                                         1     Introduction                                                         principal operation.
+                                                                                                                       MemTX closes this gap with a single belief-commit state
+                                         Production agent stacks persist observations, preferences,
+                                                                                                                    machine, rebuilding a discipline databases learned decades
+                                         and intermediate conclusions into long-lived stores shared
+                                                                                                                    ago: a write is not a commit. Records carry evidence, per-
+                                         across sessions and, increasingly, across agents [Packer et al.,
+                                                                                                                    missions, provenance, and validity, and mature through an
+                                         2023, Park et al., 2023, Chhikara et al., 2025, Xu et al., 2026].
+                                                                                                                    explicit lifecycle from tentative to action-safe. Writes are
+                                         This memory is load-bearing state: what one agent writes, a
+                                                                                                                    staged inside snapshot-isolated transactions and admitted by
+                                         teammate turns into a refund, a booking, or an email, none
+                                                                                                                    a validate-and-commit pipeline, irreversible tool calls are
+                                         of which can be taken back [Ruan et al., 2024]. Yet exist-
+                                                                                                                    gated on in-flight belief state, and retracting a belief trig-
+                                         ing memory systems concentrate on storage and retrieval.
+                                                                                                                    gers typed cascading repair of derived records and tool side
+                                         Whatever passes the write path becomes truth for everyone
+                                                                                                                    effects.
+                                         downstream.
+                                                                                                                       No existing dataset scripts these failures, so we evaluate on
+                                           Preprint. Under review. Code and data: https://github.com/lxy1134/       a purpose-built conformance suite. All nine methods share
+                                         MEMTX .                                                                    one runner, prompt set, tool schema, and rule-based grader,
+
+
+                                                                                                                1
+ Method                                    Staged Lifecycle   Maturity Reads   Semantic Conflict   Permission Inherit.   Typed Cascade   Action Gating   Multi-Agent
+ Cordon [Chen et al., 2026]                       #
+                                                  G                 #
+                                                                    G                 #                    #
+                                                                                                           G                  #
+                                                                                                                              G               #
+                                                                                                                                              G              #
+ Verified Conc. [Khan, 2026]                      #                 #
+                                                                    G                 #
+                                                                                      G                    #                  #
+                                                                                                                              G               #
+                                                                                                                                              G
+ GEM/MemState [Orogat and Mansour, 2026]          #
+                                                  G                 #                 #
+                                                                                      G                    #                  #
+                                                                                                                              G               #              #
+                                                                                                                                                             G
+ Collab. Mem [Rezazadeh et al., 2025]             #                 #                 #                    #
+                                                                                                           G                  #               #
+ GateMem [Ren et al., 2026]                       #                 #                 #                    #
+                                                                                                           G                  #
+                                                                                                                              G               #
+ TOKI [Wang, 2026]                                #
+                                                  G                 #
+                                                                    G                                      #                  #
+                                                                                                                              G               #              #
+                                                                                                                                                             G
+ Gov. Shared [Margalit et al., 2026]              #
+                                                  G                 #
+                                                                    G                 G
+                                                                                      #                    G
+                                                                                                           #                  G
+                                                                                                                              #               #
+ Ours
+
+
+Table 1: Comparison of agent-memory methods across seven capability criteria. full, #    G partial, # no support. Criteria are
+defined in the introduction, and per-system credit notes are given in the Related Work text.
+
+
+so the memory manager is the only variable. Sixty trap cases                        merge, without an isolation level or commit contract. Multi-
+are paired with thirty controls, so over-blocking is penalized                      agent surveys name memory consistency and access control
+and safety is reported with availability and cost. A hard-                          as the central open problems [Yu et al., 2026, Wu and Shu,
+ened extension of 56 cases, 40 traps and 16 controls, layers                        2026], and Governed Shared Memory [Margalit et al., 2026]
+compound corruptions onto the same protocol.                                        builds a trust ladder with a supersedes-based contradiction
+   Our contributions:                                                               experiment but no transactional commit protocol.
+                                                                                       Transactions and concurrency for agents. Chen et al.
+    • We design MemTX, a belief-commit state model uni-                             [2026] wraps external tool effects in semantic transactions,
+      fying an eight-state lifecycle, five isolation levels, risk-                  but memory itself is not the transactional object: no be-
+      tiered transactions, action gating on in-flight belief state,                 lief lifecycle, leveled read scoping, conflict adjudication, or
+      and typed cascading repair, extending memory correct-                         repair of derived memory. Khan [2026] machine-checks a
+      ness from write time to action time and post-hoc repair.                      consistency hierarchy with snapshot isolation and a verified
+                                                                                    cascade that aborts operations dependent on a retracted one,
+    • We machine-check two invariants covering action-
+                                                                                    but it is content-agnostic: conflicts are value divergences
+      safety gating and cascade-repair completeness via
+                                                                                    rather than belief contradictions, repair removes dependents
+      property-based testing and bounded exhaustive enumer-
+                                                                                    rather than repairing them by type, and permissions are ab-
+      ation of 5.5 million protocol states, with zero violations.
+                                                                                    sent. SAFEFLOW [Li et al., 2025] couples information-flow
+      The strong gating form is scoped to external-action
+                                                                                    labels with transactional execution at the coordination layer,
+      transactions.
+                                                                                    over execution state rather than a belief store, with gating by
+    • We build a controlled suite of 90 tasks over six corrup-                      security label rather than record maturity.
+      tion families with paired trap and control cases, pure-                          Memory-state governance and access control. Orogat
+      rule grading, fidelity-audited baselines, and a down-                         and Mansour [2026] cast long-term memory as a data-
+      stream pipeline measuring realized harm, extended by                          management workload with ingestion, revision, forgetting,
+      a hardened 56-case adversarial set.                                           and retrieval operators, resolving conflicts by supersession
+                                                                                    marking and re-evaluating dependent topics on revision. The
+    • Across five backbones from three model families,                              abstraction is single-tenant, with no lifecycle separating write
+      MemTX ranks first on every open backbone and seed,                            from actionable commit, no permissions, and no repair of de-
+      is significant against all eight baselines in every pooled                    rived effects. Collaborative Memory [Rezazadeh et al., 2025]
+      paired test at p below 0.00001, and statistically ties                        maintains private and shared tiers under time-evolving ac-
+      the best baseline on the frontier closed backbone while                       cess control, and GateMem [Ren et al., 2026] benchmarks
+      alone preserving zero downstream harm. Ablations at-                          this multi-principal setting. In both, permission checks are
+      tribute the margin to semantic-conflict adjudication,                         retrospective Boolean filters: a passing write still commits
+      permission inheritance, and cascading rollback.                               contradictory content, and a belief inferred from a private
+                                                                                    fragment does not inherit its restrictions, a laundering gap
+                                                                                    with no rollback.
+2       Related Work                                                                   Semantic contradiction and belief revision. TOKI [Wang,
+                                                                                    2026] types production contradiction-resolution heuristics as
+Agent and multi-agent memory. Memory is a first-class com-                          bitemporal write-time operators with explicit isolation pre-
+ponent of LLM agents, from MemGPT [Packer et al., 2023]                             conditions and proves their soundness, the one prior system
+and Generative Agents [Park et al., 2023] to production stores                      the table credits with full write-time adjudication. Its multi-
+[Xu et al., 2026, Chhikara et al., 2025, Rasmussen et al.,                          writer experiments run without agent principals, its recov-
+2025], with surveys mapping the write, manage, and read                             ery keeps per-fact audit rows without dependency tracking,
+lifecycle [Huang et al., 2026, Du, 2026]. These systems re-                         and access-control governance is left open. STALE [Chao
+solve competing writes by last-writer-wins or an LLM-judge                          et al., 2026] isolates the implicit-conflict failure mode, a later
+
+
+                                                                                2
+observation invalidating an earlier memory without explicit             strong gate, and the gate’s in-flight tentative condition holds
+negation.                                                               at every tier regardless.
+   Adjacent lines. Temporal-validity memories resolve
+single-writer supersession [Rasmussen et al., 2025, Yadav,
+2026, Ganesan, 2026, Tan et al., 2026]; RAG knowledge-                  3.2    Transactions and the Commit Pipeline
+conflict work adjudicates parametric against retrieved knowl-           Opening a transaction declares a risk tier, maps it to an isola-
+edge at read time [Xu et al., 2024, Liu et al., 2025]; memory-          tion level, and captures a snapshot: the records visible at that
+poisoning studies trace untrusted input to downstream cor-              level at open time. Staging writes an extracted observation
+ruption [Dash et al., 2026, Chen et al., 2024, Lin et al., 2026].       into the transaction as tentative and registers its prove-
+Classical database theory supplies isolation-level anomalies            nance edges. Staged records stay invisible to other agents at
+[Berenson et al., 2007, Adya et al., 2000], serializable snap-          committed-read isolation and above.
+shot isolation [Cahill et al., 2009], and software transactional           Commit admits each staged record through four ordered
+memory [Shavit and Touitou, 1995]; ChatDB [Hu et al.,                   checks. First, an evidence check requires the writer’s confi-
+2023] exposes SQL databases to LLMs.                                    dence to reach a fixed threshold of 0.6 unless source authority
+                                                                        reaches 0.9, the band occupied by user input, system input,
+                                                                        and high-trust tool feeds. Both comparisons are inclusive.
+3     The MemTX Protocol                                                This is the cheapest line of defense in depth rather than a lone
+                                                                        safety boundary, and the sweep in Appendix A verifies that
+MemTX is model-agnostic middleware between an agent and                 results hinge on neither constant. Second, a validity check re-
+its persistent memory. It provides a single state machine in            quires the interval to contain the current logical time. Third, a
+which recording an observation, committing it as a belief,              rule-based semantic-conflict check adjudicates writes to the
+acting on it, and repairing it after retraction are distinct,           same entity and attribute slot. Temporally disjoint values co-
+auditable steps. Figure 1 summarizes the protocol.                      exist. A candidate whose rival committed after the snapshot
+                                                                        is a stale late write and aborts before any authority compari-
+                                                                        son, so authority never overrides temporal precedence. Oth-
+3.1    Data Model and Belief Lifecycle                                  erwise source authority decides: a higher-authority candidate
+Each memory record is a governed object rather than an                  supersedes the old record, a lower-authority one aborts, and
+opaque string. Beyond entity, attribute, and value, a record            equal authority from different sources is quarantined for user
+carries a source with an authority weight; a permission block           review. The detector also blocks candidates derived from re-
+naming an owner, reader and writer roles, and a private,                voked parents and those republishing a private-scope parent
+shared, or public share scope; derived-from edges forming a             into a wider scope, a form of permission laundering. Fourth,
+derivation DAG; a type separating beliefs from summaries,               a dependency-stability check rejects any record whose tran-
+profiles, index entries, shared copies, and tool actions; a va-         sitive ancestors include a pending revocation.
+lidity interval judged against a logical clock; and the writer’s           Failing records are quarantined with a machine-readable
+confidence. As a running example, a support agent stages the            reason. Passing records are promoted to committed, and to
+belief that order 841 is refund-eligible from a lookup tool’s           action-safe only in external-action transactions. A transac-
+result.                                                                 tion may therefore commit, partially commit, or abort, and
+   Records progress from raw through tentative,                         every conflict adjudication is metered as a verifier call and
+validated, and committed to action-safe. Three branch                   reported as cost.
+states complete the eight-state lifecycle: quarantined
+records failed validation and may be revalidated, superseded            3.3    Gating Irreversible Actions
+records were displaced by an adjudicated newer value, and
+revoked records are terminal. A fixed transition relation               Domain tools are partitioned into reversible and irreversible
+rejects every other move.                                               sets, and the runner consults the action gate before any ir-
+   Reads are scoped by five isolation levels, each de-                  reversible call. The gate blocks under two conditions: some
+fined by the lifecycle states it exposes, from raw-read,                tentative record outside the transaction’s snapshot is in
+exposing everything, to action-safe-read, exposing only                 flight, including the agent’s own uncommitted staging, so an
+action-safe records. Causally-stable-read additionally hides            agent must commit its plan before acting on it, or the trans-
+records whose ancestors face pending invalidations. A trans-            action is at external-action risk and its snapshot contains no
+action declares one of four risk tiers, low, medium, high, or           action-safe record. The first condition holds at every tier,
+external-action, the last declared when the task intends effects        the second only in external-action transactions. A blocked
+outside the system, and its isolation level follows from the            call returns a structured refusal with the reason, and the
+tier. Tier declaration is trusted harness configuration rather          agent may commit, abort, or resolve the conflict, then retry.
+than agent output: no agent-facing tool carries a tier argu-            In the running example the refund call stays blocked until the
+ment, so a compromised agent cannot downgrade past the                  refund-eligibility belief commits or is aborted. Reversible
+
+                                                                    3
+   Admission pipeline · Runs left to right · Realizes invariant I1
+                                        Stage                                                     Four ordered checks
+                                                                                                                                                                                   Action gate                                                 Irreversible action
+                                                                       TENTATIVE                                                                     COMMITTED
+                                Draft record                                        1 Evidence                 2 Validity                                                 No tentative record in flight,                                    Recorded on the DAG as a
+      Agent A                                                                       3 Semantic conflict; stale before authority
+                         Derivation edges recorded                                                                                                                            own staging included                                                 tool action
+                                                                                    4 Dependency stability                                                                  Action-safe support at
+    Multi-principal,    Invisible to other agents until commit,
+                                                                                                                                                                                  external risk
+   one shared store          at committed-read and above                                ACTION-SAFE only for external-action transactions
+
+
+                                                       Rival write,                   Quarantined with a reason                                                                                                       Agent B’s TENTATIVE
+                                                         Agent B                                                                   Abort                      Structured refusal                                         draft, in flight
+                                                                                            revalidatable
+
+
+                                                     Derivation DAG · Recorded by Stage                                                                                      Repair keeps the gate’s view clean, G3
+                                                                                                                                                                                                                                     The committed belief later proves wrong
+                                                                                                Derived
+                              Parent                                  Belief                                                     Tool action
+                                                                                                 view
+                                                                                                                                                          Walked by Cascade
+
+
+
+
+                                     Rollback log                                                 Typed repair                                                                       Cascade                                                          Retraction
+                                                                                   Belief → REVOKED                                                                                                                                               Two entries:                                  Agent or
+                        One audit entry per step                                                                                                                          Walks the derivation DAG
+                                                                                   Derived view → QUARANTINED for rebuild                                                                                                                       Transaction abort                                 user
+                                                                                   Tool action → Compensated, or leaked                                                                                                                     Revoke a committed record
+
+
+                                                                                                                                                                                                                                            One shared routine, path independent
+
+                                                                                                                                                                                                                       Repair pipeline · Runs right to left · Realizes invariant I2
+
+      Legend · Lifecycle states:             TENTATIVE            COMMITTED          QUARANTINED              REVOKED             ACTION-SAFE marks external-action support · SUPERSEDED retires a record displaced by adjudication
+
+                                                      Pass or promote                          Repairable block                             Terminal, abort or leak                          Timeline fold
+
+      Agent identity:                                 Agent A                        Agent B            Line and border color marks the acting agent · Card fill keeps the lifecycle tint                                                                    Every conflict adjudication is one metered verifier call
+
+
+
+
+Figure 1: The MemTX protocol as a folded timeline. Admission runs left to right, realizing invariant I1. When a committed
+belief proves wrong, the timeline folds and repair runs right to left, realizing I2. The middle band is the derivation DAG linking
+the two pipelines, recorded by staging and walked by the cascade. A second agent appears as a rival write at the conflict check
+and an in-flight draft at the action gate. Fill colors mark lifecycle states, border colors the acting agent.
+
+
+tools are not gated by design, and over-blocking is measured                                                                                                      manager’s bookkeeping.
+rather than assumed absent.
+                                                                                                                                                                  I1: action-safety gating. An irreversible tool call executes
+3.4         Typed Cascading Repair                                                                                                                                if and only if no tentative record outside the calling trans-
+                                                                                                                                                                  action’s snapshot is in flight and, when the transaction is
+Retraction has two entry points, transaction abort and revo-                                                                                                      at external-action risk, its snapshot contains at least one
+cation of a committed record, which share one repair rou-                                                                                                         action-safe record. The second condition is existential: it
+tine. MemTX walks the retracted record’s transitive descen-                                                                                                       guarantees that the store an action executes over holds at
+dants in the derivation DAG and dispatches on type: beliefs                                                                                                       least one belief that passed the full commit pipeline, not
+are revoked; summaries, profiles, index entries, and shared                                                                                                       that the action’s own inputs did. Our LLM evaluation path
+copies are quarantined as invalidated, to be rebuilt from                                                                                                         opens only medium-risk and low-risk transactions and exer-
+surviving sources; tool actions are compensated when re-                                                                                                          cises the weak form alone, because the evaluated episodes
+versible and otherwise recorded as leaked irreversible ef-                                                                                                        begin from stores that have not matured through external-
+fects. In the running example, revoking the polluted refund-                                                                                                      action commits, so declaring tiers by task intent would gate
+eligibility belief quarantines the derived profile summary                                                                                                        on store maturation rather than on the protections under test.
+and flags any executed refund as leaked. Every repair emits                                                                                                       The scripted path exercises the strong form, and Appendix
+an audit entry in a rollback log. Three limitations are inher-                                                                                                    C prices both the strictest and the intent-based tier mappings
+ent. Repair covers only recorded provenance, so a deriva-                                                                                                         on the LLM path. We state this scope because it bounds what
+tion never written down is never repaired. Compensation is                                                                                                        the empirical results certify.
+a logged decision-level obligation rather than environment-
+level replay. And reversibility is a static per-tool designation,                                                                                                 I2: cascade-repair completeness. After any retraction,
+so a boundary that shifts at action time, such as a refund that                                                                                                   every non-terminal transitive descendant of the retracted
+settles, is outside the model.                                                                                                                                    record is inactive: beliefs are revoked, invalidated views
+                                                                                                                                                                  are quarantined for rebuild while also entering the revo-
+3.5         Invariants and Machine Verification                                                                                                                   cation registry that the dependency-stability check consults,
+                                                                                                                                                                  and every tool-action descendant carries a compensated or
+MemTX maintains two protocol invariants and a global                                                                                                              leaked audit entry. The invariant certifies completeness of
+corollary, checked mechanically against the executable im-                                                                                                        this repair bookkeeping. Environment-level replay is out of
+plementation. The checker recomputes reachability from                                                                                                            scope, as §3.4 states. The shared repair routine makes the
+each record’s own provenance fields rather than trusting the                                                                                                      guarantee path-independent.
+
+
+                                                                                                                                                           4
+G3: corollary. No reachable protocol state contains a                 protocol component load-bearing, so a method missing that
+committed or action-safe record with a revoked transi-                component has a family it cannot defend. Blanket refusal
+tive ancestor. Ancestors quarantined by cascade repair block          cannot score: 16 controls demand the same tools complete
+descendants through the same revocation registry. Records             legitimate tasks. And every trap must survive an agent that
+quarantined at commit are invisible at every isolation level          repairs and retries, the loop structured refusals invite.
+the default risk mapping reaches, so no later record can cite
+them as a parent.                                                     Baselines. All nine methods implement one memory-
+   We verify all three by property-based testing over ten thou-       manager interface. Five are faithful reimplementations of
+sand random traces spanning all four risk tiers and all six           the published systems closest to ours, the same five that
+record types, and by bounded exhaustive enumeration un-               anchor Table 1: Cordon [Chen et al., 2026], Verified Concur-
+der symmetry reduction, four records and three concurrent             rency [Khan, 2026], MemState [Orogat and Mansour, 2026],
+transactions to depth ten over a reduced two-tier, two-type           Collaborative Memory [Rezazadeh et al., 2025], and TOKI
+alphabet: 5,530,160 canonical states and 10,537,260 transi-           [Wang, 2026]. Each implements only what its paper claims,
+tions, zero violations. Verification of G3 exposed a missed-          with deliberate absences declared in the implementation. For
+cascade defect on the transaction-abort path, and the case is         MemState the authors’ official implementation, vendored un-
+retained as a regression test. This is bounded, runtime-level         modified, runs through the same interface as a check on ours.
+verification, deliberately weaker than the unbounded sound-           Three augmented variants each graft exactly one MemTX
+ness theorems of prior formal work but checked against the            feature onto the baseline that lacks it: cascading revocation
+executable implementation rather than an abstract model.              onto Cordon, the action gate onto Verified Concurrency, and
+                                                                      derived-permission checking onto Collaborative Memory.
+3.6    Agent Integration
+The agent-facing interface exposes the protocol as five mem-          Backbones. We evaluate on five backbones from three
+ory tools mapping one-to-one onto its operations: reading             model families: three open, Qwen3-8B [Qwen Team, 2025],
+retrieves under the transaction snapshot, staging writes a            Qwen2.5-14B [Qwen Team, 2024], and GLM-4.7-Flash,
+draft, committing runs the commit pipeline, aborting rolls            from the family the GLM-4.5 report documents [GLM Team,
+back the open transaction, and revoking retracts a committed          2025], and two closed, GPT-5.4-mini and GPT-5.5 [Singh
+record with cascading repair. Domain tools route through the          et al., 2025, OpenAI, 2026]. Serving and campaign accep-
+action gate first.                                                    tance are in Appendix B.
+
+                                                                      Tool environment. Every method sees one tool inventory:
+4     Experimental Setup                                              five memory tools mapping onto the protocol operations and
+                                                                      eleven deterministic mock domain tools, six irreversible,
+Test scenarios. No existing dataset exercises what this pro-
+                                                                      such as refunds and outbound email. Blocked irreversible
+tocol must be tested on. Public suites measure retrieval and
+                                                                      calls are recorded with their reasons rather than discarded,
+reasoning over long conversations [Maharana et al., 2024,
+                                                                      so the grader sees blocked and executed calls symmetrically
+Wu et al., 2025] or multi-principal access control [Ren et al.,
+                                                                      for every method. Appendix B states the determinism and
+2026]. None scripts concurrent writers over one shared store,
+                                                                      reason-string conventions.
+none carries ground truth for lifecycle events such as retrac-
+tion and cascading repair, and none pairs traps with controls
+so that blocking everything cannot score. We therefore con-           Grading and metrics. The grader is pure rule matching
+struct a conformance suite of 90 cases over the six state-            and never consults a model. Task success jointly requires
+corruption families of the introduction, each a declarative           correct committed beliefs, no forbidden action executed un-
+file: an initial shared store, a turn schedule with concur-           blocked, every required action executed, every required re-
+rent writers, a logical clock, and rule-checkable ground truth        traction done, and permission rules held. Safety is never
+naming required commits, forbidden and required actions,              reported alone: abort recall, dirty-read counts, and down-
+and required retractions. Sixty traps are paired with thirty          stream harm appear beside over-abstention on controls and
+controls. Appendix H gives the per-family and per-domain              beside cost as verifier calls, tokens, and latency. The down-
+composition of both suites, case schema, ground-truth se-             stream pipeline replays each method’s committed beliefs into
+mantics, and a worked example.                                        24 declarative refund episodes and scores realized harm, an
+                                                                      irreversible action on a wrong value, rather than proxy accu-
+Hardened suite. A 56-case extension raises the difficulty             racy.
+in four ways. Its 40 traps chain corruptions across families:
+a stale rewrite arrives under inverted authority, where the           Reliability controls. The memory manager is the only
+timeline must prevail over rank, or a fresh conflict lands            variable: runner, prompts, tool schemas, and case sched-
+while a cascade is still repairing. Each family makes one             ule are identical across methods. Open-backbone campaigns
+
+                                                                  5
+run three seeds and significance uses pooled paired McNe-              against 0.768 with nine discordant cases to none. A single
+mar tests. Serving at temperature zero is not bit-reproducible.        failure mode can be absorbed by a capable model, a chained
+The measured drift band is at most 0.022 task success, so ev-          pair cannot, and the 16 controls all pass on strong backbones,
+ery ablation delta is computed within one serving session              so the margin is not bought with refusal. Qwen2.5-14B reads
+against a same-session anchor. The pipeline’s two evidence             as a capability floor rather than a governance signal: failures
+constants are not tuned, and the deterministic sweep in Ap-            concentrate in the retraction protocol and controls collapse
+pendix A leaves every safety metric unchanged on both suites.          alongside traps, yet the ranking holds and the comparison
+                                                                       against the revocation-carrying Cordon variant stays signifi-
+                                                                       cant. The only hardened pair short of significance is this floor
+5    Experiments                                                       column against the action-gate variant. The scripted residual
+                                                                       decomposes cleanly. Of the six cases MemTX misses, four
+Main suite. Table 2 reports task success on the 90 cases               are the family where a polluted tool result drives an irre-
+at temperature zero. MemTX ranks first on four of the five             versible action inside a single staging window, before any
+backbones. Of the 40 paired McNemar comparisons against                commit the gate could inspect, 0.60 against 1.0 elsewhere.
+the eight baselines, 39 are significant at p below 0.005 and           The other two are the deepest revocation chains, where roll-
+survive Holm correction, and on the three open backbones               back recall holds at 1.0 but no terminal belief is reconstructed
+21 of 24 contain no case where a baseline wins and MemTX               within budget, 0.83 there. The first shares its shape with the
+loses. The exception is the strongest backbone: GPT-5.5 com-           commit-scope gap developed next, the second an obligation
+presses the task axis to a statistical tie with the Cordon vari-       the repair step leaves to the planner, and the hardened margin
+ant carrying cascading revocation, 0.756 against 0.778. The            is coverage rather than uniform robustness: what remains sits
+safety and hardened axes below show what capability does               where the protocol’s writ ends.
+not compensate. At temperature 0.7 with three seeds on the
+open backbones, MemTX ranks first in all nine model-seed
+                                                                       Scope blind spots. The hardened suite also returns two
+combinations with standard deviation at most 0.023, and
+                                                                       negative results, reported in full. In the source-scope family
+pooled McNemar is significant for all 24 comparisons at p
+                                                                       an agent transcribes private content into a shared summary
+below 0.00001. Appendix D holds the per-method spread and
+                                                                       and then acts on it. Every backbone fails every case for ev-
+full test matrix. The closed backbones run once at tempera-
+                                                                       ery method, including MemTX. The mechanism blocks the
+ture zero. Availability is uniform: the legitimate-action allow
+                                                                       laundering commit when provenance is declared, and GPT-
+rate spans 0.911 to 0.978 across all methods and backbones,
+                                                                       5.5 exposes the deeper problem: the agent transcribes without
+so none trades success for refusal. For MemTX every forbid-
+                                                                       declaring the parent, so a declarative lineage check has noth-
+den action is intercepted, dirty reads are zero, and permission
+                                                                       ing to inspect. In the temporal-scope family a stale write is
+enforcement is 1.0 everywhere except 0.889 on GPT-5.5.
+                                                                       correctly aborted, the agent retries in a fresh transaction, and
+                                                                       the retry snapshot already contains the rival, so the late write
+Downstream harm. On the 24-episode downstream                          is no longer late and adjudication falls back to authority.
+pipeline of §4, MemTX is the only method at zero harm on               On three of five backbones this escape empties the staleness
+every backbone, with rollback recall 1.0 on four backbones,            axis for every method, abort recall zero even as the task axis
+0.96 on the capability floor. Appendix E reports per-method            passes, though MemTX on GPT-5.5 holds both axes in full.
+harm, Table 4 abort recall, and on the LLM path this protec-           The failures share one shape: the protections scope to a sin-
+tion is the commit discipline behind the weak gate, within             gle commit or transaction, and routine transcription and retry
+the scope §3.5 states. On GPT-5.5, where the task axis ties,           step across it for all nine methods. Closing the gap requires
+the harm axis does not: MemTX completes every episode at               provenance that follows content to action time, the most prin-
+zero harm while the tied variant reaches 0.5 success with 0.25         cipled open problem this conformance suite exposes.
+harm, twelve discordant episodes to none at p below 0.001.
+TOKI is the sharpest reading of the two matrices: its abort re-
+                                                                       Ablations. Figure 2 attributes the main-suite margin to
+call approaches MemTX’s and exceeds it on GPT-5.5, yet its
+                                                                       three components: semantic-conflict adjudication, permis-
+harm holds between 0.25 and 0.5. Write-time adjudication
+                                                                       sion inheritance, released as the source-trust variant, and
+without staging, gating, and cascade does not convert into
+                                                                       cascading rollback each cost about eleven points of task suc-
+harm reduction as backbones improve: capability substitutes
+                                                                       cess when removed, each significant on both backbones,
+for proxy accuracy, not for commit discipline.
+                                                                       with distinct signatures: abort recall falls at least twenty
+                                                                       points without adjudication, rollback recall to 0.926 without
+Hardened suite. Table 3 shows the 56 compound-                         the cascade, and laundering writes commit without permis-
+corruption cases. Every single-feature variant falls to 0.768 or       sion inheritance. The other three components are invisible
+below while MemTX holds 0.875 to 0.929 on the four strong              on the main suite but load-bearing on the hardened suite,
+backbones, and all 32 paired comparisons there are signif-             where Figure 3 shows their losses landing in the family each
+icant. GPT-5.5, tied on the main suite, reseparates at 0.929           owns: removing the action gate empties the act-after-stale-
+
+
+                                                                   6
+ Method                                                                  Qwen3-8B                 Qwen2.5-14B         GLM-4.7-Flash      GPT-5.4-mini     GPT-5.5
+ MemTX                                                                         0.956                  0.811               0.944             0.922          0.756
+ Cordon + revocation                                                           0.822                  0.678               0.833             0.811          0.778
+ Collaborative + permissions                                                   0.733                  0.678               0.733             0.700          0.544
+ Verified Conc. + gate                                                         0.678                  0.589               0.667             0.656          0.611
+ Cordon                                                                        0.667                  0.578               0.667             0.656          0.622
+ Verified Concurrency                                                          0.656                  0.578               0.667             0.644          0.600
+ Collaborative Memory                                                          0.622                  0.567               0.611             0.589          0.556
+ TOKI                                                                          0.500                  0.533               0.500             0.600          0.578
+ MemState                                                                      0.333                  0.344               0.344             0.378          0.411
+ MemTX, intent-based tier, cold store                                          0.911                  0.800               0.911             0.900          0.711
+ MemTX, intent-based tier, matured store                                       0.967                  0.833               0.911             0.922          0.756
+
+Table 2: Task success on the 90-case main suite at temperature zero, best per column among the nine methods in bold. Below
+the rule are MemTX tier configurations over a cold store, the authored records not yet matured, and a matured store, whose
+committed records count as action-safe support, each read against its same-session anchor in Appendix C rather than against
+the MemTX row. Table 4 and Appendix E report the safety axes for every method.
+
+ Method                                                            Scripted            Qwen3-8B        GLM-4.7-Flash      GPT-5.4-mini    GPT-5.5    Qwen2.5-14B
+ MemTX                                                                 0.893             0.875                0.893          0.911          0.929        0.518
+ Cordon + revocation                                                   0.679             0.679                0.732          0.679          0.768        0.393
+ Verified Conc. + gate                                                 0.500             0.500                0.500          0.500          0.554        0.446
+ Collaborative + permissions                                           0.429             0.393                0.482          0.500          0.446        0.321
+ Cordon                                                                0.429             0.429                0.464          0.429          0.536        0.393
+ Verified Concurrency                                                  0.429             0.429                0.482          0.446          0.518        0.375
+ Collaborative Memory                                                  0.429             0.393                0.446          0.482          0.464        0.321
+ MemState                                                              0.357             0.357                0.357          0.375          0.500        0.321
+ TOKI                                                                  0.250             0.232                0.250          0.268          0.304        0.214
+ MemTX, intent-based tier, cold store                                   –                0.929                0.911          0.929          0.929        0.411
+ MemTX, intent-based tier, matured store                                –                0.875                0.875          0.911          0.929        0.446
+
+Table 3: Task success on the 56-case hardened suite of compound corruptions, best per column among the nine methods
+in bold. The scripted column replays every case deterministically with no model in the loop, and the rightmost column is a
+backbone capability floor. Tier rows as in Table 2; tier arms run only on the LLM path, leaving the scripted column empty.
+
+
+Method                        Qwen3-8B   Qwen2.5-14B   GLM-4.7-Flash    GPT-5.4-mini    GPT-5.5
+                                                                                                      C also ablates four further commit-pipeline components, de-
+MemTX                          0.922        1.000          0.989            1.000        0.922
+Cordon + revocation            0.689        0.733          0.678            0.722        0.722        pendency stability and typed repair among them, with task
+Collaborative + permissions    0.678        0.722          0.678            0.678        0.689
+Verified Conc. + gate          0.678        0.744          0.678            0.733        0.733        success within one case of the anchor everywhere.
+Cordon                         0.678        0.756          0.678            0.733        0.733
+Verified Concurrency           0.678        0.744          0.678            0.722        0.733
+Collaborative Memory           0.678        0.733          0.678            0.678        0.711
+TOKI
+MemState
+                               0.889
+                               0.678
+                                            0.989
+                                            0.756
+                                                           0.889
+                                                           0.678
+                                                                            0.989
+                                                                            0.722
+                                                                                         0.967
+                                                                                         0.822
+                                                                                                      Pricing the strong gate. The runs above keep the proto-
+                                                                                                      col’s per-transaction risk mapping, so the strong form of the
+Table 4: 
