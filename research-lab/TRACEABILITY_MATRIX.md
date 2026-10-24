@@ -1,113 +1,73 @@
-# TRACEABILITY_MATRIX.md
+# Traceability Matrix
 
-Maps every major research claim through:
+This matrix links the audit findings, literature evidence, database invariants (`1`–`10`), hypotheses (`H1`–`H4`), deliverables (`D1`–`D5`), and quality gates (`J1`–`J10`) to their normative specifications, implementation tasks, and verification artifacts.
 
-**Research Question → Hypothesis → Mechanism → Implementation Component → Test → Metric → Result Artifact**
+---
 
-Status key: `COMPLETE` · `IMPLEMENTED—UNTESTED` · `BLOCKED` · `NOT STARTED` · `SPEC-ONLY`.
+## 1. Audit Findings & Source Evidence Traceability
 
-The result-artifact column names the path that **will** carry the artifact once produced. At the end of the finalization session, every result-artifact path for an experiment is NOT STARTED. The only COMPLETE rows are the baseline specification-validation artifacts.
+| Source / Audit Artifact | Scope | Status | Authoritative Location |
+|---|---|---|---|
+| **V1–V4 Flaw & Patch Audit** | 16 original proposal flaws + V2/V3/V4 targeted fixes (including the V4 historical-memory archival fix and `P − A2` primary `H1` contrast) | `COMPLETE` | [`reference/Research_and_Fact_Check_Audit.md`](reference/Research_and_Fact_Check_Audit.md) §§1, 8, 9 |
+| **41-Reference Evidence Ledger** | Verification of references `[1]`–`[41]` with explicit per-row *Reading depth* labels and claim mappings | `COMPLETE` | [`reference/Source_Evidence_Ledger.md`](reference/Source_Evidence_Ledger.md) §§A, B, C, D |
+| **Stage-2 Full-Text Corpus (`[20]`–`[29]`)** | Extracted Markdown full texts and passage audits for 10 2026 preprints | `COMPLETE` | [`reference/sources/fulltext/`](reference/sources/fulltext/) & [`reference/Source_Evidence_Ledger.md`](reference/Source_Evidence_Ledger.md) §E |
+| **Offline Source Snapshots** | Fetched arXiv/ACL/GitHub/PostgreSQL/NIST pages and READMEs | `COMPLETE` | [`reference/sources/pages/`](reference/sources/pages/) |
+| **Mechanical Integrity Checks** | Citation bijection, reference SHA-256 guard, table shapes, section cross-references, and stale-term guards | `COMPLETE` | [`validation/mechanical_checks.py`](validation/mechanical_checks.py) |
 
-## 1. Primary research hypotheses
+---
 
-| RQ | Hypothesis | Mechanism | Impl. component (planned) | Test (planned) | Metric | Statistic | Result artifact (planned) | Status |
-|---|---|---|---|---|---|---|---|---|
-| RQ1 | H1 (two co-primary strata) | Retained bi-temporal version history **beyond** valid-time filtering (incremental effect) | `implementation/engine/temporal_state_manager/`, retrieval predicates (§3.5 of spec) | H1 harness: suite T, test split, strata = {history-dependent, present-state} | TAA | Cluster bootstrap CI + sign-flip permutation + Holm | `evaluation/runs/<ts>/H1/report.md` + `per_cluster.jsonl` | NOT STARTED |
-| RQ1 | H1 diagnostic | Full ablation (P-flat) and recorded-time-only (A2b) | A1, A2b configurations in harness | Same as H1 | TAA | Descriptive diagnostics | Same report | NOT STARTED |
-| RQ2 | H2 | Hybrid dense + lexical retrieval under temporal predicate | `implementation/engine/retrieval/` (dense pgvector exact per user; PostgreSQL FTS; RRF k=60) | H2 harness: LongMemEval_S answerable (ex. assistant-evidence) | Evidence Recall@k (primary); MRR, nDCG@k (secondary) | Intersection-union + Holm | `evaluation/runs/<ts>/H2/report.md` | NOT STARTED |
-| RQ3 | H3 (co-primary ASR+LUAR) | Write-time validation gate | `implementation/engine/gate/` + conflict relations | H3 harness: suite G, held-out attack families | ASR + LUAR | Paired test + Holm (ASR); non-inferiority at δ (LUAR) | `evaluation/runs/<ts>/H3/report.md` | NOT STARTED |
-| RQ4 | H4 (scenario-level C–P, three-conjunct Supported) | Lineage-tracked deletion within §7.7 storage boundary | `implementation/engine/deletion/` + `MEMORY_DERIVATION` + per-user partition | H4 harness: suite D with canaries (incl. superseded fact), A8 positive control, never-stated probes | Scenario-level PDLR + exact upper bound | Clopper–Pearson exact at scenario level; no hypothesis test | `evaluation/runs/<ts>/H4/report.md` | NOT STARTED |
+## 2. Database Invariants (`1`–`10`) Traceability
 
-## 2. Invariants to tests to evidence
+| Inv. # | Summary (Proposal §8) | Enforcement Mechanism (`TECHNICAL_SPECIFICATION.md`) | Implementation Task | Verification Artifact / Test Task | Current Status |
+|---|---|---|---|---|---|
+| **1** | Every `Active`/`Archived` version has `≥ 1` `MEMORY_EVIDENCE` row (extracted) or `≥ 1` outgoing `MEMORY_DERIVATION` link (derived). | `DEFERRABLE INITIALLY DEFERRED` constraint trigger on `MEMORY_VERSION` (§4). | `RL-040`, `RL-042` | `RL-091` (`implementation/tests/invariants/test_inv1_traceability.py`) | `PLANNED` |
+| **2** | `valid_range` non-empty and lower-bounded; `recorded_range IS NULL` iff staging (`candidate`, `conflict_pending`, `rejected`), else non-empty and lower-bounded. | `CHECK` constraints `valid_wellformed`, `recorded_iff_believed`, `recorded_wellformed` (§3.3). | `RL-040` | Reduced schema: `validation/bitemporal_checks.sql` (`COMPLETE`); Full schema: `RL-091` (`PLANNED`). | `PARTIAL (Reduced SQL executed)` |
+| **3** | Separate valid and recorded clocks; `recorded_from` assigned at commit from monotonic per-user clock (`R3`); only `status` and `upper(recorded_range)` may change post-insert. | `clock_now()` + `BEFORE UPDATE` trigger `guard_update()` (§3.4, §8). | `RL-040`, `RL-044` | Reduced schema: `validation/bitemporal_checks.sql` (`COMPLETE`); Replay clock test: `RL-092` (`PLANNED`). | `PARTIAL (Reduced SQL executed)` |
+| **4** | Single-valued predicates: no two `Active`/`Archived` versions for the same `(user_id, subject_key, predicate_key)` overlap in both `valid_range` and `recorded_range`. | `EXCLUDE USING gist (... valid_range WITH &&, recorded_range WITH &&)` + `R1` close-then-insert + per-user advisory lock (§3.3, §8). | `RL-040`, `RL-042` | Reduced schema: `validation/bitemporal_checks.sql` (`COMPLETE`); 8-worker concurrency load test: `RL-093` (`PLANNED`). | `PARTIAL (Reduced SQL executed)` |
+| **5** | Superseded beliefs (`NOT upper_inf(recorded_range)`) are retained for audit until deletion/purge; never overwritten in place (`R1`, `R2`). | Transactional `supersede_single` / `commit_candidate` procedures (§3.4). | `RL-042` | Reduced schema worked example E1–E3: `validation/bitemporal_checks.sql` (`COMPLETE`); Full engine: `RL-091` (`PLANNED`). | `PARTIAL (Reduced SQL executed)` |
+| **6** | Staging rows (`candidate`, `conflict_pending`, `rejected`) have `recorded_range IS NULL` and are never returned by any query predicate. | Invariant 2 `CHECK` + query functions filtering on `status` and `recorded_range` (§3.5). | `RL-040`, `RL-043` | Reduced schema: `validation/bitemporal_checks.sql` (`COMPLETE`); Full engine role check: `RL-091` (`PLANNED`). | `PARTIAL (Reduced SQL executed)` |
+| **7** | Every user-data table carries `user_id`, enforces `FORCE ROW LEVEL SECURITY` for the runtime role, and rejects unscoped queries. | PostgreSQL RLS policies + service-boundary guard (§3.1, Proposal §7.8). | `RL-040`, `RL-071` | `RL-091` & Isolation suite `I` (`RL-022`, `RL-071`) | `PLANNED` |
+| **8** | Deletion removes all versions of `memory_key` (`R6`), transitive `MEMORY_DERIVATION` closure (or re-derives surviving multi-source artifacts), embeddings, FTS entries, queue payloads, and caches; `AUDIT_EVENT` holds no content. | Transactional `delete_memory` procedure with `deletion_epoch` check (§7.2). | `RL-070` | Reduced schema key deletion: `validation/bitemporal_checks.sql`; Full 7-channel closure: `RL-090` (`T5`), `RL-105` (`H4`). | `PARTIAL (Key delete only; closure PLANNED)` |
+| **9** | Retried slow-path jobs cannot create duplicate memory versions. | Unique constraints on `JOB.idempotency_key` and `(user_id, turn_id, extractor_version, candidate_fingerprint)` (§3.1, Proposal §7.3). | `RL-040`, `RL-044` | `RL-092` (`test_worker_idempotency`) | `PLANNED` |
+| **10** | V4 Archival precondition: `Active → Archived` permitted iff `(S)` `recorded_range` is closed OR `(C)` an `Active` derived replacement `r'` exists with `MEMORY_DERIVATION(r' → r)` and `V(r') @> V(r)`. | Transactional `archive_version` procedure + trigger check (§6, `D-27`). | `RL-042`, `RL-061` | `RL-090` (`T1`–`T5` archival-precondition harness) | `PLANNED` |
 
-| Invariant (§8 proposal) | Enforcement site | Test (§G of roadmap) | Current evidence | Status |
+---
+
+## 3. Research Questions & Hypotheses (`H1`–`H4`) Traceability
+
+| RQ / Hypothesis | Primary Endpoint(s) (Proposal §10.3) | Confirmatory Contrast(s) (Proposal §§4.1, 10.4) | Dataset / Suite | Generator & Adapter Tasks | Experiment & Analysis Tasks | Current Status |
+|---|---|---|---|---|---|---|
+| **`RQ1` / `H1`** (Bi-temporal history retention) | Co-primary **TAA** on `history-dependent` (superiority `> 0`) and `present-state` (non-inferiority `≥ −δ_pres`) strata. | `P − A2` (`P` vs `P-nohistory`). (`P − A1` `P-flat` and `A2b` are diagnostic/exploratory.) | Own Suite `T` (test split) | `RL-024`, `RL-026` | Pilot: `RL-100`; Test run: `RL-101`; Report: `RL-110` | `PLANNED` |
+| **`RQ2` / `H2`** (Hybrid retrieval over extracted memories) | **Evidence Recall@k** on answerable user-grounded questions. | `P − A5` (`P-dense`) and `P − A6` (`P-lexical`) with Holm–Bonferroni (`α = 0.05`). | `LongMemEval_S` (test split) | `RL-020`, `RL-025`, `RL-026`, `RL-050` | Pilot: `RL-100`; Test run: `RL-102`; Report: `RL-110` | `PLANNED` |
+| **`RQ3` / `H3`** (Write-time validation gate) | Co-primary **ASR** (superiority `< A3`) and **LUAR** (non-inferiority `≥ 1 − δ_luar`). | `P` vs `A3` (`P-nogate`). (`A4` sub-check ablation is diagnostic.) | Own Suite `G` (test split) | `RL-022`, `RL-026`, `RL-060` | Pilot: `RL-100`; Test run: `RL-103`; Audit: `RL-104`; Report: `RL-110` | `PLANNED` |
+| **`RQ4` / `H4`** (Lineage-based deletion) | Scenario-level **PDLR** across 7 in-boundary channels (`0` observed leaks and exact 97.5% CP upper bound `≤ u*`). | `P` (primary bound) + `A8` (`P-nolineage` positive-control sensitivity check `≥ D-13`). | Own Suite `D` (test split) | `RL-023`, `RL-026`, `RL-070` | CP math: `validation/cp_bounds.py` (`COMPLETE`); Pilot: `RL-100`; Test run: `RL-105`; Report: `RL-110` | `PARTIAL (CP math verified; run PLANNED)` |
+| **Design Req.** (Cross-user isolation) | Cross-user exposure count (`0` observed, exact CP upper bound). | `P` under RLS and service-boundary checks. | Own Suite `I` | `RL-022`, `RL-071` | `RL-091`, `RL-110` | `PLANNED` |
+
+---
+
+## 4. Proposal Deliverables (`D1`–`D5`, Proposal §12) Traceability
+
+| Deliverable ID | Description | Target Location | Owning Tasks | Status |
 |---|---|---|---|---|
-| 1 Traceability of non-deleted versions | Scheduled integrity check | Lineage test | — | NOT STARTED |
-| 2 Status matches range form | CHECK constraint | SQL assertion | `validation/bitemporal_checks.output.txt` | COMPLETE (reduced schema) |
-| 3 `recorded_from` at commit | Trigger / procedure | SQL assertion | same | COMPLETE (reduced schema) |
-| 4 Single-valued no-overlap in `(V, R)` | Exclusion constraint + `btree_gist` | SQL assertion + concurrency test | same (SQL) | COMPLETE for reduced schema; **BLOCKED** for concurrent writers |
-| 5 Superseded as derived condition | Query predicate | SQL assertion | same | COMPLETE (reduced schema) |
-| 6 Staged rows never visible | CHECK + predicate design | SQL assertion | same | COMPLETE (reduced schema) |
-| 7 RLS per user | RLS policy | Cross-user isolation test | — | NOT STARTED |
-| 8 Deletion closure (R6 + §7.7) | Transactional deletion procedure | Deletion-closure test | — | NOT STARTED |
-| 9 Queue idempotency | `JOB` schema + idempotency index | Idempotency test | — | NOT STARTED |
-| 10 Archival precondition (S) ∨ (C) | Transactional archival procedure | **T1 – T5** | — | **BLOCKED** (harness not written; open decision 17) |
+| **`D1`** | Open-source bi-temporal memory engine (PostgreSQL schema, slow/fast path, validation gate, hybrid retrieval, lineage deletion). | `research-lab/implementation/` | `RL-040`–`RL-094` | `PLANNED` |
+| **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `research-lab/evaluation/` | `RL-030`–`RL-034` | `PLANNED` |
+| **`D3`** | Seeded synthetic evaluation suites (`T`, `G`, `D`, `I`) and frozen dataset splits. | `research-lab/research/benchmarks/` | `RL-020`–`RL-026` | `PLANNED` |
+| **`D4`** | Personal Digital Twin (PDT) demonstrator with Memory Inspector, timeline view, conflict resolution, and deletion controls. | `research-lab/application/` | `RL-120`–`RL-122` | `PLANNED` |
+| **`D5`** | Final thesis report, confirmatory analysis tables/figures (`H1`–`H4`), and one-command reproducibility package. | `research-lab/reports/` | `RL-110`, `RL-111`, `RL-130`–`RL-132` | `PLANNED` |
 
-## 3. Validation / specification artifacts (what IS done)
+---
 
-| Artifact | What it proves | Status | Evidence file |
+## 5. Quality Gates (`J1`–`J10`, `PROJECT_ROADMAP.md` §J)
+
+| Gate | Requirement | Verification Method | Current Status |
 |---|---|---|---|
-| Mechanical consistency checks | V4 proposal, checklist, changelog internally consistent; citations and tables well-formed; stale wording absent; H1 wording consistent; H4 wording consistent; references byte-identical to V3 | COMPLETE | `validation/mechanical_checks.output.txt` (final line `SUMMARY: ALL HARD CHECKS PASSED`) |
-| Preservation check | No V1/V2/V3/original file modified during V4 or finalization | COMPLETE | earlier preservation report (no longer retained; see `CHANGELOG.md`) (`PRESERVED`) |
-| V2 SQL log re-inspection | 43-assertion V2 log is unchanged (MD5 verified) | COMPLETE | `validation/bitemporal_log_inspection.txt` |
-| Clopper–Pearson arithmetic | Zero-leak bounds and clustering illustration reproducible | COMPLETE | `validation/cp_bounds.output.txt` (regenerated byte-identically in finalization) |
-| Full-text corpus for [20]–[29] | Depth-labelled passage reading per `Source_Evidence_Ledger.md` §E | COMPLETE | `research/sources/fulltext/` + `MANIFEST.txt` |
-| Mermaid syntax check | All 5 diagrams parse | COMPLETE (V2) | `validation/mermaid_parse.output.txt` |
-
-## 4. Sources to claims (link to ledger)
-
-The full source-to-claim mapping lives in [`Source_Evidence_Ledger.md`](Source_Evidence_Ledger.md) §C "Claim-level evidence". Each ledger row cites the exact source and the proposal section it supports. The ledger is normative. This matrix does not duplicate those rows; it points at them.
-
-Representative critical mappings:
-
-| Claim | Source | Ledger row | Proposal section |
-|---|---|---|---|
-| Bi-temporal tracking and automatic invalidation exist in an open-source system | Graphiti README | ledger §C "Bi-temporal tracking…" | §6.1 |
-| Mem0 is currently ADD-only | Mem0 README | ledger §C "Mem0's current open-source algorithm is ADD-only" | §6.1 |
-| PostgreSQL FTS is NOT BM25 | PostgreSQL docs | ledger §C "PostgreSQL full-text ranking is not BM25" | §7.6 |
-| pgvector approximate filtering can drop rows | pgvector README | ledger §C "pgvector approximate indexes…" | §7.6, §9 |
-| RRF k=60 | [12] | ledger §C "RRF k = 60" | §7.6 |
-| LoCoMo size (10 conv., 1,986 Q) and licence (CC BY-NC 4.0) | repo + computed from `locomo10.json` | ledger §C two rows | §10.2 |
-| LongMemEval size (500 Q, 30 abstention, 56 single-session-assistant, 470 answerable) | computed from `longmemeval_oracle.json` | ledger §C "LongMemEval has 500 questions…" | §10.2 |
-| Zero events in n gives exact 95% UB `1 − 0.025^(1/n)` | arithmetic | ledger §C "0 events in n…" | §10.6 |
-| Retaining history can hurt present-state answers (motivates H1 co-primary non-inferiority) | [27] §2.5, §5.6 | ledger §C "Retaining history can hurt…" | §4, §4.1, §7.3 |
-| A-TMA ablation does **not** test retaining history | [20] Table 5 and A.10 | ledger §C "A-TMA's component ablation…" | §6.1 |
-| GateMem evaluates forgetting behaviourally, not as certified erasure | [28] abstract and introduction | ledger §C "GateMem evaluates forgetting…" | §6.1, §7.7 |
-
-## 5. Open decisions to blocked work
-
-Numbering below is **roadmap/PLAN D-xx**, not spec Dec#. Canonical states: [decision register](PLAN/DECISIONS_REGISTER.md); exact prerequisites: [task graph](PLAN/TASK_GRAPH.md).
-
-| Named decision (roadmap §E / checklist §6) | Blocks |
-|---|---|
-| D-25 PostgreSQL + extension target; D-ENG-LANG runtime | RL-005/040/041 and independent environment as specified |
-| Spec Dec#10 model pinning / PLAN D-20 budget-model-subset | Actual model calls and final experimental freeze; dummy harness preparation can precede paid calls |
-| D-10–14 δ_pres, δ, u\*, share, stratum mix | RL-100 final freeze → H1/H3/H4 test experiments |
-| D-27 T1–T5 harness design (checklist item 17) | RL-090 → RL-094 → pilot/experiments |
-| D-18 full-schema exclusion feasibility | Evidence produced by RL-091; not a circular prerequisite of DDL |
-| D-19 Ethics | Optional user recruitment, not core fictional-data demonstration |
-| D-21 Graphiti inclusion | Final B4 inclusion; development qualification under RL-011/032 comes first |
-| D-22 Judge criterion/sample | RL-011 procedure → RL-033 dev validation → RL-100 freeze before test scoring |
-| D-24 Injection suite release | Release policy / dual-use review |
-
-## 6. Deliverables → test → acceptance
-
-| Deliverable (§J of roadmap) | Primary test | Acceptance | Status |
-|---|---|---|---|
-| J1 Research specification (V4) | Mechanical checks | `ALL HARD CHECKS PASSED` | COMPLETE |
-| J2 Memory engine | §G mandatory + T1–T5 | Every "Yes" row Tested | NOT STARTED |
-| J3 Evaluation runner + baselines | Reproducibility test | Byte-identical scores on seed replay | NOT STARTED |
-| J4 Executed H1 – H4 + stats | §F per RQ | Decision per §4.1 | NOT STARTED |
-| J5 Error analysis + limitations | — | One page per RQ | NOT STARTED |
-| J6 PDT demonstration | §G app rows | Each §11 flow passes acceptance test | NOT STARTED |
-| J7 Security / deletion evidence | §G cross-user + deletion-closure + T1–T5 | Outputs attached | NOT STARTED |
-| J8 Attribution | Manifests, licence files | All licences in `research/benchmarks/` | NOT STARTED |
-| J9 Reproducibility | README smoke run | Reviewer rerun succeeds | NOT STARTED |
-| J10 Clean docs | Navigation/reference checks | Canonical Lab README and inventory in `review/EXISTING_WORK_IMPACT_ANALYSIS.md`; evidence retained | Documentation consolidated; RL-001 owner-confirmed Done; separate RL-002 scaffold acceptance pending |
-| J11 Final report + presentation | — | Reports every decision honestly | NOT STARTED |
-| J12 Persona layer (OPTIONAL) | A10 report | Trait → derivation chain traceable | NOT STARTED |
-
-## 7. End-to-end example (RQ4 / H4)
-
-A worked trace through the matrix so a reviewer can follow one hypothesis end-to-end:
-
-- **Claim.** "H4 Supported" means: zero in-boundary leaks for P on suite D test split, **AND** scenario-level Clopper–Pearson upper bound ≤ u\*, **AND** positive control A8 (P-nolineage) detected leakage in ≥ the predeclared minimum share of scenarios.
-- **Mechanism.** Lineage-tracked deletion: R6 + §7.7 derivation closure within the storage boundary.
-- **Implementation component.** `implementation/engine/deletion/` + `MEMORY_DERIVATION` DAG + per-user partition.
-- **Test.** Suite D (own, scenario-level), canaries including a superseded fact; A8 positive control; never-stated control probes.
-- **Metric.** PDLR at scenario level.
-- **Statistic.** Clopper–Pearson exact two-sided 95%; closed form verified by `validation/cp_bounds.output.txt` (0 of 50 → UB 0.071; 0 of 100 → 0.036; 0 of 200 → 0.018).
-- **Decision rule.** §4.1 three-conjunct Supported; else Inconclusive (if zero-leak but a conjunct fails) or Not supported (any confirmed in-boundary leak).
-- **Honesty requirement.** `Zero observed leaks` **MUST NOT** be reported as a guarantee (§7.7, §10.6 "What the H4 bound means").
-- **Result artifact (planned).** `evaluation/runs/<ts>/H4/report.md` containing the observed count, the exact bound, per-channel diagnostics, and the positive-control sensitivity.
-- **Status.** NOT STARTED.
+| **`J1`** | Mechanical checks pass on proposal, checklist, and changelog. | `python3 validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md` | `PASS` |
+| **`J2`** | Reduced-schema bitemporal SQL assertions (`43/43`) pass. | `psql -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql` (`validation/bitemporal_checks.output.txt`) | `PASS` |
+| **`J3`** | Clopper–Pearson upper-bound script matches saved output. | `diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt` | `PASS` |
+| **`J4`** | All Phase P1blocking decisions (`D-01`–`D-08`, `D-15`–`D-19`, `D-23`–`D-27`) resolved and signed off. | Decision memos in `PLAN/decisions/` (`RL-010`, `RL-012`–`RL-016`) | `IN PROGRESS (6 GitHub issues open)` |
+| **`J5`** | Benchmark and own-suite dev/test splits frozen prior to any test run. | `research/benchmarks/splits/FREEZE_LIST.md` (`RL-026`) | `PENDING (P2)` |
+| **`J6`** | `T1`–`T5` archival-precondition harness green on full schema. | `pytest implementation/tests/archival/` (`RL-090`) | `PENDING (P9)` |
+| **`J7`** | All mandatory rows in `PROJECT_ROADMAP.md` §G testing matrix `Tested` or waived. | `implementation/tests/report.md` (`RL-094`) | `PENDING (P9)` |
+| **`J8`** | Pilot run completed on dev split only; all pilot-derived parameters (`D-09`–`D-14`, `D-21`, `D-22`) frozen. | `evaluation/runs/pilot/FREEZE_LIST.md` (`RL-100`) | `PENDING (P10)` |
+| **`J9`** | Confirmatory test splits (`H1`–`H4`) executed exactly once under frozen protocol. | `evaluation/runs/<ts>/H{1,2,3,4}/manifest.json` (`RL-101`–`RL-105`) | `PENDING (P10)` |
+| **`J10`** | Documentation, links, and reference corpus organized with a single source of truth per topic. | Link checker + `md5sum -c validation/document_hashes.txt` | `PASS` |

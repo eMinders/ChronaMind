@@ -1,24 +1,24 @@
-# Issue drafts and published first wave
+# Issue Drafts (`research-lab/PLAN/issue_drafts/`)
 
-Canonical prerequisites and task scope remain in [`TASK_GRAPH.md`](../TASK_GRAPH.md); progress is in [`PROJECT_STATUS.md`](../PROJECT_STATUS.md). The six P1 preparation issues are published below. They remain unassigned: team members choose work and coordinate reviewers.
+This directory contains the canonical issue specifications for Research Lab tasks (`RL-001`–`RL-132`), synchronized with [`../TASK_GRAPH.md`](../TASK_GRAPH.md) and [`../DECISIONS_REGISTER.md`](../DECISIONS_REGISTER.md).
 
-## Published issues
+---
 
-| Task | Issue | Status |
-|---|---|---|
-| RL-010 | [#1](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/1) | Open, ready for decision preparation |
-| RL-012 | [#2](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/2) | Open, ready for compatibility evidence |
-| RL-013 | [#3](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/3) | Open, ready for runtime evidence |
-| RL-014 | [#4](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/4) | Open, ready for decision preparation |
-| RL-015 | [#5](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/5) | Open, ready for ethics determination work |
-| RL-016 | [#6](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/6) | Open, paired preparation required |
+## 1. File Organization
 
-All six use the P1 milestone and the simplified `ready`, `decision`, and `help wanted` labels; RL-016 also has `paired`. No assignees were added. These labels mean preparation is available; they do not resolve supervisor, ethics, compatibility, implementation or experiment gates.
+- **Individual Drafts (`RL-*.md`):** Standalone issue bodies for Phase `P0` (`RL-001`–`RL-006`), Phase `P1` (`RL-010`–`RL-016`, including the six published GitHub issues `#1`–`#6`), Phase `P2` (`RL-020`–`RL-026`), and key anchor/gate tasks (`RL-030`, `RL-040`, `RL-090`, `RL-094`, `RL-100`, `RL-105`).
+- **Consolidated Remaining Tasks ([`_bulk_tasks.md`](_bulk_tasks.md)):** Ready-to-publish issue bodies for the remaining tasks across Phases `P3`–`P13` (`RL-031`–`RL-034`, `RL-041`–`RL-083`, `RL-091`–`RL-093`, `RL-101`–`RL-104`, `RL-110`–`RL-132`).
+- **Common Contributor Guidance:** Branching (`rl/<id>-<slug>`), independence boundary rules, and local verification commands are consolidated in [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
-## Remaining backlog drafts
+---
 
-- Canonical task graph: [`TASK_GRAPH.md`](../TASK_GRAPH.md); dependency view: [`DEPENDENCY_MAP.md`](../DEPENDENCY_MAP.md).
-- Other full drafts remain local in this directory. Compact definitions remain in [`_bulk_tasks.md`](_bulk_tasks.md); expand before full-backlog publication.
-- Decision issues should be generated from [`DECISIONS_REGISTER.md`](../DECISIONS_REGISTER.md) with the decision template. Do not create duplicates or publish resolved engineering choices as open decisions.
+## 2. Currently Published GitHub Issues (`Phase P1`)
 
-No individual RL-001 responses, signatures, review timestamp, or team-reviewed revision/hash are asserted. No other backlog issues or project board were published. RL-020 and RL-021 remain blocked by accepted RL-002 and RL-003; RL-016 is not a prerequisite for either mirror. Publishing these six issues does not complete RL-006 or authorize gated implementation.
+| GitHub Issue | Draft File | Title | Labels |
+|---|---|---|---|
+| [`#1`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/1) | [`RL-010.md`](RL-010.md) | `[RL-010] Prepare research-scope and supervisor decision records` | `decision`, `ready` |
+| [`#2`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/2) | [`RL-012.md`](RL-012.md) | `[RL-012] Verify PostgreSQL and pgvector compatibility evidence` | `decision`, `ready` |
+| [`#3`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/3) | [`RL-013.md`](RL-013.md) | `[RL-013] Select and verify the engine runtime` | `decision`, `ready` |
+| [`#4`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/4) | [`RL-014.md`](RL-014.md) | `[RL-014] Prepare A2b and Suite D cardinality decisions` | `decision`, `ready` |
+| [`#5`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/5) | [`RL-015.md`](RL-015.md) | `[RL-015] Determine ethics requirements for the optional usability study` | `decision`, `ready` |
+| [`#6`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/6) | [`RL-016.md`](RL-016.md) | `[RL-016] Prepare paired D-23/D-24 and suite-release decisions` | `decision`, `ready`, `paired` |

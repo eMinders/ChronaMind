@@ -1,40 +1,15 @@
----
-name: Research Lab bug / regression
-about: Report a defect in Research Lab code or docs
-title: "[RL-BUG] <short summary>"
-labels: ["rl:kind/bug"]
-assignees: []
----
+# [BUG] <Short Summary>
 
-## Summary
-<What is wrong, in one sentence.>
+**Milestone:** `<Phase Milestone>`  
+**Labels:** `bug`  
+**Related Task / Invariant:** `RL-xxx` / `Invariant #`
 
-## Where
-<File path or component.>
+## Description & Reproduction Steps
+1. Command or test executed: `...`
+2. Observed behavior: `...`
+3. Expected behavior (per `Graduation_Project_Proposal.md` or `TECHNICAL_SPECIFICATION.md`): `...`
 
-## Expected
-<What should happen, with proposal/spec reference if relevant.>
-
-## Actual
-<What actually happens. Paste command output verbatim.>
-
-## Reproduction
-```
-<commands>
-```
-
-## Scope
-- [ ] Specification document (proposal / checklist / audit / ledger / changelog)
-- [ ] Validation script
-- [ ] Research Lab planning docs
-- [ ] Engine implementation
-- [ ] Evaluation harness
-- [ ] Benchmark adapter
-- [ ] PDT application
-- [ ] CI / tooling
-
-## Blast radius
-<Does this invalidate any task's acceptance criteria? Any experiment? List them.>
-
-## Independence confirmation
-- [ ] The fix will stay inside `research-lab/`.
+## Acceptance Criteria
+- [ ] Root cause fixed inside `research-lab/`.
+- [ ] Regression test added under `research-lab/implementation/tests/` or `research-lab/evaluation/`.
+- [ ] All checks in `research-lab/PLAN/CONTRIBUTING.md` pass.

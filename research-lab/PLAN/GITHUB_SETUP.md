@@ -1,20 +1,62 @@
-# GitHub setup for the Research Lab
+# GitHub Issues, Labels, & Milestones Setup (`research-lab/`)
 
-**Current scope:** six P1 preparation issues are published in `Abdulrahman-Ayman-Farid/ChronaMind`. They are open and unassigned. The P1 milestone and the labels below are live. No project board or full backlog was created. Full setup remains under RL-006 and its separate authorization/prerequisites.
+**Scope:** Reference for managing GitHub milestones, labels, and issues for the Research Lab using the GitHub CLI (`gh`).
 
-## Labels used for the first wave
+---
 
-- `ready` — preparation may start as scoped; later gates still apply.
-- `decision` — decision/evidence work; does not itself approve downstream work.
-- `help wanted` — contributors may volunteer.
-- `paired` — the issue requires coordinated contributors from two distinct perspectives (RL-016 only).
+## 1. Label Taxonomy
 
-The six issues also use the existing `P1 Resolve open decisions` milestone. Keep status in issue state and canonical `PROJECT_STATUS.md`; do not create extra labels for effort, risk or dependency type unless the team later authorizes them.
+Keep issue labels concise and actionable. Every Research Lab issue uses:
 
-## Claiming
+| Label | Category | When to Apply |
+|---|---|---|
+| `decision` | Kind | Phase P1 architecture, methodology, or scope decision tasks (`RL-010`, `RL-012`–`RL-016`). |
+| `enhancement` | Kind | Implementation, benchmark, harness, or experiment tasks (`RL-002`–`RL-006`, `RL-011`, `RL-020`–`RL-132`). |
+| `documentation` | Kind | Documentation, report, or thesis tasks (`RL-110`, `RL-130`). |
+| `bug` | Kind | Defect in schema, engine, or evaluation harness. |
+| `ready` | Status | All prerequisites (`Blocked By`) are complete; can be claimed immediately. |
+| `paired` | Coordination | Co-owned task requiring two team members to sign off together (e.g., `RL-016` `#6`). |
 
-Follow [`CONTRIBUTING.md`](CONTRIBUTING.md) §3. Read the issue and its prerequisites, comment with the agreed claim details, self-assign only after coordinating overlap, confirm an independent reviewer, and update `PROJECT_STATUS.md` §3. RL-016 requires two contributors and a separate reviewer. Claiming an issue does not satisfy supervisor/ethics, technical, implementation or experimental gates.
+*(Avoid adding redundant meta-labels such as `help wanted` or `question` alongside `decision` + `ready` unless requesting external assistance.)*
 
-## Full-backlog publication
+---
 
-The six-issue publication is not completion of RL-006. Do not create a project board, publish remaining task drafts, add automation, or modify repository settings without the remaining RL-006 prerequisites and separate authorization. Do not implement `.github/workflows/research-lab.yaml`; the boundary §5 supervisor-approved exception is still required.
+## 2. Milestones (`P0`–`P13`)
+
+Each phase in [`../PROJECT_ROADMAP.md`](../PROJECT_ROADMAP.md) §C maps to one GitHub milestone:
+- `P0 Repository, environment, and CI`
+- `P1 Resolve open decisions`
+- `P2 Benchmarks and own suites`
+- `P3 Harness, baselines, judge, statistics`
+- `P4 Schema and engine core`
+- `P5 Retrieval, fusion, rendering`
+- `P6 Validation gate and consolidation`
+- `P7 Deletion and security`
+- `P8 Optional components`
+- `P9 Testing matrix`
+- `P10 Pilot and experiments`
+- `P11 Reporting and analysis`
+- `P12 Personal Digital Twin application`
+- `P13 Final packaging`
+
+---
+
+## 3. Published vs. Draft Issues
+
+- **Currently Published on GitHub (`P1 Resolve open decisions`):**
+  - `#1` — `[RL-010] Prepare research-scope and supervisor decision records`
+  - `#2` — `[RL-012] Verify PostgreSQL and pgvector compatibility evidence`
+  - `#3` — `[RL-013] Select and verify the engine runtime`
+  - `#4` — `[RL-014] Prepare A2b and Suite D cardinality decisions`
+  - `#5` — `[RL-015] Determine ethics requirements for the optional usability study`
+  - `#6` — `[RL-016] Prepare paired D-23/D-24 and suite-release decisions`
+- **Local Issue Drafts ([`issue_drafts/`](issue_drafts/)):**
+  - Individual draft files (`RL-001.md`–`RL-026.md`, `RL-030.md`, `RL-040.md`, `RL-090.md`, `RL-094.md`, `RL-100.md`, `RL-105.md`) and consolidated phase specs (`issue_drafts/_bulk_tasks.md`) are maintained in sync with [`TASK_GRAPH.md`](TASK_GRAPH.md).
+  - Publish subsequent waves as their upstream blockers close using:
+    ```bash
+    gh issue create \
+      --title "[RL-xxx] <Title>" \
+      --milestone "<Milestone Name>" \
+      --label "enhancement,ready" \
+      --body-file research-lab/PLAN/issue_drafts/RL-xxx.md
+    ```

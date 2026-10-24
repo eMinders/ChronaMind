@@ -1,99 +1,76 @@
-# DECISIONS_REGISTER.md — Open decisions for the Research Lab
+# Decisions Register (`research-lab/`)
 
-**Status:** mirrors [`../Methodology_and_Consistency_Checklist.md`](../Methodology_and_Consistency_Checklist.md) §6 and [`../PROJECT_ROADMAP.md`](../PROJECT_ROADMAP.md) §E for the research decisions, and adds Lab-local architecture decisions. Updates to the methodology checklist remain authoritative for research decisions; this register is a working view with owner proposals. RL-001 is Done by owner-confirmed team approval (PROJECT_STATUS.md §6); this does not approve any open supervisor, ethics, technical or pilot decision.
-
-**Legend.** State ∈ {Frozen, Open, Pilot, Supervisor}; decision conditions qualify the task edges in TASK_GRAPH.md. Owner-selected Hybrid/S-07: [F-01](../review/FEASIBILITY_REVIEW_DECISIONS.md). Hybrid is not a new Frozen row; RL-001 is independently Done by owner-confirmed team approval in PROJECT_STATUS.md §6. Routine engineering decisions follow ARCHITECTURE.md §7 and the owner's engineering authority; research/ethics changes retain existing change control.
-
-**Numbering caution:** PLAN D-xx follows roadmap §E; TECHNICAL_SPECIFICATION.md uses a different Dec# table (e.g. spec 12 = RRF, PLAN D-12 = u*). Preserve all existing Frozen rows; identify each decision by name/source, never infer state from a matching number.
+**Single Source of Truth:** This register tracks every architectural, methodological, and engineering decision for the Research Lab.  
+**Decision Memos:** Individual Phase P1 sign-off records are stored in `research-lab/PLAN/decisions/` (`RL-010`, `RL-012`–`RL-016`).
 
 ---
 
-## 1. Research decisions carried from the roadmap
+## 1. Status Legend
 
-(Items 1–8 are **Frozen in V4** and are listed here for completeness; they must not be silently changed.)
+- **`FROZEN`**: Locked by the V4 proposal (`Graduation_Project_Proposal.md`) or owner decision. Cannot change without a documented revision and re-running `validation/mechanical_checks.py`.
+- **`NEEDS SUPERVISOR SIGNOFF`**: Pre-implementation scope, model, or ethics decision assigned to `RL-010`, `RL-015`, or `RL-016`.
+- **`OPEN`**: Technical or methodological design decision assigned to a Phase P1 task (`RL-012`–`RL-016`).
+- **`PILOT-DERIVED`**: Numeric threshold or operational toggle whose measurement protocol is specified in `RL-011` (`evaluation/pilot_plan.md`) and frozen on the development split in `RL-100` before any test-split experiment runs.
 
-| ID | Decision | State | Proposed owner | Blocks |
+---
+
+## 2. Canonical Decisions Table
+
+### 2.1 Frozen Architectural & Protocol Decisions
+
+| ID | Topic | Status | Decision / Rule | Authority |
 |---|---|---|---|---|
-| D-01 | H1 primary contrast is **P − A2** | Frozen | — | — |
-| D-02 | H1 endpoint form: history-dependent (sup.) + present-state (NI at δ_pres) | Frozen | — | — |
-| D-03 | Persona layer optional, off in P for H1–H4 | Frozen | — | — |
-| D-04 | H4 inference level: scenario-level C–P primary | Frozen | — | — |
-| D-05 | H4 "Supported" rule: zero in-boundary leaks ∧ bound ≤ u* ∧ positive control ≥ share | Frozen | — | — |
-| D-06 | Archival precondition: (S) ∨ (C); branch (A) removed | Frozen | — | — |
-| D-07 | 41-entry reference list byte-identical to V3 | Frozen | — | — |
-| D-08 | Minimal consolidation essential; retention and persona summaries not essential | Frozen | — | — |
+| `D-ARCH` | Repository & runtime architecture | `FROZEN` | **Option C (Hybrid Architecture):** Self-contained engine and evaluation harness inside `research-lab/`; strict code and runtime isolation from root `app/`. | [`ARCHITECTURE.md`](ARCHITECTURE.md), [`INDEPENDENCE_BOUNDARY.md`](INDEPENDENCE_BOUNDARY.md) |
+| `D-LAB-CI` | Research Lab CI workflow | `FROZEN` | Dedicated `.github/workflows/research-lab.yaml` workflow triggered on `research-lab/**` paths (`RL-005`). | [`INDEPENDENCE_BOUNDARY.md`](INDEPENDENCE_BOUNDARY.md) §4 |
+| `D-ENG-01` | Primary `H1` confirmatory contrast | `FROZEN` | `P − A2` (`P` vs `P-nohistory`) across both co-primary strata on suite `T`. `P − A1` (`P-flat`) is diagnostic only. | Proposal §§4.1, 10.4 |
+| `D-ENG-02` | V4 Archival Precondition (`Invariant 10`) | `FROZEN` | `Active → Archived` allowed iff `(S)` `recorded_range` is closed OR `(C)` an `Active` derived replacement `r'` exists with `MEMORY_DERIVATION(r' → r)` and `V(r') @> V(r)`. V3 valid-ended branch `(A)` is removed. | Proposal §§7.4 `R5`, 7.5, 8 Inv. 10 |
+| `D-ENG-03` | Hybrid retrieval fusion constant | `FROZEN` | Reciprocal Rank Fusion `RRF(m) = Σ_c 1 / (60 + rank_c(m))` (`k = 60`). | Proposal §7.6 |
+| `D-ENG-04` | Controlled deletion boundary | `FROZEN` | Covers PostgreSQL tables, FTS/vector indexes, `JOB` queue, caches, assembled context, answers, and logs (7 channels). Excludes WAL/backups, unvacuumed pages, external provider logs, already-streamed text, and model weights. | Proposal §§7.7, 10.3 |
 
-| ID | Decision | State | Proposed owner | Target gate | Blocks |
+### 2.2 Phase P1 Pre-Implementation Decisions (`RL-010`, `RL-012`–`RL-016`)
+
+| ID | Topic | Status | Owning Task / Issue | Recommended Default / Constraint | Blocks |
 |---|---|---|---|---|---|
-| D-09 | Supervisor confirmation of H1 scope (incremental vs combined) | Open — Supervisor | Member 3 (methodology author) | `RL-010` | `RL-011`, `RL-100` |
-| D-10 | δ_pres (H1 present-state NI margin) | Open — Pilot | Member 3 | `RL-100` | `RL-101`, `RL-110` |
-| D-11 | δ (LUAR non-inferiority margin for H3) | Open — Pilot | Member 3 | `RL-100` | `RL-103`, `RL-110` |
-| D-12 | u* (H4 informativeness limit) | Open — Pilot | Member 3 | `RL-100` | `RL-105`, `RL-110` |
-| D-13 | Positive-control detection share (H4) | Open — Pilot | Member 3 | `RL-100` | `RL-105`, `RL-110` |
-| D-14 | Suite T stratum mix | Open — Pilot | Member 3 | `RL-100` | `RL-101`, `RL-110` |
-| D-15 | Implement A2b configuration | Open — Supervisor | Member 3 | `RL-014` | Final optional A2b configuration/diagnostics; RL-014 also resolves D-16 before RL-023. Not a separate hard block on baseline preparation. |
-| D-16 | One deletion event per scenario in suite D | Open | Member 3 | `RL-014` | `RL-023`, `RL-105` |
-| D-17 | Persona layer implementation (keep as A10 only vs enable) | Open — Supervisor | Member 3 (methodology) + Member 5 (PDT impact) | `RL-010` | Optional persona scope in RL-120; core demonstration remains allowed after engine prerequisites, persona off in confirmatory P. |
-| D-18 | Exclusion constraint feasibility on full schema under concurrent writers | Open — Pilot | Member 4 | `RL-091` evidence | Full-engine invariant-4 validation and P9 acceptance, not initial `RL-040` DDL needed to test it. Keep mandatory exclusion constraint pending evidence; fallback conflict follows spec §13. |
-| D-19 | Ethics determination for optional usability study | Open — Supervisor + Ethics | Member 5 (PDT demo owner) | `RL-015` | `RL-120` (user study) |
-| D-20 | LLM budget / hosted vs local model / LongMemEval subset | Open — Supervisor | Member 3 (scope impact) + Member 1 (cost / reproducibility) | `RL-010` | Actual model calls and final subset/freeze; RL-030 dummy skeleton not blocked by budget. |
-| D-21 | Include Graphiti (B4) | Open — Pilot | Member 3 | `RL-100` | Final B4 inclusion in frozen experiments; RL-032 adapter/dev qualification proceeds under RL-011 plan without presuming inclusion. |
-| D-22 | Judge agreement criterion; scenarios per suite | Open — Pilot | Member 3 | `RL-011` procedure → `RL-033` development validation → `RL-100` final freeze | Test scoring/final experimental freeze; no circular dependency requiring RL-100 completion before constructing its judge. No threshold chosen in this pass. |
-| D-23 | Script-first synthetic suites as primary evidence for H1/H3/H4 | Open — Supervisor | Member 3 (suite author) + Member 1 (release-engineering perspective) | `RL-016` | `RL-022`, `RL-023`, `RL-024` |
-| D-24 | Release of injection suite G | Open — Supervisor | Member 3 + Member 1 (same `RL-016` memo) | `RL-016` | `RL-131` |
-| D-25 | PostgreSQL version (14 / 16 / 17 / 18) | Open | Member 4 | `RL-012` | `RL-040`, `RL-041`, `RL-005` |
-| D-26 | Unverified source items (parts of [20]–[29] not read; [5], [16], [30]–[37] beyond abstracts) | Open — Supervisor | Member 3 (methodology correctness) | — | — (claim-level only) |
-| D-27 | When and how to execute T1–T5 (SQL-only vs application-level) | Open — Supervisor + Pilot | Member 4 | `RL-010` | `RL-090` |
+| `D-01` | Frozen answering/extraction LLM (model ID, snapshot, decoding params, budget ceiling) | `NEEDS SUPERVISOR SIGNOFF` | `RL-010` (`#1`) | Pin one open-weight or hosted model at `temperature = 0` with seed logging and explicit USD/token ceiling. | `RL-022`, `RL-030`, `RL-031`, `RL-040`, `RL-100` |
+| `D-02` | Frozen embedding model & vector dimension `d` | `NEEDS SUPERVISOR SIGNOFF` | `RL-010` (`#1`) | Pin one open-weight local embedder (e.g., `bge-small-en-v1.5` or `nomic-embed-text-v1.5`) across all configurable systems. | `RL-031`, `RL-040`, `RL-050`, `RL-100` |
+| `D-03` | Validated LLM judge model | `NEEDS SUPERVISOR SIGNOFF` | `RL-010` (`#1`) | Pin a judge model distinct from `D-01` where feasible to prevent self-preference bias (`Proposal §10.5`). | `RL-033`, `RL-100` |
+| `D-04` | Optional Persona layer (`A10`) | `NEEDS SUPERVISOR SIGNOFF` | `RL-010` (`#1`) | Keep **OFF** in `P` (mandatory per V4) and **SKIP** exploratory implementation unless capacity remains after `P7`. | `RL-081` |
+| `D-05` | Optional retention-weighted ranking (`A9`) | `NEEDS SUPERVISOR SIGNOFF` | `RL-010` (`#1`) | Keep **OFF** in `P` and **SKIP** exploratory implementation unless capacity remains after `P7`. | `RL-080` |
+| `D-06` | Optional BM25 lexical channel | `NEEDS SUPERVISOR SIGNOFF` | `RL-010` (`#1`) | Keep **OFF** unless pilot shows PostgreSQL `ts_rank_cd` is inadequate on the dev split. | `RL-082` |
+| `D-07` | Optional Redis / Celery / ARQ queue | `NEEDS SUPERVISOR SIGNOFF` | `RL-010` (`#1`) | Keep **OFF**; use PostgreSQL `JOB` table with `FOR UPDATE SKIP LOCKED` to keep the deletion boundary single-store. | `RL-083` |
+| `D-08` | Optional usability study (`H5`) | `NEEDS SUPERVISOR SIGNOFF` | `RL-010` (`#1`), `RL-015` (`#5`) | Keep **OFF** unless supervisor and university ethics review (`D-19`) explicitly approve before recruitment. | `RL-122` |
+| `D-15` | Exploratory ablation `A2b` (valid-time history without `recorded_range`) | `OPEN` | `RL-014` (`#4`) | Recommend **OFF** (or low-priority exploratory) because `A2` is the sole confirmatory contrast for `H1`. | `RL-024`, `RL-101` |
+| `D-16` | Suite `D` scenario cardinality `N_D` | `OPEN` | `RL-014` (`#4`) | Select `N_D` from `validation/cp_bounds.output.txt` (e.g., `N_D = 36` yields exact 97.5% upper bound `0.0974 ≤ 0.10` at 0 leaks; `N_D = 60` yields `0.0596`). | `RL-011`, `RL-023`, `RL-105` |
+| `D-17` | Engine implementation stack & SQL driver | `OPEN` | `RL-013` (`#3`) | Python `3.12` + `psycopg` v3 (`psycopg[binary,pool]`) + `pgvector` + explicit SQL functions/triggers (`validation/bitemporal_checks.sql` pattern). | `RL-003`, `RL-030`, `RL-040` |
+| `D-18` | Invariant 4 (`btree_gist`) concurrent-writer strategy | `OPEN` | `RL-012` (`#2`) | Combine `EXCLUDE USING gist` with per-user `pg_advisory_xact_lock(hashtext(user_id))`; promote to `SERIALIZABLE` + retry if `RL-093` load test shows GiST contention. | `RL-040`, `RL-042`, `RL-093` |
+| `D-19` | University ethics / IRB determination for optional `H5` | `NEEDS SUPERVISOR SIGNOFF` | `RL-015` (`#5`) | Confirm written exemption/approval requirement with supervisor; if `D-08 = OFF`, record `NOT APPLICABLE`. | `RL-122` |
+| `D-20` | Personal Digital Twin (PDT) UI framework | `OPEN` | `RL-013` (`#3`) | Minimal React + TypeScript (`Vite`) per Proposal §9, or lightweight server-rendered HTML fallback if schedule is tight in `P12`. | `RL-121` |
+| `D-23` | `LongMemEval` timestamp anomaly rule (43/500 questions with `question_date < last_turn_ts`) | `OPEN` | `RL-016` (`#6`) | Recommended: keep all 43 questions with `ρ = max(question_date, last_turn_ts)` (`Proposal §7.4` rule `3a`) and report a sensitivity check excluding them. | `RL-020`, `RL-025`, `RL-102` |
+| `D-24` | Judge human-validation threshold (`κ_min` and dev sample size) | `OPEN` | `RL-016` (`#6`) | Recommended: `n ≥ 100` stratified dev items scored by 2 human annotators with `Cohen's κ ≥ 0.75` required before scoring test splits (`Proposal §10.5`). | `RL-033`, `RL-100`, `RL-104` |
+| `D-25` | Pinned PostgreSQL & `pgvector` version/image | `OPEN` | `RL-012` (`#2`) | Pin PostgreSQL `16.x` (matching the `16.15` reduced-schema check) + `pgvector` (`v0.7+` / `v0.8+` with iterative scan support) by Docker image digest. | `RL-004`, `RL-040` |
+| `D-26` | Own-suite (`T`, `G`, `D`, `I`) open release license | `NEEDS SUPERVISOR SIGNOFF` | `RL-016` (`#6`) | Release under `MIT` or `CC BY 4.0` after pilot validation (`Proposal §10.2`), ensuring zero content copied from `LoCoMo` (`CC BY-NC 4.0`). | `RL-132` |
+| `D-27` | `T1`–`T5` archival precondition enforcement architecture | `NEEDS SUPERVISOR SIGNOFF` | `RL-010` (`#1`) | Enforce `(S) ∨ (C)` inside the transactional `archive_version` SQL/engine procedure with a `BEFORE UPDATE` trigger check on `MEMORY_VERSION.status = 'archived'`. | `RL-042`, `RL-061`, `RL-090` |
+
+### 2.3 Pilot-Derived Decisions (`RL-011` Protocol → Frozen in `RL-100`)
+
+| ID | Parameter | Target Hypothesis / Component | Measurement Protocol (`RL-011`) | Freeze Gate |
+|---|---|---|---|---|
+| `D-09` | Retrieved memory token budget `B_mem` | All systems (`B2`, `B2h`, `B3`, `B4`, `P`, `A1`–`A10`) | Inspect recall-vs-token curve on dev split (`512`, `1024`, `2048` tokens). | `RL-100` |
+| `D-10` | Primary `k` in `Evidence Recall@k` (plus secondary `k` set) | `H2` (`LongMemEval_S`) | Inspect `k ∈ {3, 5, 10}` on dev split; designate one primary `k` before test freeze. | `RL-100` |
+| `D-11` | Present-state non-inferiority margin `δ_pres` | `H1` (`TAA` present-state stratum) | Estimate scenario-level SD and B0/P gap on Suite `T` dev split (`Proposal §4.1`). | `RL-100` |
+| `D-12` | Legitimate-update acceptance non-inferiority margin `δ_luar` | `H3` (`LUAR` on Suite `G`) | Calibrate gate acceptance vs. `A3` on Suite `G` dev split (`Proposal §4.1`). | `RL-100` |
+| `D-13` | Scenario-level PDLR upper-bound threshold `u*` and minimum `A8` positive-control leak share | `H4` (`PDLR` on Suite `D`) | Pair `u*` with `N_D` (`D-16`) so `1 − 0.025^(1/N_D) ≤ u*` (e.g., `u* = 0.10` for `N_D ≥ 36`), and set minimum `A8` detection share (e.g., `≥ 0.80`) on dev split. | `RL-100` |
+| `D-14` | Final test-split scenario counts & Suite `T` stratum ratio | Suites `T`, `G`, `D`, `I` | Compute scenario-level variance of paired differences on dev split to size test splits for target CI width (`Proposal §§10.2, 10.6`). | `RL-100` |
+| `D-21` | Conditional inclusion of Baseline `B4` (Graphiti) | `B4` (`Proposal §10.1`) | Run `B4` adapter on dev sample in `RL-031`/`RL-100`; include iff end-to-end execution succeeds with frozen models within budget (`D-01`). | `RL-100` |
+| `D-22` | Full `LongMemEval_S` (500 histories) vs. seeded stratified subset | `H2` (`Proposal §10.2`) | Measure per-history extraction cost in `RL-100`; if 500 histories exceed `D-01` budget, freeze a seeded stratified subset prior to test run. | `RL-100` |
 
 ---
 
-## 2. Lab-local architecture decisions (new)
+## 3. Decision Memo Template (`PLAN/decisions/<ID>.md`)
 
-| ID | Decision | State | Proposed owner | Target gate | Blocks |
-|---|---|---|---|---|---|
-| D-ENG-LANG | Engine language/runtime; prefer supported compatible stable Python, patch pin after verification | Open | Member 2 | `RL-013` | `RL-003`, `RL-030`, `RL-040`, engine tasks; decision hands requirements to manifest, does not wait for it. |
-| D-LAB-CI | Dedicated path-filtered `research-lab.yaml` workflow | Owner-selected engineering target; boundary exception pending; implementation Not Started | Member 1 (R-INFRA) | `RL-005` | RL-003/004/012; boundary §4 permits only an added job, so §5 supervisor approval of dedicated-file exception must precede implementation. RL-001 is Done and does not satisfy this exception. |
-| D-ENGINE-SUBMOD | Module contracts in ARCHITECTURE.md §8; tests under `implementation/tests/` | Owner-authorized engineering selection; review incremental APIs in P4 | Member 2 | `RL-040` design review | Component interface handoffs per TASK_GRAPH.md; no separate architecture-choice freeze. |
-| D-GITHUB-DEPS | Use GitHub native issue dependencies vs issue-reference text | Proposal | Member 6 (publication operator) | `RL-006` | `RL-006` |
-| D-PROGRESS-TRACKER | PROJECT_STATUS.md canonical progress; future GitHub board mirrors issue state | Owner-authorized engineering selection; no board published | Phase coordinator rotation | `RL-001` team workflow review | No second review-level status snapshot; RL-006 remains publication-gated. |
-
----
-
-### Engineering rationale (2026-10-23)
-
-Dedicated Lab CI is preferred over editing main-app CI to isolate dependency/runtime and path-filter behavior; trade-off is one small workflow, verified by RL-005. This selection does not override INDEPENDENCE_BOUNDARY.md §5: submit the narrow dedicated-file exception through its existing research-decision/supervisor process before implementation. No exception or supervisor response is evidenced. Stable component boundaries avoid a second engine/test tree; names may refine through normal component review without changing semantics. A single status board avoids drift with review snapshots; future GitHub state must be mirrored, not treated as an unrecorded approval. Version pins are **not** selected yet: no Lab manifest/lock exists and upstream metadata checks in the closure pass are recorded in ARCHITECTURE.md §7; install/build and runtime compatibility remain unverified. ARCHITECTURE.md §7 specifies evidence required for RL-012/013/003 and fallback choice. No research decision here is declared approved by engineering judgment.
-
-## 3. Resolution protocol
-
-Each decision follows this flow:
-
-1. Owner drafts a 1-page memo under `research-lab/PLAN/decisions/<id>.md` with: current value, evidence, alternatives, reason for selection, consequences, supervisor sign-off if required.
-2. For Pilot items, the memo is attached to the pilot plan `research-lab/PLAN/pilot_plan.md` and the row's `State` becomes `Pilot — in progress` with an owner and target date.
-3. On resolution, the row is updated here, in `TECHNICAL_SPECIFICATION.md §2`, and in `PROJECT_ROADMAP.md §E` (keep the three views consistent — the mechanical checks guard against stale wording).
-4. Until separately authorized RL-006 publication, record decision acceptance locally with provenance and notify the team; afterward announce it on the tracking issue. Generate decision bodies from this register and the decision template, not nonexistent individual decision drafts.
-
-A decision becoming Frozen never silently rewrites any Frozen row above; a new row is added and the previous Open row is marked `Superseded by D-xx` with a date.
-
-## 4. Blocker routing and required evidence
-
-Canonical blocker classification; current task readiness is PROJECT_STATUS.md §10. No item below is approved by RL-001 alone.
-
-| Class / item | Responsible role | Required evidence / action | Downstream impact |
-|---|---|---|---|
-| Owner decision: Hybrid/S-07 | Owner | Already selected; F-01 evidence retained, no further architecture vote | No unresolved architecture-choice gate |
-| Team coordination: RL-002, role mapping | M6 coordinator; M1 scaffold reviewer; owner confirms real mapping | Existing scaffold inspection, actual reviewer acceptance and normal merge; real claim identities/access/availability | RL-003 and mirrors; publication identities still missing |
-| Academic supervisor: D-09/17/20/27 via RL-010 | M3; M4 owns D-27 technical evidence; M1 budget support | Named scope/budget/harness memos and actual supervisor dispositions; rejection uses controlled change/deferment | RL-011/040/090, paid calls, final pilot/freeze; optional persona only |
-| Academic supervisor / owner engineering: D-15/16 via RL-014 | M3; M2 review | A2b supervisor disposition; reasoned cardinality choice preserving scenario inference | RL-023; optional A2b config/diagnostic finalization |
-| Academic supervisor: D-23/24 via RL-016 | M3 + M1 paired; M2 review | Synthetic-evidence acceptance and injection release/dual-use policy | RL-022/023/024 and release posture RL-131 |
-| Ethics determination: D-19 via RL-015 | M5; supervisor/ethics authority | Actual determination/approval or documented skip before recruitment | RL-120 optional study only |
-| Version/compatibility: D-25, D-ENG-LANG via RL-012/013; RL-003 | M4 PG; M2 runtime; M1 lock | Dated release/support/license/changelog/wheel evidence, actual target build/digest, selected-schema test, independent locked resolution | RL-003/005/030/040/041; metadata observations do not close decisions |
-| Academic supervisor exception: D-LAB-CI / boundary §5 | M1 drafts; M6 routes | Dedicated-file exception must be recorded through boundary §5's checklist/supervisor process; only an added CI job currently permitted. RL-001 approval does not satisfy or waive this exception. | RL-005 dedicated workflow, then RL-006; no exception implemented here |
-| Academic supervisor / safety exception: prohibited library imports | M2 architecture; M1 dependency review; M3 routes | Reconcile FastAPI/SQLModel/Langfuse/metrics boundary conflict with proposal/project rules; required scoped exception before prohibited imports | Applicable API/ORM/tracing implementation; permitted standalone DTO/SQL planning may proceed |
-| Task-specific acceptance: proposal/spec ambiguities in existing impact analysis §4 | M4 + M2 RL-040 design review; supervisor if semantic change | Passage/entity/rule/predicate/lineage mapping; controlled spec §13 change if true conflict. Also report general P9 waiver wording versus mandatory J2/J7 tests; do not waive mandatory evidence | Schema/API acceptance, full-engine and RL-094 sign-off |
-| Technical prerequisite: RL task DAG | Task owners; independent reviewers in ASSIGNMENTS.md | Accepted predecessor artifacts and tests; no Ready state from expected completion dates | All implementation/integration tasks follow TASK_GRAPH.md, not broad phase guesses |
-| Publication/claim authorization: RL-006 | Owner explicit publication permission; M6 operator | RL-002–005 accepted, real identities/access, native-support check and local-only templates; local bootstrap claims allowed now | Remote issues/board only; no remote action or template wrappers authorized |
-| Pilot evidence: D-10–14/18/21/22 | M3 pilot; M4 concurrency; M5 judge/B4 | RL-011 procedures, dev-only evidence, RL-091 concurrency and RL-032/033 qualification; numeric values not chosen now | RL-100 final freeze; B4 remains conditional, judge qualification precedes freeze |
-| Experimental freeze: RL-100 → H1–H4 | M3; M2 + supervisor review | RL-010/011/026/031/033/034/094 accepted and signed versions/models/prompts/splits/statistics/values freeze | RL-101/102/103/105 held-out scoring, reports and release |
-| Claim-level evidence: D-26 | M3 methodology | Read exact source passages before adding claims; update ledger/audit if changed | New affected claims only, not blanket implementation block |
-
-No other owner approval is needed for routine in-contract engineering. Request real identities/availability for dispatch and separate publication permission when eligible; supervisor, ethics and pilot gates are resolved by their responsible authorities/evidence.
+Every Phase P1 decision task (`RL-010`, `RL-012`–`RL-016`) commits a Markdown record under `research-lab/PLAN/decisions/` containing:
+1. **Decision ID(s) & Title**
+2. **Selected Option / Frozen Value**
+3. **Evidence & Justification** (citing `Graduation_Project_Proposal.md`, `TECHNICAL_SPECIFICATION.md`, or empirical check output)
+4. **Downstream Impact** (tasks unblocked and files updated)
+5. **Sign-Off** (Owner / Supervisor / Peer Reviewer and date)

@@ -1,86 +1,26 @@
----
-name: Research Lab task
-about: Create a Research Lab engineering/research task
-title: "[RL-XXX] <short title>"
-labels: ["rl:kind/task"]
-assignees: []
----
+# [RL-XXX] <Task Title>
 
-<!--
-Keep this template structure. Fields in angle brackets must be filled.
-Fields marked (optional) may be omitted when not applicable.
--->
+**Milestone:** `<Phase Milestone>`  
+**Labels:** `enhancement` (add `ready` if unblocked, `paired` if co-owned)  
+**Proposed Owner:** `Member X (<Role Code>)` · **Peer Reviewer:** `Member Y (<Role Code>)`
 
-## Task ID
-RL-XXX
+## Objective & Why
+Explain what needs to be implemented and why this task is required for the Research Lab (`Graduation_Project_Proposal.md` / `TECHNICAL_SPECIFICATION.md`).
 
-## Phase
-<P0..P13>
+## Scope & Deliverables
+- **In Scope:**
+  - ...
+- **Out of Scope:**
+  - ...
+- **Deliverables (`research-lab/...`):**
+  - `research-lab/...`
 
-## Owner (proposed)
-<@github-username or `Unassigned`>
+## Acceptance Criteria
+- [ ] ...
+- [ ] All changes stay strictly within `research-lab/` (`PLAN/INDEPENDENCE_BOUNDARY.md`).
+- [ ] Verification commands in `research-lab/PLAN/CONTRIBUTING.md` pass.
 
-## Objective
-<One or two sentences describing the goal and the verifiable outcome.>
-
-## Scope
-<Bullet list of what is in scope.>
-
-## Out of scope
-<Bullet list of exclusions. Important for keeping tasks sized correctly.>
-
-## Deliverables
-- `<path>` — <what it contains>
-- …
-
-## Acceptance criteria
-- [ ] <Objectively verifiable statement 1>
-- [ ] <Objectively verifiable statement 2>
-- …
-
-## Dependencies
-### Blocks
-- RL-XXX — <reason>
-
-### Blocked by
-- RL-XXX — <reason / prerequisite deliverable>
-
-### Dependency class
-<Blocking | Non-blocking | Independent | Review | Decision>
-
-### Can start now?
-<Yes | No — waiting for RL-YYY>
-
-## Required tests and evidence
-<Specific tests, scripts, or artefacts that must accompany completion.>
-
-## Claim instructions
-Comment on this issue with:
-
-```
-CLAIMED
-Owner: @your-handle
-Started: YYYY-MM-DD HH:MM Africa/Cairo
-Expected deliverable: <short description>
-```
-
-Then self-assign the issue and move the Project card to `In Progress`.
-
-## Progress updates
-Comment on this issue when you:
-- Make meaningful progress.
-- Hit a blocker.
-- Submit for review.
-- Complete the task (with the output of the acceptance commands pasted inline).
-
-Also update `research-lab/PLAN/PROJECT_STATUS.md` per [`CONTRIBUTING.md`](../CONTRIBUTING.md) §5.
-
-## Effort
-<S | M | L>
-
-## Risk
-<Low | Medium | High>
-
-## Independence confirmation
-- [ ] I will not modify any file outside `research-lab/` for this task.
-- [ ] I will not introduce a runtime dependency on the main application.
+## Dependencies & References
+- **Blocked By:** `None` (or `RL-xxx`)
+- **Blocks:** `RL-yyy`
+- **References:** `research-lab/TECHNICAL_SPECIFICATION.md`, `research-lab/PLAN/TASK_GRAPH.md`, `research-lab/PLAN/CONTRIBUTING.md`

@@ -1,54 +1,25 @@
----
-name: Research Lab decision
-about: Track an open research or architecture decision
-title: "[D-XX] <decision name>"
-labels: ["rl:kind/decision"]
-assignees: []
----
+# [RL-XXX] <Decision Task Title>
 
-## Decision ID
-D-XX
+**Milestone:** `P1 Resolve open decisions`  
+**Labels:** `decision`, `ready` (add `paired` if co-owned)  
+**Proposed Owner:** `Member X (<Role Code>)` · **Peer Reviewer:** `Member Y (<Role Code>)`
 
-## State
-<Open | Pilot | Supervisor | Frozen>
+## Objective & Why
+State which decision IDs (`D-xx`) in `research-lab/PLAN/DECISIONS_REGISTER.md` this task resolves and why they are needed before downstream implementation or benchmark tasks begin.
 
-## Current value
-<Current value, or `Pending`>
+## Scope & Deliverables
+- **Decisions in Scope:** `D-xx`
+- **Out of Scope:** ...
+- **Deliverables:**
+  - Decision memo: `research-lab/PLAN/decisions/RL-XXX-<slug>.md`
+  - Updated rows in `research-lab/PLAN/DECISIONS_REGISTER.md` and `research-lab/TECHNICAL_SPECIFICATION.md` §2
 
-## Owner (proposed)
-<@github-username>
+## Acceptance Criteria
+- [ ] Decision memo records the chosen option/value, supporting evidence, downstream impact, and sign-off.
+- [ ] `research-lab/PLAN/DECISIONS_REGISTER.md` and `research-lab/TECHNICAL_SPECIFICATION.md` §2 are updated in the same PR.
+- [ ] `python3 validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md` passes.
 
-## Approver(s)
-<Supervisor / pilot / Lab lead / team>
-
-## Context
-<Why this decision matters, with references to the proposal / spec / roadmap sections.>
-
-## Alternatives considered
-<List with a one-line pro/con each.>
-
-## Reason for the proposed value
-<Short, non-circular reason.>
-
-## Consequences
-- Blocks: RL-XXX, RL-YYY
-- Changes if resolved differently: …
-
-## Evidence to attach on resolution
-- Proposal §…
-- Spec §…
-- Checklist §…
-- Pilot log (if applicable)
-- Supervisor sign-off memo path
-
-## Target resolution
-By <date> or in <phase gate>.
-
-## Progress updates
-Comment here each time the decision moves forward.
-
-## On resolution
-- [ ] Update `research-lab/PLAN/DECISIONS_REGISTER.md`.
-- [ ] Update `research-lab/TECHNICAL_SPECIFICATION.md` §2.
-- [ ] Update `research-lab/PROJECT_ROADMAP.md` §E.
-- [ ] Close this issue with a link to the memo.
+## Dependencies & References
+- **Blocked By:** `RL-001` (Done)
+- **Blocks:** `RL-yyy`
+- **References:** `research-lab/PLAN/DECISIONS_REGISTER.md`, `research-lab/TECHNICAL_SPECIFICATION.md`, `research-lab/PLAN/CONTRIBUTING.md`
