@@ -2,7 +2,7 @@
 
 **Scope:** mirrored public benchmarks and own-suite generators used by the H1–H4 experiments.
 **Phase:** P2.
-**Normative references:** [`../../Graduation_Project_Proposal.md`](../../Graduation_Project_Proposal.md) §10.2; [`../../PROJECT_ROADMAP.md`](../../PROJECT_ROADMAP.md) §D.2; [`../../Source_Evidence_Ledger.md`](../../Source_Evidence_Ledger.md) §C.
+**Normative references:** [`../../Graduation_Project_Proposal.md`](../../Graduation_Project_Proposal.md) §10.2; [`../../PROJECT_ROADMAP.md`](../../PROJECT_ROADMAP.md) §D.2; [`../../reference/Source_Evidence_Ledger.md`](../../reference/Source_Evidence_Ledger.md) §C.
 
 ## Planned layout
 
@@ -48,7 +48,7 @@ Any deviation at adapter time is a bug and triggers `[RL-BUG]` reporting per [`.
 - Mem0: Apache-2.0 (used as baseline B3).
 - Graphiti: Apache-2.0 (conditional baseline B4).
 
-See [`../../Source_Evidence_Ledger.md`](../../Source_Evidence_Ledger.md) for full source attribution.
+See [`../../reference/Source_Evidence_Ledger.md`](../../reference/Source_Evidence_Ledger.md) for full source attribution.
 
 ## Status
 

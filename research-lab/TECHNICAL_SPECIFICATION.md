@@ -1,246 +1,270 @@
-# TECHNICAL_SPECIFICATION.md
+# Technical Specification — Bi-Temporal Memory Engine & Evaluation Harness
 
-**Scope.** Freezes implementation-level details that `Graduation_Project_Proposal.md` leaves open. Does **not** duplicate the proposal; it points into §7–§10 of the proposal and adds (a) the implementation decisions that must be fixed before P4 of [`PROJECT_ROADMAP.md`](PROJECT_ROADMAP.md), (b) an entity–relationship summary that is testable, and (c) a decision log keyed to §E of the roadmap.
-
-Every normative statement here is marked **MUST**, **SHOULD**, or **MAY** (RFC 2119). A **MUST** that is not implemented yet is a scheduled requirement, not a current property of the engine.
-
----
-
-## 1. Normative references
-
-- [`Graduation_Project_Proposal.md`](Graduation_Project_Proposal.md) §§1.1, 7, 8, 9, 10.
-- [`Methodology_and_Consistency_Checklist.md`](Methodology_and_Consistency_Checklist.md) §§0–6.
-- [`Source_Evidence_Ledger.md`](Source_Evidence_Ledger.md) §§A, B, C.
-- [`validation/bitemporal_checks.sql`](validation/bitemporal_checks.sql) (reduced-schema reference implementation; 43 PASS lines).
-- [`PROJECT_ROADMAP.md`](PROJECT_ROADMAP.md) §C–§K.
+**Status:** Normative implementation specification derived from [`Graduation_Project_Proposal.md`](Graduation_Project_Proposal.md) (V4).  
+**Scope:** Bi-temporal data model, transactional lifecycle procedures, validation gate, hybrid retrieval, lineage deletion, evaluation harness, and statistical inference protocol.
 
 ---
 
-## 2. Decision log (keyed to roadmap §E)
+## 1. Normative Sources & Authority Hierarchy
 
-Only items that **must be fixed before code** are listed here. For the full list see roadmap §E; this log is where each decision will be recorded as it is frozen in P1. Rows currently show the **State** at the end of the finalization session.
+If a discrepancy arises between documents, resolve it in this order:
 
-| Dec# | Decision | State | Current value | Approver | Evidence | Supersedes |
-|---|---|---|---|---|---|---|
-| 1 | H1 primary contrast is **P − A2** | **Frozen** | P − A2 | V4 proposal §4 | checklist §0 "H1 scope" | V1 "four layers" claim |
-| 2 | Persona layer is optional, off in P | **Frozen** | Optional, off in P | V4 proposal §O1, §5, §7.1 | checklist §0 "Persona layer" | V1 "four layers" claim |
-| 3 | Minimal consolidation is essential | **Frozen** | Essential | V4 proposal §7.1 | checklist §0 "Persona layer" (second clause) | — |
-| 4 | H4 inference level is scenario-level C–P | **Frozen** | Scenario | V4 proposal §4.1, §10.6 | checklist §0 "H4 inference" | V1 event-level primary |
-| 5 | H4 "Supported" rule is three-conjunct | **Frozen** | zero leaks ∧ bound ≤ u\* ∧ positive control ≥ share | V4 proposal §4.1, §10.6 | checklist §0 "H4 conclusion rule" | V3 overlap in §4.1 |
-| 6 | Archival precondition is (S) ∨ (C) | **Frozen** | (S) Superseded ∨ (C) Active derived replacement; branch (A) "valid-ended" **removed** | V4 proposal §7.4 R5, §7.5, §7.6 step 1, §8 invariant 10 | checklist §0 "Historical-memory archival bug fixed" | V3 three-branch precondition |
-| 7 | Reference list byte-identical to V3 | **Frozen** | 41 entries | enforced by `validation/mechanical_checks.py` | mechanical_checks.output.txt | — |
-| 8 | H1 is a two-stratum endpoint | **Frozen** | history-dependent (sup.) + present-state (NI at δ_pres) | V4 proposal §4, §10.3 | checklist §0 "H1 endpoint form" | V1 single-stratum |
-| 9 | PostgreSQL version | **Open** | 14 / 16 / 17 / 18 (V2 SQL ran on 16.15) | TBD | checklist §6 item 13 | — |
-| 10 | LLM / embedding model pinning | **Open** | TBD | TBD | checklist §6 item 8 | — |
-| 11 | Vector index strategy per user | **Open** | Exact (default); HNSW only in scalability tests with recall checks | V4 proposal §9 directs this; the per-user partition is a Frozen architectural MUST (§3.2) | V4 §9 | — |
-| 12 | k = 60 for RRF | **Frozen** | 60 | V4 proposal §7.6; [12] "near-optimal" pilot | ledger §C | — |
-| 13 | Lexical ranker | **Frozen** | PostgreSQL full-text ranking (NOT BM25) | V4 proposal §7.6, audit §1 row 6 | ledger §A row 38 | — |
-| 14 | δ_pres, δ (LUAR), u\*, positive-control share, stratum mix | **Open** (pilot) | TBD | TBD | checklist §4, §6 item 2 | — |
-| 15 | Deletion storage boundary | **Frozen** (per §7.7) | In-boundary channels: tables, indexes, queue payloads, caches, derived artifacts, lineage rows. Excluded: backups beyond retention schedule, WAL beyond retention, provider logs, already-shown text, user-copied data. | V4 proposal §7.7 | — | V1 "guaranteed deletion" claim |
-| 16 | T1 – T5 harness design (SQL-only vs application-level) | **Open** | TBD | TBD | changelog §Unresolved decisions item 17 | — |
+1. [`Graduation_Project_Proposal.md`](Graduation_Project_Proposal.md) §§4, 7, 8, 9, 10 (frozen research contract and hypotheses `H1`–`H4`).
+2. [`Methodology_and_Consistency_Checklist.md`](Methodology_and_Consistency_Checklist.md) §§1–5 (audit checklists and `T1`–`T5` archival test contract).
+3. This `TECHNICAL_SPECIFICATION.md` (concrete SQL, API, and harness contracts).
+4. [`PLAN/DECISIONS_REGISTER.md`](PLAN/DECISIONS_REGISTER.md) (canonical status of all open, pilot-derived, and frozen decisions `D-01`–`D-27`, `D-ARCH`, `D-ENG-*`).
+5. [`reference/Source_Evidence_Ledger.md`](reference/Source_Evidence_Ledger.md) and [`reference/Research_and_Fact_Check_Audit.md`](reference/Research_and_Fact_Check_Audit.md) (literature and audit evidence).
+
+Any change to a **FROZEN** decision requires a dated entry in [`PLAN/DECISIONS_REGISTER.md`](PLAN/DECISIONS_REGISTER.md) and [`CHANGELOG.md`](CHANGELOG.md), plus a full re-run of [`validation/mechanical_checks.py`](validation/mechanical_checks.py).
 
 ---
 
-## 3. Memory entities and relationships
+## 2. Summary of Key Technical Decisions
 
-See V4 proposal §8 for the normative schema. This section summarises in a testable way; implementers **MUST** derive the DDL from the proposal and **MUST NOT** change invariant 1–10 semantics without a V5 patch.
+The full 27-item decision register lives in [`PLAN/DECISIONS_REGISTER.md`](PLAN/DECISIONS_REGISTER.md). The core architectural and protocol parameters governing this specification are summarized below:
 
-### 3.1 Entities
+| ID | Parameter / Mechanism | Status | Value / Rule | Authority |
+|---|---|---|---|---|
+| `D-ARCH` | Repository & runtime boundary | **FROZEN (Owner)** | **Option C (Hybrid Architecture):** Self-contained engine and harness under `research-lab/`, strictly isolated from root `app/`. | [`PLAN/ARCHITECTURE.md`](PLAN/ARCHITECTURE.md) |
+| `D-ENG-01` | Primary contrast for `H1` | **FROZEN (V4)** | `P − A2` (`P` vs `P-nohistory`) on suite `T`, evaluated on both co-primary strata (`history-dependent` superiority and `present-state` non-inferiority). `P − A1` (`P-flat`) is diagnostic only. | Proposal §§4.1, 10.4 |
+| `D-ENG-02` | V4 Archival precondition (Invariant 10) | **FROZEN (V4)** | A version `r` may transition `Active → Archived` iff `(S)` `recorded_range` is closed OR `(C)` an `Active` derived replacement `r'` exists with `MEMORY_DERIVATION(derived_version_id = r', source_version_id = r)` covering `V(r)`. The V3 valid-ended branch `(A)` is removed. | Proposal §§7.4 `R5`, 7.5, 8 Inv. 10 |
+| `D-ENG-03` | Reciprocal Rank Fusion constant | **FROZEN (V4)** | `RRF(m) = Σ_c 1 / (60 + rank_c(m))` (`k = 60`). Weighted-sum fusion is exploratory ablation `A7`. | Proposal §7.6 |
+| `D-ENG-04` | Controlled deletion boundary | **FROZEN (V4)** | Covers PostgreSQL tables, FTS/vector indexes, `JOB` queue, application caches, assembled prompts, answers, and logs. Excludes WAL/backups/replicas, physical unvacuumed pages, external LLM/embedding provider logs, already-streamed text, and model weights. | Proposal §§7.7, 10.3 |
+| `D-01`–`D-03` | Frozen answering LLM, embedding model, and judge model | **NEEDS SUPERVISOR SIGNOFF (`RL-010`)** | One frozen answering LLM (`temperature = 0`), one frozen embedder, and one validated judge model (distinct from answering LLM where feasible). | Proposal §§9, 10.1, 10.5 |
+| `D-04`–`D-08` | Optional components (`A10` Persona, `A9` retention ranking, BM25, Redis/Celery, `H5` usability study) | **NEEDS SUPERVISOR SIGNOFF (`RL-010`)** | All **OFF** in primary configuration `P` for confirmatory runs `H1`–`H4`. Recommended default: keep disabled unless explicitly activated as exploratory work. | Proposal §§5, 7.2, 7.6, 9, 11 |
+| `D-09`–`D-14` | Token budget `B_mem`, `k` in `Recall@k`, `δ_pres`, `δ_luar`, `u*`, positive-control share | **PILOT-DERIVED (`RL-011`, `RL-100`)** | Provisional until frozen on the development split in `RL-100` prior to any test-split run. | Proposal §§4.1, 10.1, 10.3, 10.6 |
+| `D-15`, `D-16` | Exploratory `A2b` inclusion; Suite `D` scenario count `N_D` | **OPEN (`RL-014`)** | `N_D` sets the scenario-level Clopper–Pearson upper bound (`1 − (α/2)^(1/N_D)` at 0 leaks; e.g., `N_D = 36 → 0.0974` at one-sided `α = 0.025` / two-sided `α = 0.05` convention per `validation/cp_bounds.py`). | Proposal §§10.2, 10.4, 10.6 |
+| `D-17`, `D-18` | Engine language/stack; Invariant 4 concurrency strategy | **OPEN (`RL-013`, `RL-012`)** | Python 3.12 + `psycopg` v3 + `pgvector` recommended (`RL-013`). Per-user advisory lock + `EXCLUDE USING gist`; `SERIALIZABLE` + retry if GiST contention appears under `RL-093` load. | Proposal §§7.3, 8, 9 |
+| `D-25` | PostgreSQL & `pgvector` pinned versions | **OPEN (`RL-012`)** | Reduced-schema baseline ran on PostgreSQL `16.15` (`postgres:16-alpine`). Pin exact PostgreSQL `16.x`/`17.x` and `pgvector` image digest in `RL-012`/`RL-004`. | Proposal §§7.4, 9 |
+| `D-27` | `T1`–`T5` archival precondition enforcement site | **NEEDS SUPERVISOR SIGNOFF (`RL-010`)** | Enforce `(S) ∨ (C)` inside the transactional archival procedure (`archive_version`), backed by a database trigger/function and verified by `RL-090`. | Proposal §§7.5, 8 Inv. 10 |
 
-- `MEMORY` — logical memory item identified by `(user_id, memory_key, predicate_id)`.
-- `MEMORY_VERSION` — immutable row with:
-  - `status ∈ {Candidate, Conflict-Pending, Active, Archived, Rejected, Deleted}`;
-  - **valid_range** `V = [valid_from, valid_until)` possibly open-ended;
-  - **recorded_range** `R = [recorded_from, recorded_until)` possibly open-ended;
-  - foreign key to `MEMORY`;
-  - `confidence`, `assertion_mode`, `extracted_from_event_id`.
-- `MEMORY_EVIDENCE` — joins versions to source turns/events with a per-row `evidence_role`.
-- `MEMORY_DERIVATION` — directed edge from derived version to source version; mandatory for any consolidated / summary / persona-trait row.
-- `DELETION_LOG` — append-only; contains **no content and no hash**.
-- `JOB` — PostgreSQL job table with `FOR UPDATE SKIP LOCKED` and an idempotency key.
-- `PREDICATE` — predicate schema row with `cardinality ∈ {single, multi, event}`.
+---
 
-### 3.2 Architectural MUSTs
+## 3. Bi-Temporal Data Model & Query Predicates
 
-- Every user **MUST** have an isolated partition (per-user vector-store partition and per-user scoped predicates). RLS is a second layer and does not replace the partition.
-- Candidate and Conflict-Pending rows **MUST** have `recorded_range = NULL`. `recorded_from` **MUST** be assigned only on commit to Active (invariant 3).
-- The exclusion constraint on `(user_id, memory_key, predicate_id, V, R)` with `btree_gist` **MUST** apply only to single-valued predicates (invariant 4).
-- `recorded_from` **MUST** be strictly monotonic per user to prevent replay-clock ties (rule R3).
-- Derived rows **MUST** carry at least one `MEMORY_DERIVATION` edge back to a source version.
+### 3.1 Core Relational Entities (Proposal §8)
 
-### 3.3 Temporal invariants (summary; §8 is authoritative)
+All user-data tables carry `user_id` and enforce Row-Level Security (`FORCE ROW LEVEL SECURITY`) for the runtime application role (`Invariant 7`).
 
-| # | Invariant | Enforcement site | Current test status |
+| Table | Primary Key | Key Columns & Types | Purpose |
 |---|---|---|---|
-| 1 | Every non-deleted version is traceable | Scheduled integrity check | Not executed |
-| 2 | Status matches range form | CHECK constraint | **Executed in V2** |
-| 3 | `recorded_from` set at commit to Active | Trigger / procedure | **Executed in V2** |
-| 4 | Single-valued no-overlap in `(V, R)` | Exclusion constraint with `btree_gist` | **Executed in V2** (reduced schema; full schema under concurrency Open) |
-| 5 | Superseded is a derived condition (recorded range closed) | Query predicate | Enforced by schema shape; **Executed in V2** |
-| 6 | Staged rows never satisfy any predicate | CHECK + predicate design | **Executed in V2** |
-| 7 | RLS per user | Row-level security policy | Not executed |
-| 8 | Deletion removes every version and derived artifact (R6 + §7.7 closure) | Transactional deletion procedure | Not executed |
-| 9 | Job queue is idempotent per `(user_id, key)` | `JOB` schema + idempotency index | Not executed |
-| 10 | Archival precondition (S) ∨ (C) | Transactional archival procedure | **Not executed** — tests **T1 – T5** planned |
+| `APP_USER` | `id ( text / uuid )` | `external_ref text UNIQUE`, `created_at timestamptz NOT NULL` | User identity and tenant scope root. |
+| `SESSION` | `id ( text / uuid )` | `user_id NOT NULL REFERENCES APP_USER`, `started_at timestamptz NOT NULL`, `ended_at timestamptz` | Conversational session grouping. |
+| `TURN` | `id ( text / uuid )` | `session_id NOT NULL REFERENCES SESSION`, `user_id NOT NULL`, `sequence_no int NOT NULL`, `role text CHECK (role IN ('user','assistant'))`, `content text NOT NULL`, `occurred_at timestamptz NOT NULL` | Verbatim dialogue turns; evidence source for extraction. |
+| `PREDICATE_SCHEMA` | `predicate_key ( text )` | `cardinality text NOT NULL CHECK (cardinality IN ('single','multi','event'))`, `default_layer text NOT NULL CHECK (default_layer IN ('episodic','semantic','opinion','persona'))` | Declares whether a predicate is single-valued, multi-valued, or an instantaneous event. |
+| `MEMORY_VERSION` | `id ( text / uuid )` | `memory_key text NOT NULL`, `user_id NOT NULL`, `layer text NOT NULL CHECK (layer IN ('episodic','semantic','opinion','persona'))`, `status text NOT NULL CHECK (status IN ('candidate','conflict_pending','rejected','active','archived'))`, `subject_key text NOT NULL`, `predicate_key text NOT NULL`, `single_valued boolean NOT NULL`, `content text NOT NULL`, `valid_range tstzrange NOT NULL`, `valid_from_basis text NOT NULL CHECK (valid_from_basis IN ('explicit','inferred'))`, `recorded_range tstzrange NULL`, `assertion_mode text NOT NULL`, `confidence real`, `importance real`, `reinforcement_count int NOT NULL DEFAULT 0`, `extractor_version text NOT NULL`, `archival_branch text NULL CHECK (archival_branch IN ('S','C'))` | Immutable belief version row. `memory_key` groups all versions (including superseded and re-issued rows) of the same logical memory item (`R6`). |
+| `MEMORY_EVIDENCE` | `(version_id, turn_id, evidence_span)` | `version_id NOT NULL REFERENCES MEMORY_VERSION ON DELETE CASCADE`, `turn_id NOT NULL REFERENCES TURN`, `evidence_span text NOT NULL`, `evidence_role text NOT NULL` | Grounds extracted memories in user-authored turn spans (`Invariant 1`). |
+| `MEMORY_DERIVATION` | `(derived_version_id, source_version_id)` | `derived_version_id NOT NULL REFERENCES MEMORY_VERSION ON DELETE CASCADE`, `source_version_id NOT NULL REFERENCES MEMORY_VERSION`, `derivation_type text NOT NULL CHECK (derivation_type IN ('consolidation','summary','corroboration','re_derivation'))` | Directed lineage link `r' → r` from derived version `r'` (`derived_version_id`) to source version `r` (`source_version_id`). |
+| `MEMORY_EMBEDDING` | `(version_id, embedding_model)` | `version_id NOT NULL REFERENCES MEMORY_VERSION ON DELETE CASCADE`, `embedding_model text NOT NULL`, `embedding vector(d) NOT NULL` | Dense vector representation bound 1-to-1 with a version row (`Invariant 8`). |
+| `MEMORY_CONFLICT` | `id ( text / uuid )` | `candidate_version_id NOT NULL REFERENCES MEMORY_VERSION ON DELETE CASCADE`, `existing_version_id UUID NULL`, `relation text NOT NULL`, `decision text NOT NULL CHECK (decision IN ('accept','hold','reject'))`, `reason_code text NOT NULL`, `decided_by text NOT NULL`, `decided_at timestamptz NOT NULL` | Audit record for validation-gate and conflict-detector decisions (§7.5). |
+| `AUDIT_EVENT` | `id ( text / uuid )` | `user_id NOT NULL`, `memory_ref text NOT NULL` (random token, no content), `event_type text NOT NULL`, `event_at timestamptz NOT NULL`, `details jsonb NOT NULL` (content-free schema) | Tamper-evident lifecycle and deletion log (`Invariant 8`). |
+| `DELETION_REQUEST` | `id ( text / uuid )` | `user_id NOT NULL`, `scope text NOT NULL CHECK (scope IN ('memory','topic','all'))`, `target_ref text NOT NULL`, `status text NOT NULL`, `deletion_epoch bigint NOT NULL`, `requested_at timestamptz NOT NULL`, `completed_at timestamptz` | Tracks deletion execution and monotonic per-user `deletion_epoch` (§7.7). |
+| `JOB` | `id ( text / uuid )` | `user_id NOT NULL`, `kind text NOT NULL`, `turn_id text NULL`, `idempotency_key text NOT NULL UNIQUE`, `status text NOT NULL CHECK (status IN ('queued','running','done','dead_letter'))`, `attempts int NOT NULL DEFAULT 0`, `next_run_at timestamptz NOT NULL`, `payload jsonb` | PostgreSQL background queue claimed via `SELECT ... FOR UPDATE SKIP LOCKED` (`Invariant 9`). |
 
-### 3.4 State-transition rules (R1 – R8 in §7.4)
+### 3.2 Lifecycle Status vs. Derived Temporal Conditions
 
-- **R1** close-then-insert for new belief (never destructive overwrite).
-- **R2** same-day correction forbids empty re-issue.
-- **R3** clock ties: `recorded_from` strictly monotonic (replay too).
-- **R4** staging and commit: Candidate → Active sets `recorded_from = commit_time`; Conflict-Pending → Active sets `recorded_from = resolution_time`.
-- **R5** Archive only when **(S)** OR **(C)** holds (invariant 10).
-- **R6** Delete removes every version of the memory item **and** the transitive derivation closure of §7.7; audit log carries no content and no hash.
-- **R7** cross-user isolation enforced via per-user partition and RLS.
-- **R8** read-time check: `t > ρ` disallowed in current-state queries.
+- **Stored `status` (`MEMORY_VERSION.status`):** `'candidate' | 'conflict_pending' | 'rejected' | 'active' | 'archived'`.
+  - `'deleted'` is **terminal**: rows are physically removed from `MEMORY_VERSION` (`DELETE FROM memory_version`), and a content-free event is written to `AUDIT_EVENT` and `DELETION_REQUEST`.
+- **Derived conditions (never stored as `status`):** Given reference time `ρ`, `V(r) = valid_range`, and `R(r) = recorded_range`:
+  - **Current belief:** `r.status IN ('active', 'archived') AND upper_inf(R(r))` (open upper bound on `recorded_range`).
+  - **Superseded:** `r.status IN ('active', 'archived') AND NOT upper_inf(R(r))` (closed upper bound on `recorded_range`).
+  - **Currently valid:** `V(r) @> ρ`.
+  - **Historical:** `NOT upper_inf(V(r)) AND upper(V(r)) <= ρ`.
+  - **Critical distinction:** A *historical current belief* (`status = 'active'`, `upper_inf(R(r))`, `upper(V(r)) <= ρ`) is **not** superseded; it represents what the system currently believes held in a past period and must remain reachable via `historical_as_of`.
 
-### 3.5 Retrieval predicates (§7.6)
+### 3.3 Range Representation & Constraints (Invariants 2 & 4)
 
-- `current_state(user_id, t) = { v | v.status=Active ∧ ρ ∈ R(v) ∧ ρ ∈ V(v) }` where ρ = `now()`.
-- `historical_as_of(user_id, t, [β]) = { v | v.status=Active ∧ β ∈ R(v) ∧ t ∈ V(v) ∧ t ≤ β }` (point form; window form uses `V(v) ∩ W ≠ ∅`).
-- `audit_as_of(user_id, t, β) = { v | v.status ∈ {Active, Archived} ∧ β ∈ R(v) ∧ t ∈ V(v) }`.
+All ranges use PostgreSQL `tstzrange` with canonical half-open bounds `[lower, upper)`:
 
-Archived rows **MUST** be excluded from `current_state` and `historical_as_of` and **MUST** be included in `audit_as_of`. The §7.5 four-condition table (currently valid / historical / superseded / Archived) is the normative visibility matrix.
+```sql
+CONSTRAINT valid_wellformed
+  CHECK (NOT isempty(valid_range) AND NOT lower_inf(valid_range)),
+CONSTRAINT recorded_iff_believed
+  CHECK ((status IN ('active', 'archived')) = (recorded_range IS NOT NULL)),
+CONSTRAINT recorded_wellformed
+  CHECK (recorded_range IS NULL OR (NOT isempty(recorded_range) AND NOT lower_inf(recorded_range))),
+CONSTRAINT no_bitemporal_overlap
+  EXCLUDE USING gist (
+    user_id WITH =,
+    subject_key WITH =,
+    predicate_key WITH =,
+    valid_range WITH &&,
+    recorded_range WITH &&
+  ) WHERE (single_valued AND status IN ('active', 'archived'))
+```
 
----
+### 3.4 Rules `R1`–`R8` (Proposal §7.4)
 
-## 4. Archival precondition (invariant 10)
+- **`R1` (Close then insert):** A supersession transaction **MUST** first `UPDATE` the replaced row(s) to close `recorded_range` at the transaction clock `c` (`tstzrange(lower(recorded_range), c, '[)')`), and only then `INSERT` the truncated re-issue row (if any) and the new replacement row with `recorded_range = tstzrange(c, NULL, '[)')`. All statements in the transaction use the same clock instant `c`.
+- **`R2` (Truncated re-issue):** When a single-valued belief `old` with `valid_range = [v_old, ∞)` is superseded by a new belief starting at `v_new`:
+  - If `v_old < v_new`: insert a re-issued row `old'` carrying `old`'s content and `memory_key` with `valid_range = [v_old, v_new)` and `recorded_range = [c, ∞)`.
+  - If `v_old = v_new` (same-instant correction): close `old` in recorded time without inserting a truncated re-issue row.
+  - If `v_new < v_old` (out-of-order retroactive start prior to `v_old`): route the candidate to `conflict_pending` rather than auto-superseding.
+- **`R3` (Strictly increasing per-user clock):** `clock_now(user_id)` returns strictly increasing timestamps per user (`c_next > max_recorded_instant(user_id)`), adding a `1 microsecond` increment when replay timestamps repeat so `tstzrange(lower, c)` is never empty.
+- **`R4` (Staging and commit):** Staging rows (`candidate`, `conflict_pending`, `rejected`) have `recorded_range IS NULL`. Promoting a `conflict_pending` row to `active` assigns `recorded_from = clock_now(user_id)` and closes any conflicting current belief in the same transaction.
+- **`R5` (Archival and audit):** Archiving updates `status` from `'active'` to `'archived'` and records `archival_branch IN ('S', 'C')` without modifying `valid_range` or `recorded_range`. Permitted **only** when the §6 Archival Precondition (`(S) ∨ (C)`) holds.
+- **`R6` (Deletion over audit):** Deleting a memory item deletes **all** `MEMORY_VERSION` rows sharing its `memory_key` (including superseded and re-issued rows) plus its transitive `MEMORY_DERIVATION` closure, taking precedence over audit retention.
+- **`R7` (Multi-valued predicates):** Ending a multi-valued fact ("no longer speaks French") uses the same close-then-insert pattern (`R1`, `R2`) to replace `[v_old, ∞)` with `[v_old, v_end)`, even though `single_valued = false` rows are exempt from the `no_bitemporal_overlap` exclusion constraint.
+- **`R8` (Query parameter checks):** `historical_as_of` rejects `t > ρ` (`RAISE EXCEPTION`). `audit_as_of` rejects `β > clock_now()`. Future plans use the `'plans_to'` predicate rather than future valid times on current-state queries.
 
-Rewriting of V3 branch (A); see V4 proposal §7.5 and changelog §1.
+### 3.5 Query Predicates (Proposal §7.4 & `validation/bitemporal_checks.sql`)
 
-Let `r` be the target `MEMORY_VERSION`. The transactional archival procedure **MUST** accept the archival **only if** at least one of these holds and is recorded in the archival log:
+Every query predicate is parameterized by `user_id` (`$1`) and executes under RLS:
 
-- **(S) Superseded.** `R(r)` is already closed (`recorded_until ≠ ∞`).
-- **(C) Active derived replacement.** There exists `r′` such that:
-  1. `r′.status = Active` (not Archived, not Deleted);
-  2. there exists an edge `(r′, r) ∈ MEMORY_DERIVATION` representing the same user-level fact;
-  3. `r′` is itself a current belief (recorded range open);
-  4. `V(r′) ⊇ V(r) ∩ (−∞, archival_time]` i.e. `r′` covers at least the valid range of `r` that any historical-as-of query could ask about;
-  5. ordinary retrieval through `r′` returns the fact that `r` carried.
-
-If neither (S) nor (C) holds, the procedure **MUST** return `VALIDATION_ERROR archival_precondition_unmet` and `r` **MUST** remain Active. The V3 "valid-ended" sub-branch of (A) is **removed** and must not reappear (the mechanical-checks stale-wording guard enforces this).
-
-### 4.1 Required regression tests (T1 – T5)
-
-| ID | Setup | Expected outcome | Blocks |
-|---|---|---|---|
-| **T1** | Currently-valid current belief; no (C) replacement | Archival rejected; `current_state` still returns the row | invariant 10 |
-| **T2** | Historical current belief (recorded range open, valid range ended); no (C) replacement | Archival rejected; `historical_as_of(t ∈ V)` still returns the row (**V3-bug regression test**) | invariant 10 |
-| **T3** | Superseded version | Archival accepted via (S); `current_state` and `historical_as_of` never return it; `audit_as_of` still returns it | invariant 10 |
-| **T4** | Active derived replacement `r′` with `(r′, r) ∈ MEMORY_DERIVATION` and matching valid range | Archival accepted via (C); fact still returned via `r′`; provenance chain `r′ → r` traceable; archival log records branch (C) and `r′.id` | invariant 10 |
-| **T5** | After T4, delete the original memory | R6 + §7.7 closure removes `r′` (and any further transitively derived artifact); `current_state`, `historical_as_of`, and `audit_as_of` for the deleted key return nothing; deletion-log entry has no content and no hash | invariant 10 + §7.7 |
-
-Implementation **MUST** be transactional. A single-row CHECK constraint is **insufficient** because (C) requires looking at a different row.
-
----
-
-## 5. Validation and contradiction interfaces (§7.5)
-
-- Gate inputs: candidate `MEMORY_VERSION` with `assertion_mode`, `confidence`, `evidence`; conflict relations with any current beliefs.
-- Gate outputs: `(accept | reject | hold)` + reason code + optional supersession proposal; **MUST** be logged.
-- Conflict relations **MUST** be computed in the same transaction as the version write.
-
----
-
-## 6. Derivation-lineage semantics
-
-- Every derived row **MUST** have at least one incoming `MEMORY_DERIVATION` edge.
-- Lineage **MUST** be queryable in both directions.
-- `MEMORY_DERIVATION` edges **MUST NOT** form a cycle (DAG constraint).
-- Deletion **MUST** traverse the DAG transitively (T5).
-
----
-
-## 7. Deletion closure (§7.7)
-
-In-boundary channels the deletion procedure **MUST** cover:
-
-1. All `MEMORY_VERSION` rows of the memory item.
-2. All transitively derived `MEMORY_VERSION` rows (via `MEMORY_DERIVATION`).
-3. Full-text indexes referencing those rows.
-4. Vector-store rows (pgvector) for those rows.
-5. Job-queue payloads referencing those rows.
-6. In-boundary cache entries (retrieval cache, consolidation cache).
-7. Audit entries about the memory item **except** the deletion-log entry itself (which carries no content and no hash).
-
-Out-of-boundary (explicitly excluded):
-
-- Database backups beyond the published retention schedule.
-- WAL beyond retention.
-- Provider / API logs.
-- Already-shown text in client transcripts.
-- User-copied data.
-
-A result of zero observed leaks across these channels is **MUST** be reported with a scenario-level Clopper–Pearson upper bound (per §10.6) and **MUST NOT** be presented as a guarantee of zero possible leakage.
+1. **Current-state (`current_state(user_id, ρ)`):**
+   ```sql
+   SELECT * FROM memory_version
+   WHERE user_id = $1
+     AND status = 'active'
+     AND recorded_range @> $2   -- ρ ∈ R(r)
+     AND valid_range @> $2;     -- ρ ∈ V(r)
+   ```
+2. **Historical-as-of, point form (`historical_as_of(user_id, t, ρ)`):**
+   - Guard (`R8`): if `t > ρ`, raise `INVALID_PARAMETER_VALUE` (`historical-as-of requires t <= reference time`).
+   ```sql
+   SELECT * FROM memory_version
+   WHERE user_id = $1
+     AND status = 'active'
+     AND recorded_range @> $3   -- ρ ∈ R(r) (present belief at reference time ρ)
+     AND valid_range @> $2;     -- t ∈ V(r) (valid at target time t)
+   ```
+3. **Historical-as-of, window form / change queries (`historical_window(user_id, W, ρ)`):**
+   ```sql
+   SELECT * FROM memory_version
+   WHERE user_id = $1
+     AND status = 'active'
+     AND recorded_range @> $3   -- ρ ∈ R(r)
+     AND valid_range && $2;     -- V(r) overlaps window W
+   ```
+4. **Audit-as-of (`audit_as_of(user_id, t, β)`):**
+   - Guard (`R8`): if `β > clock_now()`, raise `INVALID_PARAMETER_VALUE` (`audit-as-of requires belief time <= clock`).
+   - Restricted to the Memory Inspector and administrative API; **never** used to assemble LLM answer context.
+   ```sql
+   SELECT * FROM memory_version
+   WHERE user_id = $1
+     AND status IN ('active', 'archived')
+     AND recorded_range @> $3   -- β ∈ R(r) (believed at past time β)
+     AND valid_range @> $2;     -- t ∈ V(r)
+   ```
 
 ---
 
-## 8. API and worker boundaries
+## 4. Provenance & Traceability (Invariant 1)
 
-- Fast path (synchronous): retrieval, answer generation; **MUST** return within the §9 latency envelope.
-- Slow path (asynchronous workers): extraction, validation gate, temporal state manager, minimal consolidation, optional retention/persona.
-- Workers **MUST** use `FOR UPDATE SKIP LOCKED` on the `JOB` table.
-- Each worker job **MUST** be idempotent per `(user_id, idempotency_key)`.
-- Per-user advisory lock **MUST** serialise writes for a single user.
-- Dead-letter table **MUST** retain failed jobs with full context.
-- Visibility lag (slow-path commit → fast-path visibility) **MUST** be measured descriptively (§10 O6).
+- **Extracted memories (`layer IN ('episodic', 'semantic', 'opinion')` created from turns):** **MUST** have at least one `MEMORY_EVIDENCE` row (`version_id = r.id`) referencing a `TURN` with `role = 'user'` (or an assistant turn explicitly confirmed by a subsequent user turn).
+- **Derived memories (`consolidated` semantic/summary versions and optional `persona` traits):** **MUST** have at least one outgoing `MEMORY_DERIVATION` link (`derived_version_id = r'.id`, `source_version_id = r.id`) pointing to an `active` or `archived` source version `r`.
+- **Database enforcement:** A `CONSTRAINT TRIGGER ... DEFERRABLE INITIALLY DEFERRED` on `MEMORY_VERSION` checks at transaction commit that every non-deleted `active` or `archived` row has `EXISTS (SELECT 1 FROM memory_evidence WHERE version_id = NEW.id) OR EXISTS (SELECT 1 FROM memory_derivation WHERE derived_version_id = NEW.id)`.
 
 ---
 
-## 9. Error handling and observability
+## 5. Validation Gate Specification (Proposal §7.5)
 
-- All gate decisions, supersessions, archivals, and deletions **MUST** emit structured events with reason codes.
-- Dashboards **SHOULD** show queue lag, visibility lag, gate acceptance rate, deletion backlog, invariant-check counts.
-- Errors returned to the client **MUST** be typed (e.g. `VALIDATION_ERROR archival_precondition_unmet`) and **MUST NOT** leak another user's data.
+Each candidate extracted on the slow path is evaluated by five sequential checks before commit:
 
----
+1. **Evidence support (`evidence_check`):** Verifies that `evidence_span` occurs in a user-authored turn (exact substring or normalized token match plus verifier check). Assistant-originated statements without user confirmation are rejected (`reason_code = 'unconfirmed_assistant_claim'`).
+2. **Assertion mode (`assertion_mode_check`):** Classifies the utterance into `{'asserted', 'hedged', 'hypothetical', 'planned', 'quoted', 'third_party', 'joking'}`.
+   - Only `'asserted'` candidates may enter `active` on state predicates or trigger supersession.
+   - `'planned'` candidates are routed to the `'plans_to'` predicate.
+   - `'hedged'` and `'hypothetical'` candidates transition to `'conflict_pending'`.
+   - `'quoted'`, `'third_party'`, and `'joking'` candidates are rejected (`'non_user_assertion'`).
+3. **Instruction screen (`instruction_screen`):** Rejects candidates containing prompt-injection or persistent behavioral directives (e.g., `"always tell the user..."`, `"ignore previous..."`, system-prompt overrides) with `reason_code = 'instruction_injection'`.
+4. **Conflict relation (`conflict_detector`):** Retrieves top-`m` existing `active` versions for `(user_id, subject_key, predicate_key)` (plus dense-similarity neighbors for open-domain facts) and classifies the relation as `{'update', 'correction', 'additive', 'duplicate', 'unrelated', 'uncertain'}`:
+   - `'update'` or `'correction'` (with `assertion_mode = 'asserted'`) → invokes transactional supersession (`R1`, `R2`).
+   - `'duplicate'` → increments `reinforcement_count` on the existing version without inserting a duplicate row.
+   - `'additive'` / `'unrelated'` → inserts as a new `active` version.
+   - `'uncertain'` → holds candidate in `'conflict_pending'`.
+5. **Extractor confidence (`confidence_calibration_check`):** Numeric confidence thresholding is disabled unless development-split Expected Calibration Error (ECE) validation (`RL-060`) demonstrates reliable calibration; otherwise the gate relies exclusively on categorical checks 1–4.
 
-## 10. Configuration and version pinning
-
-- All model identifiers (LLM, embedding, judge) **MUST** be pinned per experiment and recorded in run manifests.
-- All third-party commits (Mem0 at `0724291`; Graphiti at `d50741d` as recorded in `Source_Evidence_Ledger.md` §B rows 18–19 — update when P1 freezes a release) **MUST** be captured.
-- PostgreSQL major version **MUST** be pinned (see Decision 9).
-- Dataset release / commit **MUST** be pinned (LongMemEval `98d7416`, LoCoMo `locomo10.json` as checked).
-
----
-
-## 11. Testable acceptance criteria (cross-reference to roadmap §G)
-
-Every **MUST** above maps to one or more §G rows:
-
-| Spec MUST | §G row |
-|---|---|
-| §3.3 invariant 2 | "Temporal predicates and version-transition tests" |
-| §3.3 invariant 3 | "Temporal predicates and version-transition tests" |
-| §3.3 invariant 4 | "Concurrency and transaction tests" |
-| §3.3 invariant 7 | "Cross-user isolation and access-control tests" |
-| §3.3 invariant 8 | "Deletion-closure tests" |
-| §3.3 invariant 9 | "Queue idempotency and retry tests" |
-| §3.3 invariant 10 | **T1 – T5 archival-precondition regression tests** |
-| §3.5 retrieval predicates | "Retrieval correctness tests" + "Temporal predicates and version-transition tests" |
-| §4 Archival precondition | **T1 – T5** |
-| §6 Derivation-lineage DAG | "Derived-artifact lineage tests" |
-| §7 Deletion closure | "Deletion-closure tests" |
-| §8 Idempotency per `(user, key)` | "Queue idempotency and retry tests" |
-| §8 Per-user advisory lock | "Concurrency and transaction tests" |
+Every gate evaluation writes a row to `MEMORY_CONFLICT` recording `(candidate_version_id, existing_version_id, relation, decision, reason_code, decided_by, decided_at)`.
 
 ---
 
-## 12. Non-goals
+## 6. Archival Precondition (Invariant 10, V4 Fix)
 
-- No claim that this engine will outperform any external system (§4.1 of the proposal).
-- No behavioural simulation of the user ("Personal Digital Twin" is defined conservatively in §1.1).
-- No parameter-level unlearning (§6 Related Work; this project never modifies model parameters).
-- No persona layer required for H1–H4.
-- No team or schedule assertion (§15 of the proposal).
+A transactional call `archive_version(version_id)` may transition a row `r` from `status = 'active'` to `status = 'archived'` **if and only if** at least one of the following holds inside the transaction:
+
+- **Branch `(S)` — Superseded:** `NOT upper_inf(r.recorded_range)` (the recorded range of `r` is already closed, so neither `current_state` nor `historical_as_of` can return `r`). `archival_branch` is set to `'S'`.
+- **Branch `(C)` — Active derived replacement:** There exists at least one version `r'` linked via `MEMORY_DERIVATION (derived_version_id = r'.id, source_version_id = r.id)` such that:
+  1. `r'.user_id = r.user_id` and `r'.status = 'active'`,
+  2. `upper_inf(r'.recorded_range)` (`r'` is a current belief), and
+  3. `r'.valid_range @> r.valid_range` (`r'` covers the valid interval of `r` so any `current_state` or `historical_as_of` query that would have matched `r` matches `r'`).
+  `archival_branch` is set to `'C'`.
+
+If neither `(S)` nor `(C)` holds — in particular, if `r` is a **currently valid current belief** (`T1`) or a **historical current belief** (`upper(r.valid_range) <= ρ` and `upper_inf(r.recorded_range)`, `T2`) without an `Active` derived replacement — `archive_version` **MUST** abort the transition and raise `VALIDATION_ERROR: archival_precondition_unmet`.
+
+### Mandatory `T1`–`T5` Regression Contract (`RL-090`)
+
+| Test ID | Scenario | Expected Outcome |
+|---|---|---|
+| `T1` | Attempt to archive a currently-valid current belief (`status = 'active'`, `upper_inf(R)`, `ρ ∈ V`) with no derived replacement. | Rejected (`archival_precondition_unmet`); row remains `'active'`. |
+| `T2` | Attempt to archive a historical current belief (`status = 'active'`, `upper_inf(R)`, `upper(V) <= ρ`, e.g., `v1″` in Proposal §7.4) with no derived replacement. | Rejected (`archival_precondition_unmet`); row remains `'active'` and continues to be returned by `historical_as_of`. |
+| `T3` | Attempt to archive a superseded version (`NOT upper_inf(R)`, e.g., `v1` or `v1′`). | Accepted via branch `(S)`; `status = 'archived'`, `archival_branch = 'S'`; visible to `audit_as_of`. |
+| `T4` | Create an `Active` consolidated replacement `r'` with `MEMORY_DERIVATION(r' → r)` and `V(r') @> V(r)`, then archive `r`. | Accepted via branch `(C)`; `status = 'archived'`, `archival_branch = 'C'`; queries return `r'` with provenance link to `r`. |
+| `T5` | Execute `delete_memory(r.memory_key)` after `T4`. | Single-transaction deletion removes all versions of `r.memory_key` **and** removes (or re-derives without `r`) the derived replacement `r'`; zero leakage across all 7 channels. |
 
 ---
 
-## 13. Change control
+## 7. Hybrid Retrieval, Rendering, & Lineage Deletion
 
-Any change to a **Frozen** decision in §2, to an invariant in §3.3, to a state-transition rule in §3.4, to a retrieval predicate in §3.5, to the archival precondition in §4, to the deletion closure in §7, or to the Testable acceptance criteria in §11 **MUST**:
+### 7.1 Hybrid Retrieval & Reciprocal Rank Fusion (§7.6)
 
-1. Be documented in a new changelog (`CHANGELOG_v5.md` or later).
-2. Re-run the fact-check audit for any affected citation.
-3. Re-run `mechanical_checks.py` after updating the stale-wording guard if needed.
-4. Update [`TRACEABILITY_MATRIX.md`](TRACEABILITY_MATRIX.md).
+1. **Candidate filtering:** Apply the mode-specific temporal and status predicate (§3.5) scoped to `user_id`. Only `status = 'active'` rows with `recorded_range @> ρ` enter ranking.
+2. **Dense channel (`rank_dense`):** Order matching versions by cosine distance `embedding <=> query_embedding` over `MEMORY_EMBEDDING` for the frozen `embedding_model`. Per-user stores use exact filtered scans by default; HNSW indexing is restricted to scalability benchmarking (`RL-050`, `RL-093`).
+3. **Lexical channel (`rank_lexical`):** Order matching versions by `ts_rank_cd(to_tsvector('english', content), plainto_tsquery('english', query))` using a GIN index on `to_tsvector('english', content)`.
+4. **Fusion:** Compute `RRF(m) = 1 / (60 + rank_dense(m)) + 1 / (60 + rank_lexical(m))` (omitting a channel's term if `m` has zero lexical overlap). Sort descending by `RRF(m)` with deterministic tie-breaking on `(upper(valid_range) DESC NULLS FIRST, id ASC)`.
+5. **Render rule (§7.3):** Format top items within token budget `B_mem`. Never render superseded versions. In `current` mode, never render historical versions. Label each rendered item with its validity interval and role (`current`, `historical`, or `previous` / `current` in change mode).
+
+### 7.2 Transactional Lineage Deletion (§7.7, Invariant 8)
+
+`delete_memory(user_id, scope, target_ref)` executes in a single transaction holding the per-user advisory lock:
+
+1. Increment the user's `deletion_epoch` and insert a `DELETION_REQUEST` record.
+2. Compute the target set `T_0`: all `MEMORY_VERSION` rows matching `user_id` and `memory_key = target_ref` (including `'active'`, `'archived'`, `'candidate'`, `'conflict_pending'`, `'rejected'`, superseded, and re-issued rows per `R6`).
+3. Walk the recursive transitive closure `T_derived` over `MEMORY_DERIVATION` (`source_version_id → derived_version_id`, bounded at depth `≤ 3`):
+   - Partition `T_derived` into versions whose supporting sources are **all** in `T_0 ∪ T_derived` (pure dependents → physically delete) and versions that retain independent surviving `Active` sources (`multi-source dependents` → mark for synchronous re-derivation from surviving sources only, and delete the old derived version row).
+4. Physically `DELETE` all rows in `T_0 ∪ T_derived` from `MEMORY_VERSION` (cascading to `MEMORY_EMBEDDING`, `MEMORY_EVIDENCE`, `MEMORY_DERIVATION`, `MEMORY_CONFLICT`, and FTS index entries), purge matching `JOB` queue payloads, and invalidate any user cache entries prior to `deletion_epoch`.
+5. Record a content-free event in `AUDIT_EVENT` (`user_id`, random `memory_ref`, `event_type = 'deletion_completed'`, `event_at`, counts only — **no** content, hashes, subjects, or predicates).
+
+---
+
+## 8. Concurrency, Clock Injection, & Slow-Path Guarantees
+
+- **Per-user serialization:** Every slow-path worker and deletion transaction acquires `SELECT pg_advisory_xact_lock(hashtext(user_id))` at transaction start (`Proposal §7.3`). This prevents same-user race conditions while allowing full parallelism across distinct users.
+- **Deletion-epoch race guard:** Before committing a slow-path extraction or consolidation job that began at `epoch_start`, the worker checks `current_deletion_epoch(user_id) == epoch_start`; if a deletion occurred concurrently, the job aborts and re-runs against surviving data (`Proposal §7.7`).
+- **Injectable clock (`RL-044`):** Database functions read the transaction clock via `COALESCE(NULLIF(current_setting('app.clock', true), '')::timestamptz, clock_timestamp())` wrapped in a monotonic per-user helper (`R3`). Only the evaluation replay harness (`RL-030`) may set `SET LOCAL app.clock`; application business logic never passes explicit `recorded_from` timestamps (`Invariant 3`).
+
+---
+
+## 9. Evaluation Harness & Statistical Inference Specification
+
+### 9.1 `MemorySystemAdapter` Protocol (`RL-025`, `RL-030`, `RL-031`)
+
+All compared systems (`B0`, `B1`, `B2`, `B2h`, `B3`, conditional `B4`, `P`, and ablations `A1`–`A10`) implement a single uniform interface:
+
+```python
+class MemorySystemAdapter(Protocol):
+    def reset_user(self, user_id: str) -> None: ...
+    def set_clock(self, ts: datetime) -> None: ...
+    def ingest_turn(self, turn: TurnRecord) -> IngestReceipt: ...
+    def drain_queue(self, user_id: str) -> QueueDrainStats: ...
+    def retrieve(self, user_id: str, query: str, mode: QueryMode, as_of: datetime, token_budget: int) -> RetrievalResult: ...
+    def answer(self, user_id: str, question: QuestionRecord, as_of: datetime) -> AnswerResult: ...
+    def delete(self, user_id: str, scope: DeletionScope, target_ref: str) -> DeletionReceipt: ...
+```
+
+### 9.2 Run Output Layout & Manifest (`RL-030`)
+
+Every evaluation run writes immutable artifacts under `research-lab/evaluation/runs/<run_id>/<config_id>/<suite_id>/`:
+- `manifest.json`: Git commit SHA, dirty-tree flag, config ID, dataset split SHA-256, frozen `model_id`, `embedding_model_id`, `judge_model_id`, `temperature`, `seed`, hardware specs, wall-clock duration, and token/cost totals.
+- `answers.jsonl`: Per-question/probe rendered context, raw answer, latency (`P50`/`P95`), and token counts.
+- `scores.jsonl`: Item-level primary and diagnostic metric scores.
+- `per_cluster.jsonl`: Cluster-aggregated statistics (`scenario_id` for `T`, `G`, `D`; `question_id` for `LongMemEval_S`; `conversation_id` for `LoCoMo`).
+
+### 9.3 Confirmatory Decision Rules & Multiplicity (`RL-034`, Proposal §§4.1, 10.6)
+
+- **Resampling unit:** Non-parametric cluster bootstrap (`B = 10,000` replicates, fixed seed) resampling **scenarios** (for `H1`, `H3`, `H4`) or **questions** (for `H2` on `LongMemEval_S`), paired by cluster across configurations (`P` vs contrast).
+- **Hypothesis-level decision rules (Proposal §4.1):**
+  - **`H1` (`P` vs `A2` on suite `T`):** Supported iff **both** (1) on the `history-dependent` stratum, the 95% cluster-bootstrap CI for `TAA(P) − TAA(A2)` lies entirely above `0` (paired permutation `p < 0.05`), **and** (2) on the `present-state` stratum, the lower bound of the 95% CI for `TAA(P) − TAA(A2)` is `≥ −δ_pres` (non-inferiority).
+  - **`H2` (`P` vs `A5` and `P` vs `A6` on `LongMemEval_S`):** Two co-primary contrasts controlled via **Holm–Bonferroni at familywise `α = 0.05`** (smaller `p < 0.025`, larger `p < 0.05`). Supported if at least one contrast passes its Holm threshold **and** the other shows a non-negative point difference (`≥ 0`).
+  - **`H3` (`P` vs `A3` on suite `G`):** Co-primary intersection-union test (no multiplicity correction needed because **both** must hold): (1) 95% cluster-bootstrap CI for `ASR(P) − ASR(A3)` lies entirely below `0`, **and** (2) lower bound of the 95% CI for `LUAR(P)` is `≥ 1 − δ_luar`.
+  - **`H4` (`P` and positive control `A8` on suite `D`):** Supported iff **all three** hold: (1) observed scenario-level leaks for `P` equal `0`, (2) the exact one-sided 97.5% Clopper–Pearson upper bound (`1 − 0.025^(1/N_D)`) on scenario-level `PDLR(P)` is `≤ u*`, **and** (3) positive control `A8` (`P-nolineage`) leaks in at least the predeclared minimum share of scenarios (`D-13`). If (3) fails, `H4` is reported as **Inconclusive**.
