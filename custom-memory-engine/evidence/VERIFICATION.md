@@ -20,7 +20,7 @@ Docker image ID matched the selected digest on the checked platform. SQL reporte
 | Lab reduced bitemporal SQL | **43 PASS assertions**, final ALL ASSERTIONS PASSED | Historical reduced schema only, re-executed on fresh selected image |
 | Independent 60/72-scenario arithmetic | Unit-tested against closed form | Additional cardinality examples not in original table |
 
-Captured outputs (trailing console padding stripped, substantive output unchanged): [pytest](pytest.txt), [quality](quality-checks.txt), [mechanical checks](mechanical-checks.txt), [reduced SQL](bitemporal-baseline.txt). Timings in pytest output are test execution timings, **not engine latency benchmarks**. GitHub Actions uses pinned actions and the verified database digest; remote execution status is reported separately after push.
+Captured outputs (trailing console padding stripped, substantive output unchanged): [pytest](pytest.txt), [quality](quality-checks.txt), [mechanical checks](mechanical-checks.txt), [reduced SQL](bitemporal-baseline.txt). Timings in pytest output are test execution timings, **not engine latency benchmarks**. GitHub Actions passed on commit `577196c` ([run 40115984039](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40115984039)). The remote run exposed Node 20 deprecation/ubuntu-latest migration notices; the follow-up pins Node 24 actions and Ubuntu 24.04 to avoid those known lifecycle warnings.
 
 The first integration run exposed a **test assertion defect**: PostgreSQL's human-readable server_version includes the Debian package suffix. The probe now asserts numeric server_version_num `160015`, plus exact extension versions. All tests were rerun after the correction; no failed result is presented as success.
 
