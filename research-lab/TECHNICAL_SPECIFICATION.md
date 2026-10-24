@@ -21,11 +21,24 @@ Any change to a **FROZEN** decision requires a dated entry in [`PLAN/DECISIONS_R
 
 ## 2. Summary of Key Technical Decisions
 
-The full 27-item decision register lives in [`PLAN/DECISIONS_REGISTER.md`](PLAN/DECISIONS_REGISTER.md). The core architectural and protocol parameters governing this specification are summarized below:
+The full 27-item decision register lives in [`PLAN/DECISIONS_REGISTER.md`](PLAN/DECISIONS_REGISTER.md). Its dated **2026-10-24 selected-value table** supersedes the original pre-dispatch defaults below. Current P1 memos live in [`../custom-memory-engine/decisions/`](../custom-memory-engine/decisions/) under the owner's root-placement revision; member/supervisor signatures remain pending.
+
+| IDs | Current selected values (2026-10-24) | Status / authority |
+|---|---|---|
+| D-01–03 | Answer/extract `gpt-4.1-mini-2025-04-14`; embed BAAI/bge-small-en-v1.5 revision `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, d=384; judge `gpt-4.1-2025-04-14`; temperature 0; proposed combined USD 100 / 50M-token ceiling | Prepared; supervisor pending, RL-010 |
+| D-04–08 | A10/A9 OFF in P, exploratory SKIP; BM25 and external queue OFF/SKIP; H5 OFF | Prepared; supervisor pending, RL-010 |
+| D-15/16 | A2b SKIP; Suite D target dev 20 / test 50 scenarios, zero-leak test bound 0.071121736465 | Selected; peer and final pilot freeze pending, RL-014; D-13/D-14 not frozen |
+| D-17/18 | CPython 3.12.12, Psycopg 3.3.2, pool 3.3.3, pgvector client 0.4.2, Pydantic 2.12.5; per-user advisory serialization + R1 + GiST exclusion; measured SERIALIZABLE candidate with bounded whole-transaction retries | Runtime compatibility verified; load/peer pending, RL-013/RL-012 |
+| D-19/20 | H5 ethics not applicable to disabled scope (not institutional exemption); zero recruitment without written clearance; React/TS/Vite primary with HTML/HTMX fallback | Prepared/selected; review pending, RL-015/RL-013 |
+| D-23/24/26 | Stable session sorting, 1 µs R3 tie increments, retain anomalies with reference clamped to last recorded clock and exclusion sensitivity; n≥100 stratified dev judge validation, dual blind labeling, κ≥0.75, accuracy≥0.90 and coverage/approval gates; MIT for original suites only | Paired/supervisor/ownership approvals pending, RL-016 |
+| D-25 | PostgreSQL 16.15, vector 0.8.7, btree_gist 1.7; `pgvector/pgvector:0.8.7-pg16-bookworm@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a` | Live compatibility verified; peer pending, RL-012 |
+| D-27 | Transactional archive_version plus trigger/bypass restrictions, same-transaction S∨C and replacement locking | Prepared; supervisor/full-engine T1–T5 pending, RL-010 |
+
+The original planning summary follows for historical context; its OPEN/default labels are superseded by the dated table above:
 
 | ID | Parameter / Mechanism | Status | Value / Rule | Authority |
 |---|---|---|---|---|
-| `D-ARCH` | Repository & runtime boundary | **FROZEN (Owner)** | **Option C (Hybrid Architecture):** Self-contained engine and harness under `research-lab/`, strictly isolated from root `app/`. | [`PLAN/ARCHITECTURE.md`](PLAN/ARCHITECTURE.md) |
+| `D-ARCH` | Repository & runtime boundary | **FROZEN (Owner)** | **Option C (owner placement revision 2026-10-24):** Self-contained implementation under root `custom-memory-engine/`, Research Lab as references, strictly isolated from `app/`. | [`PLAN/ARCHITECTURE.md`](PLAN/ARCHITECTURE.md) |
 | `D-ENG-01` | Primary contrast for `H1` | **FROZEN (V4)** | `P − A2` (`P` vs `P-nohistory`) on suite `T`, evaluated on both co-primary strata (`history-dependent` superiority and `present-state` non-inferiority). `P − A1` (`P-flat`) is diagnostic only. | Proposal §§4.1, 10.4 |
 | `D-ENG-02` | V4 Archival precondition (Invariant 10) | **FROZEN (V4)** | A version `r` may transition `Active → Archived` iff `(S)` `recorded_range` is closed OR `(C)` an `Active` derived replacement `r'` exists with `MEMORY_DERIVATION(derived_version_id = r', source_version_id = r)` covering `V(r)`. The V3 valid-ended branch `(A)` is removed. | Proposal §§7.4 `R5`, 7.5, 8 Inv. 10 |
 | `D-ENG-03` | Reciprocal Rank Fusion constant | **FROZEN (V4)** | `RRF(m) = Σ_c 1 / (60 + rank_c(m))` (`k = 60`). Weighted-sum fusion is exploratory ablation `A7`. | Proposal §7.6 |

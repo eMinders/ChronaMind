@@ -1,0 +1,48 @@
+name: Custom Memory Engine P1 verification
+
+on:
+  push:
+    paths: ["custom-memory-engine/**", "research-lab/**", ".github/workflows/custom-memory-engine.yaml"]
+  pull_request:
+    paths: ["custom-memory-engine/**", "research-lab/**", ".github/workflows/custom-memory-engine.yaml"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg16-bookworm@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+        env:
+          POSTGRES_USER: cme_test
+          POSTGRES_PASSWORD: isolated_ci_only
+          POSTGRES_DB: cme_compatibility
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cme_test -d cme_compatibility"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      CME_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility
+      PGPASSWORD: isolated_ci_only
+    defaults:
+      run:
+        working-directory: custom-memory-engine
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.13.5"
+      - run: uv sync --frozen --python 3.12.12
+      - run: uv run ruff check src tests && uv run ruff format --check src tests
+      - run: uv run pyright
+      - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
+      - run: uv run pytest -q
+      - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f ../research-lab/validation/bitemporal_checks.sql
+      - name: Research reference consistency
+        working-directory: research-lab
+        run: |
+          python3 validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md
+          diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt

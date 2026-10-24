@@ -1,6 +1,6 @@
 # Phase P1 Decision Records (`research-lab/PLAN/decisions/`)
 
-This directory stores the signed decision memos produced by Phase `P1` tasks (`RL-010`, `RL-012`, `RL-013`, `RL-014`, `RL-015`, `RL-016`).
+The owner placement revision (2026-10-24) moves canonical Phase P1 decision memos to [`../../../custom-memory-engine/decisions/`](../../../custom-memory-engine/decisions/). This directory is now a historical index only, not a store of signed memos. #1–#5 have verified decision-preparation deliverables; #6 remains awaiting its explicitly required Member 3/4 co-signatures. Downstream supervisor/peer approvals remain separate from preparation-task completion.
 
 ## Expected Decision Memos
 

@@ -4,6 +4,12 @@
 
 ---
 
+## Review update — 2026-10-24
+
+Canonical implementation/decision workspace is now root `custom-memory-engine/`, per owner placement revision; the older dispatch paths below are historical. RL-010 and RL-012–RL-015 (#1–#5) have verified preparation deliverables and are eligible for closure with the owner-authorized direct-to-main commit. Actual supervisor/peer approvals remain downstream gates. RL-016 (#6) remains open until Member 3/Member 4 co-sign its memo; a coding agent cannot supply those signatures.
+
+Verification: 48 warning-free tests including 5 real-DB compatibility probes; Ruff/Pyright passed, package build passed, Lab mechanical/CP checks passed, and reduced SQL baseline reran with 43 assertions. No full-engine, participant-study, benchmark or production-performance result is implied. See [`../../custom-memory-engine/evidence/VERIFICATION.md`](../../custom-memory-engine/evidence/VERIFICATION.md).
+
 ## 1. Current Repository & Execution State
 
 - **Git & Workspace Status:** `research-lab/` is committed and tracked in Git with a clean separation between normative specifications (root), execution plans (`PLAN/`), research references (`reference/`), executed design checks (`validation/`), and implementation/evaluation package directories (`implementation/`, `evaluation/`, `research/benchmarks/`, `application/`, `reports/`).

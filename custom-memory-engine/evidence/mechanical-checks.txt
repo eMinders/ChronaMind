@@ -1,0 +1,69 @@
+[PASS] citations: every cited number has a reference entry: []
+[PASS] citations: every reference entry is cited: []
+[PASS] citations: reference list is exactly 1..41 (no entries added or dropped): 41 entries
+[PASS] citations: the 41 reference entries hash to the pinned REFERENCE_LIST_SHA256: observed=a5851b94a6385e9ddea2480abce710d1c91ca0149923e04cda600f9a4254038f
+[PASS] headings: sections 1 to 16 present
+[PASS] cross-references: every 'Section x.y' in the proposal resolves to a heading: []
+[PASS] cross-references: every 'Section x.y' in the checklist resolves to a proposal heading: []
+[PASS] contents links: every in-document anchor resolves: []
+[PASS] tables (proposal): every table has a constant column count and a separator row: []
+[PASS] tables (checklist): every table has a constant column count and a separator row: []
+[PASS] ablations: every ablation ID used in the proposal is defined in the Section 10.4 table: defined=['A1', 'A10', 'A2', 'A2b', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9'] used=['A1', 'A10', 'A2', 'A2b', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9']
+[PASS] ablations: every ablation ID used in the checklist is defined in the proposal: []
+[PASS] stale wording absent from proposal: 'four-layer': stale layer count
+[PASS] stale wording absent from proposal: 'Four memory layers': stale heading
+[PASS] stale wording absent from proposal: 'four layers': stale layer count
+[PASS] stale wording absent from proposal: 'It has not been executed at proposal stage': stale execution claim
+[PASS] stale wording absent from proposal: '(A) Superseded or ended': historical archival branch (A) was removed (historical-memory bug)
+[PASS] stale wording absent from proposal: '(A) *r* is superseded or valid-ended': historical archival branch (A) was removed (historical-memory bug)
+[PASS] stale wording absent from proposal: 'in `Source_Evidence_Ledger_v2.md`': stale versioned-ledger pointer (use `Source_Evidence_Ledger.md`)
+[PASS] stale wording absent from proposal: 'in `Source_Evidence_Ledger_v3.md`': stale versioned-ledger pointer (use `Source_Evidence_Ledger.md`)
+[PASS] stale wording absent from proposal: 'in `Source_Evidence_Ledger_v4.md`': stale versioned-ledger pointer (use `Source_Evidence_Ledger.md`)
+[PASS] H1: every mention of P-flat is marked diagnostic, exploratory, or control: []
+[PASS] H1: primary contrast text names A2 in RQ table, Section 4.1, Section 10.6 units table, Section 10.4 table
+[PASS] H4: every Clopper–Pearson mention is tied to scenario level or flagged as diagnostic/independence-assuming
+[REVIEW] persona mentions: 20 lines (listed below)
+    ok  The engine organizes memories into three core layers (episodic, semantic, opinion/state) and records provenance for each one. A fourth, persona layer
+    ok  - **Derived artifact.** Any stored object computed from other memories or turns: summaries, consolidated semantic memories, persona traits (if the opt
+    ok  | O1 | Design a layered memory model with three core layers (episodic, semantic, opinion/state) and a specified but optional persona layer, with expli
+    ok  - Retention scoring and archival; the persona layer and persona summary (not required for any objective measure, hypothesis, or deliverable of Section
+    ok  | Memory layers (three core, one optional persona layer) | Established technique reused | Tiered or layered memory appears in [2], [16], [17]. No nove
+    ok      SP["<b>Slow path (asynchronous workers)</b><br/>Extraction → validation gate → temporal state manager → minimal consolidation (→ optional retentio
+    ok  **Persona decision.** The persona layer is **optional**, and no research question, objective measure (Section 3), or deliverable (Section 12) depends
+    ok  | Persona (optional) | Higher-level traits inferred from many memories ("tends to plan travel far in advance"). | Consolidation only, never directly f
+    ok      P["Persona (optional)<br/>Inferred traits, always with derivation links"]
+    ok  **Persona promotion rule (S; applies only if the optional persona layer is implemented).** A trait may be proposed only when it is supported by memori
+    ok  **Lineage.** Every derived artifact (consolidated memory, summary, and persona trait if the optional layer is present) has derivation links to its sou
+    ok  | 1 | Every non-deleted version is traceable: it has at least one `MEMORY_EVIDENCE` row (extracted memories) or at least one `MEMORY_DERIVATION` row (
+    ok  | P | Proposed system | Full configuration of the essential components (Section 7). The optional persona layer and retention-based ranking are **off**
+    ok  | **Deletion (D)** | H4: leakage after deletion | Scenario (cluster), containing several deletion events. Event-level results are diagnostics | Synthe
+    ok  **Deletion channels.** The in-boundary channels checked after a deletion are: (1) a full-text scan of every table, index text, queue payload and cache
+    ok  | A10 (optional) | Persona layer on: P plus consolidation of persona traits (the layer is off in P) | Persona layer | P | Exploratory, and only if the
+    ok  **Pilot (development split only).** The pilot (a) checks that each suite can be generated and verified, (b) checks that the adapter runs every selecte
+    ???  - *Design:* a small formative study. Participants complete defined tasks (find a stored fact and its source; correct a memory; delete a memory and con
+    ok  - Persona summary (requires the optional persona layer): corroborated traits, each labelled as an inference with links to its evidence.
+    ok  | Optional | Retention scoring and archival, persona layer (not needed for H1 to H4), review queue, explanation panel, B4 (Graphiti), score-fusion var
+[REVIEW] excluded-term hits (schedule, staffing, ownership). Each hit is shown for triage
+    proposal:103: ...present-state difference and agreed with the supervisor, since there is no operating curve for it). ...
+    proposal:251: ...nge` is NULL, so they are outside the belief timeline and cannot be returned by any query predicat...
+    proposal:294: ...R4, staging and commit.** `recorded_from` is assigned when a row enters Active. Promoting a Confli...
+    proposal:311: ...are not caught by the constraint and are the responsibility of the conflict detector, whose errors are m...
+    proposal:320: ... gate check below. The row enters the belief timeline: `recorded_from` is set to the commit time |...
+    proposal:398: ...kups, which expire under their own retention schedule; physical remnants in storage until vacuumin...
+    proposal:414: ...uperusers, roles with `BYPASSRLS`, and table owners normally bypass row security, so the applica...
+    proposal:460: ...time are separate clocks. `recorded_from` is assigned when the row is committed to Active, from th...
+    proposal:481: ...th TypeScript, kept minimal | Needed for the timeline view in the memory inspector. A lighter fram...
+    proposal:540: ...h). For own suites the split is by scenario, assigned by hashing the scenario identifier. A scenar...
+    proposal:550: ...thing changed). A rule applied to the script assigns each scored question to a stratum: **history...
+    proposal:698: ...ber of participants is to be agreed with the supervisor and is not used for inferential claims. SUS ...
+    proposal:699: ...t the university is to be confirmed with the supervisor before any participant is recruited.** The s...
+    proposal:708: ...browse memories by layer, view versions on a timeline (valid time and recorded time), and open the...
+    proposal:756: ...s and therefore **must be confirmed with the supervisor and, if required, with the university's ethi...
+    proposal:762: ...- **Responsible scope.** The system is not intended for clin...
+    proposal:766: ...ical dependencies and deliverables, not by a staffing assumption. It combines established componen...
+    proposal:795: ...e derived from the pilot and agreed with the supervisor....
+    (18 hits in proposal)
+[PASS] exclusions: no team-member names in any deliverable
+[REVIEW] result-like phrasing hits in proposal: Counter({'outperform': 1, 'results show': 1, 'outperforms': 1})
+
+SUMMARY: ALL HARD CHECKS PASSED

@@ -4,6 +4,12 @@
 
 ---
 
+## 0. Owner placement revision — 2026-10-24
+
+The owner now requires the Custom Memory Engine implementation in the repository-root **`custom-memory-engine/`**, not in Research Lab. This dated directive supersedes physical-path requirements below and historical issue drafts for implementation deliverables. Research Lab remains the normative documentation/reference workspace; canonical P1 memos are linked from its decisions register, not duplicated here.
+
+Isolation is unchanged: independent `custom-memory-engine/pyproject.toml` and `uv.lock`, no imports from `app`, `evals`, or root `scripts`, separate database/credentials (`CME_*`), and no edits to product runtime/configuration. A dedicated `.github/workflows/custom-memory-engine.yaml` may verify this package and reference-document consistency, scoped to those paths. Existing Lab architecture diagrams/draft paths describe the original placement, not authority to put new engine code back in the Lab.
+
 ## 1. Core Principle
 
 `research-lab/` is a **self-contained research and engineering workspace** within the ChronaMind repository. It shares Git history with the root FastAPI/LangGraph application (`app/`), but maintains **strict code, dependency, database, and runtime isolation** so that confirmatory experiments (`H1`–`H4`) are never confounded by the root application's middleware, prompts, or `mem0ai` storage layer.

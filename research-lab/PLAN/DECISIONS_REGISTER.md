@@ -1,7 +1,31 @@
 # Decisions Register (`research-lab/`)
 
 **Single Source of Truth:** This register tracks every architectural, methodological, and engineering decision for the Research Lab.  
-**Decision Memos:** Individual Phase P1 sign-off records are stored in `research-lab/PLAN/decisions/` (`RL-010`, `RL-012`–`RL-016`).
+**Decision Memos:** Current Phase P1 records are in [`../../custom-memory-engine/decisions/`](../../custom-memory-engine/decisions/) (`RL-010`, `RL-012`–`RL-016`). The 2026-10-24 owner placement revision supersedes historical issue-draft paths; no human signature is implied.
+
+**2026-10-24 status update:** The selected-value table below is authoritative over the original dispatch recommendations in §2.2. Technical selections are prepared and compatibility-tested; supervisor, owner, peer, and paired co-signatures remain pending. #1–#5 satisfy their preparation/verification acceptance criteria; their downstream approval gates remain pending. #6 is not complete because its explicit Member 3/4 co-signatures are absent. The owner authorizes direct-to-main delivery instead of a PR; old Lab-local memo paths are superseded.
+
+| ID | Current status | Selected value / disposition | Record |
+|---|---|---|---|
+| D-01 | PREPARED; supervisor pending | `gpt-4.1-mini-2025-04-14`, temperature 0; proposed aggregate USD 100 / 50M-token ceiling, dev USD 20 | [RL-010](../../custom-memory-engine/decisions/RL-010-scope-and-models.md) |
+| D-02 | PREPARED; supervisor pending | BAAI/bge-small-en-v1.5 at `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, d=384 | RL-010 |
+| D-03 | PREPARED; supervisor pending | `gpt-4.1-2025-04-14`; same-family bias disclosed; validation required | RL-010 |
+| D-04 | PREPARED; supervisor pending | A10 OFF in P, exploratory SKIP | RL-010 |
+| D-05 | PREPARED; supervisor pending | A9 OFF in P, exploratory SKIP | RL-010 |
+| D-06 | PREPARED; supervisor pending | BM25 OFF / SKIP; PostgreSQL FTS primary | RL-010 |
+| D-07 | PREPARED; supervisor pending | Redis/Celery/ARQ OFF / SKIP; PostgreSQL JOB queue | RL-010 |
+| D-08 | PREPARED; supervisor pending | H5 OFF; zero recruitment | RL-010 |
+| D-15 | SELECTED; peer pending | A2b OFF / SKIP | [RL-014](../../custom-memory-engine/decisions/RL-014-a2b-and-suite-d.md) |
+| D-16 | SELECTED target; final pilot freeze pending | Dev 20 / test 50 independent scenarios; test zero-leak upper bound 0.071121736465; D-13 remains pilot-derived | RL-014 |
+| D-17 | VERIFIED; peer pending | CPython 3.12.12, Psycopg 3.3.2 + pool 3.3.3, pgvector client 0.4.2, Pydantic 2.12.5; standalone uv lock | [RL-013](../../custom-memory-engine/decisions/RL-013-engine-runtime.md) |
+| D-18 | SELECTED; load validation pending | Per-user advisory lock + exclusion + R1; measured SERIALIZABLE candidate, bounded whole-transaction tenacity retries for 40001/40P01 | [RL-012](../../custom-memory-engine/decisions/RL-012-postgres-pgvector.md) |
+| D-19 | NOT APPLICABLE to disabled scope; review pending | H5 OFF; no institutional exemption asserted; written clearance required before recruitment if reopened | [RL-015](../../custom-memory-engine/decisions/RL-015-ethics-h5.md) |
+| D-20 | SELECTED; peer pending | React/TypeScript/Vite primary; server HTML/HTMX schedule fallback | RL-013 |
+| D-23 | SELECTED; paired review pending | Stable session sort, preserve turns, R3 1 µs tie increments; retain anomalies with ρ=max(question_date,last recorded turn clock); exclusion sensitivity | [RL-016](../../custom-memory-engine/decisions/RL-016-paired-d23-d24-d26.md) |
+| D-24 | PREPARED; paired/supervisor pending | At least 100 stratified dev items; dual blind annotation, inter-human κ≥0.75, judge κ≥0.75 and accuracy≥0.90; coverage, perturbation and approval gates | RL-016 |
+| D-25 | VERIFIED; peer pending | PostgreSQL 16.15 / pgvector 0.8.7 / btree_gist 1.7; `pgvector/pgvector:0.8.7-pg16-bookworm@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a` | RL-012 |
+| D-26 | PREPARED; ownership/supervisor pending | MIT for original generators/suites only; zero LoCoMo text/schema reuse; release blocked until approval and validation | RL-016 |
+| D-27 | PREPARED; supervisor pending | Transactional archive_version + trigger and bypass restrictions; V4 S∨C; T1–T5 full-engine tests still required | RL-010 |
 
 ---
 
@@ -20,7 +44,7 @@
 
 | ID | Topic | Status | Decision / Rule | Authority |
 |---|---|---|---|---|
-| `D-ARCH` | Repository & runtime architecture | `FROZEN` | **Option C (Hybrid Architecture):** Self-contained engine and evaluation harness inside `research-lab/`; strict code and runtime isolation from root `app/`. | [`ARCHITECTURE.md`](ARCHITECTURE.md), [`INDEPENDENCE_BOUNDARY.md`](INDEPENDENCE_BOUNDARY.md) |
+| `D-ARCH` | Repository & runtime architecture | `FROZEN` | **Option C, placement revised by owner 2026-10-24:** Self-contained implementation in root `custom-memory-engine/`; Research Lab remains the specification/reference workspace; strict dependency, database and runtime isolation from `app/`. | [`ARCHITECTURE.md`](ARCHITECTURE.md), [`INDEPENDENCE_BOUNDARY.md`](INDEPENDENCE_BOUNDARY.md) |
 | `D-LAB-CI` | Research Lab CI workflow | `FROZEN` | Dedicated `.github/workflows/research-lab.yaml` workflow triggered on `research-lab/**` paths (`RL-005`). | [`INDEPENDENCE_BOUNDARY.md`](INDEPENDENCE_BOUNDARY.md) §4 |
 | `D-ENG-01` | Primary `H1` confirmatory contrast | `FROZEN` | `P − A2` (`P` vs `P-nohistory`) across both co-primary strata on suite `T`. `P − A1` (`P-flat`) is diagnostic only. | Proposal §§4.1, 10.4 |
 | `D-ENG-02` | V4 Archival Precondition (`Invariant 10`) | `FROZEN` | `Active → Archived` allowed iff `(S)` `recorded_range` is closed OR `(C)` an `Active` derived replacement `r'` exists with `MEMORY_DERIVATION(r' → r)` and `V(r') @> V(r)`. V3 valid-ended branch `(A)` is removed. | Proposal §§7.4 `R5`, 7.5, 8 Inv. 10 |
@@ -68,7 +92,7 @@
 
 ## 3. Decision Memo Template (`PLAN/decisions/<ID>.md`)
 
-Every Phase P1 decision task (`RL-010`, `RL-012`–`RL-016`) commits a Markdown record under `research-lab/PLAN/decisions/` containing:
+Every Phase P1 decision task (`RL-010`, `RL-012`–`RL-016`) commits a Markdown record under `custom-memory-engine/decisions/` (owner placement revision, 2026-10-24) containing:
 1. **Decision ID(s) & Title**
 2. **Selected Option / Frozen Value**
 3. **Evidence & Justification** (citing `Graduation_Project_Proposal.md`, `TECHNICAL_SPECIFICATION.md`, or empirical check output)

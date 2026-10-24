@@ -4,6 +4,10 @@
 
 ---
 
+## Owner placement revision (2026-10-24)
+
+Implementation is now rooted at **`custom-memory-engine/`**, outside Research Lab, per the owner's explicit directive. See [Independence Boundary §0](INDEPENDENCE_BOUNDARY.md) and the [current decision records](../../custom-memory-engine/decisions/). The historical tree/diagram below remains a functional decomposition reference, not the current physical-path mandate. Dependency, database, runtime, and evaluation-vs-web isolation remain required.
+
 ## 1. Architectural Overview
 
 The Research Lab separates the **core bi-temporal memory engine** (`implementation/`), the **evaluation harness and baselines** (`evaluation/`), the **benchmark suites** (`research/benchmarks/`), and the **Personal Digital Twin demonstrator** (`application/`):

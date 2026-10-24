@@ -4,6 +4,21 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## P1 Implementation Review and Secure Local Configuration (24 October 2026)
+
+- Reviewed all six issue acceptance criteria; #1–#5 are decision-preparation tasks with verified deliverables, while #6 explicitly requires Member 3/4 co-signatures and remains blocked. Downstream supervisor/peer approvals remain pending; no institutional signature is invented.
+- Hardened agreement validation, UTC replay sorting and duplicate-session checks, local disposable database configuration/redaction, async connection cleanup, full rollback probe and server-observed writer contention.
+- Created ignored local `custom-memory-engine/.env` with generated credentials and mode 0600; committed only the non-secret example. Tests now fail on warnings. Verification expanded to 48 passing tests plus lint/type/build and reference checks.
+- Owner authorizes direct commit/push to main in place of the original PR workflow. Research freeze and full-engine production acceptance remain distinct future gates.
+
+## P1 Decision Preparation and Owner Placement Revision (24 October 2026)
+
+- Owner revised D-ARCH physical placement: new implementation and canonical P1 decision memos live in repository-root `custom-memory-engine/`; Research Lab remains references. Product imports/dependencies/database remain isolated.
+- Prepared RL-010 and RL-012–RL-016 for GitHub #1–#6, with current values indexed in the decisions register and Technical Specification §2. No owner/peer/supervisor signature or institutional clearance was fabricated; paired approval and research-freeze gates remain pending.
+- Added standalone locked CPython 3.12 runtime, replay/CP/judge protocol primitives, unit tests, and async Psycopg/PostgreSQL compatibility probes. These are P1 verification, not the later 12-table engine, T1–T5 deletion suite, benchmark adapters, human judge audit or eight-worker load test.
+- Pinned PostgreSQL 16.15 / vector 0.8.7 image by verified registry digest; bounded evidence and execution report live under `custom-memory-engine/evidence/`. Existing reduced-schema archival behavior is not misrepresented as V4-safe.
+- Clarified D-23 reference-time clamping includes recorded-clock tie increments. D-13/D-14 and other pilot thresholds remain unfrozen. No benchmark test splits were accessed.
+
 ## Pre-Implementation Documentation & Structure Refactoring (24 October 2026)
 
 1. **Centralized Reference Directory (`reference/`):**
