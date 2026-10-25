@@ -1,0 +1,9 @@
+Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
+
+Upstream dataset: LoCoMo (Maharana et al., ACL 2024; https://github.com/snap-research/locomo)
+License URL: https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+Summary of terms:
+1. Attribution — You must give appropriate credit, provide a link to the license, and indicate if changes were made.
+2. NonCommercial — You may not use the material for commercial purposes.
+3. No redistribution into MIT-licensed synthetic suites — Zero dialogue turns, persona descriptions, questions, or schemas from LoCoMo are copied, translated, or adapted into the independently authored Suites T, G, D, or I (D-26).

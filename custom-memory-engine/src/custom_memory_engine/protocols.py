@@ -49,10 +49,13 @@ def schedule_replay(sessions: Sequence[ReplaySession]) -> tuple[ScheduledTurn, .
     if len(set(session_ids)) != len(session_ids):
         raise ValueError("duplicate_session_id")
     for session in sorted(sessions, key=lambda item: item.timestamp.astimezone(UTC)):
+        session_time = session.timestamp.astimezone(UTC)
         for turn in session.turns:
             source = turn.source_timestamp.astimezone(UTC)
             if turn.turn_id in seen_ids:
                 raise ValueError("duplicate_turn_id")
+            if source < session_time:
+                raise ValueError("turn_timestamp_precedes_session_timestamp")
             if previous_source is not None and source < previous_source:
                 raise ValueError("non_monotonic_source_timestamp")
             clock = source
@@ -148,11 +151,31 @@ def binary_agreement(gold: Sequence[int], labels: Sequence[int]) -> Agreement:
     )
 
 
-def judge_gate(agreement: Agreement, *, split: Literal["dev", "test"], approvals_complete: bool) -> bool:
+def judge_gate(
+    agreement: Agreement,
+    *,
+    split: Literal["dev", "test"],
+    approvals_complete: bool,
+    inter_human: Agreement | None = None,
+    modes_covered: bool = True,
+    perturbation_checked: bool = True,
+) -> bool:
     """Numeric gate is necessary, not sufficient: blind audit and approvals also required."""
+    inter_human_ok = True
+    if inter_human is not None:
+        inter_human_ok = (
+            inter_human.true_negative + inter_human.false_positive > 0
+            and inter_human.true_positive + inter_human.false_negative > 0
+            and inter_human.sample_size >= 100
+            and inter_human.kappa is not None
+            and inter_human.kappa >= 0.75
+        )
     return (
         split == "dev"
         and approvals_complete is True
+        and modes_covered is True
+        and perturbation_checked is True
+        and inter_human_ok
         and agreement.true_negative + agreement.false_positive > 0
         and agreement.true_positive + agreement.false_negative > 0
         and agreement.sample_size >= 100

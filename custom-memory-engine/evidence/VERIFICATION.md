@@ -1,4 +1,4 @@
-# P1 verification report — 2026-10-24
+# P0, P1, and Wave 2 (`#14`–`#19`) verification report — 2026-10-25
 
 ## Scope and reproducibility
 
@@ -12,13 +12,15 @@ Docker image ID matched the selected digest on the checked platform. SQL reporte
 
 | Check | Result | Scope |
 |---|---|---|
-| Full pytest suite | **48 passed**, no skips or warnings | 31 protocol cases, 10 configuration cases, 2 boundary/link checks, 5 real-DB async compatibility tests |
-| Ruff check / format check | Passed | Independent package source/tests |
-| Pyright standard mode | **0 errors, 0 warnings** | Independent package source/tests, Python 3.12 |
+| Full pytest suite | **67 passed**, no skips or warnings | Protocol, pilot rules (`RL-011`), public benchmarks (`RL-020`, `RL-021`), own suites `G/I/D/T` (`RL-022`–`RL-024`), config, AST boundary/link checks (`RL-006`), and 5 real-DB async compatibility tests |
+| Ruff check / format check | Passed | Unified `custom-memory-engine` package, benchmark, and test modules |
+| Pyright standard mode | **0 errors, 0 warnings** | Unified `custom-memory-engine` package, benchmark, and test modules, Python 3.12 |
 | Lab mechanical consistency script | All hard checks passed | Proposal/checklist/changelog; frozen reference hash unchanged |
+| Lab document MD5 integrity | All 5 files `OK` | `md5sum -c validation/document_hashes.txt` |
 | Lab CP output replay | Byte-identical diff | Existing scenario arithmetic |
 | Lab reduced bitemporal SQL | **43 PASS assertions**, final ALL ASSERTIONS PASSED | Historical reduced schema only, re-executed on fresh selected image |
-| Independent 60/72-scenario arithmetic | Unit-tested against closed form | Additional cardinality examples not in original table |
+| Public benchmark checksums & counts | Verified | `LongMemEval` (`oracle` & `S`, `500 / 30 / 56`) and `LoCoMo` (`10 / 1,986 / 4`) |
+| Own Suites `G, I, D, T` determinism | Verified | Byte-identical seeded generation (`20` dev / `50` test scenarios) and `MANIFEST.txt` SHA-256 match |
 
 Captured outputs (trailing console padding stripped, substantive output unchanged): [pytest](pytest.txt), [quality](quality-checks.txt), [mechanical checks](mechanical-checks.txt), [reduced SQL](bitemporal-baseline.txt). Timings in pytest output are test execution timings, **not engine latency benchmarks**. GitHub Actions passed on commit `577196c` ([run 40115984039](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40115984039)). The remote run exposed Node 20 deprecation/ubuntu-latest migration notices; the follow-up pins Node 24 actions and Ubuntu 24.04 to avoid those known lifecycle warnings.
 

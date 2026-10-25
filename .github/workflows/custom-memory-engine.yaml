@@ -1,10 +1,10 @@
-name: Custom Memory Engine P1 verification
+name: Custom Memory Engine verification
 
 on:
   push:
-    paths: ["custom-memory-engine/**", "research-lab/**", ".github/workflows/custom-memory-engine.yaml"]
+    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml"]
   pull_request:
-    paths: ["custom-memory-engine/**", "research-lab/**", ".github/workflows/custom-memory-engine.yaml"]
+    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml"]
 
 permissions:
   contents: read
@@ -36,13 +36,13 @@ jobs:
         with:
           version: "0.13.5"
       - run: uv sync --frozen --python 3.12.12
-      - run: uv run ruff check src tests && uv run ruff format --check src tests
+      - run: uv run ruff check src tests research/benchmarks implementation/tests && uv run ruff format --check src tests research/benchmarks implementation/tests
       - run: uv run pyright
       - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
       - run: uv run pytest -q
-      - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f ../research-lab/validation/bitemporal_checks.sql
+      - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql
       - name: Research reference consistency
-        working-directory: research-lab
         run: |
+          md5sum -c validation/document_hashes.txt
           python3 validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md
           diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt

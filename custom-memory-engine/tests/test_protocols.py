@@ -47,6 +47,8 @@ def test_stable_session_sort_and_tie_increment() -> None:
 def test_replay_guards() -> None:
     with pytest.raises(ValueError, match="non_monotonic"):
         schedule_replay([session("bad", T, T + timedelta(seconds=1), T)])
+    with pytest.raises(ValueError, match="turn_timestamp_precedes_session_timestamp"):
+        schedule_replay([session("precedes", T, T - timedelta(seconds=1))])
     item = session("one", T, T)
     with pytest.raises(ValueError, match="duplicate_session_id"):
         schedule_replay([item, item])
@@ -91,8 +93,13 @@ def test_judge_validation_and_fail_closed() -> None:
         45,
     )
     assert judge_gate(agreement, split="dev", approvals_complete=True)
+    assert judge_gate(agreement, split="dev", approvals_complete=True, inter_human=agreement)
     assert not judge_gate(agreement, split="test", approvals_complete=True)
     assert not judge_gate(agreement, split="dev", approvals_complete=False)
+    assert not judge_gate(agreement, split="dev", approvals_complete=True, modes_covered=False)
+    assert not judge_gate(agreement, split="dev", approvals_complete=True, perturbation_checked=False)
+    low_inter_human = binary_agreement([0] * 50 + [1] * 50, [1] * 15 + [0] * 35 + [0] * 15 + [1] * 35)
+    assert not judge_gate(agreement, split="dev", approvals_complete=True, inter_human=low_inter_human)
     constant = binary_agreement([1] * 100, [1] * 100)
     assert constant.kappa is None
     assert not judge_gate(constant, split="dev", approvals_complete=True)

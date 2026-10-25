@@ -1,66 +1,96 @@
-# Custom Memory Engine
+# Custom Memory Engine (`custom-memory-engine/`)
 
-Independent top-level implementation workspace for ChronaMind. **Current scope: the six published P1 decision/verification issues, not a completed production memory engine.** Research Lab files remain normative references; the owner's 2026-10-24 placement revision keeps all new implementation outside Research Lab and isolated from `app/`.
+Unified research specification, benchmark corpus, evaluation harness, and implementation workspace for **ChronaMind**: *A Bi-Temporal, Write-Governed, Lineage-Deletable Memory Engine for Long-Term Conversational Agents*.
 
-## Issue deliverables
+All specifications, literature references, decision records, public/synthetic benchmarks, evaluation harnesses, and engine modules are consolidated in this single self-contained directory, maintaining strict code, dependency, database, and runtime isolation from the root `app/` service.
 
-| GitHub | Task | Canonical record | Remaining human gate |
+---
+
+## 1. Completed & Verified Deliverables (`P0`, `P1`, and Wave 2 `#14`–`#19`)
+
+| GitHub | Task | Canonical record / deliverable | Status / remaining gate |
 |---|---|---|---|
-| #1 | RL-010 scope/models/enforcement | [Scope and models](decisions/RL-010-scope-and-models.md) | Owner/peer/supervisor approval, funded model access |
-| #2 | RL-012 database/concurrency | [PostgreSQL and pgvector](decisions/RL-012-postgres-pgvector.md) | Owner/peer review; later eight-worker load test |
-| #3 | RL-013 runtime/UI choice | [Engine runtime](decisions/RL-013-engine-runtime.md) | Owner/peer review |
-| #4 | RL-014 A2b/Suite D | [A2b and cardinality](decisions/RL-014-a2b-and-suite-d.md) | Peer review; final pilot freeze |
-| #5 | RL-015 ethics | [H5 ethics](decisions/RL-015-ethics-h5.md) | Scope review; written clearance if H5 reopens |
-| #6 | RL-016 replay/judge/license | [Paired decisions](decisions/RL-016-paired-d23-d24-d26.md) | Member 3/4 co-signatures, peer/supervisor/license authority |
+| #1–#6 | `RL-010`, `RL-012`–`RL-016` | [Scope/models](decisions/RL-010-scope-and-models.md), [PostgreSQL/pgvector](decisions/RL-012-postgres-pgvector.md), [Runtime](decisions/RL-013-engine-runtime.md), [A2b/Suite D](decisions/RL-014-a2b-and-suite-d.md), [H5 ethics](decisions/RL-015-ethics-h5.md), [Paired D-23/24/26](decisions/RL-016-paired-d23-d24-d26.md) | Closed (owner-reviewed); supervisor & pilot freeze (`RL-100`) downstream |
+| #9–#13 | `RL-002`–`RL-006` | Unified scaffold, `pyproject.toml`/`uv.lock`/`.env.example`, `compose.yaml`, CI workflow, AST boundary guard (`tests/test_boundaries.py`, `implementation/tests/test_independence_boundary.py`) | Closed & hardened |
+| #14 | `RL-011` pilot protocol | [Pre-registered pilot plan](evaluation/pilot_plan.md) & [`pilot_rules.py`](src/custom_memory_engine/pilot_rules.py) | Implemented & unit-tested |
+| #15 | `RL-020` `LongMemEval` | [`longmemeval/fetch.py`](research/benchmarks/longmemeval/fetch.py), [README](research/benchmarks/longmemeval/README.md), [MANIFEST](research/benchmarks/longmemeval/MANIFEST.txt) | Verified on `oracle` & `S` (`500 / 30 / 56`) |
+| #16 | `RL-021` `LoCoMo` | [`locomo/fetch.py`](research/benchmarks/locomo/fetch.py), [README](research/benchmarks/locomo/README.md), [MANIFEST](research/benchmarks/locomo/MANIFEST.txt) | Verified on `locomo10.json` (`10 / 1,986 / 4`) |
+| #17 | `RL-022` Suites `G` & `I` | [`own_G/generator.py`](research/benchmarks/own_G/generator.py), [`own_I/generator.py`](research/benchmarks/own_I/generator.py) | Deterministic `dev` (`20`) & `test` (`50`) verified |
+| #18 | `RL-023` Suite `D` | [`own_D/generator.py`](research/benchmarks/own_D/generator.py), [README](research/benchmarks/own_D/README.md), [MANIFEST](research/benchmarks/own_D/MANIFEST.txt) | Deterministic `dev` (`20`) & `test` (`50`) verified |
+| #19 | `RL-024` Suite `T` | [`own_T/generator.py`](research/benchmarks/own_T/generator.py), [README](research/benchmarks/own_T/README.md), [MANIFEST](research/benchmarks/own_T/MANIFEST.txt) | Deterministic `dev` (`20`) & `test` (`50`) verified |
 
-The [Lab register](../research-lab/PLAN/DECISIONS_REGISTER.md) and [Technical Specification §2](../research-lab/TECHNICAL_SPECIFICATION.md) index current values. Original issue-draft locations are historical; no duplicate decision source is maintained. #1–#5 meet their decision-preparation/verification acceptance scope; downstream human approvals remain distinct gates, not fabricated signatures. #6 remains blocked on its explicit Member 3/4 co-signature acceptance criterion. Direct-to-main delivery is owner-authorized instead of a PR.
+---
 
-## Layout and boundaries
+## 2. Document Map & Single Sources of Truth
 
-- `src/custom_memory_engine/protocols.py`: deterministic replay scheduling/reference clamping, exact zero-leak scenario bound, binary agreement and fail-closed numeric judge gate.
-- `tests/`: unit, import/link, native-driver and real-DB compatibility checks.
-- `decisions/`: six evidence-backed records with explicit pending signatures.
-- `evidence/`: source ledger, verification report, captured passing output.
-- `pyproject.toml` / `uv.lock`: independent CPython 3.12 dependency graph.
-- `compose.yaml`: **disposable test database only**, pinned by digest, loopback port 5433, no product data/credentials.
+| Topic | Authoritative File | Purpose |
+|---|---|---|
+| **Research Proposal & Hypotheses (`H1`–`H4`)** | [`Graduation_Project_Proposal.md`](Graduation_Project_Proposal.md) | Frozen V4 research contract: problem statement, related work, bi-temporal model (§7), data model (§8), evaluation methodology (§10), and deliverables (§12). |
+| **Methodology & Consistency Checklist** | [`Methodology_and_Consistency_Checklist.md`](Methodology_and_Consistency_Checklist.md) | Audit checklist verifying statistical rules, scope exclusions, and the `T1`–`T5` archival precondition contract. |
+| **Technical Specification** | [`TECHNICAL_SPECIFICATION.md`](TECHNICAL_SPECIFICATION.md) | Concrete implementation contract: DDL table schemas, `R1`–`R8` rules, SQL query predicates, validation gate, RRF fusion, deletion closure, and `MemorySystemAdapter` protocol. |
+| **Project Roadmap & Testing Matrix** | [`PROJECT_ROADMAP.md`](PROJECT_ROADMAP.md) | Phases `P0`–`P13`, risk register (§F), mandatory testing matrix (§G), reproducibility rules (§H), and Definition of Done (§I). |
+| **Traceability Matrix** | [`TRACEABILITY_MATRIX.md`](TRACEABILITY_MATRIX.md) | End-to-end mapping from audit findings, database invariants (`1`–`10`), and hypotheses (`H1`–`H4`) to implementation tasks and verification artifacts. |
+| **Revision History** | [`CHANGELOG.md`](CHANGELOG.md) | Chronological record of V1–V4 proposal revisions and repository structure updates. |
+| **Decisions Register (`D-01`–`D-27`)** | [`PLAN/DECISIONS_REGISTER.md`](PLAN/DECISIONS_REGISTER.md) | Single registry of all open, supervisor-gated, pilot-derived, and frozen project decisions. |
+| **Task Graph (`RL-001`–`RL-132`)** | [`PLAN/TASK_GRAPH.md`](PLAN/TASK_GRAPH.md) | Detailed task definitions, deliverables, acceptance criteria, and dependencies across Phases `P0`–`P13`. |
+| **Literature & Evidence Ledger** | [`reference/Source_Evidence_Ledger.md`](reference/Source_Evidence_Ledger.md), [`evidence/SOURCES.md`](evidence/SOURCES.md) | Citation-by-citation verification ledger (`[1]`–`[41]`) and P1 primary-source verification hashes. |
 
-No ORM, product imports, paid LLM calls, API routes, participant recruitment or benchmark test-split access. There are no claims of engine latency, full deletion safety, RLS, extraction correctness or H1–H4 results. Async DB probes use unique schemas and clean them in fixture finalizers. Use only a disposable database; privileges in tests are not a production role policy.
+---
 
-## Reproduce verification
+## 3. Unified Directory Layout
 
-Install `uv` and CPython 3.12, then:
+```text
+custom-memory-engine/
+├── Graduation_Project_Proposal.md          # Normative V4 research proposal
+├── Methodology_and_Consistency_Checklist.md # Normative V4 verification checklist
+├── TECHNICAL_SPECIFICATION.md              # Concrete engineering & SQL specification
+├── PROJECT_ROADMAP.md                      # Phases P0–P13, risks, and §G testing matrix
+├── TRACEABILITY_MATRIX.md                  # Invariant, hypothesis, and deliverable traceability
+├── CHANGELOG.md                            # V1–V4 and structural changelog
+├── pyproject.toml / uv.lock                # Standalone CPython 3.12 dependency graph
+├── compose.yaml / docker-compose.yml       # Isolated PostgreSQL 16.15 + pgvector + btree_gist
+├── src/custom_memory_engine/               # Core protocols, pilot freeze rules, and config
+├── tests/                                  # Unit, benchmark, boundary, and async DB compatibility tests
+├── decisions/                              # Phase P1 decision memos (RL-010, RL-012..RL-016)
+├── evidence/                               # Source ledger, verification report, captured test outputs
+├── PLAN/                                   # Team execution plans, decisions register, and issue drafts
+├── reference/                              # Literature audit, feasibility review, and offline paper corpus
+├── validation/                             # bitemporal_checks.sql, cp_bounds.py, mechanical_checks.py
+├── research/benchmarks/                    # LongMemEval, LoCoMo, and Own Suites G, I, D, T
+├── implementation/                         # Bi-temporal memory engine modules & schema (P4–P9)
+├── evaluation/                             # Pilot plan, evaluation harness, baselines, judge, stats
+├── application/                            # Personal Digital Twin (PDT) inspector API & UI (P12)
+└── reports/                                # Thesis tables, figures, and reproducibility pack (P11, P13)
+```
+
+---
+
+## 4. Reproducing Verification
+
+Install `uv` and CPython 3.12, then run from `custom-memory-engine/`:
 
 ```bash
 cd custom-memory-engine
 uv sync --frozen --python 3.12
-uv run ruff check src tests
-uv run ruff format --check src tests
+uv run ruff check src tests research/benchmarks implementation/tests
+uv run ruff format --check src tests research/benchmarks implementation/tests
 uv run pyright
 uv run pytest -q -m 'not integration'
 
-# A private .env was generated locally (mode 0600, ignored by Git).
-# On another checkout: copy .env.example to .env, generate a password, and
-# update the URL consistently. Never source an untrusted .env as shell code.
+# Start disposable PostgreSQL 16.15 + pgvector 0.8.7 + btree_gist 1.7 container:
 docker compose --env-file .env -p cme-verify up -d --wait
 uv run --env-file .env pytest -q
 
-# Historical reduced-schema check (not V4 archival or full-engine validation).
+# Run reduced-schema bitemporal SQL verification (43 assertions):
 docker compose --env-file .env -p cme-verify exec -T db psql -U cme_test -d cme_compatibility \
-  -v ON_ERROR_STOP=1 < ../research-lab/validation/bitemporal_checks.sql
+  -v ON_ERROR_STOP=1 < validation/bitemporal_checks.sql
 docker compose --env-file .env -p cme-verify down -v
 
-cd ../research-lab
+# Run proposal/checklist/changelog mechanical checks, MD5 integrity, and Clopper-Pearson check:
+md5sum -c validation/document_hashes.txt
 python3 validation/mechanical_checks.py Graduation_Project_Proposal.md \
   Methodology_and_Consistency_Checklist.md CHANGELOG.md
 diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
 ```
-
-`config.py` reads exported environment explicitly, redacts the DSN, and restricts destructive probes to the local `cme_test` / `cme_compatibility` database. `uv run --env-file .env` loads the private test environment; no product .env is implicitly read. No LLM credentials are required or provisioned for this P1 implementation.
-
-DB tests skip without `CME_TEST_DATABASE_URL`; a skipped DB suite is **not** database verification. Full CI supplies the pinned service and runs all tests. Captured failure traces may include connection URLs: do not publish unreviewed logs or use real credentials; committed evidence here contains passing output only.
-
-## Next engineering gates
-
-Obtain human approvals first, then implement the later schema/clock/queue/gate/retrieval/lineage-deletion tasks against these contracts. Require T1–T5, tenant/RLS security tests with non-owner roles, idempotency/deletion-race regressions, provider tracing/redaction, migration/rollback strategy, and measured eight-worker load before production claims. Resolve the existing statistical-specification discrepancy noted in the [source ledger](evidence/SOURCES.md) before implementing RL-034. Never silently freeze pilot parameters or change model snapshots.
 
 See [verification results and limitations](evidence/VERIFICATION.md).

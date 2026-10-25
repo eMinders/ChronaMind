@@ -19,12 +19,12 @@ Fetched live and inspected for the specific passages below, not claimed read com
 
 ## Repository authority
 
-- [Proposal](../../research-lab/Graduation_Project_Proposal.md) §§7.4, 7.5, 8, 9, 10, 11, 14.
-- [Technical specification](../../research-lab/TECHNICAL_SPECIFICATION.md), normative subject to higher proposal authority.
-- [Existing source ledger](../../research-lab/reference/Source_Evidence_Ledger.md), rows [38]/[39] and benchmark/license caveats.
-- [Existing CP arithmetic output](../../research-lab/validation/cp_bounds.output.txt).
+- [Proposal](../Graduation_Project_Proposal.md) §§7.4, 7.5, 8, 9, 10, 11, 14.
+- [Technical specification](../TECHNICAL_SPECIFICATION.md), normative subject to higher proposal authority.
+- [Existing source ledger](../reference/Source_Evidence_Ledger.md), rows [38]/[39] and benchmark/license caveats.
+- [Existing CP arithmetic output](../validation/cp_bounds.output.txt).
 - [Executed reduced SQL baseline](bitemporal-baseline.txt), deliberately limited and not V4 archival validation.
 
-## Accuracy caveat found during review
+## Accuracy caveat found during review (resolved 2026-10-25)
 
-The existing Technical Specification §9.3 multiplicity/H2 and H3 summaries conflict with the higher-authority Proposal §§4.1/10.6 in places (in particular H2 contrasts/global Holm family, and relative LUAR non-inferiority). This P1 work does **not** implement those later statistical decision rules. RL-034 must reconcile against the Proposal before implementation; treating the lower-authority summary as sufficient would be unsafe. Judge κ/accuracy thresholds and proposed budgets here are project decisions awaiting approval, not claims established by outside studies.
+The Technical Specification §9.3 multiplicity/H2 and H3 summaries previously conflicted with the higher-authority Proposal §§4.1/10.6 (in particular H2 contrasts/global Holm family, and relative LUAR non-inferiority). On 2026-10-25, `TECHNICAL_SPECIFICATION.md` §9.3 was reconciled directly with `Graduation_Project_Proposal.md` §§4.1 and 10.6 (3-test global Holm family across H1 superiority, H2 intersection-union `max(p_A5, p_A6)` with both contrasts positive, and H3 ASR reduction; paired `LUAR(P) − LUAR(A3) > −δ_luar`). Judge κ/accuracy thresholds and proposed budgets remain project decisions subject to pilot validation, not claims established by outside studies.

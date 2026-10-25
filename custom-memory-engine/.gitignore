@@ -1,9 +1,17 @@
 .venv/
+venv/
 __pycache__/
+*.py[cod]
+*$py.class
 .pytest_cache/
 .ruff_cache/
+.pyright/
 .env
 .env.*
 !.env.example
 *.egg-info/
 dist/
+
+# Unversioned benchmark downloads & scratch outputs (manifests remain tracked)
+research/benchmarks/*/data/
+evaluation/runs/scratch/

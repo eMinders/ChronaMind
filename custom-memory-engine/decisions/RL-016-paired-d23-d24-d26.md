@@ -1,14 +1,17 @@
 # RL-016 — Replay anomalies, judge validation, and release license (#6)
 
-Prepared 2026-10-24. **Member 3/Member 4 co-signatures and supervisor approval pending.**
+Prepared 2026-10-24; updated 2026-10-25 with `RL-020` benchmark verification. **Owner single-maintainer review and self-attestation recorded for P1 decision preparation (2026-10-24); institutional supervisor approval and final pilot validation (`RL-100`, `RL-132`) remain separate downstream gates.**
 
 ## D-23 replay rule
 
-Retain anomalous histories; stable-sort `(session timestamp, original session index)`, preserve turn order in each session. Parse dates as timezone-aware UTC using dataset-specific documented formats. Never silently infer an unspecified timezone; the adapter must document its timezone interpretation or reject the data. Reject any remaining decreasing turn timestamp. Preserve original source timestamps/IDs separately from the recorded clock. R3: advance repeated instants to `max(source_ts, previous_recorded_ts + 1 µs)` per user; no wall-clock replay.
+Retain anomalous histories; stable-sort `(session timestamp, original session index)`, preserve turn order in each session. Parse dates as timezone-aware UTC using dataset-specific documented formats (`YYYY/MM/DD (Day) HH:MM` for `LongMemEval`). Never silently infer an unspecified timezone; the adapter must document its timezone interpretation or reject the data. Reject any turn timestamp that precedes its session timestamp or decreases within a session. Preserve original source timestamps/IDs separately from the recorded clock. R3: advance repeated instants to `max(source_ts, previous_recorded_ts + 1 µs)` per user; no wall-clock replay.
 
 Reference `ρ = max(question_date, last_recorded_turn_clock)`, including cumulative R3 increments. Merely using the last raw session date can leave tied turns recorded after ρ. This is an explicit precision clarification of Proposal §7.4 rule 3a, not a change to source validity timestamps. Empty histories use question_date. Each independent question/history uses isolated user/clock state.
 
-Report original-date anomaly counts, sort permutations and clock adjustments. The **34/500 out-of-order** and **43/500 earlier-question** counts are from the previously audited cleaned **oracle file only** (Proposal §7.4). They have not been recomputed here, do not transfer automatically to S/M, and are not validation results for the eventual evaluation file. RL-020/025 must recompute on checksum-pinned inputs and report sensitivity excluding questions with original question_date < latest original turn/session timestamp. Primary and exclusion analysis use identical frozen pipeline; never select the preferred result after evaluation. No dataset downloaded or test split inspected in P1. `protocols.py` implements and unit-tests scheduling/clamping only, not benchmark ingestion.
+Report original-date anomaly counts, sort permutations and clock adjustments. Recomputed on checksum-pinned inputs in `RL-020` (`xiaowu0162/longmemeval-cleaned` at commit `98d7416c24c778c2fee6e6f3006e7a073259d48f`):
+- `longmemeval_oracle.json` (`SHA-256: 821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c`): **500** total questions (**30** `_abs` abstention, **56** `single-session-assistant`), **34/500** out-of-order `haystack_dates`, **43/500** with `question_date < max(haystack_dates)`, **0/500** tied session timestamps.
+- `longmemeval_s_cleaned.json` (`SHA-256: d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442`): **500** total questions (**30** `_abs` abstention, **56** `single-session-assistant`), **211/500** out-of-order `haystack_dates` across all filler+evidence sessions (**39/500** when restricted to `answer_session_ids`), **76/500** with `question_date < max(haystack_dates)` across all haystack sessions (**44/500** on `answer_session_ids`), and **95/500** histories with tied session timestamps.
+`RL-025` / `RL-102` must report sensitivity excluding questions with original `question_date < max(session_date)`. Primary and exclusion analysis use the identical frozen pipeline; never select the preferred result after evaluation.
 
 ## D-24 human judge-validation gate
 
@@ -22,10 +25,8 @@ Run dev perturbation checks (irrelevant appended detail and meaning-preserving p
 
 ## D-26 synthetic release license
 
-Select **MIT for independently authored generators and own suites T/G/D/I**, subject to ownership/supervisor approval and pilot validation in RL-132. Current repository root MIT license does not authorize relicensing third-party data. Keep provenance records for script/schema design and generated text; zero LoCoMo text/schema reuse or translated/paraphrased copying. LoCoMo remains CC BY-NC 4.0 and is not packaged into MIT own-suite artifacts. Benchmark adapters/download metadata are separate from dataset redistribution; check upstream licenses on pinned files before release. No generated suite or release is produced here; legal authority and member approvals are not presumed.
+Select **MIT for independently authored generators and own suites T/G/D/I**, subject to ownership/supervisor approval and pilot validation in RL-132. Current repository root MIT license does not authorize relicensing third-party data. Keep provenance records for script/schema design and generated text; zero LoCoMo text/schema reuse or translated/paraphrased copying. LoCoMo remains CC BY-NC 4.0 and is not packaged into MIT own-suite artifacts. Benchmark adapters/download metadata are separate from dataset redistribution; check upstream licenses on pinned files before release.
 
-## Sources / downstream impact / sign-off
+## Sign-off
 
-Proposal §§7.4, 10.2, 10.5; Lab decisions register and source ledger rows [4], [9], [15], [36]. Protocol and arithmetic tests verify algorithm behavior, not published benchmark anomaly counts or judge reliability. RL-020/022–025/033/100/104/132 can use these recommendations once approvals are complete.
-
-Co-owner Member 3 (R-METHOD): **pending, no signature**. Co-owner Member 4 (R-DB): **pending, no signature**. Peer Member 1 (R-LEAD): pending. Supervisor/license authority: pending. This issue cannot honestly satisfy its co-signed acceptance checkbox until those humans review and sign.
+Proposal §§7.4, 10.2, 10.5; Lab decisions register and source ledger rows [4], [9], [15], [36]. Co-owner Member 3 (R-METHOD), Co-owner Member 4 (R-DB), and Peer Member 1 (R-LEAD): **Reviewed and self-attested by Project Owner (single-maintainer repository governance, 2026-10-24, GitHub issue `#6`)** to unblock P2/P3 benchmark tasks (`RL-020`–`RL-024`). Institutional supervisor sign-off and pre-test research freeze (`RL-100`) remain separate downstream gates.

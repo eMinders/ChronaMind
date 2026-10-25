@@ -1,5 +1,0 @@
-4a148af6534312f192a55f09a5f9bfef  Graduation_Project_Proposal.md
-82ae62a82f3b3819a0c09e777887fafe  Methodology_and_Consistency_Checklist.md
-946c828e61b8d5045eba8a1857b6b665  reference/Research_and_Fact_Check_Audit.md
-7897c93e4f0584a736a969fc9c7d7041  reference/Source_Evidence_Ledger.md
-2c2116c3a5fa6df4cab730e67fbe7040  CHANGELOG.md
