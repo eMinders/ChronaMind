@@ -4,6 +4,16 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-030 Evaluation Harness Foundation (26 October 2026)
+
+- Added the seven-method `MemorySystemAdapter` contract, explicit immutable model/system/configuration pins, typed replay inputs/results, and a source-checkout CLI with provider-free synthetic fixtures.
+- Added exclusive UTF-8/LF run outputs, exact split/config provenance, artifact hashes, per-cluster/stratum summaries, measured timing in the manifest, and content-free failure markers. Success manifests are staged and synced before atomic publication.
+- Implemented the RL-010 persistent campaign budget contract: reserve aggregate worst-case usage before dispatch, reconcile failed/retried calls, retain interrupted reservations, and enforce both token/USD caps plus the development allocation.
+- Added fail-closed test-run authorization using explicit confirmation, typed human attestations, exact tagged freeze/list/split hashes, and a persistent local one-shot claim. These controls do not create actual research approvals or replace RL-100.
+- Extended the dedicated workspace's lint, type and pytest scopes to include `evaluation/`; added synthetic determinism, failure, concurrency, path/junction and authorization regressions. Verification scope is recorded in `evidence/RL-030-verification.md`.
+- Cleared pre-existing repository-wide CI lint/format failures in three research verification/source-fetch helpers with formatting/import-only changes; statistical and mechanical-check stdout remains byte-identical.
+- Baselines, benchmark normalizers, extraction cache, provider judges, inferential statistics, actual pilot/test runs and H1–H4 outcomes remain separate tasks. Product runtime/configuration is unchanged.
+
 ## Wave 2 Implementation (`RL-011`, `RL-020`–`RL-024`) and P0/P1 Audit Fixes (25 October 2026)
 
 1. **P0/P1 Audit & Consistency Fixes (`#1`–`#6`, `#9`–`#13`):**

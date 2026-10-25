@@ -4,6 +4,15 @@
 **Phases:** P3 (harness + baselines + judge + stats), P10 (pilot + H1–H4 runs), P11 (statistics + error analysis).
 **Normative references:** [`../Graduation_Project_Proposal.md`](../Graduation_Project_Proposal.md) §10; [`../PROJECT_ROADMAP.md`](../PROJECT_ROADMAP.md) §D.3, §D.10, §D.11; [`../TRACEABILITY_MATRIX.md`](../TRACEABILITY_MATRIX.md) §1.
 
+## RL-030 implemented foundation
+
+[`harness/README.md`](harness/README.md) documents the seven-method adapter,
+typed configuration/replay, immutable artifacts, persistent budget reservations,
+signed-freeze/one-shot guard, and provider-free CLI smoke example. The
+[`stats/__init__.py`](stats/__init__.py) boundary intentionally contains no
+inferential implementation; RL-034 owns that work. Verification uses synthetic
+temporary fixtures, not a pilot or held-out benchmark run.
+
 ## Planned layout (populated by `RL-030` onward)
 
 ```

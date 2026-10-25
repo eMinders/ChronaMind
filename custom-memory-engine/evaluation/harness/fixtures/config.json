@@ -1,0 +1,24 @@
+{
+  "config_id": "fixture-dummy",
+  "system_id": "fixture-dummy",
+  "adapter_version": "fixture-v1",
+  "model_id": "fixture-answer-v1",
+  "embedding_model_id": "fixture-embedding-v1",
+  "judge_model_id": "fixture-judge-v1",
+  "temperature": 0,
+  "seed": 42,
+  "B_mem": 512,
+  "prompt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tokenizer_id": "fixture-tokenizer-v1",
+  "budget_id": "rl030-fixture",
+  "token_cap": 1000,
+  "cost_cap_usd": "1.00",
+  "dev_cost_cap_usd": "0.50",
+  "operation_limits": {
+    "ingest_turn": {"input_tokens": 0, "output_tokens": 0, "embedding_tokens": 0, "cost_usd": "0"},
+    "drain_queue": {"input_tokens": 0, "output_tokens": 0, "embedding_tokens": 0, "cost_usd": "0"},
+    "retrieve": {"input_tokens": 0, "output_tokens": 0, "embedding_tokens": 0, "cost_usd": "0"},
+    "answer": {"input_tokens": 0, "output_tokens": 0, "embedding_tokens": 0, "cost_usd": "0"},
+    "delete": {"input_tokens": 0, "output_tokens": 0, "embedding_tokens": 0, "cost_usd": "0"}
+  }
+}

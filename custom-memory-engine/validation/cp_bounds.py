@@ -1,9 +1,12 @@
 """Exact (Clopper-Pearson) bounds used in Section 10.6 (H4). Pure standard library.
 Two-sided 95% interval: upper limit solves P(X <= k | n, p) = 0.025; for k = 0 this is 1 - 0.025**(1/n)."""
-from math import comb, log, ceil
+
+from math import ceil, comb, log
+
 
 def binom_cdf(k, n, p):
-    return sum(comb(n, i) * p**i * (1 - p)**(n - i) for i in range(k + 1))
+    return sum(comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k + 1))
+
 
 def cp_upper(k, n, alpha=0.05):
     if k >= n:
@@ -16,6 +19,7 @@ def cp_upper(k, n, alpha=0.05):
         else:
             hi = mid
     return (lo + hi) / 2
+
 
 if __name__ == "__main__":
     print("zero observed leaks: exact upper limit of the two-sided 95% interval")
@@ -32,7 +36,10 @@ if __name__ == "__main__":
     print("\nillustration of clustering: 12 deletion events per scenario, 0 leaks")
     for ns in (10, 20, 40):
         ne = 12 * ns
-        print(f"  scenarios={ns:3d} events={ne:4d}  scenario-level bound={cp_upper(0, ns):.3f}  event-level bound (independence assumed)={cp_upper(0, ne):.3f}")
+        print(
+            f"  scenarios={ns:3d} events={ne:4d}  scenario-level bound={cp_upper(0, ns):.3f}  "
+            f"event-level bound (independence assumed)={cp_upper(0, ne):.3f}"
+        )
     print("\none leaking scenario observed: upper limit of the two-sided 95% interval")
     for n in (20, 40, 100):
         print(f"  1 of {n:3d} scenarios: {cp_upper(1, n):.3f}")
