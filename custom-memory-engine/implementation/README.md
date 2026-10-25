@@ -31,4 +31,4 @@ implementation/
 
 ## Status
 
-**Not Started.** Open decisions `D-PG-VER` (#25) and `D-ENG-LANG` must be resolved first (see [`../PLAN/DECISIONS_REGISTER.md`](../PLAN/DECISIONS_REGISTER.md)).
+**`RL-040` schema DDL authored.** Twelve-table PostgreSQL schema lives in [`schema/001_full_schema.sql`](schema/001_full_schema.sql) with the invariant map in [`schema/README.md`](schema/README.md). Python migration runner (`RL-041`), supersession/archival procedures (`RL-042`), and retrieval APIs (`RL-043`) remain unstarted.

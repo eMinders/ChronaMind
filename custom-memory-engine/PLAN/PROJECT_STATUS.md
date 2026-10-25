@@ -26,7 +26,8 @@
   - `validation/mechanical_checks.py` (`ALL HARD CHECKS PASSED` on `Graduation_Project_Proposal.md`, `Methodology_and_Consistency_Checklist.md`, `CHANGELOG.md`).
   - `validation/bitemporal_checks.sql` (`43/43` assertions passed on PostgreSQL `16.15`, logged in `validation/bitemporal_checks.output.txt`).
   - `validation/cp_bounds.py` (exact Clopper–Pearson upper bounds verified against `validation/cp_bounds.output.txt`).
-- **Not Yet Executed:** Full 12-table PostgreSQL schema (`RL-040`), `T1`–`T5` archival harness (`RL-090`), engine fast/slow paths (`P4`–`P7`), benchmark adapters and synthetic suite generators (`P2`–`P3`), dev-split pilot (`RL-100`), and confirmatory experiments `H1`–`H4` (`RL-101`–`RL-105`).
+- **Authored, in review (`#25`):** Full twelve-table PostgreSQL schema (`RL-040`) in [`../implementation/schema/001_full_schema.sql`](../implementation/schema/001_full_schema.sql), with the invariant map in [`../implementation/schema/README.md`](../implementation/schema/README.md).
+- **Not Yet Executed:** `T1`–`T5` archival harness (`RL-090`), engine fast/slow paths (`P4`–`P7`), benchmark adapters and synthetic suite generators (`P2`–`P3`), dev-split pilot (`RL-100`), and confirmatory experiments `H1`–`H4` (`RL-101`–`RL-105`).
 
 ---
 
