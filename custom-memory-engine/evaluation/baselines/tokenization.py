@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import regex
+
 from evaluation.baselines.assets import O200K_SHA256, verified_bytes
 from evaluation.baselines.contracts import Message
 
@@ -73,3 +75,47 @@ class TiktokenTokenizer:
         return 12 + sum(
             12 + len(self.encode(message.role)) + len(self.encode(message.content)) for message in messages
         )
+
+    def history_request_counts(self, messages: Sequence[Message], user_parts: Sequence[str]) -> tuple[int, ...] | None:
+        """Count every structured whole-turn suffix in linear tokenization work.
+
+        Parts are prefix, each turn including its following separator, and the
+        question tail. BPE merges stay inside regex matches. Certify every cut
+        against the actual full user message instead of assuming token counts
+        remain monotone for arbitrary string prefixes. The fixed prefix ends in
+        a newline and every retained turn starts with JSON's ``{``; deleting old
+        turns therefore leaves its final regex match unchanged. The O200K pattern
+        has no lookbehind/anchors and its whitespace lookahead sees the same
+        non-whitespace start. All retained suffix matches are unchanged too.
+        """
+        if (
+            not messages
+            or messages[-1].role != "user"
+            or len(user_parts) < 3
+            or not user_parts[0].endswith("\n")
+            or not user_parts[-1].startswith("Question:\n")
+            or any(not part.startswith("{") or not part.endswith("\n\n") for part in user_parts[1:-1])
+            or "".join(user_parts) != messages[-1].content
+        ):
+            return None
+        boundaries = set()
+        position = 0
+        for part in user_parts[:-1]:
+            position += len(part)
+            boundaries.add(position)
+        position = 0
+        for match in regex.finditer(O200K_PATTERN, messages[-1].content):
+            if match.start() != position:
+                return None
+            position = match.end()
+            boundaries.discard(position)
+        if position != len(messages[-1].content) or boundaries:
+            return None
+        framing = self.count_messages((*messages[:-1], messages[-1].model_copy(update={"content": ""})))
+        costs = tuple(len(self.encode(part)) for part in user_parts)
+        remaining = costs[-1]
+        counts = [0] * (len(costs) - 2)
+        for index in range(len(counts) - 1, -1, -1):
+            remaining += costs[index + 1]
+            counts[index] = framing + costs[0] + remaining
+        return tuple(counts)

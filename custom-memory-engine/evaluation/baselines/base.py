@@ -59,6 +59,14 @@ class BaseAdapter:
         self._prepared: dict[str, PreparedContext] = {}
         self._events: list[dict[str, object]] = []
         self._history_queries: dict[tuple[str, str, str], RetrievalDiagnostics] = {}
+        self._history_totals = {
+            "question_cases": 0,
+            "truncated_question_cases": 0,
+            "truncated_items": 0,
+            "truncated_tokens": 0,
+        }
+        self._materialized: set[str] = set()
+        self._retired: dict[str, str] = {}
         self.factory_provenance: dict[str, object] = {}
 
     def _state(self, user_id: str) -> UserState:
@@ -73,6 +81,7 @@ class BaseAdapter:
         active: OperationScope | None = None
         try:
             with self.services.scope(getattr(self.config.operation_limits, name)) as active:
+                self._drain_retired()
                 result = operation()
             return result, active.usage
         except Exception as error:
@@ -91,16 +100,45 @@ class BaseAdapter:
     def reset_user(self, user_id: str) -> None:
         if not user_id.strip():
             raise ValueError("nonblank_baseline_user_required")
-        previous = self._users.get(user_id)
-        if previous is not None:
-            self._retire_generation(user_id, previous.generation)
+        self.release_user(user_id)
         self._users[user_id] = UserState()
+
+    def release_user(self, user_id: str) -> None:
+        """Retire local case state; defer storage work to an accounted operation.
+
+        Only generations that may own backend data enter the pending queue.
+        Repeated empty resets cannot grow it. The harness releases completed
+        cases through this optional hook without changing the seven-method API.
+        """
+        if not user_id.strip():
+            raise ValueError("nonblank_baseline_user_required")
+        state = self._users.pop(user_id, None)
+        if state is not None:
+            if state.generation in self._materialized:
+                self._retired[state.generation] = user_id
+            for key in tuple(self._history_queries):
+                if key[:2] == (state.generation, user_id):
+                    item = self._history_queries.pop(key)
+                    self._history_totals["question_cases"] += 1
+                    self._history_totals["truncated_question_cases"] += int(item.truncated_items > 0)
+                    self._history_totals["truncated_items"] += item.truncated_items
+                    self._history_totals["truncated_tokens"] += item.truncated_tokens
         self._questions.pop(user_id, None)
         self._invalidate(user_id)
 
-    def _retire_generation(self, user_id: str, generation: str) -> None:
-        """Release owned generation state; reset remains local and uncharged."""
-        del user_id, generation
+    def _retire_backend(self, generation: str, user_id: str) -> None:
+        """Overridden only by adapters owning materialized replay resources."""
+
+    def _drain_retired(self) -> None:
+        for generation, user_id in tuple(self._retired.items()):
+            self._retire_backend(generation, user_id)
+            # Remove the obligation only after backend retirement succeeds.
+            self._retired.pop(generation)
+            self._materialized.discard(generation)
+
+    def close(self) -> None:
+        for user_id in tuple(self._users):
+            self.release_user(user_id)
 
     def set_clock(self, ts: datetime) -> None:
         if ts.tzinfo is None or ts.utcoffset() is None:
@@ -276,9 +314,12 @@ class BaseAdapter:
             "deletion_boundary": "current_replay_generation_raw_state_only",
             "reset_policy": "new_local_replay_generation",
             "history_truncation": {
-                "question_cases": len(self._history_queries),
-                "truncated_question_cases": sum(item.truncated_items > 0 for item in self._history_queries.values()),
-                "truncated_items": sum(item.truncated_items for item in self._history_queries.values()),
-                "truncated_tokens": sum(item.truncated_tokens for item in self._history_queries.values()),
+                "question_cases": self._history_totals["question_cases"] + len(self._history_queries),
+                "truncated_question_cases": self._history_totals["truncated_question_cases"]
+                + sum(item.truncated_items > 0 for item in self._history_queries.values()),
+                "truncated_items": self._history_totals["truncated_items"]
+                + sum(item.truncated_items for item in self._history_queries.values()),
+                "truncated_tokens": self._history_totals["truncated_tokens"]
+                + sum(item.truncated_tokens for item in self._history_queries.values()),
             },
         }

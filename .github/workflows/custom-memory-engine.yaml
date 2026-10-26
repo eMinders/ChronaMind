@@ -47,7 +47,7 @@ jobs:
       - run: uv sync --frozen --extra baselines --python 3.12.12
       - name: Prepare immutable local model assets
         run: uv run --no-sync python -m evaluation.baselines.assets prepare --directory "$CME_BASELINE_TEST_ASSETS"
-      - run: uv run --no-sync ruff check src tests research/benchmarks implementation/tests evaluation && uv run --no-sync ruff format --check src tests research/benchmarks implementation/tests evaluation
+      - run: uv run --no-sync ruff check src tests research/benchmarks implementation evaluation && uv run --no-sync ruff format --check src tests research/benchmarks implementation evaluation
       - run: uv run --no-sync pyright
       - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
       - run: uv run --no-sync pytest -q

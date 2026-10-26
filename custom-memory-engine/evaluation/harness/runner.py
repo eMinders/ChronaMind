@@ -73,6 +73,13 @@ class _AdapterResources(Protocol):
     def close(self) -> None: ...
 
 
+@runtime_checkable
+class _AdapterCaseLifecycle(MemorySystemAdapter, Protocol):
+    """Optional local hook; backend retirement belongs to accounted operations."""
+
+    def release_user(self, user_id: str) -> None: ...
+
+
 def _validate_json(value: object) -> None:
     """Refuse Python-only values and JSON's nonfinite/implicit-key coercions."""
     if value is None or type(value) in (str, bool, int):
@@ -233,8 +240,9 @@ def run_evaluation(
     with ArtifactWriter(output_root, run_id, config.config_id, suite_id) as writer, ExitStack() as resources:
         ledger = BudgetLedger(output_root, config)
         adapter = adapter_factory(config)
+        adapter_resources = resources.enter_context(ExitStack())
         if isinstance(adapter, _AdapterResources):
-            resources.callback(lambda owned_adapter=adapter: owned_adapter.close())
+            adapter_resources.callback(adapter.close)
         event_sink = partial(_drain_adapter_events, adapter, writer)
         for case in cases:
             if not isinstance(case, EvaluationCase):
@@ -243,12 +251,18 @@ def run_evaluation(
                 raise ValueError("duplicate_cluster_id")
             seen_clusters.add(case.cluster_id)
             case_count += 1
-            if case_count > 1 and isinstance(adapter, _AdapterResources):
+            if (
+                case_count > 1
+                and isinstance(adapter, _AdapterResources)
+                and not isinstance(adapter, _AdapterCaseLifecycle)
+            ):
                 # Retire the previous case's owned store, worker, graph names,
                 # and provenance maps before the next case starts. This keeps
                 # replay resource usage bounded; reset remains local/uncharged.
-                adapter.close()
+                adapter_resources.close()
                 adapter = adapter_factory(config)
+                if isinstance(adapter, _AdapterResources):
+                    adapter_resources.callback(adapter.close)
                 event_sink = partial(_drain_adapter_events, adapter, writer)
             deletion_supported: dict[str, bool] = {}
             for user_id in case.user_ids:
@@ -421,6 +435,9 @@ def run_evaluation(
                         "answer_ms": answer_delta,
                     }
                 )
+            if isinstance(adapter, _AdapterCaseLifecycle):
+                for user_id in case.user_ids:
+                    adapter.release_user(user_id)
         if not case_count or not question_count:
             raise ValueError("nonempty_evaluation_questions_required")
         # Detect edits while a loader was consuming the declared split.

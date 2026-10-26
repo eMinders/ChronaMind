@@ -251,3 +251,43 @@ def test_parent_sdk_failure_preserves_every_attempt_charge_and_cleans_graph() ->
         assert len(transport.requests) == 2
     finally:
         adapter.close()
+
+
+def test_parent_replay_retirement_bounds_graphs_and_provenance_without_model_cleanup_calls() -> None:
+    adapter, transport, graph = create_adapter()
+    foreign = "cme_" + uuid4().hex * 2
+    active = "other"
+    with redis.Redis(
+        host="127.0.0.1", port=graph["port"], socket_timeout=3, socket_connect_timeout=3, decode_responses=True
+    ) as connection:
+        existing = set(connection.execute_command("GRAPH.LIST"))
+        connection.execute_command("GRAPH.QUERY", foreign, "CREATE (:ForeignOwner {marker: 'preserve'})")
+        try:
+            adapter.reset_user(active)
+            adapter.ingest_turn(turn("active-source", "Ada likes Jasmine Tea.", user=active, speaker="Ada"))
+            active_tenant = adapter._tenant(active)
+            for _ in range(6):
+                adapter.reset_user("user")
+                adapter.ingest_turn(turn("reused-source", "Ada likes Jasmine Tea.", speaker="Ada"))
+                tenant = adapter._tenant("user")
+                assert adapter._worker._graph_tenants == {active_tenant, tenant}
+                assert len(adapter._episodes) == len(adapter._materialized) == 2
+                assert connection.exists(tenant) and connection.exists(active_tenant) and connection.exists(foreign)
+                assert set(connection.execute_command("GRAPH.LIST")) == existing | {foreign, active_tenant, tenant}
+                before = len(transport.requests)
+                adapter.release_user("user")
+                assert len(adapter._episodes) == 1 and tenant in adapter._worker._graph_tenants
+                receipt = adapter.drain_queue(active)
+                assert receipt.usage == Usage.zero() and len(transport.requests) == before
+                assert adapter._worker._graph_tenants == {active_tenant}
+                assert (
+                    not connection.exists(tenant) and connection.exists(active_tenant) and connection.exists(foreign)
+                )
+                probe = QuestionRecord(question_id="active-probe", user_id=active, question="What does Ada like?")
+                adapter.prepare_question(probe)
+                result = adapter.retrieve(active, probe.question, "current", CLOCK, adapter.config.B_mem)
+                assert result.items[0].evidence_turn_ids == ("active-source",)
+        finally:
+            adapter.close()
+            assert connection.exists(foreign)
+            connection.execute_command("GRAPH.DELETE", foreign)

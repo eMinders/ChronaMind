@@ -8,6 +8,7 @@ accounted parent bridges. No vendor OpenAI/HF defaults are constructed.
 import hashlib
 import importlib.util
 import platform
+import re
 from datetime import UTC, datetime, tzinfo
 from importlib.metadata import version
 from pathlib import Path
@@ -119,11 +120,14 @@ class Mem0Worker:
             raise ValueError("uncontrolled_optional_mem0_models_present")
         _install_clock_shims()
         self.configuration = configuration
-        self.memory: Memory | None = None
+        self.memories: dict[str, Memory] = {}
+        self.clients: dict[str, QdrantClient] = {}
 
-    def initialize(self) -> Memory:
-        if self.memory is not None:
-            return self.memory
+    def initialize(self, tenant: str) -> Memory:
+        if re.fullmatch(r"cme_[a-f0-9]{64}", tenant) is None:
+            raise ValueError("owned_mem0_namespace_required")
+        if tenant in self.memories:
+            return self.memories[tenant]
         settings = self.configuration["settings"]
         # Pinned factory seams, scoped to this disposable worker only. Ordinary
         # provider names retain actual SDK validation; no global parent patches.
@@ -132,6 +136,7 @@ class Mem0Worker:
         cast(Any, LlmFactory).create = classmethod(lambda cls, *args, **kwargs: ParentLLM(settings))
         cast(Any, EmbedderFactory).create = classmethod(lambda cls, *args, **kwargs: ParentEmbedder(settings))
         client = QdrantClient(location=":memory:")
+        self.clients[tenant] = client
         config = MemoryConfig.model_validate(
             {
                 "llm": {
@@ -162,8 +167,46 @@ class Mem0Worker:
                 "reranker": None,
             }
         )
-        self.memory = Memory(config)
-        return self.memory
+        memory = Memory(config)
+        self.memories[tenant] = memory
+        return memory
+
+    def retire(self, tenant: str) -> None:
+        """Dispose one owned in-memory vector store and its SQLite history.
+
+        Mem0.delete leaves content in native history; separate instances let
+        retirement free that history without modifying another active tenant.
+        Keep failed cleanup handles for a retry during final close.
+        """
+        if re.fullmatch(r"cme_[a-f0-9]{64}", tenant) is None:
+            raise ValueError("owned_mem0_namespace_required")
+        failed = False
+        memory = self.memories.get(tenant)
+        client = self.clients.get(tenant)
+        if memory is not None:
+            try:
+                memory.close()
+            except Exception:
+                failed = True
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                failed = True
+        if failed:
+            raise RuntimeError("owned_mem0_cleanup_failed")
+        self.memories.pop(tenant, None)
+        self.clients.pop(tenant, None)
+
+    def close(self) -> None:
+        failed = False
+        for tenant in tuple(self.clients.keys() | self.memories.keys()):
+            try:
+                self.retire(tenant)
+            except Exception:
+                failed = True
+        if failed:
+            raise RuntimeError("owned_mem0_cleanup_failed")
 
     def operation(self, request: dict[str, Any]) -> Any:
         global _CLOCK, _OBSERVATION
@@ -184,8 +227,11 @@ class Mem0Worker:
             _OBSERVATION = None
 
     def _operation(self, request: dict[str, Any]) -> Any:
-        memory = self.initialize()
         tenant = request["tenant"]
+        if request["operation"] == "retire":
+            self.retire(tenant)
+            return {"retired": True}
+        memory = self.initialize(tenant)
         if request["operation"] == "ingest":
             turn = request["turn"]
             speaker = turn.get("source_speaker")
@@ -221,15 +267,19 @@ class Mem0Worker:
 def main() -> None:
     worker = Mem0Worker(receive())
     send({"type": "ready", "vendor": "mem0ai", "version": "2.2.1", "python": platform.python_version()})
-    while True:
-        request = receive()
-        if request.get("operation") == "close":
-            send({"type": "result", "result": None})
-            return
-        try:
-            send({"type": "result", "result": worker.operation(request)})
-        except Exception as error:
-            send({"type": "error", "exception_type": type(error).__name__})
+    try:
+        while True:
+            request = receive()
+            if request.get("operation") == "close":
+                worker.close()
+                send({"type": "result", "result": None})
+                return
+            try:
+                send({"type": "result", "result": worker.operation(request)})
+            except Exception as error:
+                send({"type": "error", "exception_type": type(error).__name__})
+    finally:
+        worker.close()
 
 
 if __name__ == "__main__":

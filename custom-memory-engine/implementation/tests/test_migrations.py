@@ -16,6 +16,7 @@ import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection, sql
 from psycopg.conninfo import make_conninfo
+from psycopg.errors import ForeignKeyViolation
 from pydantic import SecretStr, ValidationError
 
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
@@ -528,6 +529,67 @@ async def test_catalog_drift_is_not_silently_accepted_and_explicit_reset_restore
             "AND conname='valid_wellformed'"
         )
         assert await cursor.fetchall() == [("valid_wellformed",)]
+
+
+@pytest.mark.integration
+async def test_status_rejects_a_foreign_key_recreated_on_the_wrong_relation(database: migrate.MigrationConfig) -> None:
+    runner = migrate.MigrationRunner(database)
+    await runner.apply()
+    async with connect(database) as conn:
+        await seed_user(conn)
+        await conn.execute("ALTER TABLE memory_evidence DROP CONSTRAINT memory_evidence_user_id_fkey")
+        await conn.execute(
+            "ALTER TABLE job ADD CONSTRAINT memory_evidence_user_id_fkey FOREIGN KEY (user_id) REFERENCES app_user(id)"
+        )
+        query = """SELECT c.relname FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid
+                   WHERE con.conname='memory_evidence_user_id_fkey' AND con.connamespace=%s::regnamespace"""
+        cursor = await conn.execute(query, (database.schema_name,))
+        assert await cursor.fetchall() == [("job",)]
+        status = await runner.status()
+        assert status.state == "drifted" and status.reason == "catalog_drift"
+        with pytest.raises(migrate.MigrationError, match="catalog_drift"):
+            await runner.apply()
+        await assert_seed_retained(conn)
+        await runner.reset(confirm_schema=database.schema_name)
+        assert (await runner.status()).state == "applied"
+        cursor = await conn.execute(query, (database.schema_name,))
+        assert await cursor.fetchall() == [("memory_evidence",)]
+
+
+@pytest.mark.integration
+async def test_status_rejects_disabled_internal_foreign_key_enforcement(database: migrate.MigrationConfig) -> None:
+    runner = migrate.MigrationRunner(database)
+    await runner.apply()
+    async with connect(database) as conn:
+        await seed_user(conn)
+        await conn.execute("ALTER TABLE memory_evidence DISABLE TRIGGER ALL")
+        triggers = """SELECT count(*),bool_and(tgenabled=%s) FROM pg_trigger
+                      WHERE tgrelid='memory_evidence'::regclass AND tgisinternal"""
+        cursor = await conn.execute(triggers, ("D",))
+        state = await cursor.fetchone()
+        assert state is not None and state[0] > 0 and state[1] is True
+        orphan_insert = """INSERT INTO memory_evidence(version_id,turn_id,user_id,evidence_span,evidence_role)
+                           VALUES ('missing-version','missing-turn','retained-user','fixture','support')"""
+        # The privileged disposable fixture demonstrates the lost FK guarantee,
+        # rather than relying solely on the trigger metadata as the oracle.
+        await conn.execute(orphan_insert)
+        cursor = await conn.execute("SELECT count(*) FROM memory_evidence")
+        assert await cursor.fetchone() == (1,)
+        status = await runner.status()
+        assert status.state == "drifted" and status.reason == "catalog_drift"
+        with pytest.raises(migrate.MigrationError, match="catalog_drift"):
+            await runner.apply()
+        await assert_seed_retained(conn)
+        await runner.reset(confirm_schema=database.schema_name)
+        assert (await runner.status()).state == "applied"
+        cursor = await conn.execute("SELECT count(*) FROM memory_evidence")
+        assert await cursor.fetchone() == (0,)
+        cursor = await conn.execute(triggers, ("O",))
+        state = await cursor.fetchone()
+        assert state is not None and state[0] > 0 and state[1] is True
+        await seed_user(conn)
+        with pytest.raises(ForeignKeyViolation):
+            await conn.execute(orphan_insert)
 
 
 @pytest.mark.integration

@@ -14,6 +14,17 @@ syntax-only lint compatibility and CI-context correction.
 
 ## Requirement-to-evidence map
 
+Post-merge assurance on 27 October addresses remaining cases after the team's
+per-case cleanup/binary-search patch. New regressions prove replacement adapters
+close exactly once on success and second-case failure, local resets defer storage
+work to accounted operations, completed-case metadata remains cumulative, and
+active/foreign backend scopes survive retirement. Native checks cover PostgreSQL,
+Mem0/Qdrant/SQLite and Graphiti/FalkorDB. Work counters and actual frozen-tokenizer
+Unicode/exact-window oracles verify exact context selection with bounded production
+tokenization work. See [`POSTMERGE-assurance.md`](POSTMERGE-assurance.md) for the
+combined follow-up's executed evidence and limits. Earlier totals above are dated
+verification of the original contribution.
+
 | Requirement | Implementation and behavioral evidence |
 | --- | --- |
 | B0 explicit session / question-only fallback | `b0_session.py`; `test_raw_baselines.py`, including cross-session exclusion and missing-session behavior. |

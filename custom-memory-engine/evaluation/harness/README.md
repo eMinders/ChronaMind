@@ -62,6 +62,11 @@ must bridge their async internals without changing this common interface.
   question and deletion events preserve input order; clocks must be aware and
   nondecreasing per user, with strictly increasing ingestion clocks. Every case
   resets its users. Queues are drained before questions and pending writes abort.
+  Adapters with the optional local `release_user` hook release completed case
+  state while retaining campaign metadata; backend retirement occurs inside the
+  next accounted operation. Resource-owning adapters without that hook retain
+  per-case close/recreation. A bounded child resource stack registers each
+  replacement, including the final adapter and failure paths, before publication.
   Source adapters own stable chronological/D-23 normalization. Gold answers and
   evidence labels are absent from `QuestionRecord` and `TurnRecord`.
 - The optional `CaseDataset` envelope asserts its suite/split; the CLI verifies

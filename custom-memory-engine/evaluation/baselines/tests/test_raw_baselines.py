@@ -232,7 +232,7 @@ def test_reset_retires_old_dense_generation_without_touching_foreign_tenant() ->
     old_generation = adapter._state("a").generation
     adapter.reset_user("a")
     initialize(adapter, turn("new", "new alice", user="a"))
-    assert (old_generation, "a") in store._items
+    assert (old_generation, "a") not in store._items
     assert (adapter._state("a").generation, "a") in store._items
     assert (adapter._state("b").generation, "b") in store._items
     adapter.close()

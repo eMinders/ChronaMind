@@ -24,6 +24,22 @@ timestamps. None adds P's extraction, write gate or temporal query analyzer.
 
 ## Install and prepare local assets
 
+History fitting uses exact segmented counts when the frozen tokenizer certifies
+the rendered turn boundaries. It selects the earliest fitting suffix without
+assuming opaque token counts are monotone and validates the complete selected
+request, including framing and output reserve. Other codecs retain the exact
+fallback scan. The production path's tokenizer work grows linearly with rendered
+history length; this does not claim arbitrary custom codecs have that bound.
+
+Completed cases use an optional local `release_user` hook. Reset and release do
+not touch storage or providers; they queue only generations that may own backend
+state. The next accounted operation retires those exact scopes before dispatch.
+Final close handles remaining resources. Mem0 generations own separate local
+Qdrant/SQLite instances; Graphiti retirement closes the exact owned graph/client.
+Active tenants remain usable. Episode mappings are generation-scoped, and completed
+history diagnostics fold into aggregate counters. This teardown is resource
+management, separate from the unsupported vendor seven-channel deletion metric.
+
 From this directory's engine root (`custom-memory-engine/`):
 
 ```powershell

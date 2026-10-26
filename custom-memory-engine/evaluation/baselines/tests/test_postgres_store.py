@@ -14,6 +14,7 @@ from evaluation.baselines import stores
 from evaluation.baselines.b2h_hybrid import B2hHybridAdapter
 from evaluation.baselines.context import answer_messages
 from evaluation.baselines.tests.helpers import FakeServices, config, settings, turn, vector
+from evaluation.harness.budget import AccountedOperationError
 from evaluation.harness.models import QuestionRecord, TurnRecord
 
 TEST_DSN = "postgresql://cme_test:fixture-only@127.0.0.1:5433/cme_compatibility"
@@ -236,6 +237,62 @@ def test_real_postgres_english_fts_tenant_generation_delete_and_schema_ownership
         store.close()
     with psycopg.connect(dsn) as connection:
         assert connection.execute("SELECT 1 FROM pg_namespace WHERE nspname=%s", (schema,)).fetchone() is None
+
+
+@pytest.mark.integration
+def test_real_postgres_replay_retirement_bounds_rows_and_rechecks_schema_ownership() -> None:
+    raw_dsn = os.environ.get("CME_BASELINE_TEST_DATABASE_URL")
+    if raw_dsn is None:
+        pytest.skip("root coordinates the dedicated disposable baseline PostgreSQL run")
+    dsn = DisposableDatabaseConfig(database_url=SecretStr(raw_dsn)).database_url.get_secret_value()
+    selected = settings()
+    services = FakeServices(selected)
+    store = stores.PostgresRawStore(dsn)
+    adapter = B2hHybridAdapter(config("B2h", selected), selected, services, store)
+    adapter.set_clock(datetime(2020, 1, 2, tzinfo=UTC))
+    try:
+        adapter.reset_user("active")
+        adapter.ingest_turn(turn("active-turn", "active retained content", user="active"))
+        active_generation = adapter._state("active").generation
+        store.put("foreign-generation", "foreign-user", (chunk("foreign", user="foreign-user"),))
+        for index in range(20):
+            user = f"case-{index}"
+            adapter.reset_user(user)
+            adapter.ingest_turn(turn("same-turn", "case content", user=user))
+            with psycopg.connect(dsn) as connection:
+                scopes = connection.execute(
+                    sql.SQL("SELECT DISTINCT namespace,user_id FROM {}.raw_chunks").format(
+                        sql.Identifier(store.schema)
+                    )
+                ).fetchall()
+            assert len(scopes) == 3
+            adapter.release_user(user)
+        # A changed marker must prevent pending retirement from deleting rows.
+        pending = dict(adapter._retired)
+        with psycopg.connect(dsn) as connection:
+            connection.execute(
+                sql.SQL("UPDATE {}.owner SET token='foreign-owner'").format(sql.Identifier(store.schema))
+            )
+        try:
+            with pytest.raises(AccountedOperationError, match="baseline_operation_failed"):
+                adapter.drain_queue("active")
+            assert adapter._retired == pending
+        finally:
+            with psycopg.connect(dsn) as connection:
+                connection.execute(
+                    sql.SQL("UPDATE {}.owner SET token=%s").format(sql.Identifier(store.schema)), (store._owner_token,)
+                )
+        adapter.drain_queue("active")
+        assert store.list(active_generation, "active")
+        assert store.list("foreign-generation", "foreign-user")
+        with psycopg.connect(dsn) as connection:
+            scopes = connection.execute(
+                sql.SQL("SELECT DISTINCT namespace,user_id FROM {}.raw_chunks").format(sql.Identifier(store.schema))
+            ).fetchall()
+        assert set(scopes) == {(active_generation, "active"), ("foreign-generation", "foreign-user")}
+        assert set(adapter._users) == {"active"} and not adapter._retired
+    finally:
+        adapter.close()
 
 
 @pytest.mark.integration
