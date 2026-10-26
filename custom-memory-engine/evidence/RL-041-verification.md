@@ -12,6 +12,7 @@ script are unchanged.
 | Explicit research database | `MigrationConfig.from_environment()` reads only `RL_DATABASE_URL`; rejects implicit/system targets. Real API and subprocess CLI tests use a disposable research database. |
 | Idempotent apply | First apply creates version 1; a repeat returns `unchanged` with identical table OIDs, one history row and retained seeded data. Concurrent applies settle to one install. |
 | Status/version | Read-only connections inspect absent/applied schemas without creating objects. Source identity, malformed/unknown history and live catalog drift are tested independently. |
+| Constraint enforcement drift | Real PostgreSQL tests move an unchanged FK to the wrong table and disable internal FK triggers. Status reports drift, apply refuses, and confirmed reset restores the correct owning table and rejects missing-parent rows with SQLSTATE 23503. |
 | Clean reset | Exact namespace confirmation, owned schema marker/current owner and valid migration history are required. Real tests assert twelve empty domain tables, recreated history and untouched outside schema/extension identities. |
 | Atomic failure | PostgreSQL errors injected after installation prove complete apply rollback and reset rollback retaining original data, table identities and history. Unknown objects and external foreign keys block destructive reset. |
 | First extension bootstrap | Fresh `template0` databases start without either extension; installation puts both in `public`, reset preserves their identities, and a failed install rolls them back. |
@@ -20,10 +21,10 @@ script are unchanged.
 
 ## Reproduction
 
-Local full-suite verification passed **428/428 tests**, including **37/37
+Local full-suite verification passed **430/430 tests**, including **39/39
 cases marked integration**, with zero failures, skips or collection errors.
-The migration file contributes **22 unit tests and 19 integration cases**. The
-19 migration integration cases all require PostgreSQL; the inherited suite's
+The migration file contributes **22 unit tests and 21 integration cases**. The
+21 migration integration cases all require PostgreSQL; the inherited suite's
 integration marker also includes some static schema-contract checks. The
 separate reduced SQL harness also passed all **43 assertions**. The owned local
 database lifecycle verified the pinned server/extension versions and removed all
@@ -71,6 +72,17 @@ was changed. Four replay-cache `isinstance` expressions received equivalent
 union syntax so the repository's older Ruff also accepts the existing cache code.
 
 ## Boundaries
+
+Renewed assurance on 27 October found two catalog false negatives despite the
+initial 428-test pass: constraint-owning relations were absent from the digest,
+and internal FK triggers were excluded. Disposable probes directly reproduced
+both, including an accepted orphan evidence row with enforcement disabled. Both
+new regressions fail against the original fingerprint queries (41 pass / 2 fail)
+and check recovery as well as detection. The correction records stable semantic
+trigger identities, not generated trigger names or OIDs. Separate storage probes
+confirmed advisory-lock timeout SQLSTATE 55P03 and cancellation both leave no
+partial install and allow a successful retry. Earlier unmerged fingerprints
+intentionally report drift; applying does not silently bless them.
 
 These are software checks using synthetic fixture rows, not research outcomes.
 Runtime role provisioning/RLS validation, transactional supersession/archival,

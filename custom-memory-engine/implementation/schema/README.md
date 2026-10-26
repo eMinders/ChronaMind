@@ -38,8 +38,9 @@ Unknown versions and edited historical sources are refused, rather than reapplie
 
 `status` reads without creating schema objects and reports `unapplied`, `applied`,
 `unmanaged` or `drifted`, plus the recorded version/checksum and a static reason.
-The live digest checks columns/defaults, relations/owners, constraints, indexes,
-functions, triggers, RLS/policies, types and extension versions; row data and
+The live digest checks columns/defaults, relations/owners, constraints and their
+owning tables, indexes, functions, triggers (including internal foreign-key firing
+state), RLS/policies, types and extension versions; row data and
 storage statistics are excluded. `apply` returns `unchanged` on a matching install
 and preserves both rows and table identities. Constructors perform no I/O.
 
@@ -65,6 +66,12 @@ The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`
 revalidates copied configuration. CLI output uses JSON, with diagnostics on stderr;
 errors contain static categories/SQLSTATE, never provider content or connection
 credentials. Windows CLI execution uses a selector event loop for psycopg.
+
+Pre-merge installations created before the constraint-enforcement fingerprint
+correction report `catalog_drift` with the revised runner. `apply` does not rewrite
+their recorded fingerprint. A confirmed reset recreates disposable fixtures;
+databases whose rows must be retained require an operator-reviewed migration
+instead of a reset.
 
 `implementation/tests/test_migrations.py` exercises real provisioning, repeated
 apply/reset, failure rollback, concurrent apply, ownership/drift, external

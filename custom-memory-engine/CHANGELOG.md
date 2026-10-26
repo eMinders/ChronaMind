@@ -6,6 +6,7 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ## RL-041 Schema Migrations (26 October 2026)
 
+- Follow-up assurance on 27 October: included constraint-owning relations and internal foreign-key trigger enforcement in catalog fingerprints. Real PostgreSQL regressions detect moved constraints and disabled enforcement, refuse apply and verify confirmed reset restores foreign-key rejection. Lock-timeout and cancellation probes also verify rollback and retry.
 - Added async, atomic schema apply, read-only version/status inspection and confirmed clean reset against explicit `RL_DATABASE_URL`, with canonical source checksums, private history, live catalog drift checks and a migration advisory lock.
 - Kept shared extensions in public and reset only known owned objects with `RESTRICT`, preserving foreign dependencies through rollback. Added independent unit and real PostgreSQL tests for idempotency, concurrent apply, failed apply/reset, malformed history, first extension bootstrap and all 43 bitemporal assertions against the full schema.
 - Extended isolated engine lint/type scopes to include the schema runner. Four equivalent replay-cache `isinstance` expressions use union syntax for compatibility with root CI's older Ruff. A scoped Git attribute preserves frozen split files' canonical LF bytes on Windows; their content and recorded hashes are unchanged. Product code, dependencies and frozen research contracts remain unchanged.
