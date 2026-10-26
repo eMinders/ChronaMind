@@ -123,7 +123,8 @@ Worker shims are release/source-hash checked: Mem0 observation dates use the
 original source date while its current/recorded dates use replay UTC; Graphiti
 uses injected recorded time and distinguishes internal query embeddings from
 stored document embeddings. Graphiti's native 16384-token request is explicitly
-capped to frozen 2048, and both requested/effective limits are observable. These
+capped to frozen 2048; integration tests inspect both limits in worker IPC. The
+persisted per-attempt accounting records actual dispatched usage and latency. These
 are documented integration policies, not changes to vendor extraction prompts.
 
 Mem0 uses its semantic-only fallback without spaCy/fastembed/BM25; these optional

@@ -10,6 +10,7 @@ This file records the revision history of the Research Lab specification (`Gradu
 - Added immutable official ONNX/tokenizer asset preparation, complete overflow chunking, explicit public assembly, isolated vendor workers and per-attempt/episode token, latency, failure and cost accounting. SDK JSON modes, source timestamps and injected replay dates are preserved through checked integration seams.
 - Extended harness context policies, clean question preparation, source-speaker handling, unavailable evidence metrics, adapter instrumentation and owned-resource cleanup before success publication. Optional dependencies remain separate from the default installation and root application.
 - Added actual local HTTP, official model, PostgreSQL, Mem0/Qdrant/SQLite and Graphiti/FalkorDB software integration checks alongside boundary, budget, configuration, failure and cleanup regressions. Verification and immutable source provenance are recorded in `evidence/RL-031-verification.md`.
+- Preserved the team's frozen split bytes across Windows checkouts with a split-scoped LF attribute; split assignments, hashes and sign-off records are unchanged.
 - B4 D-21 inclusion, paid-provider availability, pilot parameters, research approvals, confirmatory/test runs and full-engine temporal/deletion conformance remain separate gates; no such outcome is claimed by these synthetic software tests.
 
 ## RL-025 Benchmark Adapters (26 October 2026)

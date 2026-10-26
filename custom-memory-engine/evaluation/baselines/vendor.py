@@ -212,7 +212,9 @@ class VendorProcess:
 
     def close(self) -> None:
         process = self.process
-        abnormal = self._cleanup_required or (process is not None and process.poll() not in (None, 0))
+        # A previously exited child never acknowledged this close, even when
+        # its OS status is zero. Its external graphs still require recovery.
+        abnormal = self._cleanup_required or (process is not None and process.poll() is not None)
         if process is not None:
             if process.poll() is None:
                 try:
