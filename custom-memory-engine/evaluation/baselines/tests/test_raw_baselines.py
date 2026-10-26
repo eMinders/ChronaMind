@@ -9,7 +9,7 @@ from evaluation.baselines.b0_session import B0SessionAdapter
 from evaluation.baselines.b1_full_history import B1FullHistoryAdapter
 from evaluation.baselines.b2_dense import B2DenseAdapter
 from evaluation.baselines.b2h_hybrid import B2hHybridAdapter, reciprocal_rank_fusion
-from evaluation.baselines.context import answer_messages, fit_ranked_items, format_turn
+from evaluation.baselines.context import answer_messages, fit_ranked_items, format_turn, history_items
 from evaluation.baselines.contracts import Embeddings
 from evaluation.baselines.runtime import MeteredServices
 from evaluation.baselines.stores import MemoryRawStore
@@ -74,6 +74,23 @@ def test_b1_full_history_exceeds_bmem_and_preserves_speakers_roles_order() -> No
     assert result.rendered_context.index("FIRST") < result.rendered_context.index("SECOND")
     adapter.answer("user", probe, CLOCK)
     assert result.diagnostics is not None and result.diagnostics.truncated_items == 0
+
+
+def test_b1_history_truncation_uses_bounded_tokenizer_work() -> None:
+    class CountingTokenizer(CharacterTokenizer):
+        def __init__(self) -> None:
+            self.count = 0
+
+        def count_messages(self, messages):
+            self.count += 1
+            return super().count_messages(messages)
+
+    tokenizer = CountingTokenizer()
+    selected = settings(context_window_tokens=3200)
+    turns = tuple(turn(str(index), "x" * 100) for index in range(2000))
+    items, _ = history_items(turns, QuestionRecord(question_id="q", user_id="user", question="Q"), selected, tokenizer, CLOCK)
+    assert items and len(items) < len(turns)
+    assert tokenizer.count < 40
 
 
 def test_b1_drops_oldest_whole_turns_at_actual_prompt_window() -> None:
@@ -203,6 +220,22 @@ def test_prepared_context_is_invalidated_by_mutation(mutation) -> None:
         adapter.prepare_question(probe.model_copy(update={"question_id": "another"}))
     with pytest.raises(ValueError, match="prepared"):
         adapter.answer("user", probe, CLOCK)
+
+
+def test_reset_retires_old_dense_generation_without_touching_foreign_tenant() -> None:
+    selected = settings()
+    services = FakeServices(selected)
+    store = MemoryRawStore()
+    adapter = B2DenseAdapter(config("B2", selected), selected, services, store)
+    initialize(adapter, turn("a", "alice", user="a"), turn("b", "bob", user="b"))
+    old_generation = adapter._state("a").generation
+    adapter.reset_user("a")
+    initialize(adapter, turn("new", "new alice", user="a"))
+    assert (old_generation, "a") in store._items
+    assert (adapter._state("a").generation, "a") in store._items
+    assert (adapter._state("b").generation, "b") in store._items
+    adapter.close()
+    assert store._items == {}
 
 
 def test_reset_and_local_deletion_remain_tenant_scoped() -> None:

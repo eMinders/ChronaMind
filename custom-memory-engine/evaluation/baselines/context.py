@@ -68,15 +68,35 @@ def history_items(
     ) > (settings.context_window_tokens):
         raise ValueError("question_exceeds_answer_context_window")
     items = tuple(turn_item(turn) for turn in turns)
+
+    def fits(start: int) -> bool:
+        context = join_items(items[start:])
+        return (
+            tokenizer.count_messages(answer_messages(settings, question, context, reference_clock))
+            + settings.request_overhead_tokens
+            + settings.max_output_tokens
+            <= settings.context_window_tokens
+        )
+
+    # Removing an oldest whole turn monotonically reduces the request payload.
+    # Locate the first fitting suffix with binary search, so long histories do
+    # not repeatedly tokenize every remaining suffix. Recheck and advance after
+    # the search to preserve exact framing behavior for tokenizers with boundary
+    # interactions at concatenation points.
+    low, high = 0, len(items)
+    while low < high:
+        middle = (low + high) // 2
+        if fits(middle):
+            high = middle
+        else:
+            low = middle + 1
+    start = low
+    while start < len(items) and not fits(start):
+        start += 1
+    selected = items[start:]
     original_tokens = len(tokenizer.encode(join_items(items)))
-    while items and (
-        tokenizer.count_messages(answer_messages(settings, question, join_items(items), reference_clock))
-        + settings.request_overhead_tokens
-        + settings.max_output_tokens
-        > settings.context_window_tokens
-    ):
-        items = items[1:]
-    return items, max(0, original_tokens - len(tokenizer.encode(join_items(items))))
+    selected_tokens = len(tokenizer.encode(join_items(selected)))
+    return selected, max(0, original_tokens - selected_tokens)
 
 
 def fit_ranked_items(

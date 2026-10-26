@@ -31,4 +31,4 @@ implementation/
 
 ## Status
 
-**`RL-040` schema DDL authored.** Twelve-table PostgreSQL schema lives in [`schema/001_full_schema.sql`](schema/001_full_schema.sql) with the invariant map in [`schema/README.md`](schema/README.md). Python migration runner (`RL-041`), supersession/archival procedures (`RL-042`), and retrieval APIs (`RL-043`) remain unstarted.
+**`RL-040` schema DDL and `RL-041` migration runner implemented.** The twelve-table PostgreSQL schema lives in [`schema/001_full_schema.sql`](schema/001_full_schema.sql); [`schema/migrate.py`](schema/migrate.py) provides atomic apply, status/version inspection and confirmed clean reset over an owned namespace. See [`schema/README.md`](schema/README.md) for commands, ownership and extension policy. Supersession/archival procedures (`RL-042`) and retrieval APIs (`RL-043`) remain separate work.

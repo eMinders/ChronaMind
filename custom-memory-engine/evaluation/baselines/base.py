@@ -91,9 +91,16 @@ class BaseAdapter:
     def reset_user(self, user_id: str) -> None:
         if not user_id.strip():
             raise ValueError("nonblank_baseline_user_required")
+        previous = self._users.get(user_id)
+        if previous is not None:
+            self._retire_generation(user_id, previous.generation)
         self._users[user_id] = UserState()
         self._questions.pop(user_id, None)
         self._invalidate(user_id)
+
+    def _retire_generation(self, user_id: str, generation: str) -> None:
+        """Release owned generation state; reset remains local and uncharged."""
+        del user_id, generation
 
     def set_clock(self, ts: datetime) -> None:
         if ts.tzinfo is None or ts.utcoffset() is None:

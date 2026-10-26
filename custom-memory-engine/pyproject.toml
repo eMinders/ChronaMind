@@ -63,7 +63,7 @@ line-length = 119
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
 
 [tool.pyright]
-include = ["src", "tests", "research/benchmarks", "implementation/tests", "evaluation"]
+include = ["src", "tests", "research/benchmarks", "implementation", "evaluation"]
 extraPaths = ["src", "."]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"

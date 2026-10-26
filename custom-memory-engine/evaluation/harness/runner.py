@@ -234,7 +234,7 @@ def run_evaluation(
         ledger = BudgetLedger(output_root, config)
         adapter = adapter_factory(config)
         if isinstance(adapter, _AdapterResources):
-            resources.callback(adapter.close)
+            resources.callback(lambda: adapter.close())
         event_sink = partial(_drain_adapter_events, adapter, writer)
         for case in cases:
             if not isinstance(case, EvaluationCase):
@@ -243,6 +243,13 @@ def run_evaluation(
                 raise ValueError("duplicate_cluster_id")
             seen_clusters.add(case.cluster_id)
             case_count += 1
+            if case_count > 1 and isinstance(adapter, _AdapterResources):
+                # Retire the previous case's owned store, worker, graph names,
+                # and provenance maps before the next case starts. This keeps
+                # replay resource usage bounded; reset remains local/uncharged.
+                adapter.close()
+                adapter = adapter_factory(config)
+                event_sink = partial(_drain_adapter_events, adapter, writer)
             deletion_supported: dict[str, bool] = {}
             for user_id in case.user_ids:
                 adapter.reset_user(user_id)

@@ -73,8 +73,8 @@ Install `uv` and CPython 3.12, then run from `custom-memory-engine/`:
 ```bash
 cd custom-memory-engine
 uv sync --frozen --python 3.12
-uv run ruff check src tests research/benchmarks implementation/tests evaluation
-uv run ruff format --check src tests research/benchmarks implementation/tests evaluation
+uv run ruff check src tests research/benchmarks implementation evaluation
+uv run ruff format --check src tests research/benchmarks implementation evaluation
 uv run pyright
 uv run pytest -q -m 'not integration'
 

@@ -55,6 +55,9 @@ class B2DenseAdapter(BaseAdapter):
             raise ValueError("dense_baseline_system_identity_required")
         self.store: RawStore = store if store is not None else MemoryRawStore()
 
+    def _retire_generation(self, user_id: str, generation: str) -> None:
+        self.store.delete(generation, user_id, "all", "generation-retirement")
+
     def ingest_turn(self, turn: TurnRecord) -> IngestReceipt:
         state = self._validate_turn(turn)
 
