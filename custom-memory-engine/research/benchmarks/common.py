@@ -38,6 +38,7 @@ class GoldQuestion(Record):
     question_type: str | None = None
     category: int | None = None
     gold_turn_ids: tuple[str, ...] = ()
+    unresolved_evidence_ids: tuple[str, ...] = ()
     primary_recall_eligible: bool = False
     abstention: bool = False
     original_question_date: AwareDatetime | None = None
@@ -55,6 +56,7 @@ class ReplayAudit(Record):
     replay_session_ids: tuple[str, ...] = ()
     clock_adjustments: tuple[ClockAdjustment, ...] = ()
     source_speakers: tuple[tuple[str, str], ...] = ()
+    unpaired_session_dates: tuple[str, ...] = ()
 
 
 class PreparedCase(Record):
@@ -224,6 +226,8 @@ class BenchmarkSource:
                     "original_date_anomaly_count": sum(g.original_date_anomaly for g in prepared.gold),
                     "primary_recall_eligible_count": sum(g.primary_recall_eligible for g in prepared.gold),
                     "missing_gold_evidence_count": sum(not g.gold_turn_ids for g in prepared.gold),
+                    "unresolved_evidence_question_count": sum(bool(g.unresolved_evidence_ids) for g in prepared.gold),
+                    "unpaired_session_date_count": len(audit.unpaired_session_dates),
                 }
             )
             yield prepared.case
@@ -271,7 +275,7 @@ class BenchmarkSource:
         gold = self._gold[question.question_id]
         if gold.user_id != question.user_id:
             raise ValueError("scoring_tenant_mismatch")
-        recall = evidence_recall(retrieval, gold.gold_turn_ids, k)
+        recall = None if gold.unresolved_evidence_ids else evidence_recall(retrieval, gold.gold_turn_ids, k)
         all_found = float(recall == 1.0) if recall is not None and len(set(gold.gold_turn_ids)) > 1 else None
         if self.suite_id == "LoCoMo":
             if gold.category is None:

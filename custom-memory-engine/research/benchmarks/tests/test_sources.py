@@ -427,3 +427,18 @@ def test_answerability_metadata_is_kept_out_of_system_inputs(source_repo: Path) 
     )
     assert len(seen) == 1
     assert json.loads((path / "scores.jsonl").read_bytes())["stratum"] == "abstention"
+
+
+def test_unresolved_evidence_keeps_qa_but_never_claims_perfect_recall(source_repo: Path) -> None:
+    item = locomo()
+    item["qa"][0]["evidence"] = ["D1:1", "D1:99"]
+    raw, manifest, digest = raw_file(source_repo, [item], "locomo10.json")
+    source = LoCoMoAdapter(raw, manifest_path=manifest)
+    selected = selection(source_repo, "LoCoMo", digest, ["fictional-conversation"])
+    path = run_source(source, source_repo, selected, "unresolved")
+    first = json.loads((path / "scores.jsonl").read_text().splitlines()[0])
+    values = {metric["name"]: metric["value"] for metric in first["metrics"]}
+    assert values["official_qa"] == 1.0
+    assert values["evidence_recall_at_k"] is None
+    audit = json.loads((path / "manifest.json").read_bytes())["benchmark_source"]["audit"][0]
+    assert audit["unresolved_evidence_question_count"] == 1

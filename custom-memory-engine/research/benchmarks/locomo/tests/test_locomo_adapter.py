@@ -123,8 +123,7 @@ def test_empty_evidence_is_kept_distinct_from_unknown_evidence() -> None:
     raw["qa"][0]["evidence"] = []
     assert prepare_conversation(raw).gold[0].gold_turn_ids == ()
     raw["qa"][0]["evidence"] = ["D8:99"]
-    with pytest.raises(ValueError, match="unknown_evidence"):
-        prepare_conversation(raw)
+    assert prepare_conversation(raw).gold[0].unresolved_evidence_ids == ("D8:99",)
 
 
 @pytest.mark.parametrize(
@@ -177,7 +176,6 @@ def test_invalid_top_level_shapes_fail_without_mutation(field: str, value: Any) 
     "change",
     [
         "missing_session_date",
-        "orphan_session_date",
         "malformed_session_key",
         "duplicate_speakers",
         "unknown_speaker",
@@ -196,8 +194,6 @@ def test_ambiguous_session_turn_or_question_records_are_rejected(change: str) ->
     conversation = raw["conversation"]
     if change == "missing_session_date":
         del conversation["session_1_date_time"]
-    elif change == "orphan_session_date":
-        conversation["session_3_date_time"] = "9:00 am on 1 May, 2023"
     elif change == "malformed_session_key":
         conversation["session_bad"] = []
     elif change == "duplicate_speakers":
@@ -222,3 +218,20 @@ def test_ambiguous_session_turn_or_question_records_are_rejected(change: str) ->
         raw["qa"][0]["question"] = " "
     with pytest.raises(ValueError):
         prepare_conversation(raw)
+
+
+def test_unpaired_date_metadata_does_not_invent_missing_dialogue() -> None:
+    raw = synthetic_conversation()
+    raw["conversation"]["session_9_date_time"] = "9:00 am on 9 May, 2023"
+    prepared = prepare_conversation(raw)
+    assert len([e for e in prepared.case.events if isinstance(e, IngestEvent)]) == 3
+    assert prepared.audit.unpaired_session_dates == ("session_9_date_time",)
+
+
+def test_compound_evidence_resolves_known_units_and_retains_unresolved_annotations() -> None:
+    raw = synthetic_conversation()
+    raw["qa"][0]["evidence"] = ["D1:1; D1:2", "D2:1 D1:1", "D1:99", "D"]
+    prepared = prepare_conversation(raw)
+    assert len(prepared.gold[0].gold_turn_ids) == 3
+    assert prepared.gold[0].unresolved_evidence_ids == ("D1:99", "D")
+    assert "unresolved_evidence_ids" not in prepared.case.model_dump_json()

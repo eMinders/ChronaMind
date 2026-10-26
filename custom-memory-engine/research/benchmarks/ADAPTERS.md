@@ -94,7 +94,7 @@ grant new budget or one-shot authority.
   generated observations and summaries are not treated as dialogue or fetched.
   Session dates use `h:mm am/pm on d Month, YYYY`, explicitly interpreted as UTC.
   Source dialogue IDs map gold evidence; missing evidence stays missing and
-  unknown references fail. Strata are numeric categories 1–5, reported per
+  compound references are resolved when unambiguous; unresolved/malformed annotations stay in scoring-only provenance and make evidence recall null. QA remains scoreable. Unpaired date-only metadata does not invent dialogue or extend replay time. Strata are numeric categories 1–5, reported per
   conversation; no pooled confirmatory result is computed.
 
 ## Exact official scoring and provenance
@@ -141,3 +141,14 @@ streaming, exact scorer parity, and a fixed B0-style test responder through both
 source adapters and official scorer boundaries. Fake judge replies establish
 software plumbing, not real judge quality, a production baseline, full S/M data
 coverage, an approved pilot/test run, or an H1–H4 result.
+
+## Mechanical validation against existing public caches
+
+A content-free offline schema audit (no system adapter, replay execution, scorer,
+model or split selection) validated all 500 pinned LongMemEval oracle records
+and all 10 pinned LoCoMo conversations/1,986 questions. LoCoMo contains 16
+unpaired session-date metadata keys, compound evidence annotations, and five
+questions with unresolved evidence. They are preserved and counted; no dialogue
+or gold link is invented, no record is dropped, and affected evidence recall is
+null. Exact official QA scoring is unchanged. This is input-format conformance,
+not a real benchmark evaluation; actual S/M coverage remains conditional.

@@ -97,7 +97,7 @@ def _source_sessions(conversation: Mapping[str, Any]) -> list[tuple[str, datetim
             date_numbers.add(int(match.group(1)))
         elif key.startswith("session_"):
             raise ValueError("invalid_session_key")
-    if not session_numbers or session_numbers != date_numbers:
+    if not session_numbers or not session_numbers.issubset(date_numbers):
         raise ValueError("session_dates_must_match_session_lists")
     result = []
     for number in sorted(session_numbers):
@@ -125,20 +125,32 @@ def _gold_answer(question: Mapping[str, Any], category: int) -> str:
     raise ValueError("invalid_gold_answer")
 
 
-def _gold_evidence(question: Mapping[str, Any], dialogue_ids: Mapping[str, str]) -> tuple[str, ...]:
-    """Resolve exact annotated dialogue IDs, tolerating their legacy parentheses."""
+def _gold_evidence(
+    question: Mapping[str, Any], dialogue_ids: Mapping[str, str]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Resolve compound IDs; preserve malformed/dangling gold without inventing turns."""
     values = _array(question.get("evidence", []), "evidence")
     result = []
+    unresolved: list[str] = []
     for value in values:
         source_id = _text(value, "evidence_id").strip()
         if source_id.startswith("(") and source_id.endswith(")"):
             source_id = source_id[1:-1].strip()
-        if not _DIALOGUE.fullmatch(source_id) or source_id not in dialogue_ids:
-            raise ValueError("unknown_evidence_dialogue_id")
-        mapped = dialogue_ids[source_id]
-        if mapped not in result:
-            result.append(mapped)
-    return tuple(result)
+        units = re.findall(r"D[1-9][0-9]*:(?:0|[1-9][0-9]*)", source_id)
+        remainder = re.sub(r"D[1-9][0-9]*:(?:0|[1-9][0-9]*)", "", source_id)
+        if not units or remainder.strip(" ;,()\t\r\n"):
+            if source_id not in unresolved:
+                unresolved.append(source_id)
+            continue
+        for unit in units:
+            if unit not in dialogue_ids:
+                if unit not in unresolved:
+                    unresolved.append(unit)
+                continue
+            mapped = dialogue_ids[unit]
+            if mapped not in result:
+                result.append(mapped)
+    return tuple(result), tuple(unresolved)
 
 
 def prepare_conversation(row: Mapping[str, Any]) -> PreparedCase:
@@ -217,6 +229,7 @@ def prepare_conversation(row: Mapping[str, Any]) -> PreparedCase:
             stratum=f"category_{category}",
         )
         events.append(QuestionEvent(clock=reference, question=question_record))
+        resolved, unresolved = _gold_evidence(question, dialogue_ids)
         gold.append(
             GoldQuestion(
                 question_id=question_id,
@@ -224,7 +237,8 @@ def prepare_conversation(row: Mapping[str, Any]) -> PreparedCase:
                 user_id=user_id,
                 answer=_gold_answer(question, category),
                 category=category,
-                gold_turn_ids=_gold_evidence(question, dialogue_ids),
+                gold_turn_ids=resolved,
+                unresolved_evidence_ids=unresolved,
                 abstention=category == 5,
             )
         )
@@ -241,6 +255,11 @@ def prepare_conversation(row: Mapping[str, Any]) -> PreparedCase:
             if turn.recorded_clock != turn.turn.source_timestamp
         ),
         source_speakers=tuple(source_speakers),
+        unpaired_session_dates=tuple(
+            key
+            for key in conversation
+            if _SESSION_DATE.fullmatch(key) and key.removesuffix("_date_time") not in conversation
+        ),
     )
     return PreparedCase(
         case=EvaluationCase(cluster_id=cluster_id, user_ids=(user_id,), events=tuple(events)),

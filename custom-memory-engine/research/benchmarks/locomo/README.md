@@ -40,3 +40,5 @@ python3 custom-memory-engine/research/benchmarks/locomo/fetch.py
 ## RL-025 source adapter
 
 The read-only `adapter.py` source facade is documented in [ADAPTERS.md](../ADAPTERS.md), including guarded selections, clocks, evidence/scorer provenance and synthetic verification. Acquisition above is separate from evaluation; adapters never invoke fetch or repair.
+
+The RL-025 mechanical schema audit also identified 16 date-only metadata keys and 5 questions with unresolved evidence annotations. The adapter preserves all 10 conversations/1,986 questions and flags those evidence metrics as unscored; it never invents missing turns. Compound well-formed evidence references are resolved explicitly. These are source-format checks, not QA evaluation results.

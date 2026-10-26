@@ -8,7 +8,7 @@ results, model-judge validation, real baselines or a pilot/test freeze.
 
 | Requirement | Implementation and evidence |
 | --- | --- |
-| Read-only oracle/S/M and LoCoMo loading | Checksum-bound streamed arrays, no fetch/repair calls, immutable input/manifest assertions, all variant identity roundtrips, mismatch/malformed/duplicate/missing-ID rejection tests. Streaming retains one history at a time. |
+| Read-only oracle/S/M and LoCoMo loading | Checksum-bound streamed arrays, no fetch/repair calls, immutable input/manifest assertions, all variant identity roundtrips, mismatch/malformed/duplicate/missing-selected-ID rejection tests. Streaming retains one history at a time. |
 | D-23 and R3 | Stable session order, source/recorded clocks kept distinct, cumulative microsecond ties, empty history and clamped reference-time tests; original-date anomaly sensitivity is separate. |
 | Evidence mapping | Source turn/dialogue IDs map through retrieved MEMORY_EVIDENCE links; unique gold coverage and top-k truncation tests; multi-gold all-found diagnostics, primary exclusions and nullable missingness. |
 | Gold isolation | PreparedCase separates immutable labels/audit from system-visible EvaluationCase; tests use unspoken gold markers, retained original source text, and collision/tenant checks. |
@@ -68,3 +68,14 @@ exceptions rather than changing upstream algorithm branches to satisfy style.
   user or distributed authorization service. Existing research gates still apply.
 
 A final isolated subprocess import check exceeded its 30-second startup bound. Import tracing showed unnecessary full NLTK toolkit initialization for a small base interface. The exact licensed legacy StemmerI class is now retained with PorterStemmer; the full NLTK dependency is removed. The same import test keeps its original deadline and asserts that NLTK/provider/model modules never load. The prior timeout is retained in coordinator evidence rather than hidden by retries or a widened deadline.
+
+A final mechanical schema check of already-approved local public caches exposed
+LoCoMo source quirks absent from the first synthetic fixtures: unpaired date-only
+metadata and compound/dangling evidence annotations. Synthetic regression tests
+failed first, then the loader was corrected to retain records and unresolved
+annotations without fabricating dialogue/evidence or claiming a measured recall.
+The content-free audit now validates 500 oracle records and 10 LoCoMo
+conversations/1,986 questions. It counts 16 unpaired date keys and 5 questions with
+unresolved evidence; no source content, IDs, gold answers or split membership was
+saved. No system, scorer, model, replay execution or research evaluation ran. Actual
+S/M schema coverage remains conditional. Final CI must be rechecked for this fix.
