@@ -234,7 +234,7 @@ def run_evaluation(
         ledger = BudgetLedger(output_root, config)
         adapter = adapter_factory(config)
         if isinstance(adapter, _AdapterResources):
-            resources.callback(lambda: adapter.close())
+            resources.callback(lambda owned_adapter=adapter: owned_adapter.close())
         event_sink = partial(_drain_adapter_events, adapter, writer)
         for case in cases:
             if not isinstance(case, EvaluationCase):
