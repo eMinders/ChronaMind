@@ -101,7 +101,11 @@ class MemoryRawStore:
         existing = self._items.get(key, ())
         selected = tuple(chunk for chunk in existing if scope == "all" or chunk.turn.turn_id == target_ref)
         selected_ids = {chunk.chunk_id for chunk in selected}
-        self._items[key] = tuple(chunk for chunk in existing if chunk.chunk_id not in selected_ids)
+        remaining = tuple(chunk for chunk in existing if chunk.chunk_id not in selected_ids)
+        if remaining:
+            self._items[key] = remaining
+        else:
+            self._items.pop(key, None)
         return len({chunk.turn.turn_id for chunk in selected})
 
     def close(self) -> None:
@@ -262,6 +266,7 @@ class PostgresRawStore:
         predicate = sql.SQL("") if scope == "all" else sql.SQL(" AND source_turn_id=%s")
         parameters = (namespace, user_id) if scope == "all" else (namespace, user_id, target_ref)
         with self._connect() as connection:
+            self._verify_owner(connection)
             rows = connection.execute(
                 sql.SQL(
                     "DELETE FROM {}.raw_chunks WHERE namespace=%s AND user_id=%s{} RETURNING source_turn_id"
@@ -270,17 +275,20 @@ class PostgresRawStore:
             ).fetchall()
         return len({row[0] for row in rows})
 
+    def _verify_owner(self, connection: Connection) -> None:
+        marker = connection.execute(
+            sql.SQL("SELECT token FROM {}.owner").format(sql.Identifier(self.schema))
+        ).fetchall()
+        if marker != [(self._owner_token,)]:
+            raise ValueError("baseline_schema_ownership_mismatch")
+
     def close(self) -> None:
         """Drop only this object's successfully created, ownership-checked schema."""
         if self._closed:
             return
         if self._created:
             with self._connect() as connection:
-                marker = connection.execute(
-                    sql.SQL("SELECT token FROM {}.owner").format(sql.Identifier(self.schema))
-                ).fetchall()
-                if marker != [(self._owner_token,)]:
-                    raise ValueError("baseline_schema_ownership_mismatch")
+                self._verify_owner(connection)
                 connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(self.schema)))
         self._closed = True
         self._created = False

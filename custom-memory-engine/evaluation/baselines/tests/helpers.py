@@ -32,6 +32,18 @@ class CharacterTokenizer:
     def count_messages(self, messages: Sequence[Message]) -> int:
         return sum(len(message.content) + 4 for message in messages) + 2
 
+    def history_request_counts(self, messages: Sequence[Message], user_parts: Sequence[str]) -> tuple[int, ...] | None:
+        """The fixture codec's character counts are exactly additive at every cut."""
+        if not messages or len(user_parts) < 3 or "".join(user_parts) != messages[-1].content:
+            return None
+        framing = self.count_messages((*messages[:-1], messages[-1].model_copy(update={"content": ""})))
+        remaining = len(user_parts[-1])
+        counts = [0] * (len(user_parts) - 2)
+        for index in range(len(counts) - 1, -1, -1):
+            remaining += len(user_parts[index + 1])
+            counts[index] = framing + len(user_parts[0]) + remaining
+        return tuple(counts)
+
 
 def settings(**changes: object) -> BaselineSettings:
     value = {

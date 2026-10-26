@@ -207,6 +207,9 @@ class GraphitiWorker:
         token = _CLOCK.set(clock)
         try:
             tenant = request["tenant"]
+            if request["operation"] == "retire":
+                await self.retire(tenant)
+                return {"retired": True}
             client = await self.client(tenant)
             if request["operation"] == "ingest":
                 turn = request["turn"]
@@ -265,30 +268,39 @@ class GraphitiWorker:
                 # ephemeral graph data remains after an ordinary SDK failure.
                 await self.close()
 
+    async def retire(self, tenant: str) -> None:
+        if re.fullmatch(r"cme_[a-f0-9]{64}", tenant) is None:
+            raise ValueError("owned_graph_cleanup_scope_mismatch")
+        client = self.clients.get(tenant)
+        if client is None:
+            return
+        driver = client.driver
+        failed = False
+        if not isinstance(driver, FalkorDriver) or driver._database != tenant:
+            raise ValueError("owned_graph_cleanup_scope_mismatch")
+        try:
+            # Delete only this parent's exact graph; release its Redis client
+            # and constructor task through the pinned native close API.
+            falkor: Any = driver.client
+            if await falkor.connection.exists(tenant):
+                await falkor.select_graph(tenant).delete()
+        except Exception:
+            failed = True
+        try:
+            await client.close()
+        except Exception:
+            failed = True
+        if failed:
+            raise RuntimeError("owned_graph_cleanup_failed")
+        self.clients.pop(tenant)
+
     async def close(self) -> None:
         failed = False
-        for tenant, client in tuple(self.clients.items()):
-            driver = client.driver
+        for tenant in tuple(self.clients):
             try:
-                if (
-                    not isinstance(driver, FalkorDriver)
-                    or not re.fullmatch(r"cme_[a-f0-9]{64}", tenant)
-                    or driver._database != tenant
-                ):
-                    raise ValueError("owned_graph_cleanup_scope_mismatch")
-                # The base GraphDriver annotation unions unrelated backend client
-                # types. Validate the exact pinned driver before this vendor seam.
-                falkor: Any = driver.client
-                if await falkor.connection.exists(tenant):
-                    await falkor.select_graph(tenant).delete()
+                await self.retire(tenant)
             except Exception:
                 failed = True
-            finally:
-                try:
-                    await client.close()
-                except Exception:
-                    failed = True
-                self.clients.pop(tenant, None)
         if failed:
             raise RuntimeError("owned_graph_cleanup_failed")
 

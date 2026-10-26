@@ -55,9 +55,6 @@ class B2DenseAdapter(BaseAdapter):
             raise ValueError("dense_baseline_system_identity_required")
         self.store: RawStore = store if store is not None else MemoryRawStore()
 
-    def _retire_generation(self, user_id: str, generation: str) -> None:
-        self.store.delete(generation, user_id, "all", "generation-retirement")
-
     def ingest_turn(self, turn: TurnRecord) -> IngestReceipt:
         state = self._validate_turn(turn)
 
@@ -80,6 +77,7 @@ class B2DenseAdapter(BaseAdapter):
                 )
                 for index, (content, vector) in enumerate(zip(chunks, embedded.vectors, strict=True))
             )
+            self._materialized.add(state.generation)
             self.store.put(state.generation, turn.user_id, stored)
             state.turns.append(turn)
             state.mutation += 1
@@ -163,8 +161,14 @@ class B2DenseAdapter(BaseAdapter):
         count, usage = self._run("delete", remove)
         return DeletionReceipt(supported=True, deleted_count=count, usage=usage)
 
+    def _retire_backend(self, generation: str, user_id: str) -> None:
+        self.store.delete(generation, user_id, "all", generation)
+
     def close(self) -> None:
+        super().close()
         self.store.close()
+        self._retired.clear()
+        self._materialized.clear()
 
     def adapter_metadata(self) -> dict[str, object]:
         return {

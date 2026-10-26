@@ -164,6 +164,7 @@ class VendorProcess:
 
     def operation(self, payload: dict[str, object]) -> Any:
         deadline = monotonic() + self.settings.vendor_timeout_seconds
+        retiring = payload.get("operation") == "retire"
         try:
             self._start(deadline)
             if self.module == "b4_graphiti":
@@ -172,13 +173,25 @@ class VendorProcess:
                     raise ValueError("owned_graph_namespace_required")
                 # Retain the issued scope independently of the child. Even a
                 # killed process may already have created its graph/indexes.
-                self._graph_tenants.add(tenant)
+                if retiring:
+                    if tenant not in self._graph_tenants:
+                        raise ValueError("owned_graph_retirement_scope_required")
+                else:
+                    self._graph_tenants.add(tenant)
             self._send(payload)
             while True:
                 response = self._receive(deadline)
                 kind = response.get("type")
                 if kind == "result":
-                    return response["result"]
+                    result = response["result"]
+                    if retiring:
+                        if not isinstance(result, dict) or set(result) != {"retired"} or result["retired"] is not True:
+                            raise ValueError("vendor_retirement_acknowledgement_required")
+                        if self.module == "b4_graphiti":
+                            self._graph_tenants.remove(str(payload["tenant"]))
+                    return result
+                if retiring and kind in {"llm", "embed"}:
+                    raise RuntimeError("model_call_during_vendor_retirement")
                 if kind == "llm":
                     messages = tuple(Message.model_validate(m) for m in response["messages"])
                     try:
@@ -298,11 +311,36 @@ class VendorAdapter(BaseAdapter):
             "b3_mem0" if config.system_id == "B3" else "b4_graphiti", python, settings, services, graph
         )
         self._poisoned = False
-        self._episodes: dict[str, str] = {}
+        self._episodes: dict[str, dict[str, str]] = {}
+
+    @staticmethod
+    def _tenant_scope(user_id: str, generation: str) -> str:
+        return "cme_" + hashlib.sha256(f"{user_id}:{generation}".encode()).hexdigest()
 
     def _tenant(self, user_id: str) -> str:
         state = self._state(user_id)
-        return "cme_" + hashlib.sha256(f"{user_id}:{state.generation}".encode()).hexdigest()
+        return self._tenant_scope(user_id, state.generation)
+
+    def release_user(self, user_id: str) -> None:
+        state = self._users.get(user_id)
+        if state is not None:
+            self._episodes.pop(state.generation, None)
+        super().release_user(user_id)
+
+    def _retire_backend(self, generation: str, user_id: str) -> None:
+        if self._poisoned or self.clock is None:
+            raise RuntimeError("failed_vendor_adapter_requires_new_instance")
+        try:
+            self._worker.operation(
+                {
+                    "operation": "retire",
+                    "tenant": self._tenant_scope(user_id, generation),
+                    "clock": self.clock.isoformat(),
+                }
+            )
+        except BaseException:
+            self._poisoned = True
+            raise
 
     def _request(self, user_id: str, **value: object) -> Any:
         if self._poisoned:
@@ -310,6 +348,7 @@ class VendorAdapter(BaseAdapter):
         if self.clock is None:
             raise ValueError("baseline_clock_required")
         try:
+            self._materialized.add(self._state(user_id).generation)
             return self._worker.operation({"tenant": self._tenant(user_id), "clock": self.clock.isoformat(), **value})
         except BaseException:
             self._poisoned = True
@@ -326,7 +365,7 @@ class VendorAdapter(BaseAdapter):
                 lambda: self._request(turn.user_id, operation="ingest", turn=turn.model_dump(mode="json")),
             )
             if isinstance(result, dict) and isinstance(result.get("episode_id"), str):
-                self._episodes[result["episode_id"]] = turn.turn_id
+                self._episodes.setdefault(state.generation, {})[result["episode_id"]] = turn.turn_id
             state.turns.append(turn)
             state.mutation += 1
             succeeded = True
@@ -351,11 +390,12 @@ class VendorAdapter(BaseAdapter):
 
         def execute() -> tuple[list[RetrievedItem], bool]:
             rows = self._request(user_id, operation="retrieve", query=query, limit=self.settings.retrieval_k)
+            episodes = self._episodes.get(self._state(user_id).generation, {})
             items: list[RetrievedItem] = []
             provenance_complete = self.config.system_id == "B4"
             for row in rows:
                 episode_ids = row.get("episode_ids", [])
-                evidence = tuple(self._episodes[e] for e in episode_ids if e in self._episodes)
+                evidence = tuple(episodes[e] for e in episode_ids if e in episodes)
                 if not episode_ids or len(evidence) != len(episode_ids):
                     provenance_complete = False
                 items.append(RetrievedItem(reference_id=row["id"], content=row["content"], evidence_turn_ids=evidence))
@@ -410,7 +450,11 @@ class VendorAdapter(BaseAdapter):
         }
 
     def close(self) -> None:
+        super().close()
         self._worker.close()
+        self._retired.clear()
+        self._materialized.clear()
+        self._episodes.clear()
 
 
 class B3Mem0Adapter(VendorAdapter):

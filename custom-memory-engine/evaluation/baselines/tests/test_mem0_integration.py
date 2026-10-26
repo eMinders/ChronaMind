@@ -2,6 +2,7 @@
 
 import importlib.metadata
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -271,3 +272,82 @@ def test_real_mem0_native_prompt_preserves_source_date_and_injected_replay_date(
         assert "source time: 2020-01-01T00:00:00Z" in prompt
     finally:
         adapter.close()
+
+
+def test_real_mem0_retirement_closes_qdrant_and_sqlite_while_preserving_active_tenant(
+    guarded_worker: Path, tmp_path: Path
+) -> None:
+    engine = Path(__file__).resolve().parents[3]
+    program = textwrap.dedent(
+        """
+        import json, sys
+        sys.path[:0] = __ENGINE_PATHS__
+        from evaluation.baselines import b3_mem0 as module
+        from evaluation.baselines.tests.helpers import settings
+
+        def model_call(kind, **payload):
+            if kind == 'embed':
+                return [[1.0, *([0.0] * 383)] for _ in payload['texts']]
+            return json.dumps({'memory': [{'text': 'A fictional native lifecycle fact.'}]})
+
+        module.model_call = model_call
+        worker = module.Mem0Worker({'settings': settings().model_dump(mode='json')})
+        active = 'cme_' + 'f' * 64
+        clock = '2020-01-02T00:00:00+00:00'
+        def ingest(tenant):
+            return worker.operation({'operation': 'ingest', 'tenant': tenant, 'clock': clock,
+                'turn': {'turn_id': 'same-turn', 'role': 'user', 'content': 'Fictional fact.',
+                         'occurred_at': '2020-01-01T00:00:00+00:00'}})
+        try:
+            ingest(active)
+            active_db = worker.memories[active].db
+            active_client = worker.clients[active]
+            for index in range(25):
+                tenant = 'cme_' + format(index, '064x')
+                ingest(tenant)
+                memory = worker.memories[tenant]
+                history = memory.db
+                client = worker.clients[tenant]
+                assert history.connection.execute('SELECT count(*) FROM history').fetchone()[0] > 0
+                assert worker.operation({'operation': 'retire', 'tenant': tenant, 'clock': clock}) == {'retired': True}
+                assert history.connection is None and memory.db is None
+                try:
+                    client.get_collections()
+                except RuntimeError:
+                    pass
+                else:
+                    raise AssertionError('retired native Qdrant client remained open')
+                assert set(worker.memories) == set(worker.clients) == {active}
+                assert active_db.connection.execute('SELECT count(*) FROM history').fetchone()[0] > 0
+                assert active_client.get_collections().collections
+            rows = worker.operation({'operation': 'retrieve', 'tenant': active, 'clock': clock,
+                                     'query': 'fictional fact', 'limit': 5})
+            assert rows and rows[0]['content'] == 'A fictional native lifecycle fact.'
+        finally:
+            worker.close()
+        assert not worker.memories and not worker.clients and active_db.connection is None
+        print('RL031_NATIVE_RETIREMENT_OK')
+        """
+    ).replace("__ENGINE_PATHS__", repr([str(engine), str(engine / "src")]))
+    safe = {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "USERPROFILE"}
+    environment = {key: value for key, value in os.environ.items() if key.upper() in safe}
+    environment.update(
+        {
+            "MEM0_TELEMETRY": "false",
+            "MEM0_DIR": str(tmp_path / "mem0"),
+            "PYTHON_DOTENV_DISABLED": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUTF8": "1",
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-u", "-c", program],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip().endswith("RL031_NATIVE_RETIREMENT_OK")

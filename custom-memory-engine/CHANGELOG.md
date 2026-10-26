@@ -4,6 +4,12 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## Post-merge Assurance (`RL-031`, `RL-041`; 27 October 2026)
+
+- Retire completed replay generations through a local case-release hook and defer backend work to the next accounted operation. Raw stores, native Mem0 Qdrant/SQLite state, Graphiti clients/graphs, episode provenance and history diagnostics remain bounded while other active tenants are preserved. Every fallback adapter replacement is registered for final cleanup before success publication.
+- Preserve the exact earliest fitting whole-turn suffix with certified linear token counting for the frozen tokenizer. Unknown codecs retain the exact scan; complete request-window checks remain in place. Work-counter, Unicode/window-boundary and cleanup regressions cover the merged implementation's remaining gaps.
+- Include constraint-owning relations and internal foreign-key trigger enforcement in migration fingerprints. PostgreSQL regressions detect both false healthy states, refuse apply and verify explicit reset restores enforcement. Earlier pre-merge fingerprints require explicit recovery instead of being silently rewritten.
+
 ## RL-031 Baseline Adapters (26 October 2026)
 
 - Added B0 explicit current-session, B1 window-bounded history with truncation diagnostics, B2 raw-turn cosine, B2h PostgreSQL English FTS/RRF60, real pinned Mem0 B3 and conditional Graphiti B4 adapters with shared frozen answering and local embedding services.

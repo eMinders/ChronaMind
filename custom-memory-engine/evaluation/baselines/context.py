@@ -3,9 +3,19 @@
 import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Protocol, runtime_checkable
 
 from evaluation.baselines.contracts import BaselineSettings, Message, Tokenizer
 from evaluation.harness.models import QuestionRecord, RetrievedItem, TurnRecord
+
+
+@runtime_checkable
+class _HistoryCounter(Protocol):
+    """Optional exact count capability; the general Tokenizer need not provide it."""
+
+    def history_request_counts(
+        self, messages: Sequence[Message], user_parts: Sequence[str]
+    ) -> tuple[int, ...] | None: ...
 
 
 def answer_messages(
@@ -60,43 +70,49 @@ def history_items(
     tokenizer: Tokenizer,
     reference_clock: datetime,
 ) -> tuple[tuple[RetrievedItem, ...], int]:
-    """Drop oldest whole turns until the complete answer request fits its window."""
-    if (
-        tokenizer.count_messages(answer_messages(settings, question, "", reference_clock))
-        + settings.request_overhead_tokens
-        + settings.max_output_tokens
-    ) > (settings.context_window_tokens):
+    """Keep the first fitting whole-turn suffix, with an exact final request check.
+
+    Certified tokenizers count all suffixes in one segmented pass. Unknown or
+    uncertifiable tokenizers retain the exact scan: their opaque message counts
+    need not be monotone, so a generic binary search would change selection.
+    """
+    input_limit = settings.context_window_tokens - settings.request_overhead_tokens - settings.max_output_tokens
+    empty_count = tokenizer.count_messages(answer_messages(settings, question, "", reference_clock))
+    if empty_count > input_limit:
         raise ValueError("question_exceeds_answer_context_window")
     items = tuple(turn_item(turn) for turn in turns)
-
-    def fits(start: int) -> bool:
-        context = join_items(items[start:])
-        return (
-            tokenizer.count_messages(answer_messages(settings, question, context, reference_clock))
-            + settings.request_overhead_tokens
-            + settings.max_output_tokens
-            <= settings.context_window_tokens
-        )
-
-    # Removing an oldest whole turn monotonically reduces the request payload.
-    # Locate the first fitting suffix with binary search, so long histories do
-    # not repeatedly tokenize every remaining suffix. Recheck and advance after
-    # the search to preserve exact framing behavior for tokenizers with boundary
-    # interactions at concatenation points.
-    low, high = 0, len(items)
-    while low < high:
-        middle = (low + high) // 2
-        if fits(middle):
-            high = middle
-        else:
-            low = middle + 1
-    start = low
-    while start < len(items) and not fits(start):
-        start += 1
-    selected = items[start:]
-    original_tokens = len(tokenizer.encode(join_items(items)))
-    selected_tokens = len(tokenizer.encode(join_items(selected)))
-    return selected, max(0, original_tokens - selected_tokens)
+    if not items:
+        return (), 0
+    rendered = join_items(items)
+    original_tokens = len(tokenizer.encode(rendered))
+    messages = answer_messages(settings, question, rendered, reference_clock)
+    if isinstance(tokenizer, _HistoryCounter):
+        tail = "Question:\n" + question.question
+        prefix_length = len(messages[-1].content) - len(rendered) - len(tail) - 2
+        parts = (messages[-1].content[:prefix_length], *(item.content + "\n\n" for item in items), tail)
+        counts = tokenizer.history_request_counts(messages, parts)
+        if counts is not None and len(counts) == len(items):
+            # Check the complete original framing as well as the chosen suffix;
+            # capability implementations cannot substitute per-item estimates.
+            if counts[0] == tokenizer.count_messages(messages):
+                start = next((index for index, count in enumerate(counts) if count <= input_limit), len(items))
+                candidate = items[start:]
+                if not candidate or (
+                    tokenizer.count_messages(
+                        answer_messages(settings, question, join_items(candidate), reference_clock)
+                    )
+                    <= input_limit
+                ):
+                    return candidate, max(0, original_tokens - len(tokenizer.encode(join_items(candidate))))
+    # No monotonicity or additivity is promised by the base Tokenizer protocol.
+    for start in range(len(items)):
+        candidate = items[start:]
+        if (
+            tokenizer.count_messages(answer_messages(settings, question, join_items(candidate), reference_clock))
+            <= input_limit
+        ):
+            return candidate, max(0, original_tokens - len(tokenizer.encode(join_items(candidate))))
+    return (), max(0, original_tokens - len(tokenizer.encode("")))
 
 
 def fit_ranked_items(

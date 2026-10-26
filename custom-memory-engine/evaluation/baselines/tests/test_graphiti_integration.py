@@ -305,3 +305,41 @@ def test_parent_eof_also_cleans_actual_sdk_graph_scope(monkeypatch: pytest.Monke
         assert responses[0]["type"] == "ready"
         assert responses[1] == {"type": "result", "result": []}
         executor.submit(asyncio.run, verify()).result(timeout=15)
+
+
+@pytest.mark.asyncio
+async def test_native_graph_retirement_closes_connections_and_preserves_other_owners() -> None:
+    port = os.getenv("CME_BASELINE_TEST_FALKOR_PORT")
+    if port is None:
+        pytest.skip("CME_BASELINE_TEST_FALKOR_PORT must name a disposable local FalkorDB service")
+    worker = worker_module.GraphitiWorker(
+        {"settings": {"answer_model": ANSWER_MODEL}, "graph": {"host": "127.0.0.1", "port": int(port)}}
+    )
+    active, foreign = ("cme_" + uuid4().hex * 2 for _ in range(2))
+    probe = worker_module.FalkorDB(host="127.0.0.1", port=int(port), socket_timeout=3, socket_connect_timeout=3)
+    await probe.select_graph(foreign).query("CREATE (:ForeignOwner {marker: 'preserve'})")
+    try:
+        active_client = await worker.client(active)
+        for _ in range(8):
+            tenant = "cme_" + uuid4().hex * 2
+            client = await worker.client(tenant)
+            native: Any = client.driver.client
+            connections = tuple(native.connection.connection_pool._available_connections)
+            assert connections, "native graph initialization must acquire real connections"
+            assert any(connection.is_connected for connection in connections)
+            await worker.retire(tenant)
+            assert all(not connection.is_connected for connection in connections)
+            assert set(worker.clients) == {active} and worker.clients[active] is active_client
+            assert tenant not in await probe.list_graphs()
+            assert {active, foreign} <= set(await probe.list_graphs())
+        # A valid-looking graph name is insufficient: no owned client means no
+        # deletion authority, even when the graph exists on the same service.
+        await worker.retire(foreign)
+        assert foreign in await probe.list_graphs()
+    finally:
+        await worker.close()
+        assert active not in await probe.list_graphs()
+        assert foreign in await probe.list_graphs()
+        if await probe.connection.exists(foreign):
+            await probe.select_graph(foreign).delete()
+        await probe.connection.aclose()

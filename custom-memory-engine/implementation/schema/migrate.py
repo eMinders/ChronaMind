@@ -122,10 +122,11 @@ _CATALOG_QUERIES = (
        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
        LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
        WHERE n.nspname=%s AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname,a.attnum""",
-    """SELECT con.conname, con.contype, con.condeferrable, con.condeferred, con.convalidated,
+    """SELECT c.relname, con.conname, con.contype, con.condeferrable, con.condeferred, con.convalidated,
               pg_catalog.pg_get_constraintdef(con.oid,true)
        FROM pg_catalog.pg_constraint con JOIN pg_catalog.pg_namespace n ON n.oid=con.connamespace
-       WHERE n.nspname=%s ORDER BY con.conname,con.conrelid""",
+       LEFT JOIN pg_catalog.pg_class c ON c.oid=con.conrelid
+       WHERE n.nspname=%s ORDER BY c.relname,con.conname""",
     """SELECT c.relname, pg_catalog.pg_get_indexdef(i.indexrelid), i.indisvalid, i.indisready
        FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid
        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -137,6 +138,17 @@ _CATALOG_QUERIES = (
        FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
        WHERE n.nspname=%s AND NOT t.tgisinternal ORDER BY c.relname,t.tgname""",
+    # Internal foreign-key triggers have generated names containing OIDs. Bind
+    # their stable identities and enforcement state without persisting those names.
+    """SELECT c.relname, con.conname, con.conrelid::pg_catalog.regclass::text,
+              t.tgconstrrelid::pg_catalog.regclass::text, t.tgfoid::pg_catalog.regprocedure::text,
+              t.tgtype, t.tgenabled, t.tgdeferrable, t.tginitdeferred
+       FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+       JOIN pg_catalog.pg_constraint con ON con.oid=t.tgconstraint
+       WHERE n.nspname=%s AND t.tgisinternal
+       ORDER BY c.relname,con.conname,con.conrelid::pg_catalog.regclass::text,
+                t.tgconstrrelid::pg_catalog.regclass::text,t.tgfoid::pg_catalog.regprocedure::text,t.tgtype""",
     """SELECT c.relname, p.polname, p.polcmd, p.polpermissive, p.polroles::text,
               pg_catalog.pg_get_expr(p.polqual,p.polrelid), pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid)
        FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid=p.polrelid
