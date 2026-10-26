@@ -88,7 +88,8 @@ def test_b1_history_truncation_uses_bounded_tokenizer_work() -> None:
     tokenizer = CountingTokenizer()
     selected = settings(context_window_tokens=3200)
     turns = tuple(turn(str(index), "x" * 100) for index in range(2000))
-    items, _ = history_items(turns, QuestionRecord(question_id="q", user_id="user", question="Q"), selected, tokenizer, CLOCK)
+    probe = QuestionRecord(question_id="q", user_id="user", question="Q")
+    items, _ = history_items(turns, probe, selected, tokenizer, CLOCK)
     assert items and len(items) < len(turns)
     assert tokenizer.count < 40
 
