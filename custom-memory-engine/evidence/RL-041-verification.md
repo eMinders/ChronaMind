@@ -21,8 +21,10 @@ script are unchanged.
 ## Reproduction
 
 Local full-suite verification passed **428/428 tests**, including **37/37
-database integration tests**, with zero failures, skips or collection errors.
+cases marked integration**, with zero failures, skips or collection errors.
 The migration file contributes **22 unit tests and 19 integration cases**. The
+19 migration integration cases all require PostgreSQL; the inherited suite's
+integration marker also includes some static schema-contract checks. The
 separate reduced SQL harness also passed all **43 assertions**. The owned local
 database lifecycle verified the pinned server/extension versions and removed all
 its containers, networks and volumes after testing. Credentials stayed in child
