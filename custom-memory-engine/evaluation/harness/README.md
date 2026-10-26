@@ -167,3 +167,10 @@ research approval.
 The [benchmark adapters](../../research/benchmarks/ADAPTERS.md) opt into per-history streaming while ordinary callers retain eager validation. Streaming failures retain FAILED.json and never publish success. LongMemEval oracle and M have separate suite IDs and question cluster keys; only S is primary H2. TurnRecord.source_speaker optionally preserves a human speaker independently of tenant/role. Consumers must honor it for LoCoMo dialogue. Optional source metadata is namespaced under benchmark_source in the success manifest; existing provenance, authorization and budget controls remain mandatory.
 
 Reporting strata are removed from the question passed to `answer`; original strata remain in scorer inputs and artifacts. Source adapters must also use opaque system identifiers when original IDs encode answerability labels.
+
+## RL-032 extraction record-and-replay cache
+
+[`replay_cache.py`](replay_cache.py) provides `ExtractionReplayCache`, keyed deterministically by `(turn_id, extractor_version, model_id)` per Proposal §9 so ablations (`P`, `A1`–`A10`) replay byte-identical slow-path extraction candidates without re-invoking the LLM:
+- **Schema-validation gate (`ExtractedCandidate`):** Only successful extractions that pass strict candidate schema validation are cached; exceptions or malformed candidate structures increment `errors_rejected` and are never cached.
+- **Zero LLM calls on cache hit:** `get_or_extract` returns deep-isolated candidate dicts and `Usage.zero()` on hit while retaining `recorded_usage` for audit inspection.
+- **Manifest integration:** Passing `replay_cache` to `run_evaluation` (or exposing `adapter.replay_cache`) records `extraction_replay_cache` (`entry_count`, `hits`, `misses`, `errors_rejected`, `integrity_sha256`) in `manifest.json`.

@@ -33,6 +33,7 @@ from evaluation.harness.models import (
     Usage,
 )
 from evaluation.harness.paths import run_destination
+from evaluation.harness.replay_cache import ReplayCacheSummaryProvider
 
 logger = structlog.get_logger(__name__)
 
@@ -107,6 +108,7 @@ def run_evaluation(
     timer: Callable[[], float] = perf_counter,
     stream_cases: bool = False,
     source_metadata: Callable[[], dict[str, object]] | None = None,
+    replay_cache: ReplayCacheSummaryProvider | None = None,
 ) -> Path:
     """Run normalized cases only after authorization, then publish a success manifest.
 
@@ -374,6 +376,17 @@ def run_evaluation(
         }
         if source_metadata is not None:
             manifest["benchmark_source"] = source_metadata()
+        active_replay_cache = (
+            replay_cache
+            if replay_cache is not None
+            else (
+                adapter_cache
+                if isinstance((adapter_cache := getattr(adapter, "replay_cache", None)), ReplayCacheSummaryProvider)
+                else None
+            )
+        )
+        if active_replay_cache is not None:
+            manifest["extraction_replay_cache"] = active_replay_cache.manifest_summary().model_dump(mode="json")
         writer.finish(manifest)
     logger.info("evaluation_run_completed", cases=case_count, questions=question_count, unsupported=skipped_count)
     return writer.destination

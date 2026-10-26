@@ -22,14 +22,23 @@ research/benchmarks/
 │   └── data/        # Gitignored
 ├── own_T/           # Temporal suite (RL-024)
 │   ├── generator.py
-│   ├── splits/      # Frozen in RL-026
 │   ├── MANIFEST.txt
 │   └── README.md
 ├── own_D/           # Deletion suite with canaries (RL-023)
 │   └── ...
 ├── own_G/           # Gate / injection suite (RL-022)
 │   └── ...
-└── splits/          # Freeze list (RL-026)
+├── own_I/           # Cross-user isolation suite (RL-022)
+│   └── ...
+└── splits/          # Frozen dev/test splits & Gate J5 FREEZE_LIST.md (RL-026)
+    ├── FREEZE_LIST.md
+    ├── freeze.py
+    ├── longmemeval.yaml
+    ├── locomo.yaml
+    ├── own_T.yaml
+    ├── own_G.yaml
+    ├── own_D.yaml
+    └── own_I.yaml
 ```
 
 ## Hashes and oracle counts
@@ -52,7 +61,7 @@ See [`../../reference/Source_Evidence_Ledger.md`](../../reference/Source_Evidenc
 
 ## Status
 
-Not Started. Mirrors begin with `RL-020` and `RL-021`; own-suite generators begin with `RL-022` through `RL-024`; the dev/test split is frozen in `RL-026`.
+Complete (`RL-020`–`RL-026`). Public benchmark mirrors (`RL-020`, `RL-021`), own-suite generators (`RL-022`–`RL-024`), benchmark adapters (`RL-025`), and Gate `J5` dev/test splits ([`splits/FREEZE_LIST.md`](splits/FREEZE_LIST.md), `RL-026`) are verified and frozen.
 
 ## Benchmark adapters
 

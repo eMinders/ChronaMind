@@ -1,0 +1,70 @@
+{
+  "assignment_rule": "Conversation-level 20% dev (2 conversations) / 80% test (8 conversations) split for descriptive reporting via deterministic SHA-256 ranking of sample_id with seed=42.",
+  "cluster_key": "conversation_id",
+  "dataset_files": {
+    "locomo10.json": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4"
+  },
+  "dev_count": 2,
+  "dev_generator_seed": null,
+  "dev_id_sha256": {
+    "conv-41": "0aa48002fbe206c6723d923e309a1501d316f1b99a2e449f036ea9d59d290131",
+    "conv-48": "12ec30601ce3f2ca4112b6970d8eb4a4bcf7c2ffee54fc2339008334ab1eb055"
+  },
+  "dev_ids": [
+    "conv-41",
+    "conv-48"
+  ],
+  "gate": "J5",
+  "schema_version": 1,
+  "seed": 42,
+  "split_payload_sha256": "452a546d3bff2186132eb78066d2899b0de622079499e62d4616521d9a2352b1",
+  "status": "frozen",
+  "strata_counts": {
+    "dev": {
+      "category_1": 52,
+      "category_2": 69,
+      "category_3": 18,
+      "category_4": 204,
+      "category_5": 89,
+      "conversations": 2,
+      "total_questions": 432
+    },
+    "test": {
+      "category_1": 230,
+      "category_2": 252,
+      "category_3": 78,
+      "category_4": 637,
+      "category_5": 357,
+      "conversations": 8,
+      "total_questions": 1554
+    }
+  },
+  "suite_family": "LoCoMo",
+  "suite_ids": [
+    "LoCoMo"
+  ],
+  "task": "RL-026",
+  "test_count": 8,
+  "test_generator_seed": null,
+  "test_id_sha256": {
+    "conv-26": "179dcd79d9fe8518f72191a9ee22c0a119635203f7f62cd8ae7871070228848b",
+    "conv-30": "6ac72f1a64ec465b8edf6949d07110d3d58199b287b2ae3ddd6d85c09c13eddd",
+    "conv-42": "24394e06ad77670df314d0b45275db1ad842425341cfde9ad0e6ed0f1cb2dc14",
+    "conv-43": "760d99a5237b3d77262e4aecf2212a2780932faf921a2e47028a122ef569a8c0",
+    "conv-44": "43fda02d81b6394b3a69432265a64d2339e76f419411633d4661034bdf9741d8",
+    "conv-47": "a725b08152d9b0ffee2596d9016a4c252642e1131beef1ded149474f9c239bd5",
+    "conv-49": "1d7d0ee9e895074e1a8b7701a062355e5fc1692524ced0658c05f694326bd767",
+    "conv-50": "f1b23d01e3987cc943da4d4c13d458e770a8212c70704daa03e349057ed58461"
+  },
+  "test_ids": [
+    "conv-26",
+    "conv-30",
+    "conv-42",
+    "conv-43",
+    "conv-44",
+    "conv-47",
+    "conv-49",
+    "conv-50"
+  ],
+  "total_count": 10
+}

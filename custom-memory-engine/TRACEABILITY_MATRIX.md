@@ -50,8 +50,8 @@ This matrix links the audit findings, literature evidence, database invariants (
 | Deliverable ID | Description | Target Location | Owning Tasks | Status |
 |---|---|---|---|---|
 | **`D1`** | Open-source bi-temporal memory engine (PostgreSQL schema, slow/fast path, validation gate, hybrid retrieval, lineage deletion). | `custom-memory-engine/implementation/` | `RL-040`–`RL-094` | `PARTIAL (RL-040 12-table DDL)` |
-| **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `custom-memory-engine/evaluation/` | `RL-030`–`RL-034` | `PLANNED` |
-| **`D3`** | Seeded synthetic evaluation suites (`T`, `G`, `D`, `I`) and frozen dataset splits. | `custom-memory-engine/research/benchmarks/` | `RL-020`–`RL-026` | `PLANNED` |
+| **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `custom-memory-engine/evaluation/` | `RL-030`–`RL-034` | `PARTIAL (RL-030 harness, RL-032 replay cache)` |
+| **`D3`** | Seeded synthetic evaluation suites (`T`, `G`, `D`, `I`) and frozen dataset splits. | `custom-memory-engine/research/benchmarks/` | `RL-020`–`RL-026` | `COMPLETE (RL-020–RL-026)` |
 | **`D4`** | Personal Digital Twin (PDT) demonstrator with Memory Inspector, timeline view, conflict resolution, and deletion controls. | `custom-memory-engine/application/` | `RL-120`–`RL-122` | `PLANNED` |
 | **`D5`** | Final thesis report, confirmatory analysis tables/figures (`H1`–`H4`), and one-command reproducibility package. | `custom-memory-engine/reports/` | `RL-110`, `RL-111`, `RL-130`–`RL-132` | `PLANNED` |
 
@@ -65,7 +65,7 @@ This matrix links the audit findings, literature evidence, database invariants (
 | **`J2`** | Reduced-schema bitemporal SQL assertions (`43/43`) pass. | `psql -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql` (`validation/bitemporal_checks.output.txt`) | `PASS` |
 | **`J3`** | Clopper–Pearson upper-bound script matches saved output. | `diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt` | `PASS` |
 | **`J4`** | All Phase P1blocking decisions (`D-01`–`D-08`, `D-15`–`D-19`, `D-23`–`D-27`) resolved and signed off. | Decision memos in `PLAN/decisions/` (`RL-010`, `RL-012`–`RL-016`) | `IN PROGRESS (6 GitHub issues open)` |
-| **`J5`** | Benchmark and own-suite dev/test splits frozen prior to any test run. | `research/benchmarks/splits/FREEZE_LIST.md` (`RL-026`) | `PENDING (P2)` |
+| **`J5`** | Benchmark and own-suite dev/test splits frozen prior to any test run. | `research/benchmarks/splits/FREEZE_LIST.md` (`RL-026`) | `PASS` |
 | **`J6`** | `T1`–`T5` archival-precondition harness green on full schema. | `pytest implementation/tests/archival/` (`RL-090`) | `PENDING (P9)` |
 | **`J7`** | All mandatory rows in `PROJECT_ROADMAP.md` §G testing matrix `Tested` or waived. | `implementation/tests/report.md` (`RL-094`) | `PENDING (P9)` |
 | **`J8`** | Pilot run completed on dev split only; all pilot-derived parameters (`D-09`–`D-14`, `D-21`, `D-22`) frozen. | `evaluation/runs/pilot/FREEZE_LIST.md` (`RL-100`) | `PENDING (P10)` |
