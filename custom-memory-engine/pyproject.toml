@@ -31,7 +31,7 @@ packages = ["src/custom_memory_engine"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["src", "."]
-testpaths = ["tests", "implementation/tests"]
+testpaths = ["tests", "implementation/tests", "evaluation/harness/tests"]
 markers = ["integration: requires a disposable PostgreSQL database"]
 filterwarnings = ["error"]
 
@@ -42,7 +42,7 @@ line-length = 119
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
 
 [tool.pyright]
-include = ["src", "tests", "research/benchmarks", "implementation/tests"]
+include = ["src", "tests", "research/benchmarks", "implementation/tests", "evaluation"]
 extraPaths = ["src", "."]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"

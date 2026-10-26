@@ -15,6 +15,7 @@ Reference-list byte-identity guard:
     reference change MUST update this constant and record the diff in
     CHANGELOG.md.
 """
+
 import hashlib
 import re
 import sys
@@ -53,10 +54,14 @@ def cited_numbers(text):
 cited = cited_numbers(body)
 hard("citations: every cited number has a reference entry", cited <= listed, str(sorted(cited - listed)))
 hard("citations: every reference entry is cited", listed <= cited, str(sorted(listed - cited)))
-hard("citations: reference list is exactly 1..41 (no entries added or dropped)", listed == set(range(1, 42)), f"{len(listed)} entries")
+hard(
+    "citations: reference list is exactly 1..41 (no entries added or dropped)",
+    listed == set(range(1, 42)),
+    f"{len(listed)} entries",
+)
 
 # Reference-list byte-identity: SHA-256 of the 41 entries matches the pinned baseline.
-entries = [l for l in refs.split("\n") if re.match(r"\d+\. ", l)]
+entries = [line for line in refs.split("\n") if re.match(r"\d+\. ", line)]
 observed = hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
 hard(
     "citations: the 41 reference entries hash to the pinned REFERENCE_LIST_SHA256",
@@ -74,7 +79,9 @@ hard("headings: sections 1 to 16 present", heads_ok)
 
 def section_refs(text):
     out = []
-    for m in re.finditer(r"Sections?\s+((?:\d+(?:\.\d+)?)(?:\s*(?:,|and|to|\u2013)\s*(?:and\s+)?\d+(?:\.\d+)?)*)", text):
+    for m in re.finditer(
+        r"Sections?\s+((?:\d+(?:\.\d+)?)(?:\s*(?:,|and|to|\u2013)\s*(?:and\s+)?\d+(?:\.\d+)?)*)", text
+    ):
         for n in re.findall(r"\d+(?:\.\d+)?", m.group(1)):
             out.append(n)
     return out
@@ -96,14 +103,15 @@ anchors = re.findall(r"\]\(#([^)]+)\)", prop)
 bad_anchor = [a for a in anchors if a not in slugs]
 hard("contents links: every in-document anchor resolves", not bad_anchor, str(bad_anchor))
 
+
 # ---------------------------------------------------------------- 3. table shape
 def table_blocks(text):
     cur, in_code = [], False
-    for l in text.split("\n"):
-        if l.startswith("```"):
+    for line in text.split("\n"):
+        if line.startswith("```"):
             in_code = not in_code
-        if not in_code and l.startswith("|"):
-            cur.append(l)
+        if not in_code and line.startswith("|"):
+            cur.append(line)
         else:
             if cur:
                 yield cur
@@ -112,62 +120,114 @@ def table_blocks(text):
         yield cur
 
 
-def ncols(l):
-    return len(re.sub(r"\\\|", "", l).strip().strip("|").split("|"))
+def ncols(line):
+    return len(re.sub(r"\\\|", "", line).strip().strip("|").split("|"))
 
 
 for name, text in (("proposal", prop), ("checklist", check)):
     bad_tables = []
     for blk in table_blocks(text):
-        counts = {ncols(l) for l in blk}
+        counts = {ncols(line) for line in blk}
         if len(counts) != 1 or not re.match(r"^\|(\s*:?-+:?\s*\|)+$", blk[1].replace(" ", "") if len(blk) > 1 else ""):
             bad_tables.append(blk[0][:70])
-    hard(f"tables ({name}): every table has a constant column count and a separator row", not bad_tables, str(bad_tables))
+    hard(
+        f"tables ({name}): every table has a constant column count and a separator row",
+        not bad_tables,
+        str(bad_tables),
+    )
 
 # ---------------------------------------------------------------- 4. identifiers used consistently
 abl_rows = set(re.findall(r"^\| (A\d+b?)(?: \(|\s\|)", prop, re.M))
 abl_used = set(re.findall(r"\bA(?:10|[1-9])b?\b", prop))
 abl_used = {"A" + x[1:] for x in abl_used}
-hard("ablations: every ablation ID used in the proposal is defined in the Section 10.4 table",
-     abl_used <= abl_rows | {"A1", "A2"}, f"defined={sorted(abl_rows)} used={sorted(abl_used)}")
+hard(
+    "ablations: every ablation ID used in the proposal is defined in the Section 10.4 table",
+    abl_used <= abl_rows | {"A1", "A2"},
+    f"defined={sorted(abl_rows)} used={sorted(abl_used)}",
+)
 chk_used = set(re.findall(r"\bA(?:10|[1-9])b?\b", check))
-hard("ablations: every ablation ID used in the checklist is defined in the proposal", chk_used <= abl_rows, str(sorted(chk_used - abl_rows)))
+hard(
+    "ablations: every ablation ID used in the checklist is defined in the proposal",
+    chk_used <= abl_rows,
+    str(sorted(chk_used - abl_rows)),
+)
 
-for term, why in (("four-layer", "stale layer count"), ("Four memory layers", "stale heading"), ("four layers", "stale layer count"),
-                  ("It has not been executed at proposal stage", "stale execution claim"),
-                  ("(A) Superseded or ended", "historical archival branch (A) was removed (historical-memory bug)"),
-                  ("(A) *r* is superseded or valid-ended", "historical archival branch (A) was removed (historical-memory bug)"),
-                  # Stale ledger pointers that an earlier revision carried.
-                  ("in `Source_Evidence_Ledger_v2.md`", "stale versioned-ledger pointer (use `Source_Evidence_Ledger.md`)"),
-                  ("in `Source_Evidence_Ledger_v3.md`", "stale versioned-ledger pointer (use `Source_Evidence_Ledger.md`)"),
-                  ("in `Source_Evidence_Ledger_v4.md`", "stale versioned-ledger pointer (use `Source_Evidence_Ledger.md`)")):
+for term, why in (
+    ("four-layer", "stale layer count"),
+    ("Four memory layers", "stale heading"),
+    ("four layers", "stale layer count"),
+    ("It has not been executed at proposal stage", "stale execution claim"),
+    ("(A) Superseded or ended", "historical archival branch (A) was removed (historical-memory bug)"),
+    ("(A) *r* is superseded or valid-ended", "historical archival branch (A) was removed (historical-memory bug)"),
+    # Stale ledger pointers that an earlier revision carried.
+    ("in `Source_Evidence_Ledger_v2.md`", "stale versioned-ledger pointer (use `Source_Evidence_Ledger.md`)"),
+    ("in `Source_Evidence_Ledger_v3.md`", "stale versioned-ledger pointer (use `Source_Evidence_Ledger.md`)"),
+    ("in `Source_Evidence_Ledger_v4.md`", "stale versioned-ledger pointer (use `Source_Evidence_Ledger.md`)"),
+):
     hard(f"stale wording absent from proposal: {term!r}", term not in prop, why)
 
 # H1 consistency: the primary contrast is P - A2, and P - P-flat appears only as a diagnostic
-h1_lines = [l for l in prop.split("\n") if "P \u2212 P-flat" in l or "P-flat" in l]
-bad_h1 = [l[:110] for l in h1_lines if not re.search(r"diagnostic|Diagnostic|not confirmatory|combined effect|Known-failure|Temporal structure|A1|exploratory|Exploratory|\(A2 \u2212 P-flat\)", l)]
+h1_lines = [line for line in prop.split("\n") if "P \u2212 P-flat" in line or "P-flat" in line]
+bad_h1 = [
+    line[:110]
+    for line in h1_lines
+    if not re.search(
+        r"diagnostic|Diagnostic|not confirmatory|combined effect|Known-failure|Temporal structure|A1|"
+        r"exploratory|Exploratory|\(A2 \u2212 P-flat\)",
+        line,
+    )
+]
 hard("H1: every mention of P-flat is marked diagnostic, exploratory, or control", not bad_h1, str(bad_h1))
-hard("H1: primary contrast text names A2 in RQ table, Section 4.1, Section 10.6 units table, Section 10.4 table",
-     all(re.search(p, prop) for p in (r"\| RQ1 \|.*P \u2212 A2", r"\| H1 \| \*\*Both\*\*.*P \u2212 A2", r"\| H1 \(suite T\) \|.*P and by A2", r"\| A2 \(P-nohistory\) \|")))
-hard("H4: every Clopper\u2013Pearson mention is tied to scenario level or flagged as diagnostic/independence-assuming",
-     all(("scenario" in l or "diagnostic" in l.lower() or "independen" in l.lower()) for l in prop.split("\n") if "Clopper" in l))
+hard(
+    "H1: primary contrast text names A2 in RQ table, Section 4.1, Section 10.6 units table, Section 10.4 table",
+    all(
+        re.search(p, prop)
+        for p in (
+            r"\| RQ1 \|.*P \u2212 A2",
+            r"\| H1 \| \*\*Both\*\*.*P \u2212 A2",
+            r"\| H1 \(suite T\) \|.*P and by A2",
+            r"\| A2 \(P-nohistory\) \|",
+        )
+    ),
+)
+hard(
+    "H4: every Clopper\u2013Pearson mention is tied to scenario level or flagged as diagnostic/independence-assuming",
+    all(
+        ("scenario" in line or "diagnostic" in line.lower() or "independen" in line.lower())
+        for line in prop.split("\n")
+        if "Clopper" in line
+    ),
+)
 
 # persona consistency
-pers = [l for l in prop.split("\n") if re.search(r"\b[Pp]ersona\b", l)]
+pers = [line for line in prop.split("\n") if re.search(r"\b[Pp]ersona\b", line)]
 print(f"[REVIEW] persona mentions: {len(pers)} lines (listed below)")
-for l in pers:
-    flag = "ok " if re.search(r"optional|Optional|if (it is |the optional )?(persona |layer )?(layer )?(is )?implemented|A10|if present|not required|not part of P|off in P|disabled|only if|Personal Digital Twin|if the optional|\(optional\)", l) else "??? "
-    print("   ", flag, l[:150].replace("\n", " "))
+for line in pers:
+    flag = (
+        "ok "
+        if re.search(
+            r"optional|Optional|if (it is |the optional )?(persona |layer )?(layer )?(is )?implemented|"
+            r"A10|if present|not required|not part of P|off in P|disabled|only if|Personal Digital Twin|"
+            r"if the optional|\(optional\)",
+            line,
+        )
+        else "??? "
+    )
+    print("   ", flag, line[:150].replace("\n", " "))
 
 # ---------------------------------------------------------------- 5. exclusions
-terms = r"\b(weeks?|months?|sprints?|semesters?|deadlines?|milestones?|schedule|timeline|team|teammates?|members?|assigned|assigns?|responsib\w+|owners?|ownership|staff\w*|headcount|person-?(?:days|months|hours)|students?|supervisor|workload|division of labou?r)\b"
+terms = (
+    r"\b(weeks?|months?|sprints?|semesters?|deadlines?|milestones?|schedule|timeline|team|teammates?|"
+    r"members?|assigned|assigns?|responsib\w+|owners?|ownership|staff\w*|headcount|person-?(?:days|months|hours)|"
+    r"students?|supervisor|workload|division of labou?r)\b"
+)
 print("[REVIEW] excluded-term hits (schedule, staffing, ownership). Each hit is shown for triage")
 hits = 0
-for i, l in enumerate(prop.split("\n"), 1):
-    for m in re.finditer(terms, l, re.I):
+for i, line in enumerate(prop.split("\n"), 1):
+    for m in re.finditer(terms, line, re.I):
         hits += 1
         s = max(0, m.start() - 45)
-        print(f"    proposal:{i}: ...{l[s:m.end() + 45]}...")
+        print(f"    proposal:{i}: ...{line[s : m.end() + 45]}...")
 print(f"    ({hits} hits in proposal)")
 # The guard targets personal identities; the project name is not a team-member name.
 name_pat = r"\b(Mazen|Ehab|Elewashy|Nexa)\b"

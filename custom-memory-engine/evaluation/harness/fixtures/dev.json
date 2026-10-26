@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "split": "dev",
+  "suite_id": "T",
+  "cases": [
+    {
+      "cluster_id": "fictional-scenario",
+      "user_ids": ["fictional-user"],
+      "events": [
+        {
+          "kind": "ingest",
+          "clock": "2020-01-01T00:00:00Z",
+          "turn": {
+            "user_id": "fictional-user",
+            "session_id": "fictional-session",
+            "turn_id": "fictional-turn",
+            "role": "user",
+            "content": "fictional café alpha",
+            "occurred_at": "2020-01-01T00:00:00Z"
+          }
+        },
+        {
+          "kind": "question",
+          "clock": "2020-01-02T00:00:00Z",
+          "question": {
+            "question_id": "fixture-question",
+            "user_id": "fictional-user",
+            "question": "Echo the fixture?",
+            "mode": "current",
+            "stratum": "present-state"
+          }
+        }
+      ]
+    }
+  ]
+}

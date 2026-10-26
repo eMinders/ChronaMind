@@ -15,3 +15,9 @@ dist/
 # Unversioned benchmark downloads & scratch outputs (manifests remain tracked)
 research/benchmarks/*/data/
 evaluation/runs/scratch/
+
+# Harness outputs can contain rendered context/answers; publish only reviewed reports.
+evaluation/runs/*
+!evaluation/runs/pilot/
+evaluation/runs/pilot/*
+!evaluation/runs/pilot/FREEZE_LIST.md
