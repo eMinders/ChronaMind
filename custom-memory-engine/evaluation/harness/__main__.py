@@ -16,7 +16,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--cases", required=True, type=Path)
-    parser.add_argument("--suite", required=True, choices=("T", "G", "D", "I", "LongMemEval_S", "LoCoMo"))
+    parser.add_argument(
+        "--suite",
+        required=True,
+        choices=("T", "G", "D", "I", "LongMemEval_oracle", "LongMemEval_S", "LongMemEval_M", "LoCoMo"),
+    )
     parser.add_argument("--split", required=True, choices=("dev", "test"))
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--runs-root", type=Path, default=Path("evaluation/runs"))

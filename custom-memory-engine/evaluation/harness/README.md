@@ -161,3 +161,9 @@ claim; this skeleton does not implement or authorize such a batch.
 All guard tests use fictional temporary Git repositories and synthetic signed
 fixture records. They do not inspect a real held-out split or impersonate a
 research approval.
+
+## RL-025 source integration
+
+The [benchmark adapters](../../research/benchmarks/ADAPTERS.md) opt into per-history streaming while ordinary callers retain eager validation. Streaming failures retain FAILED.json and never publish success. LongMemEval oracle and M have separate suite IDs and question cluster keys; only S is primary H2. TurnRecord.source_speaker optionally preserves a human speaker independently of tenant/role. Consumers must honor it for LoCoMo dialogue. Optional source metadata is namespaced under benchmark_source in the success manifest; existing provenance, authorization and budget controls remain mandatory.
+
+Reporting strata are removed from the question passed to `answer`; original strata remain in scorer inputs and artifacts. Source adapters must also use opaque system identifiers when original IDs encode answerability labels.

@@ -105,6 +105,8 @@ def run_evaluation(
     confirm_one_shot_test_run: bool = False,
     pilot_freeze_path: Path | None = None,
     timer: Callable[[], float] = perf_counter,
+    stream_cases: bool = False,
+    source_metadata: Callable[[], dict[str, object]] | None = None,
 ) -> Path:
     """Run normalized cases only after authorization, then publish a success manifest.
 
@@ -140,15 +142,28 @@ def run_evaluation(
     skipped_count = 0
     totals = Usage.zero()
     limits = config.operation_limits
-    cases = tuple(case_loader())
-    if not cases or any(not isinstance(case, EvaluationCase) for case in cases):
-        raise ValueError("nonempty_validated_cases_required")
-    if len({case.cluster_id for case in cases}) != len(cases):
-        raise ValueError("duplicate_cluster_id")
+    # Ordinary callers keep eager validation before adapter construction. Large
+    # benchmark sources explicitly opt into bounded, per-history consumption.
+    cases: Iterable[EvaluationCase]
+    if not stream_cases:
+        validated_cases = tuple(case_loader())
+        if not validated_cases or any(not isinstance(case, EvaluationCase) for case in validated_cases):
+            raise ValueError("nonempty_validated_cases_required")
+        if len({case.cluster_id for case in validated_cases}) != len(validated_cases):
+            raise ValueError("duplicate_cluster_id")
+        cases = validated_cases
+    else:
+        cases = case_loader()
+    seen_clusters: set[str] = set()
     with ArtifactWriter(output_root, run_id, config.config_id, suite_id) as writer:
         ledger = BudgetLedger(output_root, config)
         adapter = adapter_factory(config)
         for case in cases:
+            if not isinstance(case, EvaluationCase):
+                raise ValueError("nonempty_validated_cases_required")
+            if case.cluster_id in seen_clusters:
+                raise ValueError("duplicate_cluster_id")
+            seen_clusters.add(case.cluster_id)
             case_count += 1
             deletion_supported: dict[str, bool] = {}
             for user_id in case.user_ids:
@@ -179,6 +194,9 @@ def run_evaluation(
                     deletion_supported[event.user_id] = deleted.supported
                     continue
                 question = event.question
+                # Strata can encode abstention/category ground truth. They are
+                # reporting/scoring metadata, never a hint to the answer system.
+                system_question = question.model_copy(update={"stratum": None})
                 key = (case.cluster_id, question.question_id)
                 if key in seen_questions:
                     raise ValueError("duplicate_cluster_question")
@@ -216,7 +234,7 @@ def run_evaluation(
                         ledger,
                         split,
                         limits.answer,
-                        partial(adapter.answer, question.user_id, question, event.clock),
+                        partial(adapter.answer, question.user_id, system_question, event.clock),
                         timings=answer_ms,
                         timer=timer,
                     )
@@ -334,7 +352,7 @@ def run_evaluation(
             "question_count": question_count,
             "not_supported_count": skipped_count,
             "cluster_key": "question_id"
-            if suite_id == "LongMemEval_S"
+            if suite_id in {"LongMemEval_oracle", "LongMemEval_S", "LongMemEval_M"}
             else ("conversation_id" if suite_id == "LoCoMo" else "scenario_id"),
             "timing_ms": {
                 "retrieval": {"p50": percentile(retrieval_ms, 0.50), "p95": percentile(retrieval_ms, 0.95)},
@@ -354,6 +372,8 @@ def run_evaluation(
                 "Software replay only; scoring/primary endpoint definitions and inference belong to RL-025/033/034"
             ),
         }
+        if source_metadata is not None:
+            manifest["benchmark_source"] = source_metadata()
         writer.finish(manifest)
     logger.info("evaluation_run_completed", cases=case_count, questions=question_count, unsupported=skipped_count)
     return writer.destination

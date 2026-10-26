@@ -4,6 +4,13 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-025 Benchmark Adapters (26 October 2026)
+
+- Added checksum-bound, read-only streaming loaders for LongMemEval oracle/S/M and LoCoMo, with source-scoped identities, stable D-23 replay, cumulative R3 tie handling and separate gold/scoring envelopes.
+- Added turn-provenance Evidence Recall@k, multi-gold all-evidence-found diagnostics, primary exclusions and original-date sensitivity, plus exact licensed official QA function wrappers. Retained the historical Porter algorithm for reproducible LoCoMo stemming; provider CLIs and model downloads are excluded.
+- Integrated guarded selection artifacts binding source/split/suite/metric k, bounded per-history harness replay, original speaker metadata, source/scorer/clock provenance and synthetic end-to-end compatibility checks. Real baselines, provider judges, split freezes and research runs remain separate tasks.
+- Pinned ijson and regex only in the isolated engine environment; extended default pytest collection to include benchmark-adapter tests. Product code and root dependencies remain unchanged. See research/benchmarks/ADAPTERS.md and evidence/RL-025-verification.md for contracts and verification limits.
+
 ## RL-030 Evaluation Harness Foundation (26 October 2026)
 
 - Added the seven-method `MemorySystemAdapter` contract, explicit immutable model/system/configuration pins, typed replay inputs/results, and a source-checkout CLI with provider-free synthetic fixtures.

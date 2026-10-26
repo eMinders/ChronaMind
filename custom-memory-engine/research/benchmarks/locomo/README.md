@@ -36,3 +36,7 @@
 ```bash
 python3 custom-memory-engine/research/benchmarks/locomo/fetch.py
 ```
+
+## RL-025 source adapter
+
+The read-only `adapter.py` source facade is documented in [ADAPTERS.md](../ADAPTERS.md), including guarded selections, clocks, evidence/scorer provenance and synthetic verification. Acquisition above is separate from evaluation; adapters never invoke fetch or repair.
