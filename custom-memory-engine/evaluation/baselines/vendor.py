@@ -236,6 +236,9 @@ class VendorProcess:
             for stream in (process.stdin, process.stdout):
                 if stream is not None:
                     stream.close()
+        # Persist recovery before discarding the exited child: local teardown can
+        # fail (for example a Windows file lock) and close() must remain retryable.
+        self._cleanup_required = abnormal and bool(self._graph_tenants)
         self.process = None
         if self._temporary is not None:
             self._temporary.cleanup()

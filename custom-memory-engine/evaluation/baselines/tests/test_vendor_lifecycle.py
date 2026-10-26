@@ -151,7 +151,10 @@ def test_parent_graphiti_ipc_metering_evidence_and_prepared_answer() -> None:
         adapter.close()
 
 
-def test_forced_worker_kill_recovers_only_parent_tracked_namespaces(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("failure_stage", ["helper", "temporary", "temporary_then_helper"])
+def test_forced_worker_kill_recovers_only_parent_tracked_namespaces(
+    monkeypatch: pytest.MonkeyPatch, failure_stage: str
+) -> None:
     adapter, _, graph = create_adapter()
     tenant = adapter._tenant("user")
     sentinel = "cme_lifecycle_foreign_" + uuid4().hex
@@ -166,18 +169,47 @@ def test_forced_worker_kill_recovers_only_parent_tracked_namespaces(monkeypatch:
             process.wait(timeout=5)
             actual_run = subprocess.run
             injected_failure = False
+            injected_temporary_failure = False
+
+            if failure_stage != "helper":
+                temporary = adapter._worker._temporary
+                assert temporary is not None
+                actual_cleanup = temporary.cleanup
+
+                def fail_temporary_cleanup_once() -> None:
+                    nonlocal injected_temporary_failure
+                    if not injected_temporary_failure:
+                        injected_temporary_failure = True
+                        raise PermissionError("fixture_transient_file_lock")
+                    actual_cleanup()
+
+                monkeypatch.setattr(temporary, "cleanup", fail_temporary_cleanup_once)
 
             def fail_cleanup_once(args: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
                 nonlocal injected_failure
-                if not injected_failure and any("evaluation.baselines.graph_cleanup" in arg for arg in args):
+                if (
+                    failure_stage != "temporary"
+                    and not injected_failure
+                    and any("evaluation.baselines.graph_cleanup" in arg for arg in args)
+                ):
                     injected_failure = True
                     return subprocess.CompletedProcess(args, 1, stdout=b'{"ok":false}')
                 return actual_run(args, **kwargs)
 
             monkeypatch.setattr(vendor_module.subprocess, "run", fail_cleanup_once)
-            with pytest.raises(RuntimeError, match="owned_graph_cleanup_failed"):
-                adapter.close()
-            assert injected_failure and connection.exists(tenant)
+            if failure_stage == "helper":
+                with pytest.raises(RuntimeError, match="owned_graph_cleanup_failed"):
+                    adapter.close()
+                assert injected_failure
+            else:
+                with pytest.raises(PermissionError, match="fixture_transient_file_lock"):
+                    adapter.close()
+                assert injected_temporary_failure and not injected_failure
+            assert connection.exists(tenant)
+            if failure_stage == "temporary_then_helper":
+                with pytest.raises(RuntimeError, match="owned_graph_cleanup_failed"):
+                    adapter.close()
+                assert injected_failure and connection.exists(tenant)
             # Recovery retains the parent-owned scope even with no live child.
             adapter.close()
             assert not connection.exists(tenant)

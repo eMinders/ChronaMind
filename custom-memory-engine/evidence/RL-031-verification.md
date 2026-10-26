@@ -98,6 +98,17 @@ Mem0 wall-clock dates, Graphiti clock aliases/query-role embedding, metadata-onl
 partial evidence, request-framing window bounds and abnormal-worker cleanup.
 Each material regression has a failing-before/fixed-after behavioral check.
 
+A subsequent assurance pass found a cleanup retry defect: if temporary-directory
+cleanup raised after an abnormal child exit, a later close could forget the owned
+graphs without recovery. The parent now persists the recovery obligation before
+discarding the exited process. Two dependency-free regression cases failed before
+the fix and passed afterward, including a subsequent recovery-helper failure.
+The real Graphiti/Falkor lifecycle test now exercises helper, temporary-directory,
+and combined failures, verifying actual owned-graph deletion and preservation of
+a foreign sentinel. Independent review also checked normal acknowledged shutdown
+and stream-close failure. The submitted-head PR checks remain the source of truth
+for complete integration results after this follow-up.
+
 D-21 requires its approved development probe, actual extraction stability and
 projected token/cost measurements. The local SDK checks do not include or exclude
 B4. Pilot freezes, human/supervisor approvals, paid model access, corpus baselines,
