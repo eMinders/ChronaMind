@@ -22,6 +22,8 @@ def _discard_status(*_args: object, **_kwargs: object) -> None:
 print = _discard_status
 
 
+# fmt: off
+# Preserve pinned function layout across the root and engine Ruff versions.
 def normalize_answer(s):
 
     s = s.replace(",", "")
@@ -121,3 +123,4 @@ def eval_question_answering(qas, eval_key="prediction", metric="f1"):
     print("{} QA samples evaluated; {} accuracy values".format(len(qas), len(all_ems)))
     lens = 0.0
     return all_ems, lens, all_recall
+# fmt: on
