@@ -55,3 +55,33 @@ All six uploaded tasks have technical decision deliverables in the user-requeste
 - Connections close on setup failures and use a connection timeout; pool rollback verification now uses autocommit connections so the test exercises full transaction rollback rather than a nested savepoint.
 - Conflicting writer test waits for server-side Lock contention before releasing the first transaction; pending task cleanup is bounded. Warning-free tests are enforced in pytest configuration.
 - Built wheel and source distribution successfully into a temporary directory. Reviewed package contents, environment exclusions, Git staging and issue acceptance scope. Local test database is removed after verification.
+
+## `RL-040` full-schema verification — 2026-10-26
+
+Applies to `implementation/schema/001_full_schema.sql` and `implementation/tests/test_full_schema.py` on branch `rl/040-full-schema-ddl`. This closes the DDL half of item 4 above; migrations (`RL-041`), transactional procedures (`RL-042`, `RL-044`), retrieval (`RL-043`), runtime-role RLS (`RL-071`), archival `T1`–`T5` (`RL-090`) and deletion closure (`RL-070`) remain outstanding.
+
+| Check | Result |
+|---|---|
+| `implementation/tests/test_full_schema.py` | **13 passed**, including 43/43 bitemporal assertions against the full `memory_version` |
+| Twelve-table creation and named constraints | Verified in a throwaway schema |
+| `ENABLE`/`FORCE ROW LEVEL SECURITY` on the eleven user-data tables | Verified from `pg_class`; policy enforcement as a non-superuser role is `RL-071` |
+| Deferred provenance trigger (Invariant 1) | Rejects a committed `active` row without evidence or derivation; accepts either in-transaction |
+| `guard_update()` (Invariant 3) | Rejects content edits and illegal `recorded_range` changes; permits `archival_branch` `NULL → S` only together with `status = 'archived'` |
+| `JOB` uniqueness (Invariant 9) | Both `idempotency_key` and `(user_id, turn_id, extractor_version, candidate_fingerprint)` enforced |
+| Ruff / Ruff format / Pyright standard | Clean |
+| Full pytest suite | 79 passed; one pre-existing `RL-012` version-pin assertion failed **only** on this substitute local server (`160002` / vector `0.6.2` instead of the pinned `160015` / `0.8.7`) |
+
+The local database was PostgreSQL `16.2` with `btree_gist 1.7` and `vector 0.6.2`, built as a disposable substitute because Docker is unavailable on the verification host. It is **not** the `D-25` pin; CI runs the tests against `pgvector/pgvector:0.8.7-pg16-bookworm@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a`. No concurrency, load, or production-readiness claim follows from this run.
+
+CI later ran the same suite on the pinned image and reported `179 passed`, with the replay ending in `ALL ASSERTIONS PASSED`.
+
+### Review follow-up — 2026-10-26
+
+Independent review on PR #27 raised four items. All are fixed in this branch:
+
+| Finding | Change |
+|---|---|
+| `bitemporal_on_full.sql` disabled the provenance trigger and never restored it, so a run against a persistent database left invariant 1 off | The script re-enables `trg_memory_version_provenance` as its final statement, and `test_forty_three_bitemporal_assertions_pass_against_full_memory_version` now asserts `tgenabled = 'O'` after the replay |
+| `guard_update()` allowed `archival_branch` to move `NULL → S`/`C` without an archive transition | The trigger now requires `NEW.status = 'archived'` for any `archival_branch` change, and a negative test covers a branch-only update |
+| `clock_now()` was declared `STABLE` but read volatile `clock_timestamp()`, so repeated calls could differ inside one transaction | It falls back to `transaction_timestamp()`, giving one instant per transaction as `R1` requires |
+| The specification names `validation/bitemporal_checks.sql`, while this PR replays a copy | `implementation/schema/README.md` explains why the replay exists and records the deliberate additions beyond §3.1 |
