@@ -1,0 +1,3 @@
+# Preserve the canonical bytes bound by the frozen split hashes on Windows too.
+*.yaml text eol=lf
+FREEZE_LIST.md text eol=lf

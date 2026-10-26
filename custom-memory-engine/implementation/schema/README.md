@@ -8,7 +8,72 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` Â
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
-`RL-041` owns migration runners. `RL-042` owns transactional supersession and `archive_version`. `RL-043` owns retrieval functions as engine APIs. `bitemporal_on_full.sql` still defines the design-check query helpers locally so the 43 assertions can run before those tasks.
+[`migrate.py`](migrate.py) implements the `RL-041` migration runner described below. `RL-042` owns transactional supersession and `archive_version`. `RL-043` owns retrieval functions as engine APIs. `bitemporal_on_full.sql` still defines the design-check query helpers locally so the 43 assertions can run before those tasks.
+
+## Apply, inspect and clean reset (`RL-041`)
+
+From `custom-memory-engine/`, export **`RL_DATABASE_URL`** for a dedicated research
+database, then run:
+
+```text
+uv run python -m implementation.schema.migrate status
+uv run python -m implementation.schema.migrate apply
+uv run python -m implementation.schema.migrate reset --confirm-schema cme_engine
+```
+
+The database URL must explicitly identify its host, user and database; system
+databases are rejected. The runner never loads a dotenv file or falls back to the
+product's `DATABASE_URL`. For an already configured disposable test database, an
+explicit PowerShell assignment is `$env:RL_DATABASE_URL = $env:CME_TEST_DATABASE_URL`.
+Keep credentials in the environment, outside command arguments and reports.
+
+The default target is **`cme_engine`**. `--schema cme_other_name` selects another
+lowercase `cme_` namespace; reset requires that exact value in `--confirm-schema`.
+Only schemas created and marked by this runner, owned by the current role, are
+managed. Existing unmarked schemas are never adopted or erased. The twelve
+canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
+table recording version, filename, canonical-LF source SHA-256, live-catalog digest
+and application time. Version **1 / `001_full_schema.sql`** is currently registered.
+Unknown versions and edited historical sources are refused, rather than reapplied.
+
+`status` reads without creating schema objects and reports `unapplied`, `applied`,
+`unmanaged` or `drifted`, plus the recorded version/checksum and a static reason.
+The live digest checks columns/defaults, relations/owners, constraints, indexes,
+functions, triggers, RLS/policies, types and extension versions; row data and
+storage statistics are excluded. `apply` returns `unchanged` on a matching install
+and preserves both rows and table identities. Constructors perform no I/O.
+
+All operations use an async connection and a bounded transaction-level advisory
+lock. Apply and reset commit atomically. The provisioning role needs schema and
+extension creation privileges; runtime role grants remain `RL-071`. The runner
+installs/verifies `vector` and `btree_gist` in **`public` before** selecting the
+managed creation namespace, so reset cannot erase those shared extensions.
+The supported integration stack is PostgreSQL 16.15 / vector 0.8.7 / btree_gist 1.7;
+the runner records actual extension versions, rather than silently upgrading them.
+
+Clean reset removes data in the known managed tables and recreates migration 1.
+It can repair known catalog drift after explicit confirmation. Invalid/missing
+history, unknown versions and source-checksum drift are refused. The runner drops
+known tables together with **`RESTRICT`**, then the three known functions and the
+schema, also with `RESTRICT`. External dependencies or unknown remaining objects
+make reset fail and roll back; no cross-schema `CASCADE` is used. A failed reapply
+also restores the original rows, table identities and history. Normal operation
+must stop before an operator intentionally resets its namespace.
+
+The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
+`apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
+revalidates copied configuration. CLI output uses JSON, with diagnostics on stderr;
+errors contain static categories/SQLSTATE, never provider content or connection
+credentials. Windows CLI execution uses a selector event loop for psycopg.
+
+`implementation/tests/test_migrations.py` exercises real provisioning, repeated
+apply/reset, failure rollback, concurrent apply, ownership/drift, external
+dependency preservation and first-run extension bootstrap in fresh databases.
+Its clean-reset fixture runs all **43** assertions from `bitemporal_on_full.sql`
+and checks the original full table identity and full-only columns remain present.
+That fixture script contains explicit transactions, test rows, local helper
+functions and a temporary provenance-trigger disable; it is **not** a production
+verification command. The migration CLI never executes it on runtime data.
 
 ## Invariant map
 
