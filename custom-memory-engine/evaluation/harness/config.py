@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 
-from evaluation.harness.models import Record, Usage
+from evaluation.harness.models import ContextPolicy, Record, Usage
 
 
 def safe_component(value: str) -> str:
@@ -52,6 +52,10 @@ class HarnessConfig(Record):
     temperature: float = Field(ge=0, le=0)
     seed: int = Field(ge=0)
     B_mem: int = Field(gt=0)
+    context_policy: ContextPolicy = "retrieved_memory"
+    context_window_tokens: int | None = Field(default=None, gt=0)
+    answer_output_tokens: int = Field(default=2048, gt=0)
+    adapter_configuration_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     prompt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     tokenizer_id: str = Field(min_length=1)
     budget_id: str
@@ -85,6 +89,13 @@ class HarnessConfig(Record):
     def validate_suballocation(self) -> "HarnessConfig":
         if self.dev_cost_cap_usd > self.cost_cap_usd:
             raise ValueError("development_budget_exceeds_total")
+        expected_policy = {"B0": "current_session", "B1": "full_history"}.get(self.system_id, "retrieved_memory")
+        if self.context_policy != expected_policy:
+            raise ValueError("context_policy_system_mismatch")
+        if self.context_policy != "retrieved_memory" and (
+            self.context_window_tokens is None or self.context_window_tokens <= self.answer_output_tokens
+        ):
+            raise ValueError("history_context_window_required")
         return self
 
     def execution_sha256(self) -> str:

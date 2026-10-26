@@ -133,6 +133,45 @@ def test_adapter_failure_has_no_success_manifest_and_charges_unknown_usage(repo:
     assert state["unknown_operations"] == state["failed_operations"] == 1
 
 
+def test_optional_adapter_resources_close_before_success_publication(repo: Path) -> None:
+    observed = []
+
+    class Closing(DummyAdapter):
+        def close(self) -> None:
+            observed.append((repo / "runs/first/dummy/T/manifest.json").exists())
+
+    destination = run_fixture(repo, factory=Closing)
+    assert observed == [False]
+    assert (destination / "manifest.json").exists()
+
+
+def test_adapter_cleanup_failure_prevents_success_publication(repo: Path) -> None:
+    class Closing(DummyAdapter):
+        def close(self) -> None:
+            raise RuntimeError("private cleanup diagnostic")
+
+    with pytest.raises(RuntimeError, match="private cleanup diagnostic"):
+        run_fixture(repo, factory=Closing)
+    destination = repo / "runs/first/dummy/T"
+    assert not (destination / "manifest.json").exists()
+    assert "private cleanup" not in (destination / "FAILED.json").read_text()
+
+
+def test_replay_failure_still_closes_optional_adapter_resources(repo: Path) -> None:
+    closed = []
+
+    class Failing(DummyAdapter):
+        def answer(self, user_id: str, question: QuestionRecord, as_of: datetime) -> AnswerResult:
+            raise RuntimeError("synthetic answer failure")
+
+        def close(self) -> None:
+            closed.append(True)
+
+    with pytest.raises(RuntimeError, match="synthetic answer failure"):
+        run_fixture(repo, factory=Failing)
+    assert closed == [True]
+
+
 def test_reset_and_replay_do_not_mix_user_stores(repo: Path) -> None:
     path = run_fixture(repo, loader=lambda: (fixture_case("one", "one"), fixture_case("two", "two")))
     rows = [json.loads(line) for line in (path / "answers.jsonl").read_bytes().splitlines()]

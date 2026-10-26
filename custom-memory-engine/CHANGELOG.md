@@ -4,11 +4,21 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-031 Baseline Adapters (26 October 2026)
+
+- Added B0 explicit current-session, B1 window-bounded history with truncation diagnostics, B2 raw-turn cosine, B2h PostgreSQL English FTS/RRF60, real pinned Mem0 B3 and conditional Graphiti B4 adapters with shared frozen answering and local embedding services.
+- Added immutable official ONNX/tokenizer asset preparation, complete overflow chunking, explicit public assembly, isolated vendor workers and per-attempt/episode token, latency, failure and cost accounting. SDK JSON modes, source timestamps and injected replay dates are preserved through checked integration seams.
+- Extended harness context policies, clean question preparation, source-speaker handling, unavailable evidence metrics, adapter instrumentation and owned-resource cleanup before success publication. Optional dependencies remain separate from the default installation and root application.
+- Added actual local HTTP, official model, PostgreSQL, Mem0/Qdrant/SQLite and Graphiti/FalkorDB software integration checks alongside boundary, budget, configuration, failure and cleanup regressions. Verification and immutable source provenance are recorded in `evidence/RL-031-verification.md`.
+- Follow-up assurance corrected graph-recovery state loss when worker temporary-directory cleanup fails after an abnormal exit. Recovery now survives a file-lock failure and subsequent helper failure; regression checks cover retries and preservation of foreign graphs.
+- Preserved the team's frozen split bytes across Windows checkouts with a split-scoped LF attribute; split assignments, hashes and sign-off records are unchanged.
+- B4 D-21 inclusion, paid-provider availability, pilot parameters, research approvals, confirmatory/test runs and full-engine temporal/deletion conformance remain separate gates; no such outcome is claimed by these synthetic software tests.
+
 ## RL-041 Schema Migrations (26 October 2026)
 
 - Added async, atomic schema apply, read-only version/status inspection and confirmed clean reset against explicit `RL_DATABASE_URL`, with canonical source checksums, private history, live catalog drift checks and a migration advisory lock.
 - Kept shared extensions in public and reset only known owned objects with `RESTRICT`, preserving foreign dependencies through rollback. Added independent unit and real PostgreSQL tests for idempotency, concurrent apply, failed apply/reset, malformed history, first extension bootstrap and all 43 bitemporal assertions against the full schema.
-- Extended isolated engine lint/type scopes to include the schema runner. Four equivalent replay-cache `isinstance` expressions use union syntax for compatibility with root CI's older Ruff. A scoped Git attribute preserves frozen split files' canonical LF bytes on Windows; their content and recorded hashes are unchanged. Product code, dependencies and frozen research contracts remain unchanged.
+- Extended isolated engine lint/type scopes to include the schema runner. Four equivalent replay-cache `isinstance` expressions use union syntax for compatibility with root CI's older Ruff. A scoped Git attribute preserves frozen split files' canonical LF bytes on Windows; their content and recorded hashes remain unchanged. Product code, dependencies and frozen research contracts remain unchanged.
 
 ## RL-025 Benchmark Adapters (26 October 2026)
 

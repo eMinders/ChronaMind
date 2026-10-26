@@ -12,8 +12,14 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     services:
+      falkor:
+        image: falkordb/falkordb:6.0.3@sha256:a3f7f58482504f49bc1c0d703c472f73e6eb0fc421d0c31a391cc26e21753c33
+        ports: ["16389:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 30
       postgres:
         image: pgvector/pgvector:0.8.7-pg16-bookworm@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
         env:
@@ -26,6 +32,9 @@ jobs:
           --health-interval 2s --health-timeout 3s --health-retries 30
     env:
       CME_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility
+      CME_BASELINE_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility
+      CME_BASELINE_TEST_FALKOR_PORT: "16389"
+      CME_BASELINE_TEST_ASSETS: /tmp/chronamind-rl031-assets
       PGPASSWORD: isolated_ci_only
     defaults:
       run:
@@ -35,14 +44,30 @@ jobs:
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7 (Node 24)
         with:
           version: "0.13.5"
-      - run: uv sync --frozen --python 3.12.12
-      - run: uv run ruff check src tests research/benchmarks implementation evaluation && uv run ruff format --check src tests research/benchmarks implementation evaluation
-      - run: uv run pyright
+      - run: uv sync --frozen --extra baselines --python 3.12.12
+      - name: Prepare immutable local model assets
+        run: uv run --no-sync python -m evaluation.baselines.assets prepare --directory "$CME_BASELINE_TEST_ASSETS"
+      - run: uv run --no-sync ruff check src tests research/benchmarks implementation/tests evaluation && uv run --no-sync ruff format --check src tests research/benchmarks implementation/tests evaluation
+      - run: uv run --no-sync pyright
       - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
-      - run: uv run pytest -q
+      - run: uv run --no-sync pytest -q
       - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql
       - name: Research reference consistency
         run: |
           md5sum -c validation/document_hashes.txt
           python3 validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md
           diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
+
+  default-install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: custom-memory-engine
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7 (Node 24)
+        with:
+          version: "0.13.5"
+      - name: Verify default installation without optional vendor/model packages
+        run: uv sync --frozen --python 3.12.12 && uv run --no-sync pytest -q
