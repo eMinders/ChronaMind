@@ -4,12 +4,13 @@ from datetime import datetime
 from decimal import Decimal, localcontext
 from typing import Annotated, Literal, Protocol
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 type SuiteId = Literal["T", "G", "D", "I", "LongMemEval_oracle", "LongMemEval_S", "LongMemEval_M", "LoCoMo"]
 type Split = Literal["dev", "test"]
 type QueryMode = Literal["current", "as_of", "what_changed", "before_change", "stable"]
 type DeletionScope = Literal["memory", "topic", "all"]
+type ContextPolicy = Literal["retrieved_memory", "current_session", "full_history"]
 
 
 class Record(BaseModel):
@@ -76,6 +77,14 @@ class QuestionRecord(Record):
     as_of_time: AwareDatetime | None = None
     stratum: str | None = None
     required_capabilities: tuple[Literal["retrieval", "deletion"], ...] = ()
+    session_id: str | None = None
+
+    @field_validator("session_id")
+    @classmethod
+    def nonblank_session(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("nonblank_question_session_required")
+        return value
 
 
 class IngestReceipt(Record):
@@ -95,6 +104,17 @@ class RetrievedItem(Record):
     evidence_turn_ids: tuple[str, ...] = ()
 
 
+class RetrievalDiagnostics(Record):
+    """Content-free counts from the adapter's actual context selection policy."""
+
+    context_policy: ContextPolicy
+    source_items: int = Field(ge=0)
+    selected_items: int = Field(ge=0)
+    truncated_items: int = Field(ge=0)
+    truncated_tokens: int = Field(ge=0)
+    candidate_count: int = Field(ge=0)
+
+
 class RetrievalResult(Record):
     supported: bool = True
     items: tuple[RetrievedItem, ...] = ()
@@ -102,6 +122,18 @@ class RetrievalResult(Record):
     context_tokens: int = Field(ge=0)
     retrieval_latency_ms: float | None = Field(default=None, ge=0)
     usage: Usage
+    unavailable_metrics: tuple[str, ...] = ()
+    unavailable_metrics_reason: str | None = None
+    diagnostics: RetrievalDiagnostics | None = None
+
+    @model_validator(mode="after")
+    def validate_metric_capabilities(self) -> "RetrievalResult":
+        names = self.unavailable_metrics
+        if len(set(names)) != len(names) or any(not name or any(char.isspace() for char in name) for name in names):
+            raise ValueError("unique_exact_metric_names_required")
+        if names and (self.unavailable_metrics_reason is None or not self.unavailable_metrics_reason.strip()):
+            raise ValueError("unavailable_metrics_reason_required")
+        return self
 
 
 class AnswerResult(Record):
@@ -189,6 +221,17 @@ class MetricScore(Record):
 
 class ScoreResult(Record):
     metrics: tuple[MetricScore, ...]
+
+
+def apply_metric_capabilities(score: ScoreResult, retrieval: RetrievalResult) -> ScoreResult:
+    """Keep supported QA while marking unavailable metric capabilities unscored."""
+    unavailable = frozenset(retrieval.unavailable_metrics)
+    return ScoreResult(
+        metrics=tuple(
+            metric.model_copy(update={"value": None}) if metric.name in unavailable else metric
+            for metric in score.metrics
+        )
+    )
 
 
 class MemorySystemAdapter(Protocol):

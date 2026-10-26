@@ -33,7 +33,12 @@ class ArtifactWriter:
     def append(self, name: str, value: object) -> None:
         if self._complete:
             raise ValueError("run_already_finalized")
-        self._streams[name].write(canonical_json(value))
+        if name not in ("answers", "scores", "per_cluster", "adapter_events"):
+            raise ValueError("unsupported_artifact_stream")
+        encoded = canonical_json(value)
+        if name not in self._streams:
+            self._streams[name] = (self.destination / f"{name}.jsonl").open("xb")
+        self._streams[name].write(encoded)
 
     def _close(self) -> None:
         for stream in self._streams.values():

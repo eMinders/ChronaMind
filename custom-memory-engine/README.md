@@ -25,6 +25,7 @@ All specifications, literature references, decision records, public/synthetic be
 
 | Topic | Authoritative File | Purpose |
 |---|---|---|
+| **Baseline adapters (`RL-031`)** | [`evaluation/baselines/README.md`](evaluation/baselines/README.md) | Six operational adapters, frozen assets, public factory, software verification and conditional B4 limits. |
 | **Research Proposal & Hypotheses (`H1`–`H4`)** | [`Graduation_Project_Proposal.md`](Graduation_Project_Proposal.md) | Frozen V4 research contract: problem statement, related work, bi-temporal model (§7), data model (§8), evaluation methodology (§10), and deliverables (§12). |
 | **Methodology & Consistency Checklist** | [`Methodology_and_Consistency_Checklist.md`](Methodology_and_Consistency_Checklist.md) | Audit checklist verifying statistical rules, scope exclusions, and the `T1`–`T5` archival precondition contract. |
 | **Technical Specification** | [`TECHNICAL_SPECIFICATION.md`](TECHNICAL_SPECIFICATION.md) | Concrete implementation contract: DDL table schemas, `R1`–`R8` rules, SQL query predicates, validation gate, RRF fusion, deletion closure, and `MemorySystemAdapter` protocol. |

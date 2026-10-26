@@ -4,6 +4,14 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-031 Baseline Adapters (26 October 2026)
+
+- Added B0 explicit current-session, B1 window-bounded history with truncation diagnostics, B2 raw-turn cosine, B2h PostgreSQL English FTS/RRF60, real pinned Mem0 B3 and conditional Graphiti B4 adapters with shared frozen answering and local embedding services.
+- Added immutable official ONNX/tokenizer asset preparation, complete overflow chunking, explicit public assembly, isolated vendor workers and per-attempt/episode token, latency, failure and cost accounting. SDK JSON modes, source timestamps and injected replay dates are preserved through checked integration seams.
+- Extended harness context policies, clean question preparation, source-speaker handling, unavailable evidence metrics, adapter instrumentation and owned-resource cleanup before success publication. Optional dependencies remain separate from the default installation and root application.
+- Added actual local HTTP, official model, PostgreSQL, Mem0/Qdrant/SQLite and Graphiti/FalkorDB software integration checks alongside boundary, budget, configuration, failure and cleanup regressions. Verification and immutable source provenance are recorded in `evidence/RL-031-verification.md`.
+- B4 D-21 inclusion, paid-provider availability, pilot parameters, research approvals, confirmatory/test runs and full-engine temporal/deletion conformance remain separate gates; no such outcome is claimed by these synthetic software tests.
+
 ## RL-025 Benchmark Adapters (26 October 2026)
 
 - Added checksum-bound, read-only streaming loaders for LongMemEval oracle/S/M and LoCoMo, with source-scoped identities, stable D-23 replay, cumulative R3 tie handling and separate gold/scoring envelopes.

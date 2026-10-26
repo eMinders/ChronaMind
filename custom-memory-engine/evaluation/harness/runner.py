@@ -5,13 +5,14 @@ import platform
 import subprocess
 from collections import defaultdict
 from collections.abc import Callable, Iterable
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from functools import partial
 from math import isfinite
 from os import cpu_count
 from pathlib import Path
 from time import perf_counter
-from typing import Protocol
+from typing import Protocol, cast, runtime_checkable
 
 import structlog
 
@@ -31,6 +32,7 @@ from evaluation.harness.models import (
     Split,
     SuiteId,
     Usage,
+    apply_metric_capabilities,
 )
 from evaluation.harness.paths import run_destination
 from evaluation.harness.replay_cache import ReplayCacheSummaryProvider
@@ -43,6 +45,70 @@ class Accounted(Protocol):
     def usage(self) -> Usage: ...
 
 
+@runtime_checkable
+class _QuestionPreparation(Protocol):
+    """Optional local control; reporting labels never enter this hook."""
+
+    def prepare_question(self, question: QuestionRecord) -> None: ...
+
+
+@runtime_checkable
+class _AdapterEvents(Protocol):
+    """Optional local, uncharged instrumentation emitted by accounted operations."""
+
+    def drain_adapter_events(self) -> tuple[dict[str, object], ...]: ...
+
+
+@runtime_checkable
+class _AdapterMetadata(Protocol):
+    """Optional local, uncharged runtime provenance, namespaced in the manifest."""
+
+    def adapter_metadata(self) -> dict[str, object]: ...
+
+
+@runtime_checkable
+class _AdapterResources(Protocol):
+    """Optional owned resources; cleanup must settle before success publication."""
+
+    def close(self) -> None: ...
+
+
+def _validate_json(value: object) -> None:
+    """Refuse Python-only values and JSON's nonfinite/implicit-key coercions."""
+    if value is None or type(value) in (str, bool, int):
+        return
+    if type(value) is float and isfinite(value):
+        return
+    if type(value) is list:
+        for item in value:
+            _validate_json(item)
+        return
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("adapter_hook_json_keys_required")
+            _validate_json(item)
+        return
+    raise ValueError("adapter_hook_json_value_required")
+
+
+def _json_object(value: object) -> dict[str, object]:
+    if type(value) is not dict:
+        raise ValueError("adapter_hook_json_object_required")
+    _validate_json(value)
+    return cast(dict[str, object], value)
+
+
+def _drain_adapter_events(adapter: MemorySystemAdapter, writer: ArtifactWriter) -> None:
+    if not isinstance(adapter, _AdapterEvents):
+        return
+    events = adapter.drain_adapter_events()
+    if type(events) is not tuple:
+        raise ValueError("adapter_hook_event_tuple_required")
+    for event in events:
+        writer.append("adapter_events", _json_object(event))
+
+
 def _dispatch[T: Accounted](
     ledger: BudgetLedger,
     split: Split,
@@ -51,26 +117,33 @@ def _dispatch[T: Accounted](
     *,
     timings: list[float] | None = None,
     timer: Callable[[], float] = perf_counter,
+    event_sink: Callable[[], None] | None = None,
 ) -> T:
     """Reserve before dispatch, including bounded retry costs; never retry here."""
     reservation = ledger.reserve(maximum, split)
     try:
-        started = timer() if timings is not None else None
-        result = operation()
-        if started is not None and timings is not None:
-            timings.append(_elapsed(started, timer()))
-        if not isinstance(result.usage, Usage):
-            raise TypeError("operation_usage_required")
-    except AccountedOperationError as exc:
-        ledger.reconcile(reservation, exc.usage, failed=True)
-        raise
-    except BaseException:
-        ledger.reconcile(reservation, None, failed=True)
-        raise
-    ledger.reconcile(reservation, result.usage)
-    if ledger.snapshot().breached:
-        raise BudgetExceeded("operation_exceeded_declared_reservation")
-    return result
+        try:
+            started = timer() if timings is not None else None
+            result = operation()
+            if started is not None and timings is not None:
+                timings.append(_elapsed(started, timer()))
+            if not isinstance(result.usage, Usage):
+                raise TypeError("operation_usage_required")
+        except AccountedOperationError as exc:
+            ledger.reconcile(reservation, exc.usage, failed=True)
+            raise
+        except BaseException:
+            ledger.reconcile(reservation, None, failed=True)
+            raise
+        ledger.reconcile(reservation, result.usage)
+        if ledger.snapshot().breached:
+            raise BudgetExceeded("operation_exceeded_declared_reservation")
+        return result
+    finally:
+        # Reconcile exactly once before touching instrumentation. Its errors must
+        # never turn a completed provider operation into an unknown-usage charge.
+        if event_sink is not None:
+            event_sink()
 
 
 def _git_provenance(repo_root: Path) -> dict[str, str | bool]:
@@ -157,9 +230,12 @@ def run_evaluation(
     else:
         cases = case_loader()
     seen_clusters: set[str] = set()
-    with ArtifactWriter(output_root, run_id, config.config_id, suite_id) as writer:
+    with ArtifactWriter(output_root, run_id, config.config_id, suite_id) as writer, ExitStack() as resources:
         ledger = BudgetLedger(output_root, config)
         adapter = adapter_factory(config)
+        if isinstance(adapter, _AdapterResources):
+            resources.callback(adapter.close)
+        event_sink = partial(_drain_adapter_events, adapter, writer)
         for case in cases:
             if not isinstance(case, EvaluationCase):
                 raise ValueError("nonempty_validated_cases_required")
@@ -174,11 +250,21 @@ def run_evaluation(
                 adapter.set_clock(event.clock)
                 if isinstance(event, IngestEvent):
                     visible_start = timer()
-                    receipt = _dispatch(ledger, split, limits.ingest_turn, partial(adapter.ingest_turn, event.turn))
+                    receipt = _dispatch(
+                        ledger,
+                        split,
+                        limits.ingest_turn,
+                        partial(adapter.ingest_turn, event.turn),
+                        event_sink=event_sink,
+                    )
                     if receipt.turn_id != event.turn.turn_id:
                         raise ValueError("ingestion_receipt_turn_mismatch")
                     drained = _dispatch(
-                        ledger, split, limits.drain_queue, partial(adapter.drain_queue, event.turn.user_id)
+                        ledger,
+                        split,
+                        limits.drain_queue,
+                        partial(adapter.drain_queue, event.turn.user_id),
+                        event_sink=event_sink,
                     )
                     if drained.pending:
                         raise ValueError("queue_not_drained")
@@ -191,6 +277,7 @@ def run_evaluation(
                         split,
                         limits.delete,
                         partial(adapter.delete, event.user_id, event.scope, event.target_ref),
+                        event_sink=event_sink,
                     )
                     totals = totals.plus(deleted.usage)
                     deletion_supported[event.user_id] = deleted.supported
@@ -203,9 +290,17 @@ def run_evaluation(
                 if key in seen_questions:
                     raise ValueError("duplicate_cluster_question")
                 seen_questions.add(key)
-                drained = _dispatch(ledger, split, limits.drain_queue, partial(adapter.drain_queue, question.user_id))
+                drained = _dispatch(
+                    ledger,
+                    split,
+                    limits.drain_queue,
+                    partial(adapter.drain_queue, question.user_id),
+                    event_sink=event_sink,
+                )
                 if drained.pending:
                     raise ValueError("queue_not_drained")
+                if isinstance(adapter, _QuestionPreparation):
+                    adapter.prepare_question(system_question)
                 retrieval = _dispatch(
                     ledger,
                     split,
@@ -220,9 +315,18 @@ def run_evaluation(
                     ),
                     timings=retrieval_operation_ms,
                     timer=timer,
+                    event_sink=event_sink,
                 )
-                if retrieval.context_tokens > config.B_mem:
-                    raise ValueError("retrieved_context_exceeds_frozen_budget")
+                if retrieval.diagnostics is not None and retrieval.diagnostics.context_policy != config.context_policy:
+                    raise ValueError("retrieval_diagnostics_policy_mismatch")
+                if config.context_policy == "retrieved_memory":
+                    if retrieval.context_tokens > config.B_mem:
+                        raise ValueError("retrieved_context_exceeds_frozen_budget")
+                elif (
+                    config.context_window_tokens is None
+                    or retrieval.context_tokens > config.context_window_tokens - config.answer_output_tokens
+                ):
+                    raise ValueError("history_context_exceeds_model_window")
                 supported = not (
                     ("retrieval" in question.required_capabilities and not retrieval.supported)
                     or (
@@ -239,6 +343,7 @@ def run_evaluation(
                         partial(adapter.answer, question.user_id, system_question, event.clock),
                         timings=answer_ms,
                         timer=timer,
+                        event_sink=event_sink,
                     )
                     if supported
                     else AnswerResult(supported=False, usage=Usage.zero())
@@ -247,7 +352,13 @@ def run_evaluation(
                 item_usage = drained.usage.plus(retrieval.usage).plus(answer.usage)
                 totals = totals.plus(item_usage)
                 question_count += 1
-                row = {
+                capability_fields: dict[str, object] = {}
+                if retrieval.unavailable_metrics:
+                    capability_fields = {
+                        "unavailable_metrics": list(retrieval.unavailable_metrics),
+                        "unavailable_metrics_reason": retrieval.unavailable_metrics_reason,
+                    }
+                row: dict[str, object] = {
                     "cluster_id": case.cluster_id,
                     "question_id": question.question_id,
                     "user_id": question.user_id,
@@ -261,9 +372,16 @@ def run_evaluation(
                     "usage": item_usage.model_dump(mode="json"),
                     "evidence": [item.model_dump(mode="json") for item in retrieval.items],
                     "timing_key": [case.cluster_id, question.question_id],
+                    **capability_fields,
                 }
+                if retrieval.diagnostics is not None:
+                    row["diagnostics"] = retrieval.diagnostics.model_dump(mode="json")
                 writer.append("answers", row)
-                metrics = scorer(question, retrieval, answer).metrics if supported else ()
+                metrics = (
+                    apply_metric_capabilities(scorer(question, retrieval, answer), retrieval).metrics
+                    if supported
+                    else ()
+                )
                 if len({metric.name for metric in metrics}) != len(metrics):
                     raise ValueError("duplicate_metric_name")
                 writer.append(
@@ -274,6 +392,7 @@ def run_evaluation(
                         "stratum": question.stratum,
                         "status": "scored" if supported else "not_supported",
                         "metrics": [metric.model_dump(mode="json") for metric in metrics],
+                        **capability_fields,
                     },
                 )
                 if not supported:
@@ -387,6 +506,9 @@ def run_evaluation(
         )
         if active_replay_cache is not None:
             manifest["extraction_replay_cache"] = active_replay_cache.manifest_summary().model_dump(mode="json")
+        if isinstance(adapter, _AdapterMetadata):
+            manifest["adapter_metadata"] = _json_object(adapter.adapter_metadata())
+        resources.close()
         writer.finish(manifest)
     logger.info("evaluation_run_completed", cases=case_count, questions=question_count, unsupported=skipped_count)
     return writer.destination

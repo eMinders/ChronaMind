@@ -15,6 +15,17 @@ dependencies = [
   "regex==2026.9.29",
 ]
 
+[project.optional-dependencies]
+baselines = [
+  "tiktoken==0.14.0",
+  "onnxruntime==1.31.0",
+  "tokenizers==0.23.3",
+  "mem0ai==2.2.1",
+  "graphiti-core[falkordb]==0.31.2",
+  "qdrant-client==1.20.0",
+  "openai==2.7.1",
+]
+
 [dependency-groups]
 dev = [
   "pytest==9.0.2",
@@ -33,7 +44,15 @@ packages = ["src/custom_memory_engine"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["src", "."]
-testpaths = ["tests", "implementation/tests", "evaluation/harness/tests", "research/benchmarks/longmemeval/tests", "research/benchmarks/locomo/tests", "research/benchmarks/tests"]
+testpaths = [
+  "tests",
+  "implementation/tests",
+  "evaluation/harness/tests",
+  "research/benchmarks/longmemeval/tests",
+  "research/benchmarks/locomo/tests",
+  "research/benchmarks/tests",
+  "evaluation/baselines/tests",
+]
 markers = ["integration: requires a disposable PostgreSQL database"]
 filterwarnings = ["error"]
 
