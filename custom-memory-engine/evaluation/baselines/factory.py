@@ -113,14 +113,12 @@ def _provenance(adapter: BaseAdapter, settings: BaselineSettings, assembly: str)
         "store_type": type(adapter.store).__name__
         if isinstance(adapter, B2DenseAdapter)
         else (
-            "isolated_vendor_worker"
-            if isinstance(adapter, (B3Mem0Adapter, B4GraphitiAdapter))
-            else "local_raw_history"
+            "isolated_vendor_worker" if isinstance(adapter, B3Mem0Adapter | B4GraphitiAdapter) else "local_raw_history"
         ),
         "assets_status": "not_checked_at_construction",
         "parent_runtime_packages": packages,
         "vendor_runtime_version_check": "on_worker_start"
-        if isinstance(adapter, (B3Mem0Adapter, B4GraphitiAdapter))
+        if isinstance(adapter, B3Mem0Adapter | B4GraphitiAdapter)
         else None,
     }
 

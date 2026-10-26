@@ -2,9 +2,15 @@
 
 This contribution implements [issue #23](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/23).
 The [adapter guide](../evaluation/baselines/README.md) documents operational setup
-and limitations. Component checks passed during implementation. Final integrated
-verification and exact submitted-commit CI are still in progress; this document
-will be updated with those outcomes before completion is claimed.
+and limitations. Final local integration at `780cdd8` passed **603 tests with no
+failures, skips or collection errors**, including all 20 tests marked integration,
+plus **43/43 SQL assertions**. The independent default installation passed **562
+tests with 29 explicit optional-dependency/service skips**. Source/SQL and HEAD
+snapshots were identical before and after the combined run; root and engine locks
+were unchanged. PostgreSQL resources were removed and the graph list was empty.
+The final [PR #36 checks](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/pull/36/checks)
+provide authoritative results for the submitted commit, including the subsequent
+syntax-only lint compatibility and CI-context correction.
 
 ## Requirement-to-evidence map
 
@@ -51,6 +57,19 @@ Reference checks remain `md5sum -c validation/document_hashes.txt`, the document
 `validation/mechanical_checks.py` command, exact `cp_bounds.output.txt` comparison,
 and the 43 reduced-schema SQL assertions. These SQL checks and raw-baseline store
 tests do not establish the teammate-owned full 12-table schema or production RLS.
+
+Local Ruff 0.15.6, formatting, Pyright 1.1.408, canonical LF reference hashes,
+mechanical hard checks, exact Clopper–Pearson output and dependency compatibility
+checks passed. Root CI's older Ruff additionally requires union syntax in seven
+`isinstance` checks; four are in the recently merged replay cache. Those syntax-only
+changes preserve the cache's behavior. The engine workflow uses an explicit Linux
+asset directory because `runner` context is unavailable at job-level `env`.
+
+The first combined Windows attempt reached its original 300-second process bound
+and was not counted as a pass. Its owned database was cleaned. A bounded 900-second
+retry completed pytest in 252.31 seconds without changing test selection or model
+limits. Frozen split files are checked out as their committed canonical LF bytes;
+no split assignment, signature or recorded hash was regenerated.
 
 ## Immutable primary sources
 

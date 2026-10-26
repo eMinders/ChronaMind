@@ -34,7 +34,7 @@ jobs:
       CME_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility
       CME_BASELINE_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility
       CME_BASELINE_TEST_FALKOR_PORT: "16389"
-      CME_BASELINE_TEST_ASSETS: ${{ runner.temp }}/rl031-assets
+      CME_BASELINE_TEST_ASSETS: /tmp/chronamind-rl031-assets
       PGPASSWORD: isolated_ci_only
     defaults:
       run:

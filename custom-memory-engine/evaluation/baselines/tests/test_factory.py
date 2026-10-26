@@ -75,7 +75,7 @@ def test_injected_factory_routes_to_actual_adapters(system, expected, tmp_path: 
     if isinstance(adapter, B2hHybridAdapter):
         assert isinstance(adapter.store, PostgresRawStore)
         assert provenance["store_type"] == "PostgresRawStore"
-    if isinstance(adapter, (B3Mem0Adapter, B4GraphitiAdapter)):
+    if isinstance(adapter, B3Mem0Adapter | B4GraphitiAdapter):
         assert adapter._worker.process is None
     assert services.current is None and not services.requests and not services.embedding_requests
 
