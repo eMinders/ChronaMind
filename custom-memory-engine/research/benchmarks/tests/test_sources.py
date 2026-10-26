@@ -159,6 +159,7 @@ def test_longmemeval_all_variants_run_through_official_prompt_and_harness(
     metadata = json.loads((first / "manifest.json").read_bytes())
     assert metadata["suite_id"] == suite and metadata["cluster_key"] == "question_id"
     assert metadata["benchmark_source"]["dataset_sha256"] == digest
+    assert metadata["benchmark_source"]["audit"][0]["replay_session_indices"] == [0]
     assert metadata["benchmark_source"]["official_scorers"]["LoCoMo"]["commit"].startswith("3eb6")
     assert metadata["usage"]["cost_usd"] == "0"
     assert (raw.read_bytes(), manifest.read_bytes()) == before
@@ -200,6 +201,38 @@ def test_streaming_input_rejects_ambiguous_or_invalid_json(tmp_path: Path, text:
     path.write_bytes(text.encode())
     with pytest.raises(ValueError):
         list(iter_records(path, hashlib.sha256(path.read_bytes()).hexdigest()))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[{"x":1,"x":2}]',
+        '[{"a":{"x":1,"x":2}}]',
+        '[{"a":[{"x":1,"x":2}]}]',
+        '[{"a":{"b":[{"x":1,"x":2}]}}]',
+        '[{"a":{"x":1,"x":2},"a":{}}]',
+        r'[{"a":{"x":1,"\u0078":2}}]',
+        '[{"ok":1},{"a":{"x":1,"x":2}}]',
+        '[{"a":{"x":1,"x":2}},{"ok":1}]',
+    ],
+)
+def test_duplicate_json_keys_raise_validation_errors_at_any_depth(tmp_path: Path, text: str) -> None:
+    path = tmp_path / "raw.json"
+    original = text.encode()
+    path.write_bytes(original)
+    with pytest.raises(ValueError, match="duplicate_json_key"):
+        list(iter_records(path, hashlib.sha256(original).hexdigest()))
+    assert path.read_bytes() == original
+
+
+def test_streaming_json_accepts_repeated_keys_in_distinct_objects(tmp_path: Path) -> None:
+    path = tmp_path / "raw.json"
+    original = b'[{"a":{"x":1},"b":[{"x":2},{"x":3}]}]'
+    path.write_bytes(original)
+    assert list(iter_records(path, hashlib.sha256(original).hexdigest())) == [
+        {"a": {"x": 1}, "b": [{"x": 2}, {"x": 3}]}
+    ]
+    assert path.read_bytes() == original
 
 
 def test_hash_failures_never_repair_or_mutate_raw_inputs(tmp_path: Path) -> None:

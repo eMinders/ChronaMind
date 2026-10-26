@@ -54,6 +54,7 @@ class ClockAdjustment(Record):
 class ReplayAudit(Record):
     original_session_ids: tuple[str, ...] = ()
     replay_session_ids: tuple[str, ...] = ()
+    replay_session_indices: tuple[int, ...] = ()
     clock_adjustments: tuple[ClockAdjustment, ...] = ()
     source_speakers: tuple[tuple[str, str], ...] = ()
     unpaired_session_dates: tuple[str, ...] = ()
@@ -89,9 +90,13 @@ class BenchmarkSelection(Record):
 
 
 class _UniqueMap(dict):
+    duplicate_keys: bool = False
+
     def __setitem__(self, key: str, value: object) -> None:
         if key in self:
-            raise ValueError("duplicate_json_key")
+            # Raising inside ijson's C callback can leave a pending exception.
+            # Validate the flag in ordinary Python before exposing the record.
+            self.duplicate_keys = True
         super().__setitem__(key, value)
 
 
@@ -141,6 +146,15 @@ def iter_records(path: Path, expected_sha256: str) -> Iterator[dict[str, Any]]:
             for row in ijson.items(handle, "item", map_type=_UniqueMap):
                 if not isinstance(row, dict):
                     raise ValueError("benchmark_object_required")
+                pending: list[object] = [row]
+                while pending:
+                    value = pending.pop()
+                    if isinstance(value, _UniqueMap) and value.duplicate_keys:
+                        raise ValueError("duplicate_json_key")
+                    if isinstance(value, dict):
+                        pending.extend(value.values())
+                    elif isinstance(value, list):
+                        pending.extend(value)
                 yield row
         except ijson.JSONError:
             raise ValueError("invalid_benchmark_json") from None
@@ -219,6 +233,7 @@ class BenchmarkSource:
                     "case_id": identifier,
                     "original_session_ids": list(audit.original_session_ids),
                     "replay_session_ids": list(audit.replay_session_ids),
+                    "replay_session_indices": list(audit.replay_session_indices),
                     "adjusted_clock_count": len(audit.clock_adjustments),
                     "clock_adjustments_sha256": hashlib.sha256(
                         canonical_json([clock.model_dump(mode="json") for clock in audit.clock_adjustments])

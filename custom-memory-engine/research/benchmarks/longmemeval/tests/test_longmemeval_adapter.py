@@ -76,6 +76,43 @@ def test_reference_clock_includes_all_cumulative_tie_adjustments() -> None:
     assert prepared.gold[0].original_date_anomaly is False
 
 
+@pytest.mark.parametrize("tied_dates", [False, True])
+def test_repeated_source_session_labels_preserve_occurrences_and_sort_permutation(tied_dates: bool) -> None:
+    raw = history()
+    raw["haystack_session_ids"] = ["same", "middle", "same"]
+    raw["answer_session_ids"] = ["same"]
+    raw["haystack_dates"] = [
+        "2024/01/03 (Wed) 10:00",
+        "2024/01/02 (Tue) 10:00",
+        "2024/01/01 (Mon) 10:00",
+    ]
+    if tied_dates:
+        raw["haystack_dates"] = ["2024/01/01 (Mon) 10:00"] * 3
+    raw["haystack_sessions"] = [
+        [{"role": "user", "content": "First occurrence", "has_answer": True}],
+        [{"role": "user", "content": "Middle occurrence"}],
+        [{"role": "assistant", "content": "Second occurrence", "has_answer": True}],
+    ]
+    before = copy.deepcopy(raw)
+    prepared = prepare_item(raw)
+    turns = [event for event in prepared.case.events if isinstance(event, IngestEvent)]
+    assert len(turns) == len({event.turn.turn_id for event in turns}) == 3
+    assert len({event.turn.session_id for event in turns}) == 3
+    expected_indices = (0, 1, 2) if tied_dates else (2, 1, 0)
+    assert prepared.audit.replay_session_indices == expected_indices
+    assert prepared.audit.original_session_ids == prepared.audit.replay_session_ids == ("same", "middle", "same")
+    assert [event.turn.content for event in turns] == (
+        ["First occurrence", "Middle occurrence", "Second occurrence"]
+        if tied_dates
+        else ["Second occurrence", "Middle occurrence", "First occurrence"]
+    )
+    assert set(prepared.gold[0].gold_turn_ids) == {turns[0].turn.turn_id, turns[2].turn.turn_id}
+    assert all(a.clock < b.clock for a, b in zip(turns, turns[1:], strict=False))
+    if tied_dates:
+        assert turns[-1].clock - turns[0].clock == timedelta(microseconds=2)
+    assert raw == before
+
+
 def test_original_date_sensitivity_uses_raw_sessions_not_adjusted_ties() -> None:
     prepared = prepare_item(history())
     assert prepared.gold[0].original_date_anomaly is True
@@ -172,7 +209,7 @@ def test_scalar_gold_answers_are_preserved_as_text(answer: object) -> None:
         ("question_type", "unregistered-kind"),
         ("question_date", "2024-01-01T09:00:00"),
         ("question_date", "2024/99/01 (Mon) 09:00"),
-        ("haystack_session_ids", ["same", "same", "other"]),
+        ("haystack_session_ids", ["later", "", "equal_time"]),
         ("haystack_dates", ["2024/01/01 (Mon) 09:00"]),
         ("haystack_sessions", "not-an-array"),
         ("answer_session_ids", ["unknown-session"]),

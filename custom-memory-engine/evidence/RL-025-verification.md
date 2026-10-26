@@ -50,9 +50,12 @@ exceptions rather than changing upstream algorithm branches to satisfy style.
 ## Explicit limits
 
 - New adapter/scorer tests use independently authored synthetic fixtures. Existing
-  acquisition tests may internally verify approved public caches; no real adapter
-  inference, pilot, confirmatory split, judge validation or H1-H4 result occurred.
-  Actual S/M asset branches remain conditional when those assets are absent.
+  acquisition tests internally verify approved public caches. All three actual
+  pinned LongMemEval files additionally passed full mechanical source-schema,
+  envelope and clock validation (500 records each; 414 primary-eligible in S).
+  No real system/scorer/model inference, pilot, confirmatory split, judge
+  validation or H1-H4 result occurred. CI machines without S/M still exercise
+  their source-mode contracts through synthetic fixtures.
 - During implementation one worker's broad search incidentally emitted timestamp-
   only metadata lines from the existing public LoCoMo cache. No dialogue, questions,
   gold labels or actual split membership was inspected through that search; later
@@ -77,5 +80,39 @@ annotations without fabricating dialogue/evidence or claiming a measured recall.
 The content-free audit now validates 500 oracle records and 10 LoCoMo
 conversations/1,986 questions. It counts 16 unpaired date keys and 5 questions with
 unresolved evidence; no source content, IDs, gold answers or split membership was
-saved. No system, scorer, model, replay execution or research evaluation ran. Actual
-S/M schema coverage remains conditional. Final CI must be rechecked for this fix.
+saved. No system, scorer, model, replay execution or research evaluation ran.
+
+## Follow-up review and complete source-format coverage
+
+The public S (277,383,467 bytes) and M (2,737,100,077 bytes) files were acquired
+using the existing immutable source revision and committed manifests. Full
+content-free mechanical normalization now passes all 500 records in each of
+oracle/S/M and all 10 LoCoMo conversations. Raw checksums stay intact; only
+aggregate counts and hashes are saved outside the raw cache. Raw assets stay
+gitignored and are not committed.
+
+The first S pass rejected 13 histories because repeated source-session labels
+were incorrectly assumed invalid; 449 M histories also contain repeated labels.
+Two synthetic regressions failed before the
+fix, covering reverse date order and tied dates with identical labels. The
+loader now retains every original array occurrence with distinct indexed IDs,
+preserves all annotated gold turns, and records replay_session_indices so the
+sort permutation remains unambiguous. All 414 primary-eligible S questions are
+retained. This replaces the earlier conditional S/M source-format limitation;
+it does not establish real inference, judge quality or research outcomes.
+The exact S/M source-date anomaly counts were recomputed separately and are
+recorded in ADAPTERS.md; no development/test membership was generated.
+
+A separate malformed-input regression exposed exceptions raised inside ijson's
+C callback leaking as SystemError. The callback now records duplicate-key flags
+without raising; iterative validation rejects duplicates before yielding. Eight
+duplicate shapes and a valid distinct-object case cover nested/escaped keys,
+overwritten values, per-record behavior and unchanged raw bytes. Three checks
+failed before this correction, then all focused checks passed. The exception
+catch remains limited to parser JSON errors.
+
+Independent review checked both changes and compared official scorer closures
+against independently compiled source on 2,500 synthetic LoCoMo cases, 12 exact
+LongMemEval prompts and six reply-parser cases. No material finding remains in
+that scoped review. The final coordinator report and exact submitted-head CI
+must still establish current integrated test counts and successful checks.

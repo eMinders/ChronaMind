@@ -107,8 +107,6 @@ def prepare_item(item: Mapping[str, Any], *, variant: Variant = "s") -> Prepared
     if len(raw_ids) != len(raw_dates) or len(raw_ids) != len(raw_sessions):
         raise ValueError("session_arrays_must_have_equal_lengths")
     session_ids = tuple(_identifier(sid, "session_id") for sid in raw_ids)
-    if len(set(session_ids)) != len(session_ids):
-        raise ValueError("duplicate_source_session_id")
     answer_sids = tuple(
         _identifier(sid, "answer_session_id") for sid in _array(item.get("answer_session_ids"), "answer_session_ids")
     )
@@ -171,9 +169,10 @@ def prepare_item(item: Mapping[str, Any], *, variant: Variant = "s") -> Prepared
             QuestionEvent(clock=rho, question=question),
         ),
     )
-    replay_session_ids = tuple(
-        source_session_ids[session.session_id] for session in sorted(sessions, key=lambda value: value.timestamp)
-    )
+    # Labels can repeat in the official S/M haystacks. Array positions identify
+    # occurrences; retain every occurrence and an unambiguous sort permutation.
+    replay_session_indices = tuple(sorted(range(len(sessions)), key=lambda index: sessions[index].timestamp))
+    replay_session_ids = tuple(source_session_ids[sessions[index].session_id] for index in replay_session_indices)
     return PreparedCase(
         case=case,
         gold=(
@@ -195,6 +194,7 @@ def prepare_item(item: Mapping[str, Any], *, variant: Variant = "s") -> Prepared
         audit=ReplayAudit(
             original_session_ids=session_ids,
             replay_session_ids=replay_session_ids,
+            replay_session_indices=replay_session_indices,
             clock_adjustments=tuple(
                 ClockAdjustment(
                     turn_id=turn.turn.turn_id,

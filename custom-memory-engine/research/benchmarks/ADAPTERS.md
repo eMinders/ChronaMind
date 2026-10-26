@@ -11,10 +11,12 @@ The loaders stream a top-level JSON array with `ijson`. Hashing uses fixed-size
 chunks and normalization retains one history/conversation at a time. Memory is
 bounded by a single source history, not the entire 2.7 GB M file. A source is
 checksummed before consumption, after consumption, and before successful
-manifest publication. Duplicate JSON keys/IDs, malformed shapes, missing
+manifest publication. Duplicate JSON keys or case IDs, malformed shapes, missing
 selected IDs and altered bytes fail closed. Files and manifests remain intact
 on failure. Only selected records are normalized or exposed to systems/scoring;
 the raw array is scanned for its checksum and unique source identities.
+Nested duplicate JSON keys are detected before yielding a record; validation
+errors are raised outside the parser's C callbacks, consistently across backends.
 
 ## Selection and controlled execution
 
@@ -71,6 +73,10 @@ grant new budget or one-shot authority.
   timestamps must follow that format and cannot precede/decrease within their
   session. Recorded clocks advance by 1 microsecond on ties, and
   `rho = max(question_date, last_recorded_clock)` includes all such advances.
+  Raw session labels may repeat in the pinned S/M haystacks. Every array
+  occurrence remains a distinct indexed session/turn sequence; no deduplication
+  or text merging occurs. `replay_session_indices` records the original-index
+  permutation, since repeated raw labels alone cannot describe the sort.
   The source question type is retained as a stratum. Free-text temporal
   questions have no authoritative target-time annotation: the adapter supplies
   the reference clock without guessing an as-of target from the gold answer.
@@ -139,16 +145,40 @@ The default pytest scope also collects these tests. Independently authored
 synthetic fixtures cover clocks, identity, gold separation, immutability,
 streaming, exact scorer parity, and a fixed B0-style test responder through both
 source adapters and official scorer boundaries. Fake judge replies establish
-software plumbing, not real judge quality, a production baseline, full S/M data
-coverage, an approved pilot/test run, or an H1–H4 result.
+software plumbing, not real judge quality, a production baseline, an approved
+pilot/test run, or an H1–H4 result. Actual source-format coverage is described below.
 
-## Mechanical validation against existing public caches
+## Mechanical validation against the pinned public sources
 
 A content-free offline schema audit (no system adapter, replay execution, scorer,
-model or split selection) validated all 500 pinned LongMemEval oracle records
-and all 10 pinned LoCoMo conversations/1,986 questions. LoCoMo contains 16
+model or split selection) validated all 500 records in each pinned LongMemEval
+oracle, S and M file, and all 10 pinned LoCoMo conversations/1,986 questions.
+S and M were acquired through the existing pinned fetcher and their committed
+SHA-256 manifests matched before and after validation. S retains all 414
+primary-eligible questions. Thirteen S and 449 M histories have repeated source
+session labels; the adapter preserves every occurrence with indexed identities and
+explicit replay-index provenance. Source text/IDs/gold were not saved in audit
+reports. The raw files remain gitignored and are not part of the PR.
+
+The source-date audit recomputed D-23 counts on the exact files, before any split:
+
+| Mechanical source statistic | S | M |
+| --- | ---: | ---: |
+| Total histories | 500 | 500 |
+| Abstention / assistant-evidence questions | 30 / 56 | 30 / 56 |
+| Evidence-session dates out of order | 39 | 39 |
+| Question date before last evidence-session date | 44 | 42 |
+| All haystack-session dates out of order | 211 | 211 |
+| Question date before last haystack-session date | 76 | 118 |
+| Histories with tied session timestamps | 95 | 480 |
+| Histories with repeated raw session labels | 13 | 449 |
+
+These aggregate source counts do not define development/test membership or
+change the restriction of the primary H2 endpoint to S.
+
+LoCoMo contains 16
 unpaired session-date metadata keys, compound evidence annotations, and five
 questions with unresolved evidence. They are preserved and counted; no dialogue
 or gold link is invented, no record is dropped, and affected evidence recall is
-null. Exact official QA scoring is unchanged. This is input-format conformance,
-not a real benchmark evaluation; actual S/M coverage remains conditional.
+null. Exact official QA scoring is unchanged. This is input-format, envelope and
+clock conformance, not a real system/scorer/model benchmark evaluation.
