@@ -107,7 +107,7 @@ class ExtractedCandidate(Record):
     def validate_probability_score(cls, value: object) -> float | None:
         if value is None:
             return None
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, int | float):
             raise TypeError("numeric_score_required")
         score = float(value)
         if not isfinite(score) or score < 0.0 or score > 1.0:
@@ -156,7 +156,7 @@ def validate_and_canonicalize_candidates(
     candidates: Sequence[Mapping[str, Any] | ExtractedCandidate],
 ) -> tuple[bytes, tuple[dict[str, Any], ...]]:
     """Validate a candidate sequence against ExtractedCandidate and return canonical UTF-8 JSON bytes and dicts."""
-    if isinstance(candidates, (str, bytes, bytearray)) or not isinstance(candidates, Sequence):
+    if isinstance(candidates, str | bytes | bytearray) or not isinstance(candidates, Sequence):
         raise ExtractionSchemaValidationError("candidate_sequence_required")
 
     normalized_list: list[dict[str, Any]] = []
@@ -292,10 +292,10 @@ def _unpack_extractor_output(
         and len(raw_output) == 2
         and isinstance(raw_output[1], Usage)
         and isinstance(raw_output[0], Sequence)
-        and not isinstance(raw_output[0], (str, bytes, bytearray))
+        and not isinstance(raw_output[0], str | bytes | bytearray)
     ):
         return raw_output[0], raw_output[1]
-    if isinstance(raw_output, Sequence) and not isinstance(raw_output, (str, bytes, bytearray)):
+    if isinstance(raw_output, Sequence) and not isinstance(raw_output, str | bytes | bytearray):
         return raw_output, Usage.zero()
     raise ExtractionSchemaValidationError("invalid_extractor_return_type")
 

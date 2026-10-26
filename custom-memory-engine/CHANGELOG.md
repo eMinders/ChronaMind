@@ -4,6 +4,12 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-041 Schema Migrations (26 October 2026)
+
+- Added async, atomic schema apply, read-only version/status inspection and confirmed clean reset against explicit `RL_DATABASE_URL`, with canonical source checksums, private history, live catalog drift checks and a migration advisory lock.
+- Kept shared extensions in public and reset only known owned objects with `RESTRICT`, preserving foreign dependencies through rollback. Added independent unit and real PostgreSQL tests for idempotency, concurrent apply, failed apply/reset, malformed history, first extension bootstrap and all 43 bitemporal assertions against the full schema.
+- Extended isolated engine lint/type scopes to include the schema runner. Four equivalent replay-cache `isinstance` expressions use union syntax for compatibility with root CI's older Ruff. A scoped Git attribute preserves frozen split files' canonical LF bytes on Windows; their content and recorded hashes are unchanged. Product code, dependencies and frozen research contracts remain unchanged.
+
 ## RL-025 Benchmark Adapters (26 October 2026)
 
 - Added checksum-bound, read-only streaming loaders for LongMemEval oracle/S/M and LoCoMo, with source-scoped identities, stable D-23 replay, cumulative R3 tie handling and separate gold/scoring envelopes.

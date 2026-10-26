@@ -36,7 +36,7 @@ jobs:
         with:
           version: "0.13.5"
       - run: uv sync --frozen --python 3.12.12
-      - run: uv run ruff check src tests research/benchmarks implementation/tests evaluation && uv run ruff format --check src tests research/benchmarks implementation/tests evaluation
+      - run: uv run ruff check src tests research/benchmarks implementation evaluation && uv run ruff format --check src tests research/benchmarks implementation evaluation
       - run: uv run pyright
       - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
       - run: uv run pytest -q

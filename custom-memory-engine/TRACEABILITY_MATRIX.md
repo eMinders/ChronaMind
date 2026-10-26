@@ -33,6 +33,24 @@ This matrix links the audit findings, literature evidence, database invariants (
 
 ---
 
+### 2.1 Schema provisioning (`RL-041`)
+
+`implementation/schema/migrate.py` provisions the unchanged `RL-040` full schema
+through explicit `RL_DATABASE_URL`, with version/source identity, catalog drift
+inspection, idempotent apply and atomic confirmed clean reset. The private
+migration ledger is operational metadata, outside the twelve domain tables.
+`implementation/tests/test_migrations.py` verifies rollback, repeated/concurrent
+apply, ownership, history/source drift and preservation of outside dependencies.
+Its post-reset replay executes all 43 adapted assertions against the existing full
+`memory_version` table, checking table identity, full-only columns and restored
+provenance trigger. See [`evidence/RL-041-verification.md`](evidence/RL-041-verification.md).
+
+This establishes schema provisioning and design-check compatibility. The runtime
+procedure, role, concurrency-load, archival and deletion gates above remain owned
+by their respective tasks; this contribution does not mark them complete.
+
+---
+
 ## 3. Research Questions & Hypotheses (`H1`–`H4`) Traceability
 
 | RQ / Hypothesis | Primary Endpoint(s) (Proposal §10.3) | Confirmatory Contrast(s) (Proposal §§4.1, 10.4) | Dataset / Suite | Generator & Adapter Tasks | Experiment & Analysis Tasks | Current Status |
@@ -49,7 +67,7 @@ This matrix links the audit findings, literature evidence, database invariants (
 
 | Deliverable ID | Description | Target Location | Owning Tasks | Status |
 |---|---|---|---|---|
-| **`D1`** | Open-source bi-temporal memory engine (PostgreSQL schema, slow/fast path, validation gate, hybrid retrieval, lineage deletion). | `custom-memory-engine/implementation/` | `RL-040`–`RL-094` | `PARTIAL (RL-040 12-table DDL)` |
+| **`D1`** | Open-source bi-temporal memory engine (PostgreSQL schema, slow/fast path, validation gate, hybrid retrieval, lineage deletion). | `custom-memory-engine/implementation/` | `RL-040`–`RL-094` | `PARTIAL (RL-040 DDL; RL-041 provisioning implemented, review pending)` |
 | **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `custom-memory-engine/evaluation/` | `RL-030`–`RL-034` | `PARTIAL (RL-030 harness, RL-032 replay cache)` |
 | **`D3`** | Seeded synthetic evaluation suites (`T`, `G`, `D`, `I`) and frozen dataset splits. | `custom-memory-engine/research/benchmarks/` | `RL-020`–`RL-026` | `COMPLETE (RL-020–RL-026)` |
 | **`D4`** | Personal Digital Twin (PDT) demonstrator with Memory Inspector, timeline view, conflict resolution, and deletion controls. | `custom-memory-engine/application/` | `RL-120`–`RL-122` | `PLANNED` |
