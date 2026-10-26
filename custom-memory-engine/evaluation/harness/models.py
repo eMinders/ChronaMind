@@ -6,7 +6,7 @@ from typing import Annotated, Literal, Protocol
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-type SuiteId = Literal["T", "G", "D", "I", "LongMemEval_S", "LoCoMo"]
+type SuiteId = Literal["T", "G", "D", "I", "LongMemEval_oracle", "LongMemEval_S", "LongMemEval_M", "LoCoMo"]
 type Split = Literal["dev", "test"]
 type QueryMode = Literal["current", "as_of", "what_changed", "before_change", "stable"]
 type DeletionScope = Literal["memory", "topic", "all"]
@@ -63,6 +63,7 @@ class TurnRecord(Record):
     role: Literal["user", "assistant"]
     content: str
     occurred_at: AwareDatetime
+    source_speaker: str | None = None
 
 
 class QuestionRecord(Record):

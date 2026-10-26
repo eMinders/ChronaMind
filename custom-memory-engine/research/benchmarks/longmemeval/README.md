@@ -46,3 +46,7 @@ All timestamps use the format `YYYY/MM/DD (Day) HH:MM` (parsed as UTC per `D-23`
 # Populate and verify oracle and S variants (offline cache + SHA-256 + anomaly checks)
 python3 custom-memory-engine/research/benchmarks/longmemeval/fetch.py --variants oracle s
 ```
+
+## RL-025 source adapter
+
+The read-only `adapter.py` source facade is documented in [ADAPTERS.md](../ADAPTERS.md), including guarded selections, clocks, evidence/scorer provenance and synthetic verification. Acquisition above is separate from evaluation; adapters never invoke fetch or repair.

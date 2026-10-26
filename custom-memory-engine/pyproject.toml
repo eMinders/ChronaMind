@@ -11,6 +11,8 @@ dependencies = [
   "structlog==25.5.0",
   "rich==14.3.3",
   "numpy==2.4.2",
+  "ijson==3.6.0",
+  "regex==2026.9.29",
 ]
 
 [dependency-groups]
@@ -31,7 +33,7 @@ packages = ["src/custom_memory_engine"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["src", "."]
-testpaths = ["tests", "implementation/tests", "evaluation/harness/tests"]
+testpaths = ["tests", "implementation/tests", "evaluation/harness/tests", "research/benchmarks/longmemeval/tests", "research/benchmarks/locomo/tests", "research/benchmarks/tests"]
 markers = ["integration: requires a disposable PostgreSQL database"]
 filterwarnings = ["error"]
 

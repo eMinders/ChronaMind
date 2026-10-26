@@ -1,0 +1,3 @@
+# Exact upstream byte archives/licenses are hash-verified on Windows and Linux.
+sources/*.txt -text -whitespace
+*_LICENSE.txt -text -whitespace

@@ -53,3 +53,7 @@ See [`../../reference/Source_Evidence_Ledger.md`](../../reference/Source_Evidenc
 ## Status
 
 Not Started. Mirrors begin with `RL-020` and `RL-021`; own-suite generators begin with `RL-022` through `RL-024`; the dev/test split is frozen in `RL-026`.
+
+## Benchmark adapters
+
+See [ADAPTERS.md](ADAPTERS.md) for the RL-025 checksum-bound sources and official scorer wrappers. Raw data remains ignored and unchanged; source loading, real split freezes, model providers and scientific evaluation retain their separate gates.
