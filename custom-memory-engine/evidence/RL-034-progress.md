@@ -6,7 +6,21 @@ the four explicit H3 branches are implemented, while a complete evaluator is
 still pending. This is neither a
 STAT-UNIT completion claim nor a pilot/confirmatory research result.
 
-## Hard-review correction
+## Defined H3 extension
+
+Source commit `2eba86af9750bf027ee54b4ee8d5d02cb8cf8034` adds the four
+unambiguous H3 branches, preserving a pending result for undefined cases.
+Current statistics collection:427 tests; non-CP196 passed. Independent review
+passed22 focused tests,25 real-pipeline H3 cases, five family states and16
+persisted-record rejection probes. It found no material defect in these branches.
+Both full-service CI runs passed **1,104 tests**, with zero skips/failures;
+both default installations passed **1,032 tests, 56 expected skips**. All six
+checks passed, including SQL/reference checks, root checks and the automated
+review workflow. See [PR engine run](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40443418187)
+and [push engine run](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40443412306).
+The following evidence-only update receives separate exact-head checks.
+
+## Earlier hard-review correction
 
 The subsequent hard review reproduced two false-positive paths in the earlier
 source commit: rounding paired scores before averaging could manufacture a
@@ -17,8 +31,8 @@ Aggregation now preserves exact binary-input sums through each independent
 cluster, and bootstrap resamples divide exact integer sums once. Fraction-based
 oracles cover cancellation, subnormals, run/item permutations and constant
 bootstrap distributions. H1 also rejects a question appearing in both exclusive
-strata. Latest focused non-CP tests:183 passed; the full collection contains
-414 statistics tests. The corrected source commit's CI results are below.
+strata. That revision's focused non-CP tests:183 passed; its collection contains
+414 statistics tests. That corrected source commit's CI results are below.
 An additional exact-threshold check found a one-bit difference between default
 CP APIs caused by floating subtraction of the confidence level. Both frozen
 default paths now use the identical literal 0.025 tail; a regression checks H4
@@ -42,7 +56,7 @@ counts below remain dated evidence for their named commits.
 
 - CP module: 231 tests passed, including exhaustive N20–100 arithmetic and nominal
   coverage checks; scoped Ruff and Pyright passed.
-- Latest combined non-CP statistics tests:183 passed; CP plus affected decision
+- Earlier combined non-CP statistics tests:183 passed; CP plus affected decision
   and rounding tests:281 passed. Independent Fraction checks covered 429 constant
   bootstrap cases, 660 random means and 96 nested weighting cases, mixed
   subnormal distributions and larger seeded/unbatched bootstrap oracles.
