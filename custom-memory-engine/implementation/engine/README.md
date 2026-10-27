@@ -118,3 +118,20 @@ privileged explicit-user-filter controls, both clocks, half-open boundaries,
 status visibility, transaction ownership and infinity round trips. See
 [`../../evidence/RL-043-verification.md`](../../evidence/RL-043-verification.md)
 for the contribution's verification record and its limits.
+
+---
+
+# Transactional supersession and archival (`RL-042`)
+
+[`transactions.py`](transactions.py) implements Proposal §§7.2, 8.2, 10.2 and Technical
+Specification §§3.4, 6 over the canonical `memory_version`, `memory_evidence`,
+`memory_derivation`, `memory_conflict`, and `audit_event` tables:
+
+- **`stage_candidate`**: Stages a non-believed row (`candidate`, `conflict_pending`, or `rejected`) with `recorded_range = NULL` (`R4`).
+- **`commit_initial_version`**: Commits an initial or additive `active` version at `recorded_range = [c, NULL)` with provenance (`R1`, `R3`, `R4`, `Invariant 8`).
+- **`supersede_single`**: Single-valued close-then-insert supersession (`R1`–`R3`, `E1`, `E2`), handling `v_old < v_new` (truncated re-issue + copied provenance), `v_old == v_new` (same-instant correction without empty re-issue), `v_new < v_old` (hold in `conflict_pending` + `memory_conflict`), and ablation modes `A1` (`P-flat`), `A2` (`P-nohistory`), and `A2b` (`D-15`, disabled unless `allow_a2b=True`).
+- **`revise_transition_boundary`**: Closes both adjacent active versions at `c` and re-issues both with the revised shared valid-time boundary (`E3`).
+- **`resolve_conflict_pending`**: Resolves a `conflict_pending` or `candidate` row to `active` (setting `recorded_range = [c, NULL)` at the resolution transaction's clock `c` while closing/re-issuing any overlapping active version) or `rejected` (`R4`).
+- **`end_multivalued`**: Closes an open `single_valued = False` version at `c` and inserts a truncated `[v_old, valid_end)` version with copied provenance (`R7`).
+- **`archive_version` & `ensure_archival_trigger`**: Enforces `R5`, `Invariant 10`, and `D-27` under per-user transaction advisory locks and row locks (`FOR UPDATE`), preferring branch `'S'` when both `(S)` and `(C)` hold, rejecting `T1`/`T2` when neither holds, and preventing replacement mutations from uncovering an already-archived `(C)`-branch source.
+

@@ -110,8 +110,8 @@ frozen split assignments, proposal or checklist were changed.
 
 ## Remaining work
 
-Resolve the H3 protocol clarification, implement and test its final three-way
-decision, reconcile resulting documentation, verify the final submitted head
-and complete independent final review. The counts above describe the named
-source commit; later documentation-only heads still receive CI checks. Leader
-review/merge and the project's research approval/freeze gates remain separate.
+None for `RL-034` (`#31`): the `H3` three-way decision protocol (`Supported` /
+`Not supported` / `Inconclusive`) and `analyze_h3` integration were completed and
+verified in commit `5607e92` (`428` passing unit tests in `evaluation/stats/tests`).
+Downstream pilot freeze (`RL-100`) and confirmatory test-split execution
+(`RL-101`–`RL-105`) remain separate Phase P10 tasks.

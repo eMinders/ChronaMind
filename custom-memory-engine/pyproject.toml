@@ -53,6 +53,7 @@ testpaths = [
   "research/benchmarks/locomo/tests",
   "research/benchmarks/tests",
   "evaluation/baselines/tests",
+  "evaluation/judge/tests",
   "evaluation/stats/tests",
 ]
 markers = ["integration: requires a disposable PostgreSQL database"]

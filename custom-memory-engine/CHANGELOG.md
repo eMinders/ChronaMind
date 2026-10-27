@@ -4,6 +4,17 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-042 Transactional Supersession and Archival Procedures (27 October 2026)
+
+- Added `implementation/engine/transactions.py` implementing close-then-insert single-valued supersession (`R1`–`R3`, `E1`, `E2`), transition-boundary revision (`E3`), candidate staging and `conflict_pending` promotion/rejection (`R4`), multi-valued termination (`R7`), and archival (`R5`, `Invariant 10`, `D-27`).
+- Added `ensure_archival_trigger` and engine checks enforcing `(S) ∨ (C)` under per-user advisory locks and row locks (`FOR UPDATE`), preferring branch `'S'` when both `(S)` and `(C)` hold, rejecting `T1`/`T2` when neither holds, and preventing replacement mutations from leaving an already-archived `(C)`-branch source uncovered.
+- Added ablation switches `A1` (`P-flat`), `A2` (`P-nohistory`), and `A2b` (`D-15`, disabled by default unless `allow_a2b=True`), along with unit and full-schema PostgreSQL integration tests in `implementation/tests/test_transactions.py` and `implementation/tests/test_transactions_db.py`.
+
+## RL-033 Answer Scoring and LLM Judge Validation (27 October 2026)
+
+- Added `evaluation/judge/deterministic.py` implementing normalized fact matching, effective-date verification (`what_changed` with partial-credit diagnostic), abstention detection, forbidden-claim and undisambiguated dual-value checks, and deterministic scorers for Suites `T`, `G`, `D`, and `I`.
+- Added `evaluation/judge/llm_judge.py` and `evaluation/judge/validation_report.md` implementing `D-03` model separation (`gpt-4.1-2025-04-14` vs. `gpt-4.1-mini-2025-04-14`), same-family preference-bias disclosure, single-answer randomized presentation, length-normalization rubric prompts, successful-only SHA-256 response caching, `BudgetLedger` accounting with Tenacity retries, perturbation stability evaluation (`append_irrelevant_detail` and `paraphrase_hypothesis`), and `D-24` development-split validation (`Cohen's κ`, confusion matrices, and 95% cluster-bootstrap accuracy CIs). Live dual-annotator sign-off (`approvals_complete`) and the `RL-100` pilot freeze remain separate downstream gates.
+
 ## RL-044 Monotonic Clock and Atomic Queue (27 October 2026)
 
 - Added transaction-consistent live/replay clock allocation with per-user advisory locking, `+1 µs` tie/out-of-order advancement and a durable content-free watermark in the existing audit table. Allocations synchronize the canonical database clock and record the clock mode without adding schema objects or changing migration fingerprints.

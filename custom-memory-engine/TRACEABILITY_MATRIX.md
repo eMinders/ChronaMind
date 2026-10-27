@@ -100,8 +100,8 @@ wiring (`RL-044`/`RL-092`), ranking/rendering or research approvals.
 
 | Deliverable ID | Description | Target Location | Owning Tasks | Status |
 |---|---|---|---|---|
-| **`D1`** | Open-source bi-temporal memory engine (PostgreSQL schema, slow/fast path, validation gate, hybrid retrieval, lineage deletion). | `custom-memory-engine/implementation/` | `RL-040`–`RL-094` | `PARTIAL (RL-040 DDL; RL-041 provisioning merged)` |
-| **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `custom-memory-engine/evaluation/` | `RL-030`–`RL-034` | `PARTIAL (RL-030 harness, RL-031 baselines, RL-032 replay cache, RL-034 statistical module complete; judge pending)` |
+| **`D1`** | Open-source bi-temporal memory engine (PostgreSQL schema, slow/fast path, validation gate, hybrid retrieval, lineage deletion). | `custom-memory-engine/implementation/` | `RL-040`–`RL-094` | `PARTIAL (RL-040 DDL, RL-041 migrations, RL-042 transactions, RL-043 predicates, RL-044 clock/queue complete)` |
+| **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `custom-memory-engine/evaluation/` | `RL-030`–`RL-034` | `COMPLETE (RL-030–RL-034)` |
 | **`D3`** | Seeded synthetic evaluation suites (`T`, `G`, `D`, `I`) and frozen dataset splits. | `custom-memory-engine/research/benchmarks/` | `RL-020`–`RL-026` | `COMPLETE (RL-020–RL-026)` |
 | **`D4`** | Personal Digital Twin (PDT) demonstrator with Memory Inspector, timeline view, conflict resolution, and deletion controls. | `custom-memory-engine/application/` | `RL-120`–`RL-122` | `PLANNED` |
 | **`D5`** | Final thesis report, confirmatory analysis tables/figures (`H1`–`H4`), and one-command reproducibility package. | `custom-memory-engine/reports/` | `RL-110`, `RL-111`, `RL-130`–`RL-132` | `PLANNED` |
