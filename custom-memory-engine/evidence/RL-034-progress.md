@@ -26,12 +26,21 @@ STAT-UNIT completion claim nor a pilot/confirmatory research result.
   383 tests. Two independent review passes reproduced and corrected source-mix,
   descriptive-only reporting and persisted-summary defects; method probes and
   strict H1/H2/H4 boundary checks passed after correction.
-- Default install: 975 passed, 56 expected optional-package/service skips. All six
-  optional model/vendor packages were confirmed absent. This broad run preceded
-  the last 13 persisted-summary regression additions; latest focused checks cover
-  those changes. Exact submitted-head CI remains to be inspected.
-- Full-service verification is in progress; its result and owned-resource cleanup
-  must be recorded before claiming that check passed.
+- Submitted source commit `cad63350c1dfe5b30b44be93bdf50d8552947f19` passed
+  all six checks: both Linux full-service jobs **1,060 passed**, zero failures or
+  skips; both default-install jobs **988 passed, 56 expected skips**. Engine
+  runs [40429405393](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40429405393)
+  (PR) and [40429332734](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40429332734)
+  (push) also passed reduced SQL and reference checks. The root checks and review
+  workflow succeeded; no formal/inline review or review comment was present at
+  inspection, so workflow success is not described as leader approval.
+- Local full-service run: **1,047 passed**, 42 marked integration tests passed,
+  zero failures/skips/errors. It collected before the last 13 persisted-summary
+  regression additions; latest focused tests and the submitted-head Linux runs
+  include them. Owned PostgreSQL containers/networks/volumes remaining: **0/0/0**;
+  owned Falkor graph list empty and container removed. Local default:975 passed,
+  56 skips; all six optional model/vendor packages confirmed absent. Latest
+  non-CP383-minus231=152 statistics checks also pass in that default environment.
 - Engine Ruff lint/format and Pyright passed; root Ruff compatibility was checked
   with its older pinned tool. Mechanical/reference CP checks passed. Only the
   changed changelog's canonical LF document checksum was updated.
@@ -45,6 +54,7 @@ frozen split assignments, proposal or checklist were changed.
 ## Remaining work
 
 Resolve the H3 protocol clarification, implement and test its final three-way
-decision, reconcile any resulting documentation, finish full-service/default
-and exact-head CI verification, and complete independent final review. Leader
+decision, reconcile resulting documentation, verify the final submitted head
+and complete independent final review. The counts above describe the named
+source commit; later documentation-only heads still receive CI checks. Leader
 review/merge and the project's research approval/freeze gates remain separate.
