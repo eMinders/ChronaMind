@@ -15,6 +15,9 @@ contains one dataset, endpoint and comparator; datasets and H1 strata are separa
 Repeated runs are averaged within each question/event first. Item differences
 are then averaged within their scenario/conversation. The reported effect is
 the **equal-weight mean of cluster differences**, regardless of question count.
+Run means and cluster/resample means use exact binary-input integer sums before
+one final rounding. This keeps tied run multisets tied and constant bootstrap
+samples constant, so reduction roundoff cannot cross a strict support boundary.
 LongMemEval_S questions must each be their own cluster. LoCoMo conversations
 remain clusters, and their results are descriptive only. Inputs are already
 scored fractions in [0,1]; null/unavailable metrics must be resolved by the
@@ -68,6 +71,7 @@ application environment is unchanged.
 H1 combines history superiority with present-state NI. Support uses strict
 `adjusted_p < .05`, history conservative lower `> 0`, and present NI lower
 `> −margin`. Rejection uses history upper `<= 0` or present 95% upper `< −margin`.
+The same question identity cannot appear in both exclusive H1 strata.
 H2 uses both positive point estimates, both conservative intervals above zero,
 and globally adjusted max-p `< .05`. Proposal §4.1's inconclusive cell explicitly
 covers an interval containing zero; this gate reconciles the whole row and is

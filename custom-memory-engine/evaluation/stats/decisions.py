@@ -57,6 +57,10 @@ def evaluate_h1(
     _check_contrast(history, "T", "history_taa", "A2")
     _check_contrast(present, "T", "present_taa", "A2")
     _check_joint_clusters(history, present)
+    history_questions = {(row.cluster_id, row.item_id) for row in history.sample.observations}
+    present_questions = {(row.cluster_id, row.item_id) for row in present.sample.observations}
+    if history_questions & present_questions:
+        raise ValueError("h1_question_cannot_belong_to_both_strata")
     _probability(adjusted_p, "adjusted_p")
     _probability(present_margin, "present_margin")
     if type(precision_adequate) is not bool:

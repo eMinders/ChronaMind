@@ -61,7 +61,13 @@ def evidence(
         endpoint=endpoint,
         comparator=comparator,
         observations=tuple(
-            PairedObservation(cluster_id=str(i), item_id=str(i), run_id="r", proposed=0.5, comparator=0.5 - estimate)
+            PairedObservation(
+                cluster_id=str(i),
+                item_id=f"{endpoint}-{i}" if dataset == "T" else str(i),
+                run_id="r",
+                proposed=0.5,
+                comparator=0.5 - estimate,
+            )
             for i in range(n)
         ),
     )

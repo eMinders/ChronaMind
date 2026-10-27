@@ -2,10 +2,11 @@
 
 from collections import defaultdict
 from collections.abc import Sequence
-from math import fsum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from evaluation.stats.arithmetic import paired_run_difference
 
 type Dataset = Literal["T", "G", "LongMemEval_S", "LoCoMo"]
 type Endpoint = Literal["history_taa", "present_taa", "recall", "asr", "luar", "qa"]
@@ -98,14 +99,18 @@ class PairedSample(StatsRecord):
             grouped[row.cluster_id][row.item_id].append(row)
         effects: list[ClusterEffect] = []
         for cluster_id, items in sorted(grouped.items()):
-            item_means: list[float] = []
-            for _, rows in sorted(items.items()):
-                ordered = sorted(rows, key=lambda row: row.run_id)
-                item_means.append(fsum(row.proposed - row.comparator for row in ordered) / len(ordered))
+            ordered = tuple(
+                row for _, rows in sorted(items.items()) for row in sorted(rows, key=lambda row: row.run_id)
+            )
+            # The validated complete run grid gives each item the same run
+            # count. Exact totals therefore equal averaging runs, then items,
+            # without rounding either item contrast before the cluster mean.
             effects.append(
                 ClusterEffect(
                     cluster_id=cluster_id,
-                    difference=fsum(item_means) / len(item_means),
+                    difference=paired_run_difference(
+                        [row.proposed for row in ordered], [row.comparator for row in ordered]
+                    ),
                     item_count=len(items),
                     run_count=len(next(iter(items.values()))),
                 )

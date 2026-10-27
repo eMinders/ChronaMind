@@ -16,6 +16,8 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from evaluation.stats.arithmetic import exact_mean
+
 
 class SignFlipResult(BaseModel):
     """A reproducible test result; no conclusion or research approval is implied."""
@@ -61,8 +63,6 @@ def _validated_differences(differences: Sequence[float]) -> tuple[float, ...]:
     for value in differences:
         if isinstance(value, bool) or not isinstance(value, Real):
             raise ValueError("finite_real_cluster_differences_required")
-        if not -1 <= value <= 1:
-            raise ValueError("cluster_difference_outside_unit_interval")
         if not -1 <= value <= 1:
             raise ValueError("cluster_difference_outside_unit_interval")
         converted = float(value)
@@ -162,7 +162,7 @@ def paired_permutation(
         )
     p_value = extreme_count / permutations if method == "exact" else (extreme_count + 1) / (permutations + 1)
     return SignFlipResult(
-        estimate=fsum(original) / len(original),
+        estimate=exact_mean(original),
         p_value=p_value,
         method=method,
         seed=seed,

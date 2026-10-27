@@ -1,5 +1,6 @@
 """Analytical cluster, pairing, run-aggregation and percentile oracles."""
 
+from fractions import Fraction
 from itertools import permutations
 from typing import cast
 
@@ -48,7 +49,10 @@ def test_exact_percentiles_of_independent_seeded_cluster_index_oracle() -> None:
     rng = np.random.Generator(np.random.PCG64(813))
     indices = rng.integers(0, 5, size=(10_011, 5))
     values = np.asarray([-0.7, -0.1, 0.2, 0.5, 0.8])
-    reference = np.quantile(values[indices].mean(axis=1), [0.025, 0.975, 0.05 / 6, 1 - 0.05 / 6], method="linear")
+    fractions = tuple(Fraction.from_float(float(value)) for value in values)
+    # Exact rational oracle avoids accepting NumPy reduction roundoff as truth.
+    means = [float(sum((fractions[index] for index in row), Fraction(0)) / 5) for row in indices]
+    reference = np.quantile(means, [0.025, 0.975, 0.05 / 6, 1 - 0.05 / 6], method="linear")
     assert (result.ci95.low, result.ci95.high) == tuple(reference[:2])
     assert (result.conservative_ci.low, result.conservative_ci.high) == tuple(reference[2:])
     assert result.noninferiority_lower == result.ci95.low

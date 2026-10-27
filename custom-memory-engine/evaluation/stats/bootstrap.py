@@ -1,11 +1,11 @@
 """Proposal §10.6 percentile bootstrap of whole paired independent clusters."""
 
-from math import fsum
 from typing import Literal
 
 import numpy as np
 from pydantic import Field, model_validator
 
+from evaluation.stats.arithmetic import exact_mean, integer_lattice
 from evaluation.stats.models import ClusterEffect, ConfidenceInterval, PairedSample, StatsRecord
 
 
@@ -26,7 +26,7 @@ class BootstrapResult(StatsRecord):
     def consistent_summary(self) -> "BootstrapResult":
         if len({cluster.cluster_id for cluster in self.clusters}) != len(self.clusters):
             raise ValueError("duplicate_cluster_effect")
-        if self.estimate != fsum(cluster.difference for cluster in self.clusters) / len(self.clusters):
+        if self.estimate != exact_mean([cluster.difference for cluster in self.clusters]):
             raise ValueError("estimate_cluster_effect_mismatch")
         if self.ci95.level != 0.95 or self.conservative_ci.level != 1 - 0.05 / 3:
             raise ValueError("incorrect_predeclared_interval_level")
@@ -49,7 +49,12 @@ def cluster_bootstrap(sample: PairedSample, *, seed: int, resamples: int = 10_00
     if type(resamples) is not int or resamples < 10_000:
         raise ValueError("at_least_10000_bootstrap_resamples_required")
     clusters = sample.cluster_effects()
-    values = np.asarray([cluster.difference for cluster in clusters], dtype=np.float64)
+    effects = [cluster.difference for cluster in clusters]
+    weights, denominator = integer_lattice(effects)
+    # Object arrays preserve Python integers even for subnormal inputs. Exact
+    # sums prevent constant samples from moving across strict NI boundaries.
+    values = np.asarray(weights, dtype=object)
+    divisor = denominator * len(clusters)
     generator = np.random.Generator(np.random.PCG64(seed))
     replicates = np.empty(resamples, dtype=np.float64)
     # Limit temporary index/value matrices independently of the number of replicates.
@@ -57,12 +62,13 @@ def cluster_bootstrap(sample: PairedSample, *, seed: int, resamples: int = 10_00
     for start in range(0, resamples, batch):
         size = min(batch, resamples - start)
         indices = generator.integers(0, len(clusters), size=(size, len(clusters)))
-        replicates[start : start + size] = values[indices].mean(axis=1)
+        sums = values[indices].sum(axis=1)
+        replicates[start : start + size] = np.fromiter((int(total) / divisor for total in sums), dtype=np.float64)
     lower, upper, conservative_lower, conservative_upper = np.quantile(
         replicates, [0.025, 0.975, 0.05 / 6, 1 - 0.05 / 6], method="linear"
     )
     return BootstrapResult(
-        estimate=fsum(cluster.difference for cluster in clusters) / len(clusters),
+        estimate=exact_mean(effects),
         ci95=ConfidenceInterval(level=0.95, low=float(lower), high=float(upper)),
         conservative_ci=ConfidenceInterval(
             level=1 - 0.05 / 3, low=float(conservative_lower), high=float(conservative_upper)

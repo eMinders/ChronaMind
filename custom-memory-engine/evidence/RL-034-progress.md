@@ -5,6 +5,20 @@ The user is asking the leader to clarify H3's undefined crossing-zero ASR cases;
 the final H3 verdict evaluator is deliberately pending. This is neither a
 STAT-UNIT completion claim nor a pilot/confirmatory research result.
 
+## Hard-review correction
+
+The subsequent hard review reproduced two false-positive paths in the earlier
+source commit: rounding paired scores before averaging could manufacture a
+positive contrast from identical run/item score multisets; a NumPy reduction
+could also move a constant `−0.1` bootstrap lower bound above the exact `−0.1`
+NI margin. New failing regressions established both defects before correction.
+Aggregation now preserves exact binary-input sums through each independent
+cluster, and bootstrap resamples divide exact integer sums once. Fraction-based
+oracles cover cancellation, subnormals, run/item permutations and constant
+bootstrap distributions. H1 also rejects a question appearing in both exclusive
+strata. Latest focused non-CP tests:182 passed; the submitted revision's complete
+CI must be inspected separately from the earlier commit counts below.
+
 ## Requirement coverage
 
 | Requirement | Implementation / portable evidence |
