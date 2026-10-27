@@ -11,7 +11,8 @@ STAT-UNIT completion claim nor a pilot/confirmatory research result.
 Source commit `2eba86af9750bf027ee54b4ee8d5d02cb8cf8034` adds the four
 unambiguous H3 branches, preserving a pending result for undefined cases.
 Current statistics collection:427 tests; non-CP196 passed. Independent review
-passed22 focused tests,25 real-pipeline H3 cases, five family states and16
+passed22 focused tests,25 H3 cases (19 full-pipeline and six interval-boundary
+fixtures), five family states and16
 persisted-record rejection probes. It found no material defect in these branches.
 Both full-service CI runs passed **1,104 tests**, with zero skips/failures;
 both default installations passed **1,032 tests, 56 expected skips**. All six
