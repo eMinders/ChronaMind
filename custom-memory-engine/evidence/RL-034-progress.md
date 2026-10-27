@@ -16,8 +16,8 @@ Aggregation now preserves exact binary-input sums through each independent
 cluster, and bootstrap resamples divide exact integer sums once. Fraction-based
 oracles cover cancellation, subnormals, run/item permutations and constant
 bootstrap distributions. H1 also rejects a question appearing in both exclusive
-strata. Latest focused non-CP tests:182 passed; the submitted revision's complete
-CI must be inspected separately from the earlier commit counts below.
+strata. Latest focused non-CP tests:183 passed; the full collection contains
+414 statistics tests. The corrected source commit's CI results are below.
 An additional exact-threshold check found a one-bit difference between default
 CP APIs caused by floating subtraction of the confidence level. Both frozen
 default paths now use the identical literal 0.025 tail; a regression checks H4
@@ -41,11 +41,21 @@ counts below remain dated evidence for their named commits.
 
 - CP module: 231 tests passed, including exhaustive N20–100 arithmetic and nominal
   coverage checks; scoped Ruff and Pyright passed.
-- Latest combined non-CP statistics tests: 152 passed. Total statistics collection:
-  383 tests. Two independent review passes reproduced and corrected source-mix,
+- Latest combined non-CP statistics tests:183 passed; CP plus affected decision
+  and rounding tests:281 passed. Independent Fraction checks covered 429 constant
+  bootstrap cases, 660 random means and 96 nested weighting cases, mixed
+  subnormal distributions and larger seeded/unbatched bootstrap oracles.
+- Source commit `df074f7bdcc9e66c2e6132723a64a4c0e414d4d6` passed all six
+  checks. Both Linux full-service jobs: **1,091 passed**, zero failures/skips.
+  Both default-install jobs: **1,019 passed, 56 expected skips**. The
+  [PR engine run](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40441046220)
+  and [push engine run](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40441042005)
+  passed SQL assertions and reference consistency; root and automated review
+  workflows succeeded. No formal review approval was present at inspection.
+- Earlier independent review passes reproduced and corrected source-mix,
   descriptive-only reporting and persisted-summary defects; method probes and
   strict H1/H2/H4 boundary checks passed after correction.
-- Submitted source commit `cad63350c1dfe5b30b44be93bdf50d8552947f19` passed
+- Earlier source commit `cad63350c1dfe5b30b44be93bdf50d8552947f19` passed
   all six checks: both Linux full-service jobs **1,060 passed**, zero failures or
   skips; both default-install jobs **988 passed, 56 expected skips**. Engine
   runs [40429405393](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40429405393)
@@ -53,13 +63,15 @@ counts below remain dated evidence for their named commits.
   (push) also passed reduced SQL and reference checks. The root checks and review
   workflow succeeded; no formal/inline review or review comment was present at
   inspection, so workflow success is not described as leader approval.
-- Local full-service run: **1,047 passed**, 42 marked integration tests passed,
+- Earlier local full-service run: **1,047 passed**, 42 marked integration tests passed,
   zero failures/skips/errors. It collected before the last 13 persisted-summary
   regression additions; latest focused tests and the submitted-head Linux runs
   include them. Owned PostgreSQL containers/networks/volumes remaining: **0/0/0**;
   owned Falkor graph list empty and container removed. Local default:975 passed,
-  56 skips; all six optional model/vendor packages confirmed absent. Latest
-  non-CP383-minus231=152 statistics checks also pass in that default environment.
+  56 skips; all six optional model/vendor packages confirmed absent. The then
+  152 non-CP statistics checks also passed in that default environment. The hard
+  review's later broad Windows snapshot passed1,033/skipped54 before the final
+  extra regressions; the final source's Linux runs include all414 statistics tests.
 - Engine Ruff lint/format and Pyright passed; root Ruff compatibility was checked
   with its older pinned tool. Mechanical/reference CP checks passed. Only the
   changed changelog's canonical LF document checksum was updated.
