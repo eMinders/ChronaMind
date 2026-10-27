@@ -2,7 +2,8 @@
 
 **In progress.** Numerical primitives and H1/H2/H4 decisions are implemented.
 The user is asking the leader to clarify H3's undefined crossing-zero ASR cases;
-the final H3 verdict evaluator is deliberately pending. This is neither a
+the four explicit H3 branches are implemented, while a complete evaluator is
+still pending. This is neither a
 STAT-UNIT completion claim nor a pilot/confirmatory research result.
 
 ## Hard-review correction
@@ -34,7 +35,7 @@ counts below remain dated evidence for their named commits.
 | Global Holm family of three | `multiplicity.py` combines H2 by max-p before global Holm; `test_multiplicity.py` checks an independent closed-Bonferroni-intersection oracle; `family.py` refuses a missing superiority input. NI endpoints add no extra test. |
 | Exact CP and frozen output | `clopper_pearson.py`; all 4,941 (N,k) combinations for N20–100 checked against the existing elementary binomial-sum/bisection oracle, entire formatted `validation/cp_bounds.output.txt` reproduced, high-precision Decimal anchors, independent root-solver/CDF inversion, coverage/symmetry/tiny-tail/invalid-input checks |
 | H1/H2/H4 mechanical decisions | Strict p/CI/NI boundaries, feasibility/precision guards, shared source identities, H4 scenario counts and positive control conditions tested. H2 reconciles the full Proposal row: an interval containing zero is inconclusive; both conservative intervals must be above zero for support. |
-| H3 final decision | **Pending leader clarification.** `h3_conditions` exposes the specified ASR and LUAR components without inventing a final outcome. |
+| H3 final decision | **Partial, leader clarification pending.** `evaluate_h3` classifies the explicit feasibility, excessive-LUAR-loss, joint-support and strict-LUAR-straddle branches. Other cases have no invented verdict. Assessment/family JSON validators bind each defined result to its conditions and freeze. |
 | Persisted evidence integrity | Input/effect hashes, sample/summary counts, predeclared CI levels, NI consistency, role/freeze/p-value/precision and H4 count/CP/verdict contradictions are validated; regressions in `test_evidence_integrity.py`, `test_family.py`, `test_decisions.py`. |
 
 ## Verification recorded so far

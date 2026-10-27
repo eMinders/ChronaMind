@@ -6,6 +6,7 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ## RL-034 Statistical Inference — In Progress (27 October 2026)
 
+- Added the four explicitly defined H3 decision branches and family output binding. Undefined ASR uncertainty and exact NI touching cases remain structured pending decisions; the leader's clarification is still required before RL-034/STAT-UNIT completion.
 - Hard review corrected intermediate rounding that could turn equal repeated-run means into a positive effect or move a constant bootstrap lower bound above an exact non-inferiority margin. Aggregation now uses exact binary-input sums with one final rounding; rational-oracle and real decision regressions cover both false-positive cases. H1 also rejects overlapping question identities across its exclusive strata.
 - Bound the two equivalent default Clopper–Pearson APIs to the same literal 0.025 tail; a boundary regression covers exact and immediately lower H4 informativeness limits for every scenario count from 20 through 100.
 - Added identity-paired, run-then-cluster aggregation, seeded percentile cluster bootstrap, exact/Monte Carlo two-sided sign flips, the fixed global three-hypothesis Holm family, and exact scenario-level Clopper–Pearson bounds. SciPy is pinned in the isolated engine environment.

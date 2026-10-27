@@ -3,7 +3,14 @@
 from pydantic import Field, model_validator
 
 from evaluation.stats.analysis import ContrastAnalysis
-from evaluation.stats.decisions import Decision, H3Conditions, evaluate_h1, evaluate_h2, h3_conditions
+from evaluation.stats.decisions import (
+    Decision,
+    H3Conditions,
+    defined_h3_decision,
+    evaluate_h1,
+    evaluate_h2,
+    h3_conditions,
+)
 from evaluation.stats.models import StatsRecord
 from evaluation.stats.multiplicity import confirmatory_holm
 
@@ -33,6 +40,7 @@ class FamilyEvidence(StatsRecord):
     h1: Decision
     h2: Decision
     h3: H3Conditions
+    h3_decision: Decision | None
 
     @model_validator(mode="after")
     def consistent_decisions(self) -> "FamilyEvidence":
@@ -48,6 +56,8 @@ class FamilyEvidence(StatsRecord):
             raise ValueError("h3_superiority_conflicts_with_global_p")
         if self.h3.feasible and not self.plan.h3_precision_adequate:
             raise ValueError("h3_feasibility_conflicts_with_precision")
+        if self.h3_decision != defined_h3_decision(self.h3, freeze_reference=self.plan.freeze_reference):
+            raise ValueError("h3_decision_defined_conditions_mismatch")
         return self
 
 
@@ -79,6 +89,13 @@ def evaluate_family(
         h2_lexical=lexical.permutation.p_value,
         h3_asr=asr.permutation.p_value,
     )
+    h3 = h3_conditions(
+        asr,
+        luar,
+        adjusted_p=adjusted["H3"],
+        luar_margin=plan.luar_margin,
+        precision_adequate=plan.h3_precision_adequate,
+    )
     return FamilyEvidence(
         plan=plan,
         adjusted_p=FamilyPValues(h1=adjusted["H1"], h2=adjusted["H2"], h3=adjusted["H3"]),
@@ -97,11 +114,6 @@ def evaluate_family(
             precision_adequate=plan.h2_precision_adequate,
             freeze_reference=plan.freeze_reference,
         ),
-        h3=h3_conditions(
-            asr,
-            luar,
-            adjusted_p=adjusted["H3"],
-            luar_margin=plan.luar_margin,
-            precision_adequate=plan.h3_precision_adequate,
-        ),
+        h3=h3,
+        h3_decision=defined_h3_decision(h3, freeze_reference=plan.freeze_reference),
     )

@@ -61,6 +61,7 @@ def test_complete_pipeline_global_family_iut_and_json_reproducibility(complete_f
     assert result.h1.verdict == result.h2.verdict == "Supported"
     assert result.h3.feasible and result.h3.asr_superiority and result.h3.luar_noninferiority
     assert result.h3.clarification_required
+    assert result.h3_decision is not None and result.h3_decision.verdict == "Supported"
     assert FamilyEvidence.model_validate_json(result.model_dump_json()) == result
 
 
@@ -105,3 +106,14 @@ def test_plan_requires_explicit_margins_precision_and_freeze_reference() -> None
     data["freeze_reference"] = " "
     with pytest.raises(ValidationError, match="nonblank"):
         DecisionPlan.model_validate(data)
+
+
+def test_family_h3_decision_is_bound_to_conditions_and_freeze(complete_family: FamilyEvidence) -> None:
+    data = complete_family.model_dump()
+    data["h3_decision"] = None
+    with pytest.raises(ValidationError, match="h3_decision_defined_conditions"):
+        FamilyEvidence.model_validate(data)
+    data = complete_family.model_dump()
+    data["h3_decision"]["freeze_reference"] = "another-freeze"
+    with pytest.raises(ValidationError, match="h3_decision_defined_conditions"):
+        FamilyEvidence.model_validate(data)

@@ -98,9 +98,21 @@ of leakage or covers unprobed/out-of-boundary channels.
 
 **Pending leader clarification:** Proposal §4.1 does not completely define H3
 cases where ASR's interval spans zero. The user is asking the leader for the
-intended rule. `h3_conditions` exposes the already specified benefit/NI conditions
-without emitting a final verdict. The full H3 decision evaluator and RL-034
-completion remain pending that answer; no inferred rule is frozen here.
+intended rule. `evaluate_h3` classifies only explicit branches: inadequate
+cluster count/precision is inconclusive; a 95% LUAR interval entirely below the
+loss margin rejects; ASR superiority plus LUAR NI supports; established ASR
+superiority with LUAR strictly straddling the margin is inconclusive. The 95%
+adverse-LUAR interval follows the documented NI interpretation used for H1.
+
+All remaining cases have `H3Assessment.decision = None` and
+`case_requires_clarification = True`, including exact NI touching boundaries.
+This is a missing protocol decision, not a fourth research verdict. Family
+assembly retains `h3` component conditions and adds `h3_decision` for defined
+cases, validating it against those conditions and the freeze reference.
+`H3Conditions.clarification_required = True` denotes the overall unresolved
+protocol even when a particular case has an explicitly defined decision. The
+full H3 evaluator and RL-034 completion remain pending the leader's answer;
+no proposed fallback rule is activated.
 
 ## Synthetic use
 
