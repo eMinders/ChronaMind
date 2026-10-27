@@ -18,6 +18,11 @@ oracles cover cancellation, subnormals, run/item permutations and constant
 bootstrap distributions. H1 also rejects a question appearing in both exclusive
 strata. Latest focused non-CP tests:182 passed; the submitted revision's complete
 CI must be inspected separately from the earlier commit counts below.
+An additional exact-threshold check found a one-bit difference between default
+CP APIs caused by floating subtraction of the confidence level. Both frozen
+default paths now use the identical literal 0.025 tail; a regression checks H4
+at and immediately below that bound for every N20–100. Earlier verification
+counts below remain dated evidence for their named commits.
 
 ## Requirement coverage
 

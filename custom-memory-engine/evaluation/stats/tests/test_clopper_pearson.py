@@ -75,7 +75,8 @@ def test_two_sided_interval_matches_binomial_test_root_solver(leaks: int, scenar
     reference = binomtest(leaks, scenarios).proportion_ci(confidence_level=confidence, method="exact")
     actual = cp_interval(leaks, scenarios, confidence=confidence)
     assert actual == pytest.approx((reference.low, reference.high), rel=0, abs=3e-12)
-    assert actual[1] == cp_upper(leaks, scenarios, tail_probability=(1 - confidence) / 2)
+    tail = 0.025 if confidence == 0.95 else (1 - confidence) / 2
+    assert actual[1] == cp_upper(leaks, scenarios, tail_probability=tail)
 
 
 @pytest.mark.parametrize(("leaks", "scenarios"), [(1, 20), (10, 20), (19, 20), (17, 100), (499999, 1000000)])

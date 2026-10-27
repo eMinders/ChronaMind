@@ -1,11 +1,13 @@
 """Strict decision boundaries must not be crossed by intermediate rounding."""
 
 from fractions import Fraction
+from math import nextafter
 
 import pytest
 
 from evaluation.stats.analysis import analyze_contrast
-from evaluation.stats.decisions import evaluate_h1, evaluate_h2
+from evaluation.stats.clopper_pearson import cp_interval, cp_upper
+from evaluation.stats.decisions import LeakageScenario, evaluate_h1, evaluate_h2, evaluate_h4
 from evaluation.stats.models import PairedObservation, PairedSample
 from evaluation.stats.multiplicity import confirmatory_holm
 
@@ -159,3 +161,28 @@ def test_exact_item_mean_ties_remain_zero_at_the_cluster_boundary() -> None:
     assert history.permutation is not None
     assert history.permutation.p_value == 1 and history.permutation.n_nonzero == 0
     assert not history.inferentially_feasible
+
+
+def test_h4_default_cp_apis_agree_at_the_exact_informativeness_boundary() -> None:
+    for count in range(20, 101):
+        upper = cp_upper(0, count)
+        assert cp_interval(0, count)[1] == upper
+        rows = tuple(
+            LeakageScenario(scenario_id=str(i), leaked=False, positive_control_leaked=True) for i in range(count)
+        )
+        exact = evaluate_h4(
+            rows,
+            informativeness_limit=upper,
+            minimum_control_share=1.0,
+            frozen_preconditions_met=True,
+            freeze_reference="synthetic",
+        )
+        below = evaluate_h4(
+            rows,
+            informativeness_limit=nextafter(upper, 0.0),
+            minimum_control_share=1.0,
+            frozen_preconditions_met=True,
+            freeze_reference="synthetic",
+        )
+        assert exact.decision.verdict == "Supported"
+        assert below.decision.verdict == "Inconclusive"

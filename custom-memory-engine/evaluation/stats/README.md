@@ -53,6 +53,8 @@ interval levels and NI bounds to reject accidental mixing of analysis sources.
   caller-supplied plan parameters, and refuses an incomplete superiority family.
 - `clopper_pearson.cp_upper` uses a 0.025 tail by default: the upper endpoint of
   the two-sided 95% interval, equivalently a one-sided 97.5% upper bound. With
+  the frozen default confidence, both APIs use the identical literal 0.025 tail
+  so floating subtraction cannot change an H4 equality decision. With
   zero leaks it uses stable `−expm1(log(0.025)/N)`. `cp_interval` also supplies the
   lower endpoint and supports nonzero counts. Independent scenarios are the
   H4 denominator; deletion events and channels do not multiply N. The same

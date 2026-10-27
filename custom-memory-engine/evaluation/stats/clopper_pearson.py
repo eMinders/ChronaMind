@@ -40,7 +40,10 @@ def cp_interval(leaks: int, scenarios: int, *, confidence: float = 0.95) -> tupl
     """Equal-tailed, two-sided Clopper–Pearson interval for scenario counts."""
     _counts(leaks, scenarios)
     _probability(confidence, "confidence")
-    tail = (1 - confidence) / 2
+    # The frozen 95% interval has exactly the same .025 tail as cp_upper's
+    # default. Subtracting the binary float .95 from 1 would instead produce
+    # .025000000000000022 and could change an H4 decision at an exact boundary.
+    tail = 0.025 if confidence == 0.95 else (1 - confidence) / 2
     lower = 0.0 if leaks == 0 else float(betaincinv(leaks, scenarios - leaks + 1, tail))
     upper = cp_upper(leaks, scenarios, tail_probability=tail)
     if not isfinite(lower) or not 0 <= lower <= upper:
