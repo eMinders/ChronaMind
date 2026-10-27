@@ -4,6 +4,12 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-043 Temporal Query Predicates (27 October 2026)
+
+- Added typed builders, composable bound SQL and asynchronous reads for `current_state`, `historical_as_of`, `historical_window` and inspector-only `audit_as_of`. Ordinary reads use recorded-range containment at the reference time, following the frozen Proposal/Technical Specification rather than the issue's stale open-upper-bound shorthand.
+- Enforced point/window future guards and audit belief checks against the schema's database clock with deterministic SQLSTATE `22023`. Revalidation at compilation and execution prevents copied query objects from bypassing those guards. Explicit user filtering and existing tenant context compose with native RLS without changing caller identity or transaction ownership.
+- Preserved every canonical version field and native range boundaries, including literal infinity versus unbounded endpoints. Added pure and full-schema PostgreSQL tests for the E1–E3 example, status visibility, replay clocks, real unprivileged RLS, schema qualification and transaction rollback. See `evidence/RL-043-verification.md`; ranking, rendering and later research gates remain separate.
+
 ## Post-merge Assurance (`RL-031`, `RL-041`; 27 October 2026)
 
 - Retire completed replay generations through a local case-release hook and defer backend work to the next accounted operation. Raw stores, native Mem0 Qdrant/SQLite state, Graphiti clients/graphs, episode provenance and history diagnostics remain bounded while other active tenants are preserved. Every fallback adapter replacement is registered for final cleanup before success publication.

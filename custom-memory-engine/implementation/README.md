@@ -16,7 +16,7 @@ implementation/
 │   ├── consolidation/     # Minimal consolidation + MEMORY_DERIVATION lineage (RL-061)
 │   ├── deletion/          # §7.7 closure (RL-070)
 │   ├── paths/             # Fast/slow paths + job queue (RL-080)
-│   └── temporal_state_manager/  # Retrieval predicates (RL-043)
+│   └── predicates.py      # Typed temporal builders + async reads (RL-043)
 └── tests/
     ├── archival/    # T1 – T5 regression harness (RL-090)
     ├── concurrency/ # Replay-clock + exclusion-constraint under contention (RL-091)
@@ -31,4 +31,6 @@ implementation/
 
 ## Status
 
-**`RL-040` schema DDL and `RL-041` migration runner implemented.** The twelve-table PostgreSQL schema lives in [`schema/001_full_schema.sql`](schema/001_full_schema.sql); [`schema/migrate.py`](schema/migrate.py) provides atomic apply, status/version inspection and confirmed clean reset over an owned namespace. See [`schema/README.md`](schema/README.md) for commands, ownership and extension policy. Supersession/archival procedures (`RL-042`) and retrieval APIs (`RL-043`) remain separate work.
+**`RL-040` schema DDL, `RL-041` migration runner and `RL-043` temporal reads implemented.** The twelve-table PostgreSQL schema lives in [`schema/001_full_schema.sql`](schema/001_full_schema.sql); [`schema/migrate.py`](schema/migrate.py) provides atomic apply, status/version inspection and confirmed clean reset over an owned namespace. See [`schema/README.md`](schema/README.md) for commands, ownership and extension policy.
+
+[`engine/predicates.py`](engine/predicates.py) provides all four canonical temporal modes, bound SQL, deterministic future guards, typed results and tenant-scoped asynchronous reads. [`engine/README.md`](engine/README.md) documents reference-time containment, caller transactions and audit/context separation. Supersession/archival procedures (`RL-042`), ranking/fusion (`RL-050`) and rendering (`RL-051`) remain separate work.
