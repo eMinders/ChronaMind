@@ -4,6 +4,12 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-044 Monotonic Clock and Atomic Queue (27 October 2026)
+
+- Added transaction-consistent live/replay clock allocation with per-user advisory locking, `+1 µs` tie/out-of-order advancement and a durable content-free watermark in the existing audit table. Allocations synchronize the canonical database clock and record the clock mode without adding schema objects or changing migration fingerprints.
+- Added typed idempotent enqueue and tenant-scoped `FOR UPDATE SKIP LOCKED` processing. Prepared database effects, clock allocation and job completion commit atomically; bounded Tenacity retries repeat fresh whole transactions only for serialization/deadlock failures. Semantic exclusion errors and exhausted jobs route to the canonical dead-letter state, and cancellation rolls back safely.
+- Added pure and real PostgreSQL clock/concurrency/rollback/idempotency tests, including fresh-process persistence, actual unprivileged RLS, competing-worker retry races and deferred commit failures. See `evidence/RL-044-verification.md`. Provider/gate integration, production grants, deletion integration and the eight-worker load/research gates remain separate.
+
 ## Post-merge Assurance (`RL-031`, `RL-041`; 27 October 2026)
 
 - Retire completed replay generations through a local case-release hook and defer backend work to the next accounted operation. Raw stores, native Mem0 Qdrant/SQLite state, Graphiti clients/graphs, episode provenance and history diagnostics remain bounded while other active tenants are preserved. Every fallback adapter replacement is registered for final cleanup before success publication.

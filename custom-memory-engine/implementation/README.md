@@ -8,6 +8,8 @@
 
 ```
 implementation/
+├── clock/           # Durable live/replay per-user allocation (RL-044)
+├── queue/           # Atomic SKIP LOCKED worker + whole-TX retries (RL-044)
 ├── schema/          # Full-schema DDL (RL-040)
 ├── migrations/      # Up/down migrations (RL-041)
 ├── engine/          # Sub-modules decided in P4 design review (RL-042+)
@@ -31,4 +33,6 @@ implementation/
 
 ## Status
 
-**`RL-040` schema DDL and `RL-041` migration runner implemented.** The twelve-table PostgreSQL schema lives in [`schema/001_full_schema.sql`](schema/001_full_schema.sql); [`schema/migrate.py`](schema/migrate.py) provides atomic apply, status/version inspection and confirmed clean reset over an owned namespace. See [`schema/README.md`](schema/README.md) for commands, ownership and extension policy. Supersession/archival procedures (`RL-042`) and retrieval APIs (`RL-043`) remain separate work.
+**`RL-040` schema DDL, `RL-041` migration runner and `RL-044` clock/queue implemented.** The twelve-table PostgreSQL schema lives in [`schema/001_full_schema.sql`](schema/001_full_schema.sql); [`schema/migrate.py`](schema/migrate.py) provides atomic apply, status/version inspection and confirmed clean reset over an owned namespace. See [`schema/README.md`](schema/README.md) for commands, ownership and extension policy.
+
+[`clock/`](clock/README.md) allocates one strictly increasing per-user recorded instant per transaction, persists a content-free watermark and synchronizes live/replay time with the canonical database clock. [`queue/`](queue/README.md) provides typed enqueue and atomic tenant-scoped processing with durable idempotency, native SKIP LOCKED claims and bounded whole-transaction retries. It accepts prepared database-only handlers. Supersession/archival (`RL-042`), read predicates (`RL-043`), extraction/gate integration and the wider invariant/load/research gates remain separate contributions.
