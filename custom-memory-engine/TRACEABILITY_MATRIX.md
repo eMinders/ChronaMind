@@ -49,6 +49,14 @@ This establishes schema provisioning and design-check compatibility. The runtime
 procedure, role, concurrency-load, archival and deletion gates above remain owned
 by their respective tasks; this contribution does not mark them complete.
 
+### 2.2 Durable clock and queue (`RL-044`)
+
+[`implementation/clock/`](implementation/clock/README.md) allocates one recorded instant per mutation transaction under the canonical user advisory lock. Live raw time uses the database transaction clock; replay input is explicit. The allocation takes the maximum prior content-free allocation event and memory recorded bounds, so ties/out-of-order instants advance by 1µs across connections, processes and empty jobs. Audit mode metadata attributes rows by user/recorded instant without logging memory content. Rollback restores the local clock and discards the allocation. No DDL/function/catalog change is introduced.
+
+[`implementation/queue/`](implementation/queue/README.md) claims due work with SKIP LOCKED and commits prepared database effects with durable completion. Tenacity repeats at most three fresh whole transactions on 40001/40P01, including commit-time failures, with the fixed D-18 backoff; 23P01 is not blindly retried. Dual enqueue keys, pinned work revalidation, cancellation rollback and concurrent terminal-state checks protect idempotency. The canonical `JOB.status='dead_letter'` state holds exhausted/permanent failures. Actual native tests preserve the full schema, provenance and RLS boundaries. See [`evidence/RL-044-verification.md`](evidence/RL-044-verification.md).
+
+This supplies the clock/queue foundation. It does not complete extraction/gate/writer/deletion integration, runtime grants, the full replay suite or the eight-worker load test, and it establishes no research result or sign-off.
+
 ### 2.2 Temporal selection (`RL-043`)
 
 [`implementation/engine/predicates.py`](implementation/engine/predicates.py)

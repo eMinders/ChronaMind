@@ -4,6 +4,12 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-044 Monotonic Clock and Atomic Queue (27 October 2026)
+
+- Added transaction-consistent live/replay clock allocation with per-user advisory locking, `+1 µs` tie/out-of-order advancement and a durable content-free watermark in the existing audit table. Allocations synchronize the canonical database clock and record the clock mode without adding schema objects or changing migration fingerprints.
+- Added typed idempotent enqueue and tenant-scoped `FOR UPDATE SKIP LOCKED` processing. Prepared database effects, clock allocation and job completion commit atomically; bounded Tenacity retries repeat fresh whole transactions only for serialization/deadlock failures. Semantic exclusion errors and exhausted jobs route to the canonical dead-letter state, and cancellation rolls back safely.
+- Added pure and real PostgreSQL clock/concurrency/rollback/idempotency tests, including fresh-process persistence, actual unprivileged RLS, competing-worker retry races and deferred commit failures. See `evidence/RL-044-verification.md`. Provider/gate integration, production grants, deletion integration and the eight-worker load/research gates remain separate.
+
 ## RL-043 Temporal Query Predicates (27 October 2026)
 
 - Added typed builders, composable bound SQL and asynchronous reads for `current_state`, `historical_as_of`, `historical_window` and inspector-only `audit_as_of`. Ordinary reads use recorded-range containment at the reference time, following the frozen Proposal/Technical Specification rather than the issue's stale open-upper-bound shorthand.
