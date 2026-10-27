@@ -68,7 +68,7 @@ and [paired permutation documentation](https://docs.scipy.org/doc/scipy/referenc
 SciPy 1.18.1 is pinned only in the independent engine environment; the root
 application environment is unchanged.
 
-## Decisions and pending clarification
+## Decisions
 
 H1 combines history superiority with present-state NI. Support uses strict
 `adjusted_p < .05`, history conservative lower `> 0`, and present NI lower
@@ -96,23 +96,18 @@ confirmed in-boundary leak takes precedence and rejects; otherwise failure of
 the bound/control/precondition is inconclusive. This never proves impossibility
 of leakage or covers unprobed/out-of-boundary channels.
 
-**Pending leader clarification:** Proposal §4.1 does not completely define H3
-cases where ASR's interval spans zero. The user is asking the leader for the
-intended rule. `evaluate_h3` classifies only explicit branches: inadequate
-cluster count/precision is inconclusive; a 95% LUAR interval entirely below the
-loss margin rejects; ASR superiority plus LUAR NI supports; established ASR
-superiority with LUAR strictly straddling the margin is inconclusive. The 95%
-adverse-LUAR interval follows the documented NI interpretation used for H1.
-
-All remaining cases have `H3Assessment.decision = None` and
-`case_requires_clarification = True`, including exact NI touching boundaries.
-This is a missing protocol decision, not a fourth research verdict. Family
-assembly retains `h3` component conditions and adds `h3_decision` for defined
-cases, validating it against those conditions and the freeze reference.
-`H3Conditions.clarification_required = True` denotes the overall unresolved
-protocol even when a particular case has an explicitly defined decision. The
-full H3 evaluator and RL-034 completion remain pending the leader's answer;
-no proposed fallback rule is activated.
+H3 uses a complete three-way protocol. Infeasible analysis is `Inconclusive`.
+A feasible ASR contrast is `Supported` only when its estimate is negative, its
+Holm-adjusted p-value is strictly below `.05`, and its conservative interval is
+entirely below zero. Every feasible case that does not establish this reduction
+is `Not supported`, including intervals that cross or touch zero. With ASR
+reduction established, LUAR non-inferiority requires the one-sided lower bound
+to be strictly above `−δ_luar`; an interval entirely beyond the margin is `Not
+supported`, while exact contact or any remaining uncertainty is `Inconclusive`.
+Family assembly persists and validates this H3 decision against the conditions
+and freeze reference. These rules are software decision semantics only; pilot
+threshold freezing, confirmatory runs, and research approval remain separate
+gates.
 
 ## Synthetic use
 

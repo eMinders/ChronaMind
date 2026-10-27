@@ -33,14 +33,14 @@ class DecisionPlan(StatsRecord):
 
 
 class FamilyEvidence(StatsRecord):
-    """H3 final classification awaits protocol clarification; no completion claim."""
+    """Complete confirmatory evidence with mechanical H3 classification."""
 
     plan: DecisionPlan
     adjusted_p: FamilyPValues
     h1: Decision
     h2: Decision
     h3: H3Conditions
-    h3_decision: Decision | None
+    h3_decision: Decision
 
     @model_validator(mode="after")
     def consistent_decisions(self) -> "FamilyEvidence":

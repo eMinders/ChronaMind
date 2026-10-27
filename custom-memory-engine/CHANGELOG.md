@@ -4,14 +4,23 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
-## RL-034 Statistical Inference — In Progress (27 October 2026)
+## RL-044 Monotonic Clock and Atomic Queue (27 October 2026)
 
-- Added the four explicitly defined H3 decision branches and family output binding. Undefined ASR uncertainty and exact NI touching cases remain structured pending decisions; the leader's clarification is still required before RL-034/STAT-UNIT completion.
-- Hard review corrected intermediate rounding that could turn equal repeated-run means into a positive effect or move a constant bootstrap lower bound above an exact non-inferiority margin. Aggregation now uses exact binary-input sums with one final rounding; rational-oracle and real decision regressions cover both false-positive cases. H1 also rejects overlapping question identities across its exclusive strata.
-- Bound the two equivalent default Clopper–Pearson APIs to the same literal 0.025 tail; a boundary regression covers exact and immediately lower H4 informativeness limits for every scenario count from 20 through 100.
-- Added identity-paired, run-then-cluster aggregation, seeded percentile cluster bootstrap, exact/Monte Carlo two-sided sign flips, the fixed global three-hypothesis Holm family, and exact scenario-level Clopper–Pearson bounds. SciPy is pinned in the isolated engine environment.
-- Added H1/H2/H4 decision evaluators and an assembly API for the co-primary evidence, with explicit caller-supplied margins, precision assessments and freeze references. Persisted summaries reject source/hash/count/interval inconsistencies. LoCoMo remains descriptive; NI endpoints receive no extra superiority test.
-- Added analytical, exhaustive, high-precision and identity/decision-boundary software checks. H3's final classification of ambiguous ASR intervals remains pending the leader's protocol clarification; this entry does not mark RL-034 or STAT-UNIT complete. No pilot, confirmatory run, frozen threshold or experimental outcome is claimed.
+- Added transaction-consistent live/replay clock allocation with per-user advisory locking, `+1 µs` tie/out-of-order advancement and a durable content-free watermark in the existing audit table. Allocations synchronize the canonical database clock and record the clock mode without adding schema objects or changing migration fingerprints.
+- Added typed idempotent enqueue and tenant-scoped `FOR UPDATE SKIP LOCKED` processing. Prepared database effects, clock allocation and job completion commit atomically; bounded Tenacity retries repeat fresh whole transactions only for serialization/deadlock failures. Semantic exclusion errors and exhausted jobs route to the canonical dead-letter state, and cancellation rolls back safely.
+- Added pure and real PostgreSQL clock/concurrency/rollback/idempotency tests, including fresh-process persistence, actual unprivileged RLS, competing-worker retry races and deferred commit failures. See `evidence/RL-044-verification.md`. Provider/gate integration, production grants, deletion integration and the eight-worker load/research gates remain separate.
+
+## RL-043 Temporal Query Predicates (27 October 2026)
+
+- Added typed builders, composable bound SQL and asynchronous reads for `current_state`, `historical_as_of`, `historical_window` and inspector-only `audit_as_of`. Ordinary reads use recorded-range containment at the reference time, following the frozen Proposal/Technical Specification rather than the issue's stale open-upper-bound shorthand.
+- Enforced point/window future guards and audit belief checks against the schema's database clock with deterministic SQLSTATE `22023`. Revalidation at compilation and execution prevents copied query objects from bypassing those guards. Explicit user filtering and existing tenant context compose with native RLS without changing caller identity or transaction ownership.
+- Preserved every canonical version field and native range boundaries, including literal infinity versus unbounded endpoints. Added pure and full-schema PostgreSQL tests for the E1–E3 example, status visibility, replay clocks, real unprivileged RLS, schema qualification and transaction rollback. See `evidence/RL-043-verification.md`; ranking, rendering and later research gates remain separate.
+
+## RL-034 Statistical Inference — Complete (27 October 2026)
+
+- Added paired cluster inference, exact Clopper–Pearson bounds, the fixed global Holm family, and mechanical H1–H4 decision evaluators.
+- Completed H3's three-way protocol: failure to establish ASR reduction is `Not supported`; LUAR intervals entirely beyond the frozen loss margin are `Not supported`; exact margin contact is `Inconclusive`; strict non-inferiority plus established ASR reduction is `Supported`.
+- Added truth-table and exact-boundary regressions for H3. This software completion does not claim pilot thresholds, confirmatory results, or research approval.
 
 ## Post-merge Assurance (`RL-031`, `RL-041`; 27 October 2026)
 

@@ -1,12 +1,22 @@
 # RL-034 software implementation status — 27 October 2026
 
-**In progress.** Numerical primitives and H1/H2/H4 decisions are implemented.
-The user is asking the leader to clarify H3's undefined crossing-zero ASR cases;
-the four explicit H3 branches are implemented, while a complete evaluator is
-still pending. This is neither a
-STAT-UNIT completion claim nor a pilot/confirmatory research result.
+**Software implementation complete.** Numerical primitives and H1–H4 decisions
+are implemented and mechanically tested. This is not a pilot/confirmatory
+research result or research approval.
 
-## Defined H3 extension
+## H3 protocol completion
+
+H3 now has a deterministic three-way decision for every valid input. Infeasible
+analysis is `Inconclusive`; failure to establish ASR reduction is `Not supported`;
+LUAR loss entirely beyond the frozen margin is `Not supported`; strict LUAR
+non-inferiority with established ASR reduction is `Supported`; exact margin
+contact and remaining LUAR uncertainty are `Inconclusive`. The ASR rule treats
+an interval crossing or touching zero as failure to establish reduction. Tests
+cover crossing-zero, positive/non-significant, p-value, precision, excessive
+loss, strict support, strict straddle, and exact-margin boundaries.
+
+Earlier verification records below remain historical evidence for their named
+source commits; final-head checks are recorded after the implementation commit.
 
 Source commit `2eba86af9750bf027ee54b4ee8d5d02cb8cf8034` adds the four
 unambiguous H3 branches, preserving a pending result for undefined cases.
@@ -50,7 +60,7 @@ counts below remain dated evidence for their named commits.
 | Global Holm family of three | `multiplicity.py` combines H2 by max-p before global Holm; `test_multiplicity.py` checks an independent closed-Bonferroni-intersection oracle; `family.py` refuses a missing superiority input. NI endpoints add no extra test. |
 | Exact CP and frozen output | `clopper_pearson.py`; all 4,941 (N,k) combinations for N20–100 checked against the existing elementary binomial-sum/bisection oracle, entire formatted `validation/cp_bounds.output.txt` reproduced, high-precision Decimal anchors, independent root-solver/CDF inversion, coverage/symmetry/tiny-tail/invalid-input checks |
 | H1/H2/H4 mechanical decisions | Strict p/CI/NI boundaries, feasibility/precision guards, shared source identities, H4 scenario counts and positive control conditions tested. H2 reconciles the full Proposal row: an interval containing zero is inconclusive; both conservative intervals must be above zero for support. |
-| H3 final decision | **Partial, leader clarification pending.** `evaluate_h3` classifies the explicit feasibility, excessive-LUAR-loss, joint-support and strict-LUAR-straddle branches. Other cases have no invented verdict. Assessment/family JSON validators bind each defined result to its conditions and freeze. |
+| H3 final decision | **Complete.** `evaluate_h3` classifies every valid input using the frozen three-way protocol; assessment and family JSON validators bind each result to its conditions and freeze reference. |
 | Persisted evidence integrity | Input/effect hashes, sample/summary counts, predeclared CI levels, NI consistency, role/freeze/p-value/precision and H4 count/CP/verdict contradictions are validated; regressions in `test_evidence_integrity.py`, `test_family.py`, `test_decisions.py`. |
 
 ## Verification recorded so far

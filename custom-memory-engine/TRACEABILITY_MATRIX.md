@@ -25,7 +25,7 @@ This matrix links the audit findings, literature evidence, database invariants (
 | **3** | Separate valid and recorded clocks; `recorded_from` assigned at commit from monotonic per-user clock (`R3`); only `status` and `upper(recorded_range)` may change post-insert. | `clock_now()` + `BEFORE UPDATE` trigger `guard_update()` (§3.4, §8). | `RL-040`, `RL-044` | Reduced schema: `validation/bitemporal_checks.sql` (`COMPLETE`); Full schema: `implementation/schema/bitemporal_on_full.sql` (`RL-040`); Replay clock test: `RL-092` (`PLANNED`). | `PARTIAL (Reduced and full SQL executed; replay pending)` |
 | **4** | Single-valued predicates: no two `Active`/`Archived` versions for the same `(user_id, subject_key, predicate_key)` overlap in both `valid_range` and `recorded_range`. | `EXCLUDE USING gist (... valid_range WITH &&, recorded_range WITH &&)` + `R1` close-then-insert + per-user advisory lock (§3.3, §8). | `RL-040`, `RL-042` | Reduced schema: `validation/bitemporal_checks.sql` (`COMPLETE`); Full schema: `implementation/schema/bitemporal_on_full.sql` (`RL-040`); 8-worker concurrency load test: `RL-093` (`PLANNED`). | `PARTIAL (Reduced and full SQL executed; load pending)` |
 | **5** | Superseded beliefs (`NOT upper_inf(recorded_range)`) are retained for audit until deletion/purge; never overwritten in place (`R1`, `R2`). | Transactional `supersede_single` / `commit_candidate` procedures (§3.4). | `RL-042` | Reduced schema worked example E1–E3: `validation/bitemporal_checks.sql` (`COMPLETE`); Full engine: `RL-091` (`PLANNED`). | `PARTIAL (Reduced SQL executed)` |
-| **6** | Staging rows (`candidate`, `conflict_pending`, `rejected`) have `recorded_range IS NULL` and are never returned by any query predicate. | Invariant 2 `CHECK` + query functions filtering on `status` and `recorded_range` (§3.5). | `RL-040`, `RL-043` | Reduced schema: `validation/bitemporal_checks.sql` (`COMPLETE`); Full schema: `implementation/schema/bitemporal_on_full.sql` (`RL-040`); Full engine role check: `RL-091` (`PLANNED`). | `PARTIAL (Reduced and full SQL executed; role lock-down pending)` |
+| **6** | Staging rows (`candidate`, `conflict_pending`, `rejected`) have `recorded_range IS NULL` and are never returned by any query predicate. | Invariant 2 `CHECK` + query functions filtering on `status` and `recorded_range` (§3.5). | `RL-040`, `RL-043` | Reduced schema: `validation/bitemporal_checks.sql`; Full schema: `implementation/schema/bitemporal_on_full.sql`; all four predicates + unprivileged RLS: `implementation/tests/test_predicates_db.py` (`RL-043`). | `PARTIAL (DDL and predicate coverage; full RL-091/runtime role gates pending)` |
 | **7** | Every user-data table carries `user_id`, enforces `FORCE ROW LEVEL SECURITY` for the runtime role, and rejects unscoped queries. | PostgreSQL RLS policies + service-boundary guard (§3.1, Proposal §7.8). | `RL-040`, `RL-071` | DDL `ENABLE`/`FORCE` + isolation policies: `implementation/schema/001_full_schema.sql` (`RL-040`); runtime grants and Suite `I`: `RL-071` | `PARTIAL (RLS scaffolding executed)` |
 | **8** | Deletion removes all versions of `memory_key` (`R6`), transitive `MEMORY_DERIVATION` closure (or re-derives surviving multi-source artifacts), embeddings, FTS entries, queue payloads, and caches; `AUDIT_EVENT` holds no content. | Transactional `delete_memory` procedure with `deletion_epoch` check (§7.2). | `RL-070` | Reduced schema key deletion: `validation/bitemporal_checks.sql`; Full 7-channel closure: `RL-090` (`T5`), `RL-105` (`H4`). | `PARTIAL (Key delete only; closure PLANNED)` |
 | **9** | Retried slow-path jobs cannot create duplicate memory versions. | Unique constraints on `JOB.idempotency_key` and `(user_id, turn_id, extractor_version, candidate_fingerprint)` (§3.1, Proposal §7.3). | `RL-040`, `RL-044` | Unique constraints: `implementation/tests/test_full_schema.py` (`RL-040`); worker replay: `RL-092` (`test_worker_idempotency`) | `PARTIAL (DDL unique constraints executed)` |
@@ -49,6 +49,39 @@ This establishes schema provisioning and design-check compatibility. The runtime
 procedure, role, concurrency-load, archival and deletion gates above remain owned
 by their respective tasks; this contribution does not mark them complete.
 
+### 2.2 Durable clock and queue (`RL-044`)
+
+[`implementation/clock/`](implementation/clock/README.md) allocates one recorded instant per mutation transaction under the canonical user advisory lock. Live raw time uses the database transaction clock; replay input is explicit. The allocation takes the maximum prior content-free allocation event and memory recorded bounds, so ties/out-of-order instants advance by 1µs across connections, processes and empty jobs. Audit mode metadata attributes rows by user/recorded instant without logging memory content. Rollback restores the local clock and discards the allocation. No DDL/function/catalog change is introduced.
+
+[`implementation/queue/`](implementation/queue/README.md) claims due work with SKIP LOCKED and commits prepared database effects with durable completion. Tenacity repeats at most three fresh whole transactions on 40001/40P01, including commit-time failures, with the fixed D-18 backoff; 23P01 is not blindly retried. Dual enqueue keys, pinned work revalidation, cancellation rollback and concurrent terminal-state checks protect idempotency. The canonical `JOB.status='dead_letter'` state holds exhausted/permanent failures. Actual native tests preserve the full schema, provenance and RLS boundaries. See [`evidence/RL-044-verification.md`](evidence/RL-044-verification.md).
+
+This supplies the clock/queue foundation. It does not complete extraction/gate/writer/deletion integration, runtime grants, the full replay suite or the eight-worker load test, and it establishes no research result or sign-off.
+
+### 2.2 Temporal selection (`RL-043`)
+
+[`implementation/engine/predicates.py`](implementation/engine/predicates.py)
+implements all four Proposal §7.4 / Technical Specification §3.5 predicates with
+bound user/time values and native PostgreSQL range operations. Ordinary reads
+select `active` versions whose recorded range contains the reference time;
+audit includes `active`/`archived` at the belief time. The reference-containment
+rule follows the frozen specification and both SQL checks, superseding the
+published issue's stale `upper_inf` shorthand.
+
+| Contract / risk | Verification artifact |
+|---|---|
+| E1–E3 current/corrected history/original belief; earlier reference with closed recorded range | `implementation/tests/test_predicates_db.py` worked-example/reference matrices |
+| R8 point/window order and future guards, UTC comparisons, copied-model revalidation, deterministic `22023` | `implementation/tests/test_predicates.py` |
+| Audit `β ≤ clock_now()` even for empty results; replay override and transaction-clock fallback; unrestricted audit valid target | Both predicate suites |
+| Ordinary/audit status matrix and staging exclusion; valid/recorded half-open boundaries | `implementation/tests/test_predicates_db.py` |
+| Bound SQL, quoted aliases, exact user filtering, existing tenant context and actual non-superuser RLS | Both predicate suites; DB role/bypass controls |
+| Caller transaction/savepoint preservation, schema-qualified reads, native infinity/unbounded result distinction | `implementation/tests/test_predicates_db.py` |
+| Audit excluded from answering context through the public result accessor | `implementation/tests/test_predicates.py`; `implementation/engine/README.md` |
+
+See [`evidence/RL-043-verification.md`](evidence/RL-043-verification.md) for the
+recorded checks and limits. Predicate coverage does not complete production role
+grants (`RL-071`), the wider invariants suite (`RL-091`), monotonic clock/worker
+wiring (`RL-044`/`RL-092`), ranking/rendering or research approvals.
+
 ---
 
 ## 3. Research Questions & Hypotheses (`H1`–`H4`) Traceability
@@ -68,7 +101,7 @@ by their respective tasks; this contribution does not mark them complete.
 | Deliverable ID | Description | Target Location | Owning Tasks | Status |
 |---|---|---|---|---|
 | **`D1`** | Open-source bi-temporal memory engine (PostgreSQL schema, slow/fast path, validation gate, hybrid retrieval, lineage deletion). | `custom-memory-engine/implementation/` | `RL-040`–`RL-094` | `PARTIAL (RL-040 DDL; RL-041 provisioning merged)` |
-| **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `custom-memory-engine/evaluation/` | `RL-030`–`RL-034` | `PARTIAL (RL-030 harness, RL-031 baselines, RL-032 replay cache; RL-034 numerical primitives/decisions in progress, H3 clarification pending; judge pending)` |
+| **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `custom-memory-engine/evaluation/` | `RL-030`–`RL-034` | `PARTIAL (RL-030 harness, RL-031 baselines, RL-032 replay cache, RL-034 statistical module complete; judge pending)` |
 | **`D3`** | Seeded synthetic evaluation suites (`T`, `G`, `D`, `I`) and frozen dataset splits. | `custom-memory-engine/research/benchmarks/` | `RL-020`–`RL-026` | `COMPLETE (RL-020–RL-026)` |
 | **`D4`** | Personal Digital Twin (PDT) demonstrator with Memory Inspector, timeline view, conflict resolution, and deletion controls. | `custom-memory-engine/application/` | `RL-120`–`RL-122` | `PLANNED` |
 | **`D5`** | Final thesis report, confirmatory analysis tables/figures (`H1`–`H4`), and one-command reproducibility package. | `custom-memory-engine/reports/` | `RL-110`, `RL-111`, `RL-130`–`RL-132` | `PLANNED` |

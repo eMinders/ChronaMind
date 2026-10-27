@@ -1,4 +1,4 @@
-"""Known H3 branches are executable; undefined cases never acquire a verdict."""
+"""H3's complete three-way decision table is executable."""
 
 import pytest
 from pydantic import ValidationError
@@ -54,22 +54,22 @@ def test_explicit_h3_branches(asr: tuple[float, ...], luar: tuple[float, ...], p
     assert result.decision is not None
     assert result.decision.hypothesis == "H3" and result.decision.verdict == expected
     assert not result.case_requires_clarification
-    # The overall protocol still needs the leader, even for a defined case.
-    assert result.conditions.clarification_required
     assert H3Assessment.model_validate_json(result.model_dump_json()) == result
 
 
 @pytest.mark.parametrize(
-    ("asr", "luar", "adjusted_p"),
+    ("asr", "luar", "adjusted_p", "expected"),
     [
-        ((-0.25,) * 6 + (0.5,) * 2, (0.0,) * 8, 0.2),
-        ((-0.25,) * 4 + (0.25,) * 4, (0.0,) * 8, 1.0),
-        ((0.25,) * 8, (0.0,) * 8, 0.01),
-        ((-0.25,) * 8, (-0.125,) * 8, 0.01),
-        ((-0.25,) * 8, (0.0,) * 8, 0.05),
+        ((-0.25,) * 6 + (0.5,) * 2, (0.0,) * 8, 0.2, "Not supported"),
+        ((-0.25,) * 4 + (0.25,) * 4, (0.0,) * 8, 1.0, "Not supported"),
+        ((0.25,) * 8, (0.0,) * 8, 0.01, "Not supported"),
+        ((-0.25,) * 8, (-0.125,) * 8, 0.01, "Inconclusive"),
+        ((-0.25,) * 8, (0.0,) * 8, 0.05, "Not supported"),
     ],
 )
-def test_undefined_cases_remain_pending(asr: tuple[float, ...], luar: tuple[float, ...], adjusted_p: float) -> None:
+def test_complete_h3_decision_table(
+    asr: tuple[float, ...], luar: tuple[float, ...], adjusted_p: float, expected: str
+) -> None:
     result = evaluate_h3(
         contrast("asr", asr),
         contrast("luar", luar),
@@ -78,17 +78,22 @@ def test_undefined_cases_remain_pending(asr: tuple[float, ...], luar: tuple[floa
         precision_adequate=True,
         freeze_reference="synthetic",
     )
-    assert result.decision is None and result.case_requires_clarification
+    assert result.decision.verdict == expected
+    assert not result.case_requires_clarification
     assert H3Assessment.model_validate_json(result.model_dump_json()) == result
-    altered = result.model_dump()
-    altered["decision"] = dict(
-        hypothesis="H3",
-        verdict="Inconclusive",
-        reasons=("unapproved_rule",),
+
+
+def test_exact_luar_margin_contact_is_inconclusive() -> None:
+    result = evaluate_h3(
+        contrast("asr", (-0.25,) * 8),
+        contrast("luar", (-0.125,) * 8),
+        adjusted_p=0.01,
+        luar_margin=0.125,
+        precision_adequate=True,
         freeze_reference="synthetic",
     )
-    with pytest.raises(ValidationError, match="defined_conditions_mismatch"):
-        H3Assessment.model_validate(altered)
+    assert result.decision.verdict == "Inconclusive"
+    assert result.decision.reasons == ("luar_noninferiority_boundary_or_uncertainty",)
 
 
 def test_known_case_cannot_be_suppressed_or_relabelled_in_json() -> None:
@@ -102,7 +107,7 @@ def test_known_case_cannot_be_suppressed_or_relabelled_in_json() -> None:
     )
     altered = result.model_dump()
     altered["decision"] = None
-    with pytest.raises(ValidationError, match="defined_conditions_mismatch"):
+    with pytest.raises(ValidationError, match="valid dictionary"):
         H3Assessment.model_validate(altered)
     for key, value in (("hypothesis", "H1"), ("verdict", "Not supported"), ("freeze_reference", "another-freeze")):
         altered = result.model_dump()

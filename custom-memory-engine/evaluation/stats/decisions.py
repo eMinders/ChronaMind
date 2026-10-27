@@ -1,8 +1,4 @@
-"""Mechanical decision conditions from Proposal §§4.1/10.6.
-
-H3's ambiguous ASR cases await the leader's clarification. Its component
-conditions are exposed without inventing a final verdict for those cases.
-"""
+"""Mechanical decision conditions from Proposal §§4.1/10.6."""
 
 from math import isfinite
 from typing import Literal
@@ -123,7 +119,7 @@ def evaluate_h2(
 
 
 class H3Conditions(StatsRecord):
-    """Computed conditions only; unresolved protocol cases have no invented verdict."""
+    """Computed ASR and LUAR conditions for the H3 decision table."""
 
     feasible: bool
     asr_superiority: bool
@@ -131,7 +127,6 @@ class H3Conditions(StatsRecord):
     asr_interval_nonnegative: bool
     luar_interval_beyond_margin: bool
     luar_interval_straddles_margin: bool
-    clarification_required: Literal[True] = True
 
     @model_validator(mode="after")
     def noncontradictory_conditions(self) -> "H3Conditions":
@@ -169,32 +164,33 @@ def h3_conditions(
     )
 
 
-def defined_h3_decision(conditions: H3Conditions, *, freeze_reference: str) -> Decision | None:
-    """Classify only branches explicitly defined in Proposal §§4.1/10.6.
+def defined_h3_decision(conditions: H3Conditions, *, freeze_reference: str) -> Decision:
+    """Apply the complete three-way H3 protocol.
 
-    The remaining ASR uncertainty and NI boundary cases await the leader's
-    clarification. None means a missing protocol rule, never a fourth research
-    verdict and never an implicit Inconclusive/Not supported classification.
+    ASR support requires an established reduction. Any feasible ASR case that
+    does not establish reduction is therefore Not supported. LUAR support is
+    strict: a lower bound exactly at the frozen loss margin is inconclusive,
+    while an interval entirely beyond that margin is Not supported.
     """
     if not conditions.feasible:
         verdict, reasons = "Inconclusive", ("insufficient_independent_clusters_or_precision",)
+    elif not conditions.asr_superiority:
+        verdict, reasons = "Not supported", ("asr_reduction_not_established",)
     elif conditions.luar_interval_beyond_margin:
         verdict, reasons = "Not supported", ("luar_loss_exceeds_frozen_margin",)
-    elif conditions.asr_superiority and conditions.luar_noninferiority:
+    elif conditions.luar_noninferiority:
         verdict, reasons = "Supported", ("asr_superiority_and_luar_noninferiority",)
-    elif conditions.asr_superiority and conditions.luar_interval_straddles_margin:
-        verdict, reasons = "Inconclusive", ("luar_interval_straddles_frozen_margin",)
     else:
-        return None
+        verdict, reasons = "Inconclusive", ("luar_noninferiority_boundary_or_uncertainty",)
     return Decision(hypothesis="H3", verdict=verdict, reasons=reasons, freeze_reference=freeze_reference)
 
 
 class H3Assessment(StatsRecord):
-    """Defined case decision, or an explicit unresolved protocol case."""
+    """H3 conditions and their mechanically determined three-way decision."""
 
     conditions: H3Conditions
     freeze_reference: str = Field(min_length=1)
-    decision: Decision | None
+    decision: Decision
 
     @model_validator(mode="after")
     def decision_matches_defined_conditions(self) -> "H3Assessment":
@@ -205,7 +201,7 @@ class H3Assessment(StatsRecord):
 
     @property
     def case_requires_clarification(self) -> bool:
-        return self.decision is None
+        return False
 
 
 def evaluate_h3(
@@ -217,7 +213,7 @@ def evaluate_h3(
     precision_adequate: bool,
     freeze_reference: str,
 ) -> H3Assessment:
-    """Evaluate known IUT branches without guessing the unresolved H3 rule."""
+    """Evaluate H3 using the frozen ASR and LUAR decision boundaries."""
     conditions = h3_conditions(
         asr, luar, adjusted_p=adjusted_p, luar_margin=luar_margin, precision_adequate=precision_adequate
     )

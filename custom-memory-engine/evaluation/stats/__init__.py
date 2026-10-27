@@ -1,1 +1,1 @@
-"""Paired cluster inference; see README for contracts and pending H3 clarification."""
+"""Paired cluster inference and mechanical hypothesis decisions."""

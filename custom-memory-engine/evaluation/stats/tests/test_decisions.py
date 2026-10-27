@@ -155,13 +155,12 @@ def test_h2_cluster_floor_and_shared_proposed_identity() -> None:
         evaluate_h2(dense, wrong, adjusted_p=0.001, precision_adequate=True, freeze_reference="synthetic")
 
 
-def test_h3_conditions_do_not_invent_a_pending_research_verdict() -> None:
+def test_h3_conditions_are_complete_without_protocol_placeholder() -> None:
     asr = evidence(dataset="G", endpoint="asr", comparator="A3", estimate=-0.25, low=-0.4, high=-0.1)
     luar = evidence(dataset="G", endpoint="luar", comparator="A3", estimate=0.0, low=-0.1, high=0.1)
     result = h3_conditions(asr, luar, adjusted_p=0.01, luar_margin=0.125, precision_adequate=True)
     assert result.feasible and result.asr_superiority and result.luar_noninferiority
-    assert result.clarification_required
-    assert "verdict" not in result.model_dump()
+    assert "clarification_required" not in result.model_dump()
 
 
 def scenarios(n: int = 36, leaks: int = 0, control: int = 36) -> tuple[LeakageScenario, ...]:
