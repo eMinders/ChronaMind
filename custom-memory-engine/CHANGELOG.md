@@ -4,6 +4,12 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-034 Statistical Inference — In Progress (27 October 2026)
+
+- Added identity-paired, run-then-cluster aggregation, seeded percentile cluster bootstrap, exact/Monte Carlo two-sided sign flips, the fixed global three-hypothesis Holm family, and exact scenario-level Clopper–Pearson bounds. SciPy is pinned in the isolated engine environment.
+- Added H1/H2/H4 decision evaluators and an assembly API for the co-primary evidence, with explicit caller-supplied margins, precision assessments and freeze references. Persisted summaries reject source/hash/count/interval inconsistencies. LoCoMo remains descriptive; NI endpoints receive no extra superiority test.
+- Added analytical, exhaustive, high-precision and identity/decision-boundary software checks. H3's final classification of ambiguous ASR intervals remains pending the leader's protocol clarification; this entry does not mark RL-034 or STAT-UNIT complete. No pilot, confirmatory run, frozen threshold or experimental outcome is claimed.
+
 ## Post-merge Assurance (`RL-031`, `RL-041`; 27 October 2026)
 
 - Retire completed replay generations through a local case-release hook and defer backend work to the next accounted operation. Raw stores, native Mem0 Qdrant/SQLite state, Graphiti clients/graphs, episode provenance and history diagnostics remain bounded while other active tenants are preserved. Every fallback adapter replacement is registered for final cleanup before success publication.

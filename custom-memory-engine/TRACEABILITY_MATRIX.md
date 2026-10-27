@@ -68,7 +68,7 @@ by their respective tasks; this contribution does not mark them complete.
 | Deliverable ID | Description | Target Location | Owning Tasks | Status |
 |---|---|---|---|---|
 | **`D1`** | Open-source bi-temporal memory engine (PostgreSQL schema, slow/fast path, validation gate, hybrid retrieval, lineage deletion). | `custom-memory-engine/implementation/` | `RL-040`–`RL-094` | `PARTIAL (RL-040 DDL; RL-041 provisioning merged)` |
-| **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `custom-memory-engine/evaluation/` | `RL-030`–`RL-034` | `PARTIAL (RL-030 harness, RL-031 baselines, RL-032 replay cache; judge/statistics pending)` |
+| **`D2`** | Evaluation harness, baseline adapters (`B0`–`B4`), LLM judge validation, and statistical analysis module. | `custom-memory-engine/evaluation/` | `RL-030`–`RL-034` | `PARTIAL (RL-030 harness, RL-031 baselines, RL-032 replay cache; RL-034 numerical primitives/decisions in progress, H3 clarification pending; judge pending)` |
 | **`D3`** | Seeded synthetic evaluation suites (`T`, `G`, `D`, `I`) and frozen dataset splits. | `custom-memory-engine/research/benchmarks/` | `RL-020`–`RL-026` | `COMPLETE (RL-020–RL-026)` |
 | **`D4`** | Personal Digital Twin (PDT) demonstrator with Memory Inspector, timeline view, conflict resolution, and deletion controls. | `custom-memory-engine/application/` | `RL-120`–`RL-122` | `PLANNED` |
 | **`D5`** | Final thesis report, confirmatory analysis tables/figures (`H1`–`H4`), and one-command reproducibility package. | `custom-memory-engine/reports/` | `RL-110`, `RL-111`, `RL-130`–`RL-132` | `PLANNED` |

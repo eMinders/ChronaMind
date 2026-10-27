@@ -113,7 +113,7 @@ Every mandatory row below must be `COMPLETE` (or carry a signed supervisor waive
 | **`INV-9-IDEM`** | **Invariant 9 (Worker Idempotency & Queue):** Duplicate job replay produces zero duplicate `MEMORY_VERSION` rows; `SKIP LOCKED` + per-user advisory lock preserves order. | Worker integration test | `PLANNED` (Mandatory) | `RL-044`, `RL-092` |
 | **`CLK-REP`** | **Replay Clock Monotonicity (`R3`):** Out-of-order benchmark sessions are sorted; identical timestamps increment by `1 µs`; `t > ρ` and `β > clock` rejected (`R8`). | Harness + clock unit/integration test | `PLANNED` (Mandatory) | `RL-044`, `RL-092` |
 | **`LOAD-CONC`** | **Concurrency & HNSW Recall (`D-18`):** 8 concurrent slow-path workers across users and same-user contention; ANN recall vs. exact scan (`descriptive`). | Load & benchmark test | `PLANNED` (Concurrency mandatory; HNSW descriptive) | `RL-093` |
-| **`STAT-UNIT`** | **Statistical Module Verification:** Cluster bootstrap, paired permutation, Holm–Bonferroni, and Clopper–Pearson match analytical reference values. | Unit test suite | `PLANNED` (Mandatory) | `RL-034` |
+| **`STAT-UNIT`** | **Statistical Module Verification:** Cluster bootstrap, paired permutation, Holm–Bonferroni, and Clopper–Pearson match analytical reference values. | [`evaluation/stats/tests/`](evaluation/stats/tests/), [contract/status](evaluation/stats/README.md) | `IN PROGRESS` (H3 decision clarification pending; not a research gate sign-off) | `RL-034` |
 
 ---
 
