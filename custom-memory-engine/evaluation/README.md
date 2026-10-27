@@ -9,8 +9,8 @@
 [`harness/README.md`](harness/README.md) documents the seven-method adapter,
 typed configuration/replay, immutable artifacts, persistent budget reservations,
 signed-freeze/one-shot guard, and provider-free CLI smoke example. The
-[`stats/__init__.py`](stats/__init__.py) boundary intentionally contains no
-inferential implementation; RL-034 owns that work. Verification uses synthetic
+[`stats/README.md`](stats/README.md) documents paired inferential primitives and
+the pending H3 decision clarification in RL-034. Verification uses synthetic
 temporary fixtures, not a pilot or held-out benchmark run.
 
 ## Planned layout (populated by `RL-030` onward)
