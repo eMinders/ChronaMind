@@ -195,28 +195,39 @@ New coverage added in this refactoring:
   write, key deletion, multi-source re-derivation, monotonic epoch, and
   "deleted content is not retrievable".
 
-Verified: `1281 passed, 21 skipped` (integration included, DB up).
+Verified: `1374 passed, 21 skipped` (integration included, DB up); `1240 passed, 155 skipped` without a database.
 
 ---
 
 ## 6. Remaining work, in dependency order
 
-1. **`MemorySystemAdapter` for `P` is done.** `evaluation/baselines/p_engine.py`
+1. **`MemorySystemAdapter` for `P` is done and factory-registered.** `evaluation/baselines/p_engine.py`
    implements the seven-method harness protocol over the real schema, with a
    private event loop for async↔sync bridging. The extraction callable is still
-   injected. Integration tests in `tests/integration/test_engine_adapter_db.py`
-   verify ingest, supersession, retrieval, deletion, the token budget, and
-   `A2b` governance. **Next: wire a real frozen extractor and run the harness
-   with `--system P`.**
-2. **`RL-061` consolidation** — depends on the gate. Required for archival branch
-   `(C)` coverage beyond the manual path.
+   injected. `evaluation/baselines/factory.py` now assembles `P` (and the
+   registered ablations `A1`, `A2`, `A2b`) as first-class systems instead of
+   falling through to the `B4` assertion. **Next: wire a real frozen extractor and
+   run the harness with `--system P`.** `--system` does not exist yet —
+   `evaluation/harness/__main__.py` still always constructs `DummyAdapter`.
+2. **`RL-032` extraction replay cache is wired.** Extraction now flows through
+   `(turn_id, extractor_version, model_id)`; a hit re-derives the identical
+   `CandidateVersionInput` sequence and charges `Usage.zero()`. Remaining: the
+   provider-backed extractor itself (`D-01`, supervisor signoff).
+2. **`RL-061` consolidation is implemented** (`src/custom_memory_engine/consolidation/`).
+   `plan_consolidation` is the single place the branch-`(C)` coverage contract, the
+   `depth <= 3` budget, and the one-`(subject, predicate)` rule are decided, so the
+   rules are unit-tested without a database (22 tests) and verified against the full
+   schema (18 integration tests). Remaining: peer review on `#45`.
 3. **`RL-071` runtime role + grants** — RLS policies exist, but no `app_role`
    with `FORCE ROW LEVEL SECURITY` grants. Suite `I` needs it.
 4. **`RL-070` remainder** — the 7-channel leak scanner (caches, prompts, answers,
    logs) belongs to the harness, not `engine/deletion.py`. Deletion scope `topic`
-   now matches `subject_key` as well as `memory_key`.
+   now matches `subject_key` as well as `memory_key`. The `A8` (`P-nolineage`)
+   toggle is also still missing from `AblationMode`.
 5. **`RL-072`** audit/log redaction guard.
-6. **`RL-090`** `T1`–`T5` archival regression harness; **`RL-093`** 8-worker load +
+6. **`RL-090`** `T1`–`T5` archival regression harness (`T1`–`T4` already exist
+   inline in `tests/integration/test_transactions_db.py`; extraction to
+   `tests/integration/archival/` plus `T5` remain); **`RL-093`** 8-worker load +
    HNSW-vs-exact study (the numbers in §4 are not that study).
 7. **`RL-100`** pilot freeze, then `RL-101`–`RL-105` confirmatory runs.
 
@@ -226,7 +237,36 @@ Verified: `1281 passed, 21 skipped` (integration included, DB up).
   result as a `Sequence[CandidateVersionInput]`. Calling a model to produce that
   sequence is the caller's job; the engine never loads a model, so `P` and its
   ablations share one frozen extraction (RL-032). The `EngineAdapter` in
-  `evaluation/baselines/p_engine.py` accepts an optional `Extractor` callable.
+  `evaluation/baselines/p_engine.py` accepts an optional `Extractor` callable and
+  an optional `ExtractionReplayCache`; passing the cache is what makes the
+  replay guarantee real rather than nominal.
+- **The cache stores extraction, not engine identity.** `ExtractedCandidate`
+  admits only provider-owned fields, so `version_id`, `memory_key` and `user_id`
+  are re-derived on replay (`<turn_id>:<index>`, `<subject>:<predicate>`,
+  `turn.user_id`). This is what lets one frozen extraction serve every ablation;
+  it also means a candidate's engine identity is a function of its turn.
+- **`evidence_role` is projected, not copied.** The engine's `EvidenceInput`
+  defaults to `"primary"` and allows free-form roles; the cache's frozen schema
+  admits only `user`/`assistant`. The adapter preserves a valid role and
+  otherwise projects the ingested turn's role. Resolving this properly means
+  widening one of the two vocabularies — a specification change, not a silent
+  coercion.
+- **Ablation `A8` (`P-nolineage`) is not implemented.** `AblationMode` is
+  `P|A1|A2|A2b`, so `H4`'s positive control cannot run yet. `A3`–`A7` exist only
+  as gate/fusion switches on `EngineOptions`, and are not registered system ids.
+- **`"summary"` is a derivation type, not a memory layer.** The schema and
+  `MemoryLayer` admit only `episodic|semantic|opinion|persona`, so a derived
+  summary is a `semantic` row whose `MEMORY_DERIVATION.derivation_type` is
+  `summary`. `plan_consolidation` refuses any other layer for a derived row.
+- **Derived versions must not go through the gate.** A consolidated candidate has
+  no turn evidence, so the evidence check would reject it as
+  `unconfirmed_assistant_claim` — verified directly against `evaluate()`. The
+  consolidation path therefore commits via `commit_initial_version`, which
+  enforces provenance through `require_provenance()` instead.
+- **Derivation depth is counted above a version**, not below it: a version's depth
+  is its longest ancestor chain, and a new derived row is `max(depth) + 1`. The
+  first implementation walked the wrong direction and reported 0 for a 3-deep
+  chain; the integration test caught it.
 - **`engine/transactions.py` is ~2025 LOC.** All 12 version writes now go
   through one `_insert_version()` helper, so the 18-column list exists once
   (verified by the DB suite). The module still holds six coherent procedures in

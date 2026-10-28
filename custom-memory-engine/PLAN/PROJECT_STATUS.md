@@ -1,13 +1,56 @@
-# Project Status & First-Wave Dispatch (`research-lab/`)
+# Project Status & First-Wave Dispatch (`custom-memory-engine/`)
 
 **Single Source of Truth for Execution State:** This document tracks what is complete, what is currently open on GitHub, and how the team executes the first wave of tasks.
 
 ---
 
+## Review update — 2026-10-28 (repository state, verified)
+
+**This document was stale relative to the code.** The sections below describe the
+2026-10-25 wave and are retained as history; where they conflict with the
+repository, the repository and [`../REFACTORING.md`](../REFACTORING.md) win.
+
+Reconciled against `main` @ `aa2e125` and subsequent work in this session:
+
+- **Phase P4–P7 engine work is implemented, not "Not Yet Executed"** as §1 below
+  claims. `src/custom_memory_engine/{engine,schema,clock,queue}/` exists with
+  predicates, transactions, retrieval, render, gate, deletion, ingest, clock and
+  queue modules, all covered by `tests/` and `tests/integration/`.
+- **`RL-040` (full schema) is complete**, not "in review":
+  `src/custom_memory_engine/schema/001_full_schema.sql` is applied by
+  `schema/migrate.py` and replayed by `tests/integration/test_full_schema.py`.
+- **`RL-032` is wired.** `EngineAdapter` routes extraction through
+  `ExtractionReplayCache` keyed by `(turn_id, extractor_version, model_id)`;
+  `P`, `A1`, `A2` and `A2b` are constructible through `baselines/factory.py`.
+  `A8` (`P-nolineage`) and the 7-channel scanner remain open (`RL-070`).
+- **`RL-061` consolidation is implemented** (`src/custom_memory_engine/consolidation/`,
+  40 new tests), so branches `(S)` and `(C)` are both exercised end-to-end and
+  `RL-070` is no longer gated by it.
+- **Still genuinely open:** `RL-070` remainder (`A8` toggle, cache invalidation,
+  7-channel scanner), `RL-071`, `RL-072` (no `security/` package), `RL-090`–`RL-094`.
+- **Open GitHub issues are not all incomplete.** `#42` (`RL-050`) and `#44`
+  (`RL-060`) are implemented and verified; `#43` (`RL-051`) is implemented with a
+  deliberate scope change (mode classification lives in the caller/predicate, not a
+  `query_analyzer.py`). They await peer review, not code.
+- **Gated on `RL-010`/`D-01` supervisor signoff:** the real provider-backed
+  extractor. The cache, the engine, and all ablations are provider-free and were
+  not blocked by it.
+- **Verified test state:** `1374 passed, 21 skipped` with the disposable
+  database; `1240 passed, 155 skipped` without it. The 21 skips are environment
+  gates (FalkorDB, tokenizer assets, dedicated baseline PostgreSQL), not failures.
+- **Issue ledger (live, 2026-10-28):** 35 issues total — **29 closed, 6 open**.
+  Open: `#42` `RL-050`, `#43` `RL-051`, `#44` `RL-060`, `#45` `RL-061`,
+  `#46` `RL-070`, `#47` `RL-071`. Of those, three are implemented and awaiting
+  recorded review (`#42`, `#43`, `#44`), one is implemented on an open PR
+  (`#45`), one is partial (`#46`), and one has not started (`#47`).
+- **Branch workflow:** changes land on a topic branch `rl/<id>-<slug>` and are
+  merged through a PR with peer review (`PLAN/CONTRIBUTING.md` §1). `main` has no
+  branch protection configured; the workflow is enforced by convention.
+
 ## Review update — 2026-10-25
 
 1. **Completed & Closed Wave 1 (`#1`–`#6`: `RL-010`, `RL-012`–`RL-016`) and Phase P0 (`#9`–`#13`: `RL-002`–`RL-006`):**
-   - Canonical implementation workspace is root `custom-memory-engine/`, with decision memos mirrored in `research-lab/PLAN/decisions/`.
+   - Canonical implementation workspace is root `custom-memory-engine/`, with decision memos in `custom-memory-engine/decisions/` (the duplicated `PLAN/decisions/` copy was removed in `aa2e125`).
    - Reviewed and hardened P0/P1 implementation: added turn-before-session timestamp guard in `schedule_replay`, extended `judge_gate` to enforce optional inter-human `κ ≥ 0.75`, mode coverage, and perturbation gates, added synthetic AST import-violation regressions (`RL-006`), reconciled `TECHNICAL_SPECIFICATION.md` §9.3 with `Graduation_Project_Proposal.md` §§4.1 and 10.6, and synchronized `validation/document_hashes.txt`.
 2. **Completed Wave 2 Issues (`#14`–`#19`: `RL-011`, `RL-020`–`RL-024`):**
    - **`#14` (`RL-011`):** Authored [`../evaluation/pilot_plan.md`](../evaluation/pilot_plan.md) and executable deterministic freeze functions in [`../../custom-memory-engine/src/custom_memory_engine/pilot_rules.py`](../../custom-memory-engine/src/custom_memory_engine/pilot_rules.py) covering `D-09`–`D-14`, `D-21`, `D-22`.
