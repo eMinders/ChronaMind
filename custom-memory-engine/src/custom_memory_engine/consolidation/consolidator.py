@@ -136,7 +136,7 @@ async def load_sources(
     higher: ``max(source depth) + 1``. Sources must be ``active``: consolidating an
     archived or staging row would launder a non-belief into a belief.
     """
-    if not isinstance(source_version_ids, Sequence) or isinstance(source_version_ids, (str, bytes)):
+    if not isinstance(source_version_ids, Sequence) or isinstance(source_version_ids, str | bytes):
         raise ConsolidationError("source_version_id_sequence_required")
     ordered = tuple(dict.fromkeys(str(item) for item in source_version_ids))
     if not ordered:
