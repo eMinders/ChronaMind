@@ -6,10 +6,10 @@ replay/schema assurance). All changes are inside `custom-memory-engine/`.
 
 ## Implemented contract
 
-[`../implementation/engine/predicates.py`](../implementation/engine/predicates.py)
+[`../src/custom_memory_engine/engine/predicates.py`](../src/custom_memory_engine/engine/predicates.py)
 provides all four typed query builders, parameterized WHERE clauses and guarded
 asynchronous execution over the canonical full schema. The
-[`API guide`](../implementation/engine/README.md) documents caller identity,
+[`API guide`](../src/custom_memory_engine/engine/README.md) documents caller identity,
 transactions, database clocks, range results and audit/context separation.
 
 The frozen Proposal §7.4, Technical Specification §3.5 and both canonical SQL
@@ -48,7 +48,7 @@ assets; no paid provider calls were made.
 
 | Check | Result |
 |---|---|
-| `pytest -q implementation/tests/test_predicates.py` | **28 passed**; separately repeated by two independent reviewers |
+| `pytest -q tests/test_predicates.py` | **28 passed**; separately repeated by two independent reviewers |
 | Initial full service-backed workspace suite | **717 passed, 1 failed**, zero skips/collection errors; 55 integration cases collected. The sole failure was a new test expecting a session clock to disappear after the fixture itself set it |
 | Corrected predicate suite against real PostgreSQL | **41 passed**, including **13/13 integration cases**, zero skips/failures/collection errors |
 | Frozen default install in a separate environment | **633 passed, 69 explicit skips** (66 test skips + 3 module collection skips); no failures/collection errors. Confirmed `mem0`, `graphiti_core`, `onnxruntime`, `tokenizers` and `tiktoken` are absent |

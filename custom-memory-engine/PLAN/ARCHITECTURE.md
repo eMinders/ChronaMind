@@ -10,7 +10,7 @@ All research specifications, literature references, benchmark suites, evaluation
 
 ## 1. Architectural Overview
 
-The Research Lab separates the **core bi-temporal memory engine** (`implementation/`), the **evaluation harness and baselines** (`evaluation/`), the **benchmark suites** (`research/benchmarks/`), and the **Personal Digital Twin demonstrator** (`application/`):
+The Research Lab separates the **core bi-temporal memory engine** (`src/custom_memory_engine/`), the **evaluation harness and baselines** (`evaluation/`), the **benchmark suites** (`research/benchmarks/`), and the **Personal Digital Twin demonstrator** (`application/`):
 
 ```mermaid
 flowchart TB
@@ -27,7 +27,7 @@ flowchart TB
         STA["Statistical Inference<br/>Cluster Bootstrap · Paired Permutation · Holm · Clopper–Pearson"]
     end
 
-    subgraph IMPL["implementation/ (Proposed System P & Ablations A1–A10)"]
+    subgraph IMPL["src/custom_memory_engine/ (Proposed System P & Ablations A1–A10)"]
         FAST["Fast Path<br/>Query Analyzer → Hybrid Retrieval (Dense + FTS + RRF) → Context Builder"]
         SLOW["Slow Path<br/>SKIP LOCKED Worker → Extractor → 5-Check Gate → Supersession → Consolidation"]
         DEL["Lineage Deletion & RLS<br/>Single-Tx Closure + Re-Derivation + 7-Channel Scanner"]
@@ -57,7 +57,7 @@ flowchart TB
     API --> DEL
 ```
 
-**Critical Separation Rule:** All benchmark and hypothesis runs (`H1`–`H4`, pilot `RL-100`) call `implementation/` directly through the Python `MemorySystemAdapter` protocol in `evaluation/harness/`. They never pass through `application/` (the Phase P12 HTTP/UI layer).
+**Critical Separation Rule:** All benchmark and hypothesis runs (`H1`–`H4`, pilot `RL-100`) call `src/custom_memory_engine/` directly through the Python `MemorySystemAdapter` protocol in `evaluation/harness/`. They never pass through `application/` (the Phase P12 HTTP/UI layer).
 
 ---
 
@@ -69,7 +69,7 @@ research-lab/
 ├── uv.lock                         # Locked dependency graph (RL-003)
 ├── docker-compose.yml              # Isolated PostgreSQL + pgvector + btree_gist (RL-004)
 ├── .env.example                    # RL_* environment template (RL-003)
-├── implementation/
+├── src/custom_memory_engine/
 │   ├── schema/                     # 12-table SQL DDL, triggers, RLS policies, migrations (RL-040, RL-041)
 │   ├── clock/                      # Injectable transaction clock & monotonic per-user guard (RL-044)
 │   ├── engine/                     # Supersession (R1/R2), archival (R5), query predicates (RL-042, RL-043)

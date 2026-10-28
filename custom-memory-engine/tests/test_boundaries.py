@@ -51,7 +51,6 @@ def test_no_product_or_baseline_imports() -> None:
     scan_roots = [
         ROOT / "src",
         ROOT / "tests",
-        ROOT / "implementation",
         ROOT / "evaluation",
         ROOT / "application",
         ROOT / "research",
@@ -93,15 +92,13 @@ def test_vendor_exception_matches_only_the_designated_worker() -> None:
     for module, worker in (("mem0", "b3_mem0.py"), ("graphiti_core", "b4_graphiti.py")):
         source = f"import {module}\nfrom app.core import config\n"
         assert find_forbidden_imports(source, relative_path=f"evaluation/baselines/{worker}") == ["app.core"]
-        for wrong_path in (f"implementation/{worker}", f"evaluation/baselines/tests/{worker}", "evaluation/x.py"):
+        for wrong_path in (f"src/{worker}", f"evaluation/baselines/tests/{worker}", "evaluation/x.py"):
             assert find_forbidden_imports(source, relative_path=wrong_path) == [module, "app.core"]
 
 
 def test_six_memos_and_reference_links() -> None:
     memos = sorted((ROOT / "decisions").glob("RL-*.md"))
     assert len(memos) == 6
-    plan_memos = sorted((ROOT / "PLAN/decisions").glob("RL-*.md"))
-    assert len(plan_memos) == 6
     register = (ROOT / "PLAN/DECISIONS_REGISTER.md").read_text(encoding="utf-8")
     for memo in memos:
         assert memo.name in register
@@ -113,7 +110,6 @@ def test_six_memos_and_reference_links() -> None:
         ROOT / "evidence/SOURCES.md",
         ROOT / "evidence/VERIFICATION.md",
         *memos,
-        *plan_memos,
         ROOT / "PLAN/DECISIONS_REGISTER.md",
     ]:
         for target in re.findall(r"\]\(([^)]+)\)", path.read_text(encoding="utf-8")):

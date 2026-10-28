@@ -11,5 +11,5 @@
 
 ## Acceptance Criteria
 - [ ] Root cause fixed inside `research-lab/`.
-- [ ] Regression test added under `research-lab/implementation/tests/` or `research-lab/evaluation/`.
+- [ ] Regression test added under `research-lab/tests/integration/` or `research-lab/evaluation/`.
 - [ ] All checks in `research-lab/PLAN/CONTRIBUTING.md` pass.

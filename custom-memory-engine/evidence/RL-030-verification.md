@@ -25,8 +25,8 @@ Using the existing locked CPython **3.12.12**, Ruff **0.15.6**, Pyright
 **1.1.408** and pytest **9.0.2**:
 
 ```sh
-uv run ruff check src tests research/benchmarks implementation/tests evaluation
-uv run ruff format --check src tests research/benchmarks implementation/tests evaluation
+uv run ruff check src tests research/benchmarks evaluation
+uv run ruff format --check src tests research/benchmarks evaluation
 uv run pyright
 uv run pytest -q
 python validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md

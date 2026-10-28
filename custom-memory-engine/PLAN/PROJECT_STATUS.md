@@ -20,13 +20,13 @@
 
 ## 1. Current Repository & Execution State
 
-- **Git & Workspace Status:** `research-lab/` is committed and tracked in Git with a clean separation between normative specifications (root), execution plans (`PLAN/`), research references (`reference/`), executed design checks (`validation/`), and implementation/evaluation package directories (`implementation/`, `evaluation/`, `research/benchmarks/`, `application/`, `reports/`).
+- **Git & Workspace Status:** `research-lab/` is committed and tracked in Git with a clean separation between normative specifications (root), execution plans (`PLAN/`), research references (`reference/`), executed design checks (`validation/`), and src/custom_memory_engine/evaluation package directories (`src/custom_memory_engine/`, `evaluation/`, `research/benchmarks/`, `application/`, `reports/`).
 - **Architecture & Team Plan (`RL-001`):** **Done (Owner-approved).** Option C (**Hybrid Architecture**, `D-ARCH`) is locked (`PLAN/ARCHITECTURE.md`, `PLAN/INDEPENDENCE_BOUNDARY.md`).
 - **Executed Verification Artifacts:**
   - `validation/mechanical_checks.py` (`ALL HARD CHECKS PASSED` on `Graduation_Project_Proposal.md`, `Methodology_and_Consistency_Checklist.md`, `CHANGELOG.md`).
   - `validation/bitemporal_checks.sql` (`43/43` assertions passed on PostgreSQL `16.15`, logged in `validation/bitemporal_checks.output.txt`).
   - `validation/cp_bounds.py` (exact Clopper–Pearson upper bounds verified against `validation/cp_bounds.output.txt`).
-- **Authored, in review (`#25`):** Full twelve-table PostgreSQL schema (`RL-040`) in [`../implementation/schema/001_full_schema.sql`](../implementation/schema/001_full_schema.sql), with the invariant map in [`../implementation/schema/README.md`](../implementation/schema/README.md).
+- **Authored, in review (`#25`):** Full twelve-table PostgreSQL schema (`RL-040`) in [`../src/custom_memory_engine/schema/001_full_schema.sql`](../src/custom_memory_engine/schema/001_full_schema.sql), with the invariant map in [`../src/custom_memory_engine/schema/README.md`](../src/custom_memory_engine/schema/README.md).
 - **Not Yet Executed:** `T1`–`T5` archival harness (`RL-090`), engine fast/slow paths (`P4`–`P7`), benchmark adapters and synthetic suite generators (`P2`–`P3`), dev-split pilot (`RL-100`), and confirmatory experiments `H1`–`H4` (`RL-101`–`RL-105`).
 
 ---

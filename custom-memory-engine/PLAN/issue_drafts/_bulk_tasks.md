@@ -56,7 +56,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P4 Schema and engine core` · **Labels:** `enhancement`
 - **Owner:** Member 4 (`R-DB`) · **Reviewer:** Member 2 (`R-ENGINE`)
 - **Blocked By:** `RL-003`, `RL-040` · **Blocks:** `RL-042`–`RL-044`, `RL-090`–`RL-093`
-- **Deliverables:** `implementation/schema/migrate.py`, `implementation/tests/test_migrations.py`.
+- **Deliverables:** `src/custom_memory_engine/schema/migrate.py`, `tests/integration/test_migrations.py`.
 - **Acceptance Criteria:** Idempotent apply/reset migrations against `RL_DATABASE_URL`; clean reset passes all 43 assertions of `validation/bitemporal_checks.sql`.
 
 ---
@@ -65,7 +65,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P4 Schema and engine core` · **Labels:** `enhancement`
 - **Owner:** Member 2 (`R-ENGINE`) · **Reviewer:** Member 4 (`R-DB`)
 - **Blocked By:** `RL-040`, `RL-041` · **Blocks:** `RL-060`, `RL-061`, `RL-070`, `RL-090`, `RL-091`
-- **Deliverables:** `implementation/engine/transactions.py` and SQL procedures.
+- **Deliverables:** `src/custom_memory_engine/engine/transactions.py` and SQL procedures.
 - **Acceptance Criteria:** Implements close-then-insert (`R1`), truncated re-issue (`R2`), `conflict_pending` promotion (`R4`), multi-valued end (`R7`), `archive_version` enforcing `(S) ∨ (C)` (`TECHNICAL_SPECIFICATION.md` §6), and ablation switches `A1` (`P-flat`), `A2` (`P-nohistory`), and `A2b` (if enabled by `D-15`).
 
 ---
@@ -74,7 +74,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P4 Schema and engine core` · **Labels:** `enhancement`
 - **Owner:** Member 4 (`R-DB`) · **Reviewer:** Member 2 (`R-ENGINE`)
 - **Blocked By:** `RL-040`, `RL-041` · **Blocks:** `RL-050`, `RL-091`
-- **Deliverables:** `implementation/engine/predicates.py` and SQL query functions (`TECHNICAL_SPECIFICATION.md` §3.5).
+- **Deliverables:** `src/custom_memory_engine/engine/predicates.py` and SQL query functions (`TECHNICAL_SPECIFICATION.md` §3.5).
 - **Acceptance Criteria:** Enforces `t ≤ ρ` on `historical_as_of` and `β ≤ clock_now()` on `audit_as_of` (`R8`); excludes `Archived` rows from `current_state`/`historical_as_of` and includes `Archived` rows in `audit_as_of`.
 
 ---
@@ -83,7 +83,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P4 Schema and engine core` · **Labels:** `enhancement`
 - **Owner:** Member 2 (`R-ENGINE`) · **Reviewer:** Member 4 (`R-DB`)
 - **Blocked By:** `RL-040`, `RL-041` · **Blocks:** `RL-060`, `RL-092`, `RL-093`
-- **Deliverables:** `implementation/clock/`, `implementation/queue/`.
+- **Deliverables:** `src/custom_memory_engine/clock/`, `src/custom_memory_engine/queue/`.
 - **Acceptance Criteria:** Monotonic per-user clock (`+1 µs` on ties), `SELECT ... FOR UPDATE SKIP LOCKED` job claiming, per-user `pg_advisory_xact_lock(hashtext(user_id))` serialization, tenacity exponential backoff retry, dead-letter routing, and idempotency (`Invariant 9`).
 
 ---
@@ -94,7 +94,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P5 Retrieval, fusion, rendering` · **Labels:** `enhancement`
 - **Owner:** Member 4 (`R-DB`) · **Reviewer:** Member 2 (`R-ENGINE`)
 - **Blocked By:** `RL-010` (`#1`, `D-02`), `RL-040`, `RL-043` · **Blocks:** `RL-051`, `RL-060`, `RL-093`, `RL-100`, `RL-102`
-- **Deliverables:** `implementation/retrieval/{dense.py,lexical.py,fusion.py}`.
+- **Deliverables:** `src/custom_memory_engine/retrieval/{dense.py,lexical.py,fusion.py}`.
 - **Acceptance Criteria:** Applies mode-specific hard temporal predicate first (`§7.6`), ranks dense (`embedding <=> query_vec`) and lexical (`ts_rank_cd`), fuses with `RRF(m) = Σ 1/(60 + rank_c(m))`, and supports ablation toggles `A5` (`P-dense`), `A6` (`P-lexical`), and `A7` (weighted sum).
 
 ---
@@ -103,7 +103,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P5 Retrieval, fusion, rendering` · **Labels:** `enhancement`
 - **Owner:** Member 2 (`R-ENGINE`) · **Reviewer:** Member 3 (`R-METHOD`)
 - **Blocked By:** `RL-050` · **Blocks:** `RL-100`, `RL-101`, `RL-120`
-- **Deliverables:** `implementation/retrieval/{query_analyzer.py,renderer.py}`.
+- **Deliverables:** `src/custom_memory_engine/retrieval/{query_analyzer.py,renderer.py}`.
 - **Acceptance Criteria:** Classifies query mode (`current`, `historical`, `change`) and target time `t`; enforces the `§7.3` render rule (never render superseded versions; never render historical versions in `current` mode); formats role labels (`current`, `historical`, `previous`/`current`) within `B_mem` inside a snapshot-consistent transaction.
 
 ---
@@ -114,7 +114,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P6 Validation gate and consolidation` · **Labels:** `enhancement`
 - **Owner:** Member 2 (`R-ENGINE`) · **Reviewer:** Member 3 (`R-METHOD`)
 - **Blocked By:** `RL-042`, `RL-044`, `RL-050` · **Blocks:** `RL-061`, `RL-091`, `RL-100`, `RL-103`, `RL-120`
-- **Deliverables:** `implementation/gate/{validator.py,conflict_detector.py,calibration.py}`.
+- **Deliverables:** `src/custom_memory_engine/gate/{validator.py,conflict_detector.py,calibration.py}`.
 - **Acceptance Criteria:** Enforces checks 1–5 (`TECHNICAL_SPECIFICATION.md` §5: user evidence span, assertion mode, instruction screen, conflict relation, calibrated confidence check), writes every decision to `MEMORY_CONFLICT`, and supports `A3` (`P-nogate`) and `A4` (sub-check) ablations.
 
 ---
@@ -123,7 +123,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P6 Validation gate and consolidation` · **Labels:** `enhancement`
 - **Owner:** Member 2 (`R-ENGINE`) · **Reviewer:** Member 4 (`R-DB`)
 - **Blocked By:** `RL-042`, `RL-060` · **Blocks:** `RL-070`, `RL-081`, `RL-090`, `RL-100`, `RL-105`
-- **Deliverables:** `implementation/consolidation/`.
+- **Deliverables:** `src/custom_memory_engine/consolidation/`.
 - **Acceptance Criteria:** Creates consolidated semantic/summary versions with `MEMORY_DERIVATION(derived_version_id = r', source_version_id = r)` links and valid ranges covering `V(r)` (`V(r') @> V(r)`), satisfying Invariant 1 and enabling safe archival via branch `(C)`.
 
 ---
@@ -134,7 +134,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P7 Deletion and security` · **Labels:** `enhancement`
 - **Owner:** Member 2 (`R-ENGINE`) · **Reviewer:** Member 4 (`R-DB`)
 - **Blocked By:** `RL-042`, `RL-050`, `RL-061` · **Blocks:** `RL-072`, `RL-090`, `RL-091`, `RL-100`, `RL-105`, `RL-120`
-- **Deliverables:** `implementation/deletion/{closure.py,rederive.py,scanner.py}`.
+- **Deliverables:** `src/custom_memory_engine/deletion/{closure.py,rederive.py,scanner.py}`.
 - **Acceptance Criteria:** Single-transaction deletion removing all versions of `memory_key` (`R6`), recursive `MEMORY_DERIVATION` closure (`depth ≤ 3`), embeddings, FTS entries, queue payloads, and cache entries keyed by `deletion_epoch`; synchronous re-derivation of multi-source summaries from surviving `Active` sources; `A8` (`P-nolineage`) toggle; 7-channel verification scanner (`Proposal` §10.3).
 
 ---
@@ -143,7 +143,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P7 Deletion and security` · **Labels:** `enhancement`
 - **Owner:** Member 4 (`R-DB`) · **Reviewer:** Member 2 (`R-ENGINE`)
 - **Blocked By:** `RL-022`, `RL-040` · **Blocks:** `RL-091`, `RL-120`
-- **Deliverables:** `implementation/security/rls.sql`, `implementation/security/scoping.py`.
+- **Deliverables:** `src/custom_memory_engine/security/rls.sql`, `src/custom_memory_engine/security/scoping.py`.
 - **Acceptance Criteria:** Non-superuser `app_role` without `BYPASSRLS` + `FORCE ROW LEVEL SECURITY` on all user tables; service-boundary guard rejects missing/mismatched `user_id`; zero cross-user leaks on Suite `I`.
 
 ---
@@ -152,7 +152,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P7 Deletion and security` · **Labels:** `enhancement`
 - **Owner:** Member 5 (`R-APP`) · **Reviewer:** Member 2 (`R-ENGINE`)
 - **Blocked By:** `RL-070` · **Blocks:** `RL-090`, `RL-091`
-- **Deliverables:** `implementation/security/audit_guard.py`, `implementation/tests/test_log_redaction.py`.
+- **Deliverables:** `src/custom_memory_engine/security/audit_guard.py`, `tests/integration/test_log_redaction.py`.
 - **Acceptance Criteria:** Enforces schema validation on `AUDIT_EVENT.details` and structlog processors so memory content, content hashes, subjects, and predicates never appear in audit tables or logs (Channel 7).
 
 ---
@@ -162,7 +162,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 ### `[RL-080]`–`[RL-083]` Optional exploratory modules (`A9`, `A10`, BM25, Redis queue)
 - **Milestone:** `P8 Optional components` · **Labels:** `enhancement`
 - **Blocked By:** `RL-010` (`#1`, `D-04`–`D-07`)
-- **Scope:** Implemented **only if** explicitly enabled in `RL-010` (`D-04` Persona `A10` → `RL-081`; `D-05` Retention ranking `A9` → `RL-080`; `D-06` BM25 → `RL-082`; `D-07` Redis queue → `RL-083`). Otherwise closed with a `SKIPPED per D-04..D-07` note in `implementation/optional/README.md`.
+- **Scope:** Implemented **only if** explicitly enabled in `RL-010` (`D-04` Persona `A10` → `RL-081`; `D-05` Retention ranking `A9` → `RL-080`; `D-06` BM25 → `RL-082`; `D-07` Redis queue → `RL-083`). Otherwise closed with a `SKIPPED per D-04..D-07` note in `src/custom_memory_engine/optional/README.md`.
 
 ---
 
@@ -174,7 +174,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P9 Testing matrix` · **Labels:** `enhancement`
 - **Owner:** Member 4 (`R-DB`) · **Reviewer:** Member 2 (`R-ENGINE`)
 - **Blocked By:** `RL-041`–`RL-043`, `RL-060`, `RL-070`–`RL-072` · **Blocks:** `RL-094`
-- **Deliverables:** `implementation/tests/invariants/test_invariants_1_to_9.py`.
+- **Deliverables:** `tests/integration/invariants/test_invariants_1_to_9.py`.
 - **Acceptance Criteria:** Exercises every invariant `1`–`9` (`INV-1`, `INV-2-6`, `INV-7-RLS`, `INV-8-DEL`, `INV-9-IDEM` in `PROJECT_ROADMAP.md` §G) against the full 12-table PostgreSQL schema.
 
 ---
@@ -183,7 +183,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P9 Testing matrix` · **Labels:** `enhancement`
 - **Owner:** Member 2 (`R-ENGINE`) · **Reviewer:** Member 4 (`R-DB`)
 - **Blocked By:** `RL-044` · **Blocks:** `RL-094`
-- **Deliverables:** `implementation/tests/test_clock_and_queue.py`.
+- **Deliverables:** `tests/integration/test_clock_and_queue.py`.
 - **Acceptance Criteria:** Verifies out-of-order session sorting, `+1 µs` tie increment, `t > ρ` and `β > clock` rejection (`R8`), `SKIP LOCKED` worker claiming, per-user advisory lock ordering, and zero duplicate memories on job retry (`CLK-REP` and `INV-9-IDEM` in `PROJECT_ROADMAP.md` §G).
 
 ---
@@ -192,7 +192,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Milestone:** `P9 Testing matrix` · **Labels:** `enhancement`
 - **Owner:** Member 4 (`R-DB`) · **Reviewer:** Member 2 (`R-ENGINE`)
 - **Blocked By:** `RL-012` (`#2`), `RL-044`, `RL-050` · **Blocks:** `RL-094`, `RL-111`
-- **Deliverables:** `implementation/tests/test_concurrency_and_hnsw.py`, `reports/analysis/hnsw_recall.md`.
+- **Deliverables:** `tests/integration/test_concurrency_and_hnsw.py`, `reports/analysis/hnsw_recall.md`.
 - **Acceptance Criteria:** Runs 8 concurrent slow-path workers issuing supersessions (`R1`) across users and against the same user; verifies zero `no_bitemporal_overlap` constraint violations or unhandled deadlocks (`D-18`), and records ANN HNSW recall vs. exact scan (`LOAD-CONC` in `PROJECT_ROADMAP.md` §G).
 
 ---
@@ -262,7 +262,7 @@ This file holds the ready-to-publish issue specifications for the remaining task
 - **Owner:** Member 5 (`R-APP`) · **Reviewer:** Member 2 (`R-ENGINE`)
 - **Blocked By:** `RL-013` (`#3`), `RL-051`, `RL-060`, `RL-070`, `RL-071` · **Blocks:** `RL-121`, `RL-130`
 - **Deliverables:** `application/api/`.
-- **Acceptance Criteria:** Thin FastAPI service over `implementation/` providing chat turn ingestion, bitemporal timeline queries (`current_state`, `historical_as_of`, `audit_as_of`), `conflict_pending` resolution, and deletion requests (`memory`, `topic`, `all`).
+- **Acceptance Criteria:** Thin FastAPI service over `src/custom_memory_engine/` providing chat turn ingestion, bitemporal timeline queries (`current_state`, `historical_as_of`, `audit_as_of`), `conflict_pending` resolution, and deletion requests (`memory`, `topic`, `all`).
 
 ---
 

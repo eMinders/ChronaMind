@@ -50,8 +50,8 @@ From `custom-memory-engine/` with disposable PostgreSQL and FalkorDB services:
 ```text
 uv sync --frozen --extra baselines --python 3.12.12
 uv run --no-sync python -m evaluation.baselines.assets prepare --directory ABSOLUTE_ASSET_DIRECTORY
-uv run --no-sync ruff check src tests research/benchmarks implementation/tests evaluation
-uv run --no-sync ruff format --check src tests research/benchmarks implementation/tests evaluation
+uv run --no-sync ruff check src tests research/benchmarks evaluation
+uv run --no-sync ruff format --check src tests research/benchmarks evaluation
 uv run --no-sync pyright
 uv run --no-sync pytest -q
 ```

@@ -36,8 +36,8 @@ Isolation from root `app/` is unchanged: independent `custom-memory-engine/pypro
 
 ### 3.2 Independent Dependency Manifest (`research-lab/pyproject.toml`)
 - `research-lab/` manages its own `pyproject.toml` and `uv.lock` (`RL-003`).
-- Engine (`implementation/`) and harness (`evaluation/`) dependencies are governed by [`ARCHITECTURE.md`](ARCHITECTURE.md) and `RL-013` (e.g., `psycopg[binary,pool]`, `pgvector`, `pydantic`, `numpy`, `scipy`, `pandas`, `tenacity`, `pytest`).
-- `mem0ai` may be installed only as an optional dependency group (`baselines`) and imported **exclusively** inside the `B3` baseline adapter (`research-lab/evaluation/baselines/b3_mem0.py`, `RL-031`), never inside `research-lab/implementation/`.
+- Engine (`src/custom_memory_engine/`) and harness (`evaluation/`) dependencies are governed by [`ARCHITECTURE.md`](ARCHITECTURE.md) and `RL-013` (e.g., `psycopg[binary,pool]`, `pgvector`, `pydantic`, `numpy`, `scipy`, `pandas`, `tenacity`, `pytest`).
+- `mem0ai` may be installed only as an optional dependency group (`baselines`) and imported **exclusively** inside the `B3` baseline adapter (`research-lab/evaluation/baselines/b3_mem0.py`, `RL-031`), never inside `research-lab/src/custom_memory_engine/`.
 - Web/API libraries (`fastapi`, `uvicorn`) are scoped to the Phase P12 Personal Digital Twin demonstrator (`research-lab/application/`, `RL-120`) and are never invoked on the `H1`–`H4` evaluation path.
 
 ### 3.3 Dedicated PostgreSQL Instance & Credentials

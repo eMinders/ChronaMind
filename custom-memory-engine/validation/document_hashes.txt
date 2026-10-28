@@ -2,4 +2,4 @@
 82ae62a82f3b3819a0c09e777887fafe  Methodology_and_Consistency_Checklist.md
 946c828e61b8d5045eba8a1857b6b665  reference/Research_and_Fact_Check_Audit.md
 7897c93e4f0584a736a969fc9c7d7041  reference/Source_Evidence_Ledger.md
-fe1e4330c9d7102190bc88635a193cf8  CHANGELOG.md
+f98a0cd37ccbdfa1b78ff05ff99376a7  CHANGELOG.md

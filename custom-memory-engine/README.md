@@ -11,7 +11,7 @@ All specifications, literature references, decision records, public/synthetic be
 | GitHub | Task | Canonical record / deliverable | Status / remaining gate |
 |---|---|---|---|
 | #1–#6 | `RL-010`, `RL-012`–`RL-016` | [Scope/models](decisions/RL-010-scope-and-models.md), [PostgreSQL/pgvector](decisions/RL-012-postgres-pgvector.md), [Runtime](decisions/RL-013-engine-runtime.md), [A2b/Suite D](decisions/RL-014-a2b-and-suite-d.md), [H5 ethics](decisions/RL-015-ethics-h5.md), [Paired D-23/24/26](decisions/RL-016-paired-d23-d24-d26.md) | Closed (owner-reviewed); supervisor & pilot freeze (`RL-100`) downstream |
-| #9–#13 | `RL-002`–`RL-006` | Unified scaffold, `pyproject.toml`/`uv.lock`/`.env.example`, `compose.yaml`, CI workflow, AST boundary guard (`tests/test_boundaries.py`, `implementation/tests/test_independence_boundary.py`) | Closed & hardened |
+| #9–#13 | `RL-002`–`RL-006` | Unified scaffold, `pyproject.toml`/`uv.lock`/`.env.example`, `compose.yaml`, CI workflow, AST boundary guard (`tests/test_boundaries.py`, `tests/integration/test_independence_boundary.py`) | Closed & hardened |
 | #14 | `RL-011` pilot protocol | [Pre-registered pilot plan](evaluation/pilot_plan.md) & [`pilot_rules.py`](src/custom_memory_engine/pilot_rules.py) | Implemented & unit-tested |
 | #15 | `RL-020` `LongMemEval` | [`longmemeval/fetch.py`](research/benchmarks/longmemeval/fetch.py), [README](research/benchmarks/longmemeval/README.md), [MANIFEST](research/benchmarks/longmemeval/MANIFEST.txt) | Verified on `oracle` & `S` (`500 / 30 / 56`) |
 | #16 | `RL-021` `LoCoMo` | [`locomo/fetch.py`](research/benchmarks/locomo/fetch.py), [README](research/benchmarks/locomo/README.md), [MANIFEST](research/benchmarks/locomo/MANIFEST.txt) | Verified on `locomo10.json` (`10 / 1,986 / 4`) |
@@ -42,6 +42,7 @@ All specifications, literature references, decision records, public/synthetic be
 
 ```text
 custom-memory-engine/
+├── REFACTORING.md                          # Handoff: architecture, decisions, benchmarks, open work
 ├── Graduation_Project_Proposal.md          # Normative V4 research proposal
 ├── Methodology_and_Consistency_Checklist.md # Normative V4 verification checklist
 ├── TECHNICAL_SPECIFICATION.md              # Concrete engineering & SQL specification
@@ -49,19 +50,19 @@ custom-memory-engine/
 ├── TRACEABILITY_MATRIX.md                  # Invariant, hypothesis, and deliverable traceability
 ├── CHANGELOG.md                            # V1–V4 and structural changelog
 ├── pyproject.toml / uv.lock                # Standalone CPython 3.12 dependency graph
-├── compose.yaml / docker-compose.yml       # Isolated PostgreSQL 16.15 + pgvector + btree_gist
-├── src/custom_memory_engine/               # Core protocols, pilot freeze rules, and config
-├── tests/                                  # Unit, benchmark, boundary, and async DB compatibility tests
+├── compose.yaml                            # Isolated PostgreSQL 16.15 + pgvector + btree_gist
+├── src/custom_memory_engine/               # THE engine: engine/, schema/, clock/, queue/
+├── tests/                                  # Contract tests; tests/integration/ needs PostgreSQL
+├── scripts/                                # bench_retrieval.py (measured latency)
 ├── decisions/                              # Phase P1 decision memos (RL-010, RL-012..RL-016)
-├── evidence/                               # Source ledger, verification report, captured test outputs
-├── PLAN/                                   # Team execution plans, decisions register, and issue drafts
-├── reference/                              # Literature audit, feasibility review, and offline paper corpus
+├── evidence/                               # Source ledger, verification report, captured outputs
+├── PLAN/                                   # Execution plans, decisions register, issue drafts
+├── reference/                              # Literature audit, feasibility review, paper corpus
 ├── validation/                             # bitemporal_checks.sql, cp_bounds.py, mechanical_checks.py
 ├── research/benchmarks/                    # LongMemEval, LoCoMo, and Own Suites G, I, D, T
-├── implementation/                         # Bi-temporal memory engine modules & schema (P4–P9)
-├── evaluation/                             # Pilot plan, evaluation harness, baselines, judge, stats
+├── evaluation/                             # Pilot plan, harness, baselines, judge, stats
 ├── application/                            # Personal Digital Twin (PDT) inspector API & UI (P12)
-└── reports/                                # Thesis tables, figures, and reproducibility pack (P11, P13)
+└── reports/                                # Thesis tables, figures, measured benchmarks
 ```
 
 ---
@@ -72,9 +73,11 @@ Install `uv` and CPython 3.12, then run from `custom-memory-engine/`:
 
 ```bash
 cd custom-memory-engine
-uv sync --frozen --python 3.12
-uv run ruff check src tests research/benchmarks implementation evaluation
-uv run ruff format --check src tests research/benchmarks implementation evaluation
+# Install the optional `baselines` extra so `pyright` can resolve the B3/B4
+# vendor imports (mem0ai, graphiti-core, redis); the default sync omits them.
+uv sync --frozen --extra baselines --python 3.12
+uv run ruff check src tests research/benchmarks evaluation
+uv run ruff format --check src tests research/benchmarks evaluation
 uv run pyright
 uv run pytest -q -m 'not integration'
 

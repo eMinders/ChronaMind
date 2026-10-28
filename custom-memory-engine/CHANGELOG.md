@@ -1,8 +1,64 @@
-# Changelog — Research Lab (`research-lab/`)
+# Changelog — Custom Memory Engine (`custom-memory-engine/`)
 
 This file records the revision history of the Research Lab specification (`Graduation_Project_Proposal.md`, `Methodology_and_Consistency_Checklist.md`, `TECHNICAL_SPECIFICATION.md`, `PROJECT_ROADMAP.md`) and its supporting reference corpus (`reference/`).
 
 ---
+
+## Post-Refactoring Gaps (28 October 2026)
+
+- **Archival triggers moved from Python to schema.** `ensure_archival_trigger` no
+  longer installs DDL; the `(S)∨(C)` triggers and their PL/pgSQL functions are now
+  part of `001_full_schema.sql`, so a freshly migrated database is protected without
+  any application call. The Python helper verifies presence only.
+- **`guard_update` extended** to allow `reinforcement_count` to increment in-place,
+  per Technical Specification §5 (duplicate reinforcement).
+- **`engine/ingest.py` written.** `persist_turn` persists a turn idempotently.
+  `apply_candidate` runs the validation gate and routes its verdict: commit/supersede
+  for accepted candidates, hold/reject staging for held or rejected ones, in-place
+  reinforcement for exact duplicates, and `plans_to` routing for planned utterances.
+  `attach_embedding` writes the dense vector alongside a committed version.
+  `derived_candidate` builds consolidation rows with `MEMORY_DERIVATION` lineage.
+- **`deletion.scope="topic"` implemented.** Targets every version whose `memory_key`
+  **or** `subject_key` matches the requested topic.
+- **`evaluation/baselines/p_engine.py` written.** System `P` as a synchronous
+  `MemorySystemAdapter` over the real schema, with an injected extractor callable,
+  a private event loop for async↔sync bridging, and support for ablations `A1`–`A2b`
+  and fusion modes `A5`/`A6`. Tested via `tests/integration/test_engine_adapter_db.py`.
+- **`validation/contracts.py` allowlist updated** to include `P` so `HarnessConfig`
+  with `system_id = "P"` validates.
+- **`bitemporal_on_full.sql` corrected.** The archival assertion now archives
+  `v1p` (superseded, branch S) rather than the currently-valid `v2p` (T1 case),
+  which the new schema trigger correctly rejects.
+- **43 bitemporal assertions still pass.** One assertion was replaced with a
+  semantically equivalent one for the corrected subject; the count did not change.
+- Test count: **1305 passed, 21 skipped** (integration, with container).
+
+## Engine Refactoring and Read/Write Paths (28 October 2026)
+
+- Merged the two import roots into one installable package. The engine core moved
+  from `implementation/` to `src/custom_memory_engine/{engine,schema,clock,queue}/`;
+  `pyproject.toml` previously packaged only the contracts module, so the engine was
+  absent from a built wheel. Engine tests now live in `tests/` (pure) and
+  `tests/integration/` (PostgreSQL). Paths named in earlier entries describe the
+  tree as it stood when those changes were made.
+- Removed the duplicate `PLAN/decisions/` memo copy and the redundant
+  `implementation/tests/test_independence_boundary.py`, which duplicated
+  `tests/test_boundaries.py` with a weaker check.
+- Implemented the missing read path: `engine/retrieval.py` (exact dense cosine +
+  `ts_rank_cd` lexical, fused by RRF with `k = 60`, `A5`/`A6` channel ablations) and
+  `engine/render.py` (never renders superseded rows, omits ended validity in
+  `current` mode, preserves rank order within `B_mem`).
+- Implemented `engine/gate.py` (five ordered checks, `plans_to` routing, injection
+  screen, `A3`/`A4` switches, one `MEMORY_CONFLICT` write) and
+  `engine/deletion.py` (`R6` closure, bounded lineage walk, multi-source
+  re-derivation, deletion epoch, content-free audit).
+- Added the missing retrieval indexes plus a generated `memory_version.content_fts`
+  `tsvector` column; the DDL previously declared no index at all. All 12
+  `memory_version` writes now share one `_insert_version` helper, and a supplied
+  `ClockTick` is validated against the transaction's own allocation.
+- Measured, rather than asserted, retrieval latency and planner behaviour:
+  `scripts/bench_retrieval.py`, results in `reports/benchmarks/`, rationale and
+  open work in `REFACTORING.md`.
 
 ## RL-042 Transactional Supersession and Archival Procedures (27 October 2026)
 

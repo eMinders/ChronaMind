@@ -37,7 +37,7 @@ canonical reference hashes, mechanical checks and exact Clopper–Pearson output
 passed. Root types used the existing root interpreter explicitly because this
 isolated checkout has no root product environment.
 
-The dedicated engine workflow lints all of `implementation/`, restoring coverage
+The dedicated engine workflow lints all engine sources, restoring coverage
 of the migration runner after the earlier merge narrowed that command to tests.
 
 Earlier attempts were not treated as passes. An external progress logger collided

@@ -47,7 +47,6 @@ asyncio_mode = "auto"
 pythonpath = ["src", "."]
 testpaths = [
   "tests",
-  "implementation/tests",
   "evaluation/harness/tests",
   "research/benchmarks/longmemeval/tests",
   "research/benchmarks/locomo/tests",
@@ -66,7 +65,7 @@ line-length = 119
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
 
 [tool.pyright]
-include = ["src", "tests", "research/benchmarks", "implementation", "evaluation"]
+include = ["src", "tests", "research/benchmarks", "evaluation"]
 extraPaths = ["src", "."]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"

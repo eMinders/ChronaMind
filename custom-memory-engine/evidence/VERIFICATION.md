@@ -58,11 +58,11 @@ All six uploaded tasks have technical decision deliverables in the user-requeste
 
 ## `RL-040` full-schema verification — 2026-10-26
 
-Applies to `implementation/schema/001_full_schema.sql` and `implementation/tests/test_full_schema.py` on branch `rl/040-full-schema-ddl`. This closes the DDL half of item 4 above; migrations (`RL-041`), transactional procedures (`RL-042`, `RL-044`), retrieval (`RL-043`), runtime-role RLS (`RL-071`), archival `T1`–`T5` (`RL-090`) and deletion closure (`RL-070`) remain outstanding.
+Applies to `src/custom_memory_engine/schema/001_full_schema.sql` and `tests/integration/test_full_schema.py` (the paths as of this record; the files were under `implementation/` when the run was captured). This closes the DDL half of item 4 above; migrations (`RL-041`), transactional procedures (`RL-042`, `RL-044`), retrieval (`RL-043`), runtime-role RLS (`RL-071`), archival `T1`–`T5` (`RL-090`) and deletion closure (`RL-070`) remain outstanding.
 
 | Check | Result |
 |---|---|
-| `implementation/tests/test_full_schema.py` | **13 passed**, including 43/43 bitemporal assertions against the full `memory_version` |
+| `tests/integration/test_full_schema.py` | **13 passed**, including 43/43 bitemporal assertions against the full `memory_version` |
 | Twelve-table creation and named constraints | Verified in a throwaway schema |
 | `ENABLE`/`FORCE ROW LEVEL SECURITY` on the eleven user-data tables | Verified from `pg_class`; policy enforcement as a non-superuser role is `RL-071` |
 | Deferred provenance trigger (Invariant 1) | Rejects a committed `active` row without evidence or derivation; accepts either in-transaction |
@@ -84,4 +84,4 @@ Independent review on PR #27 raised four items. All are fixed in this branch:
 | `bitemporal_on_full.sql` disabled the provenance trigger and never restored it, so a run against a persistent database left invariant 1 off | The script re-enables `trg_memory_version_provenance` as its final statement, and `test_forty_three_bitemporal_assertions_pass_against_full_memory_version` now asserts `tgenabled = 'O'` after the replay |
 | `guard_update()` allowed `archival_branch` to move `NULL → S`/`C` without an archive transition | The trigger now requires `NEW.status = 'archived'` for any `archival_branch` change, and a negative test covers a branch-only update |
 | `clock_now()` was declared `STABLE` but read volatile `clock_timestamp()`, so repeated calls could differ inside one transaction | It falls back to `transaction_timestamp()`, giving one instant per transaction as `R1` requires |
-| The specification names `validation/bitemporal_checks.sql`, while this PR replays a copy | `implementation/schema/README.md` explains why the replay exists and records the deliberate additions beyond §3.1 |
+| The specification names `validation/bitemporal_checks.sql`, while this PR replays a copy | `src/custom_memory_engine/schema/README.md` explains why the replay exists and records the deliberate additions beyond §3.1 |

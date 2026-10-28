@@ -1,0 +1,44 @@
+{
+  "rows_per_user": 2000,
+  "users": 2,
+  "candidates": 2000,
+  "dense": {
+    "p50_ms": 26.99,
+    "p95_ms": 29.41,
+    "min_ms": 18.03,
+    "max_ms": 29.97
+  },
+  "lexical": {
+    "p50_ms": 11.11,
+    "p95_ms": 11.95,
+    "min_ms": 10.55,
+    "max_ms": 12.09
+  },
+  "fused": {
+    "p50_ms": 28.16,
+    "p95_ms": 29.84,
+    "min_ms": 27.07,
+    "max_ms": 31.18
+  },
+  "temporal_scan": {
+    "Node Type": "Index Scan",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Scan Direction": "Forward",
+    "Index Name": "memory_version_temporal_idx",
+    "Relation Name": "memory_version",
+    "Alias": "m",
+    "Startup Cost": 0.15,
+    "Total Cost": 8.17,
+    "Plan Rows": 1,
+    "Plan Width": 32,
+    "Actual Startup Time": 0.047,
+    "Actual Total Time": 0.779,
+    "Actual Rows": 1675,
+    "Actual Loops": 1,
+    "Index Cond": "((user_id = 'bench-0'::text) AND (valid_range @> now()) AND (recorded_range @> now()))",
+    "Rows Removed by Index Recheck": 0,
+    "Filter": "(status = 'active'::text)",
+    "Rows Removed by Filter": 0
+  }
+}

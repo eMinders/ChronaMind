@@ -7,7 +7,7 @@
 
 ## Purpose and boundaries
 
-The PDT application is a **conservatively-defined demonstration** (proposal §1.1, §11) that uses the engine from `../implementation/`. It is **not** the primary research contribution, and its evaluation does **not** substitute for engine evaluation (proposal §A.3).
+The PDT application is a **conservatively-defined demonstration** (proposal §1.1, §11) that uses the engine from `../src/custom_memory_engine/`. It is **not** the primary research contribution, and its evaluation does **not** substitute for engine evaluation (proposal §A.3).
 
 Per [`../PROJECT_ROADMAP.md`](../PROJECT_ROADMAP.md) §J row J6, the PDT demonstration is **Mandatory for the application track and optional for the research track**.
 

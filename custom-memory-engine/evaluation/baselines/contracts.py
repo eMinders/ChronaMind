@@ -102,7 +102,7 @@ class BaselineSettings(Record):
     def validate_harness(self, config: HarnessConfig) -> HarnessConfig:
         # model_copy(update=...) bypasses Pydantic validation; revalidate here.
         checked = HarnessConfig.model_validate(config.model_dump())
-        if checked.system_id not in {"B0", "B1", "B2", "B2h", "B3", "B4"}:
+        if checked.system_id not in {"B0", "B1", "B2", "B2h", "B3", "B4", "P"}:
             raise ValueError("unknown_baseline_system")
         if (
             checked.adapter_version != ADAPTER_VERSION

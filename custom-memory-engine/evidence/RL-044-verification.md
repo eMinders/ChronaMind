@@ -7,7 +7,7 @@ dependency locks are unchanged.
 
 ## Contract and authority
 
-[`implementation/clock`](../implementation/clock/README.md) allocates one strictly
+[`src/custom_memory_engine/clock`](../src/custom_memory_engine/clock/README.md) allocates one strictly
 increasing recorded instant per user/transaction. Live raw time comes from the
 database transaction clock; replay input is explicit and UTC-normalized. Native
 advisory locking, a durable content-free audit watermark and existing memory
@@ -15,7 +15,7 @@ recorded bounds implement `max(raw, previous + 1µs)` across ties, out-of-order
 input, new connections/processes and empty jobs. The allocated instant is checked
 against the schema-qualified `clock_now()` and shared by all R1 statements.
 
-[`implementation/queue`](../implementation/queue/README.md) supplies typed enqueue
+[`src/custom_memory_engine/queue`](../src/custom_memory_engine/queue/README.md) supplies typed enqueue
 and tenant-scoped processing of prepared database-only handlers. Due jobs use
 native SKIP LOCKED claims after the canonical user advisory lock. Effects,
 clock allocation and completion commit atomically. D-18 whole-transaction retries

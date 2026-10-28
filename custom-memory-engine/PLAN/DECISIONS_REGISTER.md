@@ -1,7 +1,7 @@
 # Decisions Register (`custom-memory-engine/`)
 
 **Single Source of Truth:** This register tracks every architectural, methodological, and engineering decision for the Custom Memory Engine workspace.  
-**Decision Memos:** Canonical Phase P1 records are in [`../decisions/`](../decisions/) and mirrored in [`decisions/`](decisions/) (`RL-010`, `RL-012`–`RL-016`). All specifications, benchmarks, evaluation harnesses, and engine modules are consolidated under `custom-memory-engine/`.
+**Decision Memos:** Canonical Phase P1 records live in [`../decisions/`](../decisions/) (`RL-010`, `RL-012`–`RL-016`); there is no second copy. All specifications, benchmarks, evaluation harnesses, and engine modules are consolidated under `custom-memory-engine/`.
 
 **2026-10-25 status update:** The selected-value table below is authoritative over the original dispatch recommendations in §2.2. Phase P1 issues (`#1`–`#6`), Phase P0 workspace issues (`#9`–`#13`), and Wave 2 pilot/benchmark issues (`#14`–`#19`: `RL-011`, `RL-020`–`RL-024`) are implemented and verified locally. Project Owner single-maintainer review and self-attestation closed `#1`–`#6` and `#9`–`#13` on GitHub (2026-10-24); institutional supervisor approval and Phase P10 pilot freeze (`RL-100`) remain separate downstream gates before confirmatory test runs.
 
