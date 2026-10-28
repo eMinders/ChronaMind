@@ -16,6 +16,10 @@ EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 EMBEDDING_REVISION = "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"
 QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 ADAPTER_VERSION = "rl031-v1"
+# ``P`` plus every engine ablation the adapter can actually configure. Ablations are
+# separate systems (``D-ENG-01``: ``P − A2`` is a real paired contrast), so their ids must
+# pass the same frozen-configuration validation as ``P``.
+ENGINE_SYSTEM_IDS = frozenset({"P", "A1", "A2", "A2b"})
 EVIDENCE_METRICS = (
     "evidence_recall_at_k",
     "diagnostic_evidence_recall_at_k",
@@ -102,7 +106,7 @@ class BaselineSettings(Record):
     def validate_harness(self, config: HarnessConfig) -> HarnessConfig:
         # model_copy(update=...) bypasses Pydantic validation; revalidate here.
         checked = HarnessConfig.model_validate(config.model_dump())
-        if checked.system_id not in {"B0", "B1", "B2", "B2h", "B3", "B4", "P"}:
+        if checked.system_id not in {"B0", "B1", "B2", "B2h", "B3", "B4"} | ENGINE_SYSTEM_IDS:
             raise ValueError("unknown_baseline_system")
         if (
             checked.adapter_version != ADAPTER_VERSION

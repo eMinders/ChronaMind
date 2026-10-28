@@ -4,6 +4,65 @@ This file records the revision history of the Research Lab specification (`Gradu
 
 ---
 
+## RL-061 Episodic -> Semantic Consolidation (28 October 2026)
+
+- **`src/custom_memory_engine/consolidation/` added.** `load_sources` reads the
+  selected active sources and their derivation depth; `plan_consolidation`
+  validates a request against Invariant 10 `(C)`; `consolidate` commits the derived
+  row with `MEMORY_DERIVATION` links. Sources are never mutated and never archived
+  by consolidation — `archive_version` remains the only door to `Archived`.
+- **Branch `(C)` coverage is computed, not assumed.** The derived valid range is the
+  earliest source start and is unbounded if *any* source is unbounded, so
+  `V(r') @> V(r)` holds for every source by construction instead of by chance.
+- **Two design constraints surfaced from the schema and are enforced.**
+  `"summary"` is a *derivation type*, not a layer (`MemoryLayer` admits only
+  `episodic|semantic|opinion|persona`), so a derived summary is a `semantic` row;
+  and a derived candidate has no turn evidence, so it cannot pass the gate's
+  evidence check (`unconfirmed_assistant_claim`, verified directly) and must commit
+  through `commit_initial_version`/`require_provenance` instead.
+- **`depth <= 3` matches `deletion.MAX_LINEAGE_DEPTH`.** A consolidation the
+  deletion walk could not see is never created. The first implementation measured
+  depth in the wrong direction (reporting 0 for a 3-deep chain); the integration
+  test caught it and the arithmetic is now verified 1 -> 2 -> 3 -> refused.
+- Test count: **1374 passed, 21 skipped** (integration, with container), up from
+  1334. New: `tests/test_consolidation.py` (22) and
+  `tests/integration/test_consolidation_db.py` (18). The 21 skips are environment
+  gates (FalkorDB, tokenizer assets, dedicated baseline PostgreSQL); without a
+  database the suite is `1240 passed, 155 skipped`.
+- **Status at this entry:** implementation committed to branch
+  `rl/061-consolidation-and-tracker-sync`. Issue `#45` remains **open** pending
+  merge and recorded review; this entry does not claim it is closed.
+
+## RL-032 Replay Cache Wiring and `P` Factory Registration (28 October 2026)
+
+- **`P` is a registered system.** `evaluation/baselines/factory.py` gained an
+  `ENGINE_SYSTEM_IDS` branch, an `EngineFactoryOptions` runtime record, and a
+  matching `_validated_options` rule. Previously `system_id="P"` passed
+  `contracts.validate_harness` but fell through to the `B4` branch and raised
+  `AssertionError`; it now constructs an `EngineAdapter`, and a missing engine
+  block raises `runtime_options_system_mismatch`.
+- **Ablations are constructible.** `EngineAdapter` required `system_id == "P"`
+  *and* rejected a non-`P` ablation on `P`, while `validate_harness` admitted only
+  `P`. No ablation could be built, blocking `H1` (`P − A2`), `H2` (`P − A5`/`A6`) and
+  `H3` (`P − A3`). `contracts.ENGINE_SYSTEM_IDS` now registers `P`, `A1`, `A2` and
+  `A2b`, and identity is asserted per instance against `EngineOptions.ablation` so
+  a run cannot be labelled `P` while measuring an ablation.
+- **`RL-032` cache is wired into the write path.** `EngineAdapter` accepts an
+  `ExtractionReplayCache`; extraction is keyed by
+  `(turn_id, extractor_version, model_id)`, a hit re-derives the identical
+  `CandidateVersionInput` sequence without invoking the extractor, and a hit
+  charges `Usage.zero()`. `cached_candidates()` performs the deterministic
+  re-derivation. The run manifest already summarized `adapter.replay_cache` via
+  `runner.py`; nothing had populated it before.
+- **Two vocabulary mismatches surfaced and are documented, not hidden.** The
+  engine's default `evidence_role` (`"primary"`) is rejected by the cache's
+  frozen schema (`user`/`assistant`), so the adapter projects the ingested turn's
+  role; and cached ISO-8601 strings are parsed back to `datetime` because the
+  transaction models are `strict=True`.
+- **Test count: 1334 passed, 21 skipped** (integration, with container), up from
+  1305. New: `evaluation/baselines/tests/test_rl032_replay_cache_integration.py`
+  (16) and four factory regressions.
+
 ## Post-Refactoring Gaps (28 October 2026)
 
 - **Archival triggers moved from Python to schema.** `ensure_archival_trigger` no

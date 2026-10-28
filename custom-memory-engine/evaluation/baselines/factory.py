@@ -1,5 +1,6 @@
 """Explicit public assembly for the six real RL-031 adapters; no work on import."""
 
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version
@@ -13,8 +14,9 @@ from evaluation.baselines.b1_full_history import B1FullHistoryAdapter
 from evaluation.baselines.b2_dense import B2DenseAdapter
 from evaluation.baselines.b2h_hybrid import B2hHybridAdapter
 from evaluation.baselines.base import BaseAdapter
-from evaluation.baselines.contracts import BaselineSettings, ModelServices
+from evaluation.baselines.contracts import ENGINE_SYSTEM_IDS, BaselineSettings, ModelServices
 from evaluation.baselines.embedding import OnnxBgeEmbedder
+from evaluation.baselines.p_engine import EngineAdapter, EngineOptions
 from evaluation.baselines.runtime import MeteredServices, OpenAITransport
 from evaluation.baselines.stores import PostgresRawStore
 from evaluation.baselines.tokenization import TiktokenTokenizer
@@ -28,6 +30,26 @@ class LocalGraphOptions(Record):
     port: int = Field(ge=1, le=65535)
 
 
+class EngineFactoryOptions(Record):
+    """Engine configuration needed to assemble ``P`` without importing a model.
+
+    ``P`` keeps its database DSN in ``RuntimeOptions.postgres_dsn`` like ``B2h``;
+    this record only carries the labelled write/read switches that must appear in
+    the run manifest.
+    """
+
+    schema_name: str = "cme_engine"
+    ablation: Literal["P", "A1", "A2", "A2b"] = "P"
+    allow_a2b: bool = False
+
+    @field_validator("schema_name")
+    @classmethod
+    def isolated_schema_identifier(cls, value: str) -> str:
+        if re.fullmatch(r"cme_[a-z][a-z0-9_]*", value) is None:
+            raise ValueError("isolated_engine_schema_identifier_required")
+        return value
+
+
 class RuntimeOptions(Record):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True, allow_inf_nan=False, hide_input_in_errors=True)
 
@@ -35,6 +57,7 @@ class RuntimeOptions(Record):
     vendor_python: Path | None = None
     postgres_dsn: SecretStr | None = Field(default=None, repr=False)
     local_graph: LocalGraphOptions | None = None
+    engine: EngineFactoryOptions | None = None
 
     @field_validator("assets_directory", "vendor_python")
     @classmethod
@@ -71,6 +94,22 @@ def assemble_adapter(
     elif checked.system_id == "B3":
         assert runtime.vendor_python is not None
         adapter = B3Mem0Adapter(checked, selected, services, python=runtime.vendor_python)
+    elif checked.system_id in ENGINE_SYSTEM_IDS:
+        # ``P`` and its ablations are first-class systems, not the B4 fallback: assembling
+        # one without an engine block is a configuration error, never an AssertionError.
+        assert runtime.postgres_dsn is not None and runtime.engine is not None
+        engine = runtime.engine
+        adapter = EngineAdapter(
+            checked,
+            selected,
+            services,
+            options=EngineOptions(
+                database_url=runtime.postgres_dsn.get_secret_value(),
+                schema_name=engine.schema_name,
+                ablation=engine.ablation,
+                allow_a2b=engine.allow_a2b,
+            ),
+        )
     else:
         assert runtime.vendor_python is not None and runtime.local_graph is not None
         adapter = B4GraphitiAdapter(
@@ -88,12 +127,19 @@ def _validated_options(options: RuntimeOptions, system_id: str) -> RuntimeOption
     # Pydantic's model_copy(update=...) deliberately skips validation. Revalidate
     # all caller records before choosing a backend or retaining a credential.
     runtime = RuntimeOptions.model_validate(options.model_dump())
+    is_engine_system = system_id in ENGINE_SYSTEM_IDS
     if (
-        (runtime.postgres_dsn is not None) != (system_id == "B2h")
+        (runtime.postgres_dsn is not None) != (system_id == "B2h" or is_engine_system)
         or (runtime.vendor_python is not None) != (system_id in {"B3", "B4"})
         or (runtime.local_graph is not None) != (system_id == "B4")
+        or (runtime.engine is not None) != is_engine_system
     ):
         raise ValueError("runtime_options_system_mismatch")
+    if runtime.engine is not None and runtime.engine.ablation != system_id:
+        # The engine block and the run label must agree before any backend is built.
+        raise ValueError("engine_ablation_requires_matching_system_id")
+    if runtime.engine is not None and runtime.engine.ablation == "A2b" and not runtime.engine.allow_a2b:
+        raise ValueError("a2b_disabled_by_d15")
     return runtime
 
 
@@ -110,17 +156,24 @@ def _provenance(adapter: BaseAdapter, settings: BaselineSettings, assembly: str)
         "embedding_model": settings.embedding_model,
         "embedding_revision": settings.embedding_revision,
         "embedding_inference_policy": settings.embedding_inference_policy,
-        "store_type": type(adapter.store).__name__
-        if isinstance(adapter, B2DenseAdapter)
-        else (
-            "isolated_vendor_worker" if isinstance(adapter, B3Mem0Adapter | B4GraphitiAdapter) else "local_raw_history"
-        ),
+        "store_type": _store_type(adapter),
         "assets_status": "not_checked_at_construction",
         "parent_runtime_packages": packages,
         "vendor_runtime_version_check": "on_worker_start"
         if isinstance(adapter, B3Mem0Adapter | B4GraphitiAdapter)
         else None,
     }
+
+
+def _store_type(adapter: object) -> str:
+    """Name the adapter's storage backend without assuming every adapter has ``.store``."""
+    if isinstance(adapter, B2DenseAdapter):
+        return type(adapter.store).__name__
+    if isinstance(adapter, B3Mem0Adapter | B4GraphitiAdapter):
+        return "isolated_vendor_worker"
+    if isinstance(adapter, EngineAdapter):
+        return f"engine_schema:{adapter.options.schema_name}"
+    return "local_raw_history"
 
 
 def create_adapter(
