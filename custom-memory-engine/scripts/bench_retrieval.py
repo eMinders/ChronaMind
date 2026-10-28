@@ -43,8 +43,7 @@ async def seed(conn: AsyncConnection, rows: int, users: int) -> datetime:
     # Distinct predicates per belief: the exclusion constraint is keyed on
     # (subject_key, predicate_key), so seeded rows must not share one.
     await conn.execute(
-        "INSERT INTO predicate_schema SELECT 'fact-' || g, 'single', 'semantic' "
-        "FROM generate_series(0, %s) AS g",
+        "INSERT INTO predicate_schema SELECT 'fact-' || g, 'single', 'semantic' FROM generate_series(0, %s) AS g",
         (rows,),
     )
     rng = random.Random(20261026)
