@@ -203,7 +203,8 @@ def test_adapter_metadata_describes_the_engine(schema) -> None:
         assert engine["schema"] == schema
         assert engine["ablation"] == "P"
         assert engine["fusion"] == "rrf"
-        assert engine["extraction"] == "injected"
+        assert engine["extraction"]["source"] == "injected"  # type: ignore[index]
+        assert engine["extraction"]["replay_cache"] == "absent"  # type: ignore[index]
         assert dict(engine["deletion"]) == {  # type: ignore[arg-type]
             "memory": "lineage_closure",
             "topic": "lineage_closure",
@@ -221,7 +222,8 @@ def test_a2b_is_refused_when_governance_disables_it() -> None:
     TestDatabaseConfig.from_environment()
     selected = settings()
     services = FakeServices(selected)
-    harness = config("P", selected)
+    # An ablation is its own system: A2b must be labelled as such, never as `P`.
+    harness = config("A2b", selected)
     with pytest.raises(ValueError, match="a2b_disabled_by_d15"):
         EngineAdapter(
             harness,

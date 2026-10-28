@@ -7,7 +7,7 @@ from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -18,12 +18,14 @@ from evaluation.baselines.b2_dense import B2DenseAdapter
 from evaluation.baselines.b2h_hybrid import B2hHybridAdapter
 from evaluation.baselines.contracts import ModelServices
 from evaluation.baselines.factory import (
+    EngineFactoryOptions,
     LocalGraphOptions,
     RuntimeOptions,
     assemble_adapter,
     baseline_adapter,
     create_adapter,
 )
+from evaluation.baselines.p_engine import EngineAdapter
 from evaluation.baselines.stores import PostgresRawStore
 from evaluation.baselines.tests.helpers import FakeServices, config, settings
 from evaluation.baselines.tokenization import TiktokenTokenizer
@@ -39,8 +41,9 @@ def options_for(system: str, directory: Path) -> RuntimeOptions:
     return RuntimeOptions(
         assets_directory=directory,
         vendor_python=Path(sys.executable) if system in {"B3", "B4"} else None,
-        postgres_dsn=SecretStr(TEST_DSN) if system == "B2h" else None,
+        postgres_dsn=SecretStr(TEST_DSN) if system in {"B2h", "P"} else None,
         local_graph=LocalGraphOptions(host="127.0.0.1", port=16379) if system == "B4" else None,
+        engine=EngineFactoryOptions() if system == "P" else None,
     )
 
 
@@ -57,6 +60,7 @@ def production_settings(directory: Path):
         ("B2h", B2hHybridAdapter),
         ("B3", B3Mem0Adapter),
         ("B4", B4GraphitiAdapter),
+        ("P", EngineAdapter),
     ],
 )
 def test_injected_factory_routes_to_actual_adapters(system, expected, tmp_path: Path) -> None:
@@ -67,20 +71,25 @@ def test_injected_factory_routes_to_actual_adapters(system, expected, tmp_path: 
     )
     assert isinstance(adapter, expected)
     assert adapter.services is services
-    metadata = adapter.adapter_metadata()
-    provenance = cast(dict[str, object], metadata["factory"])
-    assert provenance["assembly"] == "injected_model_services"
-    assert provenance["embedding_inference_policy"] == selected.embedding_inference_policy
-    assert provenance["tokenizer_id"] == selected.tokenizer_id
-    if isinstance(adapter, B2hHybridAdapter):
-        assert isinstance(adapter.store, PostgresRawStore)
-        assert provenance["store_type"] == "PostgresRawStore"
-    if isinstance(adapter, B3Mem0Adapter | B4GraphitiAdapter):
-        assert adapter._worker.process is None
+    try:
+        metadata = adapter.adapter_metadata()
+        provenance = cast(dict[str, object], metadata["factory"])
+        assert provenance["assembly"] == "injected_model_services"
+        assert provenance["embedding_inference_policy"] == selected.embedding_inference_policy
+        assert provenance["tokenizer_id"] == selected.tokenizer_id
+        if isinstance(adapter, B2hHybridAdapter):
+            assert isinstance(adapter.store, PostgresRawStore)
+            assert provenance["store_type"] == "PostgresRawStore"
+        if isinstance(adapter, B3Mem0Adapter | B4GraphitiAdapter):
+            assert adapter._worker.process is None
+    finally:
+        # ``EngineAdapter`` owns a private event loop; leaking it trips
+        # ``filterwarnings = ["error"]`` in later tests.
+        adapter.close()
     assert services.current is None and not services.requests and not services.embedding_requests
 
 
-@pytest.mark.parametrize("system", ["B0", "B1", "B2", "B2h", "B3", "B4"])
+@pytest.mark.parametrize("system", ["B0", "B1", "B2", "B2h", "B3", "B4", "P"])
 def test_production_factory_is_lazy_and_reads_no_assets(
     system: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -97,13 +106,16 @@ def test_production_factory_is_lazy_and_reads_no_assets(
     adapter = create_adapter(
         config(system, selected), selected, options_for(system, tmp_path), api_key="fixture-only-key"
     )
-    assert adapter.services.tokenizer.identity == selected.tokenizer_id
-    metadata = adapter.adapter_metadata()
-    provenance = cast(dict[str, object], metadata["factory"])
-    assert provenance["assembly"] == "pinned_onnx_https_runtime"
-    assert provenance["assets_status"] == "not_checked_at_construction"
-    assert "fictional-secret" not in json.dumps(metadata) and "fixture-only-key" not in repr(adapter)
-    assert str(tmp_path) not in json.dumps(metadata)
+    try:
+        assert adapter.services.tokenizer.identity == selected.tokenizer_id
+        metadata = adapter.adapter_metadata()
+        provenance = cast(dict[str, object], metadata["factory"])
+        assert provenance["assembly"] == "pinned_onnx_https_runtime"
+        assert provenance["assets_status"] == "not_checked_at_construction"
+        assert "fictional-secret" not in json.dumps(metadata) and "fixture-only-key" not in repr(adapter)
+        assert str(tmp_path) not in json.dumps(metadata)
+    finally:
+        adapter.close()
 
 
 @pytest.mark.parametrize(
@@ -116,6 +128,10 @@ def test_production_factory_is_lazy_and_reads_no_assets(
         ("B4", {"local_graph": None}),
         ("B3", {"local_graph": LocalGraphOptions(host="localhost", port=16379)}),
         ("B2", {"vendor_python": Path(sys.executable)}),
+        ("P", {"postgres_dsn": None}),
+        ("P", {"engine": None}),
+        ("B2h", {"engine": EngineFactoryOptions()}),
+        ("B0", {"engine": EngineFactoryOptions()}),
     ],
 )
 def test_system_options_require_only_the_selected_backend(system, changes, tmp_path: Path) -> None:
@@ -123,6 +139,72 @@ def test_system_options_require_only_the_selected_backend(system, changes, tmp_p
     options = options_for(system, tmp_path).model_copy(update=changes)
     with pytest.raises(ValueError, match="runtime_options_system_mismatch"):
         assemble_adapter(config(system, selected), selected, cast(ModelServices, FakeServices(selected)), options)
+
+
+def test_p_is_a_first_class_system_not_the_b4_fallback(tmp_path: Path) -> None:
+    """Regression: ``P`` used to fall through to the B4 arm and raise AssertionError."""
+    selected = settings()
+    adapter = assemble_adapter(
+        config("P", selected), selected, cast(ModelServices, FakeServices(selected)), options_for("P", tmp_path)
+    )
+    assert isinstance(adapter, EngineAdapter)
+    try:
+        provenance = cast(dict[str, object], adapter.adapter_metadata()["factory"])
+        assert provenance["store_type"] == "engine_schema:cme_engine"
+        assert adapter.extractor is None and adapter.replay_cache is None
+    finally:
+        adapter.close()
+
+
+def test_p_without_engine_options_is_a_domain_error(tmp_path: Path) -> None:
+    """Missing engine configuration must not surface as an AssertionError."""
+    selected = settings()
+    options = options_for("P", tmp_path).model_copy(update={"engine": None})
+    with pytest.raises(ValueError, match="runtime_options_system_mismatch"):
+        assemble_adapter(config("P", selected), selected, cast(ModelServices, FakeServices(selected)), options)
+
+
+@pytest.mark.parametrize("ablation", ["A1", "A2", "A2b"])
+def test_engine_ablation_options_are_carried_into_the_adapter(ablation: str, tmp_path: Path) -> None:
+    """Ablations are first-class systems: each must be constructible under its own id."""
+    selected = settings()
+    mode = cast("Literal['P', 'A1', 'A2', 'A2b']", ablation)
+    options = RuntimeOptions(
+        assets_directory=tmp_path,
+        postgres_dsn=SecretStr(TEST_DSN),
+        engine=EngineFactoryOptions(ablation=mode, allow_a2b=True),
+    )
+    adapter = assemble_adapter(
+        config(ablation, selected), selected, cast(ModelServices, FakeServices(selected)), options
+    )
+    assert isinstance(adapter, EngineAdapter)
+    try:
+        assert adapter.options.ablation == ablation
+    finally:
+        adapter.close()
+
+
+def test_engine_identity_must_match_the_configured_ablation(tmp_path: Path) -> None:
+    """A run may not be labelled ``P`` while measuring an ablation."""
+    selected = settings()
+    options = RuntimeOptions(
+        assets_directory=tmp_path,
+        postgres_dsn=SecretStr(TEST_DSN),
+        engine=EngineFactoryOptions(ablation="A2"),
+    )
+    with pytest.raises(ValueError, match="engine_ablation_requires_matching_system_id"):
+        assemble_adapter(config("P", selected), selected, cast(ModelServices, FakeServices(selected)), options)
+
+
+def test_a2b_stays_refused_by_default_through_the_factory(tmp_path: Path) -> None:
+    selected = settings()
+    options = RuntimeOptions(
+        assets_directory=tmp_path,
+        postgres_dsn=SecretStr(TEST_DSN),
+        engine=EngineFactoryOptions(ablation="A2b", allow_a2b=False),
+    )
+    with pytest.raises(ValueError, match="a2b_disabled_by_d15"):
+        assemble_adapter(config("A2b", selected), selected, cast(ModelServices, FakeServices(selected)), options)
 
 
 @pytest.mark.parametrize("field", ["assets_directory", "vendor_python"])

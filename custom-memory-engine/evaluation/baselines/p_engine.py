@@ -10,22 +10,27 @@ Three deliberate boundaries:
 * **No provider calls here.** Extraction is injected as a callable and embeddings
   arrive through ``ModelServices``, so ``P`` and its ablations replay one frozen
   extraction (``RL-032``).
+* **The extraction cache is where the ablation invariant is enforced.** Passing a
+  replay cache routes every slow-path extraction through
+  ``(turn_id, extractor_version, model_id)``; a hit re-derives the identical
+  ``CandidateVersionInput`` sequence while charging ``Usage.zero()``, so ablations
+  cannot differ through LLM variance.
 * **The engine is async, the harness is sync.** One private event loop per adapter
   thread-marshals each engine call. It is created once and closed on ``close``.
 * **Ablations are configuration, not forks.** ``A1``/``A2``/``A2b`` are write-path
   switches; ``A3``/``A4`` disable gate checks; ``A5``/``A6`` select a retrieval
-  channel. They all run this same adapter.
+  channel. They all run this same adapter, each labelled by its own system id.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import structlog
 from psycopg import AsyncConnection, sql
@@ -41,7 +46,7 @@ from custom_memory_engine.engine.predicates import (
 )
 from custom_memory_engine.engine.render import render_context
 from custom_memory_engine.engine.retrieval import FusionMode, rank_versions
-from custom_memory_engine.engine.transactions import AblationMode, CandidateVersionInput
+from custom_memory_engine.engine.transactions import AblationMode, CandidateVersionInput, EvidenceInput
 from evaluation.baselines.base import BaseAdapter
 from evaluation.baselines.context import fit_ranked_items, join_items
 from evaluation.baselines.contracts import BaselineSettings, ModelServices
@@ -60,6 +65,7 @@ from evaluation.harness.models import (
     TurnRecord,
     Usage,
 )
+from evaluation.harness.replay_cache import ExtractionCacheKey, ExtractionReplayCache
 
 logger = structlog.get_logger(__name__)
 
@@ -68,6 +74,64 @@ T = TypeVar("T")
 SCHEMA_SQL = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema/001_full_schema.sql"
 
 type Extractor = Callable[[TurnRecord], Sequence[CandidateVersionInput]]
+
+
+def _replayed_instant(value: object, fallback: datetime) -> datetime:
+    """Parse a cached ISO-8601 instant; the cache stores JSON, the engine needs ``datetime``."""
+    if value is None:
+        return fallback
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
+def cached_candidates(
+    turn: TurnRecord,
+    records: Sequence[Mapping[str, Any]],
+    extractor_version: str,
+) -> tuple[CandidateVersionInput, ...]:
+    """Re-derive engine version inputs from cached provider candidate records.
+
+    Deterministic by construction: the identity the cache does not carry
+    (``version_id``, ``memory_key``, ``user_id``) is a pure function of the turn and the
+    record's own subject/predicate, so replay is byte-stable across ablations. Cached
+    records hold provider-owned fields only — never engine version rows.
+    """
+    candidates: list[CandidateVersionInput] = []
+    for index, record in enumerate(records):
+        subject_key = str(record["subject_key"])
+        predicate_key = str(record["predicate_key"])
+        candidates.append(
+            CandidateVersionInput(
+                version_id=f"{turn.turn_id}:{index}",
+                memory_key=f"{subject_key}:{predicate_key}",
+                user_id=turn.user_id,
+                subject_key=subject_key,
+                predicate_key=predicate_key,
+                content=str(record["content"]),
+                single_valued=bool(record.get("single_valued", True)),
+                layer=record.get("layer", "episodic"),
+                assertion_mode=record.get("assertion_mode", "asserted"),
+                valid_from=_replayed_instant(record.get("valid_from"), turn.occurred_at),
+                valid_until=(
+                    None
+                    if record.get("valid_to") is None
+                    else _replayed_instant(record.get("valid_to"), turn.occurred_at)
+                ),
+                valid_from_basis=record.get("valid_from_basis", "explicit"),
+                confidence=record.get("confidence"),
+                importance=record.get("importance"),
+                extractor_version=extractor_version,
+                evidence=(
+                    EvidenceInput(
+                        turn_id=turn.turn_id,
+                        evidence_span=str(record["evidence_span"]),
+                        evidence_role=str(record.get("evidence_role", "user")),
+                    ),
+                ),
+            )
+        )
+    return tuple(candidates)
 
 
 @dataclass(frozen=True)
@@ -79,6 +143,7 @@ class EngineOptions:
     ablation: AblationMode = "P"
     allow_a2b: bool = False
     fusion: FusionMode = "rrf"
+    extractor_version: str = "engine-v1"
     gate_enabled: tuple[GateCheck, ...] = (
         "evidence",
         "assertion_mode",
@@ -91,6 +156,9 @@ class EngineOptions:
 class EngineAdapter(BaseAdapter):
     """``P`` over the canonical schema. Extraction and embeddings are injected."""
 
+    # ``P`` is the full pipeline; each ablation is an equally first-class system that
+    # runs this same adapter with different switches. The identity is asserted per
+    # instance against ``EngineOptions.ablation`` in ``__init__``.
     system_id = "P"
 
     def __init__(
@@ -101,17 +169,20 @@ class EngineAdapter(BaseAdapter):
         *,
         options: EngineOptions,
         extractor: Extractor | None = None,
+        replay_cache: ExtractionReplayCache | None = None,
     ) -> None:
         super().__init__(config, settings, services)
-        if self.config.system_id != self.system_id:
-            raise ValueError("engine_system_identity_required")
+        if self.config.system_id != options.ablation:
+            # One system id labels one configuration: ``P`` is the full pipeline and each
+            # ablation is its own system, so a run can never mislabel what it measured
+            # (``D-ENG-01`` needs ``P − A2`` as a real, separately-named run).
+            raise ValueError("engine_ablation_requires_matching_system_id")
         if options.ablation == "A2b" and not options.allow_a2b:
             raise ValueError("a2b_disabled_by_d15")
-        if options.ablation != "P" and self.config.system_id == "P":
-            # Ablations are separate systems; `P` is always the full configuration.
-            raise ValueError("engine_ablation_requires_matching_system_id")
         self.options = options
         self.extractor = extractor
+        # Exposed for ``runner``'s manifest summary (RL-032); ``None`` keeps prior behaviour.
+        self.replay_cache = replay_cache
         self._schema = options.schema_name
         self._loop = asyncio.new_event_loop()
         self._connection: AsyncConnection | None = None
@@ -186,7 +257,7 @@ class EngineAdapter(BaseAdapter):
         def ingest() -> None:
             connection = self._conn()
             self._set_replay_clock(self.clock)  # type: ignore[arg-type]
-            candidates = tuple(self.extractor(turn)) if self.extractor is not None else ()
+            candidates = self._extract(turn)
             embeddings = self.services.embed([c.content for c in candidates]) if candidates else None
 
             async def work() -> None:
@@ -227,6 +298,59 @@ class EngineAdapter(BaseAdapter):
 
         _, usage = self._run("ingest_turn", ingest)
         return IngestReceipt(turn_id=turn.turn_id, usage=usage)
+
+    def _extract(self, turn: TurnRecord) -> tuple[CandidateVersionInput, ...]:
+        """Return this turn's candidates, replaying them from the RL-032 cache when configured.
+
+        With a cache, the provider-owned candidate records are cached under
+        ``(turn_id, extractor_version, model_id)`` and the engine inputs are re-derived, so
+        ``P`` and every ablation observe the identical extraction. A hit charges
+        ``Usage.zero()`` because the extractor callable is never invoked.
+        """
+        if self.extractor is None:
+            return ()
+        extractor = self.extractor
+        if self.replay_cache is None:
+            return tuple(extractor(turn))
+        key = ExtractionCacheKey(
+            turn_id=turn.turn_id,
+            extractor_version=self.options.extractor_version,
+            model_id=self.config.model_id,
+        )
+
+        def extract() -> tuple[Mapping[str, Any], ...]:
+            # Runs only on a cache miss: the extractor callable is what a hit avoids.
+            # Only provider-owned, schema-validatable fields enter the cache; engine
+            # identity is re-derived on replay (see ``cached_candidates``).
+            return tuple(
+                {
+                    "subject_key": candidate.subject_key,
+                    "predicate_key": candidate.predicate_key,
+                    "content": candidate.content,
+                    "single_valued": candidate.single_valued,
+                    "layer": candidate.layer,
+                    "assertion_mode": candidate.assertion_mode,
+                    "valid_from": candidate.valid_from.isoformat(),
+                    "valid_to": candidate.valid_until.isoformat() if candidate.valid_until else None,
+                    "valid_from_basis": candidate.valid_from_basis,
+                    "confidence": candidate.confidence,
+                    "importance": candidate.importance,
+                    "evidence_span": candidate.evidence[0].evidence_span if candidate.evidence else candidate.content,
+                    # The engine allows free-form evidence roles (its default is
+                    # ``primary``), but the cache's frozen extraction schema admits only
+                    # ``user``/``assistant``. Preserve a valid role; otherwise project the
+                    # role of the turn whose content the span actually grounds.
+                    "evidence_role": (
+                        candidate.evidence[0].evidence_role
+                        if candidate.evidence and candidate.evidence[0].evidence_role in {"user", "assistant"}
+                        else turn.role
+                    ),
+                }
+                for candidate in extractor(turn)
+            )
+
+        outcome = self.replay_cache.get_or_extract(key, extract)
+        return cached_candidates(turn, outcome.candidates, self.options.extractor_version)
 
     def drain_queue(self, user_id: str) -> QueueDrainStats:
         self._state(user_id)
@@ -385,7 +509,12 @@ class EngineAdapter(BaseAdapter):
                     "topic": "lineage_closure",
                     "all": "all_versions_for_user",
                 },
-                "extraction": "injected" if self.extractor is not None else "absent",
+                "extraction": {
+                    "source": "injected" if self.extractor is not None else "absent",
+                    "replay_cache": "enabled" if self.replay_cache is not None else "absent",
+                    "extractor_version": self.options.extractor_version,
+                    "cache_key": ["turn_id", "extractor_version", "model_id"],
+                },
             },
         }
 
