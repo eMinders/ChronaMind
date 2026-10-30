@@ -394,6 +394,7 @@ def test_clean_interpreter_factory_construction_imports_no_heavy_optional_sdk(tm
     program = """
 import json,sys
 from pathlib import Path
+sys.path.insert(0,sys.argv[2])
 from evaluation.baselines.factory import create_adapter,RuntimeOptions,LocalGraphOptions
 from pydantic import SecretStr
 from evaluation.baselines.tests.helpers import config,settings
@@ -411,7 +412,17 @@ for name in ('mem0','graphiti_core','onnxruntime','tokenizers','tiktoken'):
 print(json.dumps({'status':'lazy_factory_verified'}))
 """
     result = subprocess.run(
-        [sys.executable, "-c", program, str(tmp_path)], capture_output=True, text=True, check=False, timeout=30
+        [
+            sys.executable,
+            "-c",
+            program,
+            str(tmp_path),
+            str(Path(__file__).resolve().parents[3] / "src"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"status": "lazy_factory_verified"}

@@ -1,6 +1,8 @@
 """Bi-temporal memory engine: temporal reads, transactional writes, retrieval, gate, deletion."""
 
-from custom_memory_engine.engine.deletion import DeletionError, DeletionReceipt, delete_memory, deletion_epoch
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
 from custom_memory_engine.engine.gate import (
     AssertionMode,
     ConflictRelation,
@@ -85,6 +87,18 @@ from custom_memory_engine.engine.transactions import (
     stage_candidate,
     supersede_single,
 )
+
+if TYPE_CHECKING:
+    from custom_memory_engine.engine.deletion import DeletionError, DeletionReceipt, delete_memory, deletion_epoch
+
+
+def __getattr__(name: str) -> Any:
+    """Load deletion exports lazily to keep engine and summary-rebuild imports acyclic."""
+    if name in {"DeletionError", "DeletionReceipt", "delete_memory", "deletion_epoch"}:
+        deletion = import_module(".deletion", __name__)
+        return getattr(deletion, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "AblationDisabledError",

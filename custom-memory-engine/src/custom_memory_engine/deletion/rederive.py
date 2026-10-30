@@ -11,6 +11,7 @@ from psycopg.errors import InvalidParameterValue
 from psycopg.rows import tuple_row
 
 from custom_memory_engine.clock import ClockTick
+from custom_memory_engine.consolidation.consolidator import consolidate
 
 EMBEDDING_DIMENSION = 384
 
@@ -113,8 +114,6 @@ async def rederive_summary(
         await cursor.execute(
             sql.SQL("DELETE FROM {v} WHERE user_id = %s AND id = %s").format(v=versions), (user_id, summary_id)
         )
-
-    from custom_memory_engine.consolidation.consolidator import consolidate
 
     await consolidate(
         connection,
