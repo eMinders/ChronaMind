@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_random_exponential
 
 from custom_memory_engine.clock import ClockTick, allocate_clock
+from custom_memory_engine.deletion.closure import StaleDeletionEpoch, require_current_deletion_epoch
 from custom_memory_engine.queue.contracts import (
     EnqueueResult,
     Job,
@@ -144,6 +145,17 @@ async def _selected_job(
         return selected
 
 
+def _job_epoch_start(job: Job) -> int | None:
+    """Read an optional captured deletion epoch from an object-shaped job payload."""
+    payload = job.payload
+    if not isinstance(payload, dict) or "deletion_epoch" not in payload:
+        return None
+    value = payload["deletion_epoch"]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise QueueError("job_deletion_epoch_invalid")
+    return value
+
+
 def _terminal(job: Job, state: AttemptState) -> WorkerResult:
     if job.status in ("done", "dead_letter"):
         return WorkerResult(
@@ -182,6 +194,9 @@ async def _attempt(
             state.selected = job.model_copy(deep=True)
             state.attempts = job.attempts
         state.attempts = max(state.attempts, job.attempts)
+        epoch_start = _job_epoch_start(job)
+        if epoch_start is not None:
+            await require_current_deletion_epoch(connection, user_id, epoch_start, schema_name=schema_name)
         if state.attempts >= MAX_ATTEMPTS:
             await connection.execute(
                 sql.SQL("UPDATE {} SET status='dead_letter',attempts=%s WHERE id=%s AND user_id=%s").format(table),
@@ -289,6 +304,8 @@ async def process_one(
             state.transaction_attempts = attempt.retry_state.attempt_number
             with attempt:
                 return await _attempt(connection, user_id, handler, table, schema_name, replay_time, state)
+    except StaleDeletionEpoch:
+        raise
     except Exception as error:
         if state.selected is None:
             raise  # Unselected/precondition failures cannot consume a job.

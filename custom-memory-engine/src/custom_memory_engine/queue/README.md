@@ -41,6 +41,13 @@ commit rolls back the uncommitted `running` transition, leaving the job queued;
 there is no durable running lease to expire. A lost response after a successful
 commit is safe to redeliver because the durable job is already `done`.
 
+Slow-path jobs whose prepared input depends on memory state may include an integer
+`deletion_epoch` in an object-shaped payload. The worker compares it with the
+current per-user deletion epoch before invoking the handler. A stale job is not
+run, charged an attempt, or dead-lettered; `StaleDeletionEpoch` propagates with
+the captured and current epochs so the caller can prepare fresh input against
+surviving data. The failed transaction leaves the job queued.
+
 `process_one` owns its root transactions and requires an **idle connection**.
 It rejects an existing caller transaction rather than committing it or retrying
 only a savepoint. `enqueue` can compose through a nested savepoint and preserves
