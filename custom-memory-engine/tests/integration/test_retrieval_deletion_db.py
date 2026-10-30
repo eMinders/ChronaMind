@@ -359,8 +359,8 @@ async def test_delete_re_derives_a_dependent_with_a_surviving_source(database) -
                 single_valued=False,
             )
             await conn.execute(
-                "INSERT INTO memory_derivation VALUES ('summary', 'src-a', 'u1', 'consolidation'), "
-                "('summary', 'src-b', 'u1', 'consolidation')"
+                "INSERT INTO memory_derivation VALUES ('summary', 'src-a', 'u1', 'summary'), "
+                "('summary', 'src-b', 'u1', 'summary')"
             )
         async with conn.transaction():
 
@@ -471,6 +471,8 @@ async def test_a8_skips_lineage_and_primary_deletion_removes_it(database) -> Non
                 "channel_6_final_answer",
                 "channel_7_application_logs",
             }
+
+        async with conn.transaction():
             await delete_memory(conn, "u1", target_ref="p-key", ablation="P", schema_name=schema)
         cursor = await conn.execute(
             "SELECT id FROM memory_version WHERE id IN ('a8-derived', 'p-derived') ORDER BY id"
