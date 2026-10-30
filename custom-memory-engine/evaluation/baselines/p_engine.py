@@ -25,31 +25,20 @@ Three deliberate boundaries:
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import structlog
 from psycopg import AsyncConnection, sql
 
-from custom_memory_engine.engine.deletion import delete_memory
-from custom_memory_engine.engine.gate import GateCheck
-from custom_memory_engine.engine.ingest import TurnInput, apply_candidate, persist_turn
-from custom_memory_engine.engine.predicates import (
-    TemporalQuery,
-    current_state,
-    historical_as_of,
-    historical_window,
-)
-from custom_memory_engine.engine.render import render_context
-from custom_memory_engine.engine.retrieval import FusionMode, rank_versions
-from custom_memory_engine.engine.transactions import AblationMode, CandidateVersionInput, EvidenceInput
 from evaluation.baselines.base import BaseAdapter
 from evaluation.baselines.context import fit_ranked_items, join_items
-from evaluation.baselines.contracts import BaselineSettings, ModelServices
+from evaluation.baselines.contracts import BaselineSettings, Message, ModelServices
 from evaluation.harness.config import HarnessConfig
 from evaluation.harness.models import (
     AnswerResult,
@@ -66,6 +55,15 @@ from evaluation.harness.models import (
     Usage,
 )
 from evaluation.harness.replay_cache import ExtractionCacheKey, ExtractionReplayCache
+
+if TYPE_CHECKING:
+    from custom_memory_engine.deletion.closure import CacheInvalidator
+    from custom_memory_engine.deletion.rederive import ActiveSource, RebuiltSummary
+    from custom_memory_engine.engine.deletion import DeletionReceipt as EngineDeletionReceipt
+    from custom_memory_engine.engine.gate import GateCheck
+    from custom_memory_engine.engine.predicates import TemporalQuery
+    from custom_memory_engine.engine.retrieval import FusionMode
+    from custom_memory_engine.engine.transactions import AblationMode, CandidateVersionInput
 
 logger = structlog.get_logger(__name__)
 
@@ -97,6 +95,8 @@ def cached_candidates(
     record's own subject/predicate, so replay is byte-stable across ablations. Cached
     records hold provider-owned fields only — never engine version rows.
     """
+    from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput
+
     candidates: list[CandidateVersionInput] = []
     for index, record in enumerate(records):
         subject_key = str(record["subject_key"])
@@ -170,6 +170,7 @@ class EngineAdapter(BaseAdapter):
         options: EngineOptions,
         extractor: Extractor | None = None,
         replay_cache: ExtractionReplayCache | None = None,
+        cache_invalidator: CacheInvalidator | None = None,
     ) -> None:
         super().__init__(config, settings, services)
         if self.config.system_id != options.ablation:
@@ -183,6 +184,7 @@ class EngineAdapter(BaseAdapter):
         self.extractor = extractor
         # Exposed for ``runner``'s manifest summary (RL-032); ``None`` keeps prior behaviour.
         self.replay_cache = replay_cache
+        self.cache_invalidator = cache_invalidator
         self._schema = options.schema_name
         self._loop = asyncio.new_event_loop()
         self._connection: AsyncConnection | None = None
@@ -255,6 +257,8 @@ class EngineAdapter(BaseAdapter):
             raise ValueError("engine_replay_clock_required")
 
         def ingest() -> None:
+            from custom_memory_engine.engine.ingest import TurnInput, apply_candidate, persist_turn
+
             connection = self._conn()
             self._set_replay_clock(self.clock)  # type: ignore[arg-type]
             candidates = self._extract(turn)
@@ -379,6 +383,8 @@ class EngineAdapter(BaseAdapter):
     # ---------------------------------------------------------------- retrieve
 
     def _temporal_query(self, user_id: str, mode: QueryMode, as_of: datetime) -> TemporalQuery:
+        from custom_memory_engine.engine.predicates import current_state, historical_as_of, historical_window
+
         if self.clock is None:
             raise ValueError("engine_reference_clock_required")
         reference = max(self.clock, as_of)
@@ -398,6 +404,9 @@ class EngineAdapter(BaseAdapter):
         question = self._question(user_id, query, mode, as_of, token_budget)
 
         def retrieve() -> RetrievalResult:
+            from custom_memory_engine.engine.render import render_context
+            from custom_memory_engine.engine.retrieval import rank_versions
+
             started = perf_counter()
             connection = self._conn()
             self._set_replay_clock(self.clock)  # type: ignore[arg-type]
@@ -476,22 +485,64 @@ class EngineAdapter(BaseAdapter):
             connection = self._conn()
             self._set_replay_clock(self.clock)  # type: ignore[arg-type]
 
-            async def work() -> int:
+            async def work() -> EngineDeletionReceipt:
+                from custom_memory_engine.engine.deletion import delete_memory
+
                 async with connection.transaction():
-                    receipt = await delete_memory(
+                    return await delete_memory(
                         connection,
                         user_id,
                         scope=scope,
                         target_ref=target_ref,
+                        ablation=self.options.ablation,
+                        summary_builder=self._rebuild_summary,
                         schema_name=self._schema,
                         replay_time=self.clock,
                     )
-                return receipt.deleted_versions
+
+            receipt = self._run_async(work())
+            if self.cache_invalidator is not None:
+                from custom_memory_engine.deletion.closure import invalidate_cache_entries
+
+                self._run_async(invalidate_cache_entries(self.cache_invalidator, user_id, receipt.deletion_epoch))
+            return receipt.deleted_versions
 
             return self._run_async(work())
 
         count, usage = self._run("delete", remove)
         return DeletionReceipt(supported=True, deleted_count=count, usage=usage)
+
+    async def _rebuild_summary(self, summary_id: str, sources: Sequence[ActiveSource]) -> RebuiltSummary:
+        """Rebuild a derived summary and its vector from the surviving Active sources."""
+        from custom_memory_engine.deletion.rederive import RebuiltSummary
+
+        messages = (
+            Message(
+                role="system",
+                content=(
+                    "Create a concise factual summary using only the supplied source records. "
+                    "Do not retain facts absent from those records. Return only the summary text."
+                ),
+            ),
+            Message(
+                role="user",
+                content=json.dumps(
+                    [{"source_id": source.version_id, "content": source.content} for source in sources],
+                    ensure_ascii=True,
+                ),
+            ),
+        )
+        content = self.services.complete(messages).text.strip()
+        if not content:
+            raise ValueError("summary_provider_returned_empty_content")
+        embedded = self.services.embed((content,))
+        if len(embedded.vectors) != 1:
+            raise ValueError("summary_embedding_count_invalid")
+        return RebuiltSummary(
+            content=content,
+            embedding_model=self.config.embedding_model_id,
+            embedding=tuple(embedded.vectors[0]),
+        )
 
     # -------------------------------------------------------------- metadata
 

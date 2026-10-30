@@ -164,11 +164,11 @@ def test_p_without_engine_options_is_a_domain_error(tmp_path: Path) -> None:
         assemble_adapter(config("P", selected), selected, cast(ModelServices, FakeServices(selected)), options)
 
 
-@pytest.mark.parametrize("ablation", ["A1", "A2", "A2b"])
+@pytest.mark.parametrize("ablation", ["A1", "A2", "A2b", "A8"])
 def test_engine_ablation_options_are_carried_into_the_adapter(ablation: str, tmp_path: Path) -> None:
     """Ablations are first-class systems: each must be constructible under its own id."""
     selected = settings()
-    mode = cast("Literal['P', 'A1', 'A2', 'A2b']", ablation)
+    mode = cast("Literal['P', 'A1', 'A2', 'A2b', 'A8']", ablation)
     options = RuntimeOptions(
         assets_directory=tmp_path,
         postgres_dsn=SecretStr(TEST_DSN),

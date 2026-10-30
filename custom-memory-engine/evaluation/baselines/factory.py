@@ -39,7 +39,7 @@ class EngineFactoryOptions(Record):
     """
 
     schema_name: str = "cme_engine"
-    ablation: Literal["P", "A1", "A2", "A2b"] = "P"
+    ablation: Literal["P", "A1", "A2", "A2b", "A8"] = "P"
     allow_a2b: bool = False
 
     @field_validator("schema_name")
