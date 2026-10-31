@@ -48,6 +48,7 @@ jobs:
           uv run --no-sync python scripts/check_statistics.py
           uv run --no-sync python scripts/check_test_split_gate.py
           python3 scripts/check_plan_refs.py
+          python3 scripts/audit_status.py --check
 
   verify:
     runs-on: ubuntu-24.04
