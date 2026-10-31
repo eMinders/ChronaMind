@@ -22,7 +22,7 @@ All three must be green. A PR is not "CI green" because `verify` alone passed.
 
 - **Pinning.** Third-party actions are pinned to a full **commit** SHA with the version in a comment, and service images to a digest. (An annotated-tag object SHA also works but cannot be checked with the commits API; use the commit it dereferences to.)
 - **Permissions.** Least privilege: `contents: read` by default; only the Claude workflows add the scopes their action needs.
-- **Concurrency.** A new push to a PR cancels that PR's superseded run. Pushes to `main` and deploys are never cancelled.
+- **Concurrency.** A new push to a PR cancels that PR's superseded run. Each push to `main` has its own group (keyed on the commit SHA), so no `main` run is cancelled or replaced: GitHub replaces a *pending* run in a shared group even when `cancel-in-progress` is false. A running deploy is never cancelled; a newer manual dispatch supersedes one that is still queued.
 - **Timeouts.** Every job sets `timeout-minutes`.
 - **No duplicate runs.** `push` is limited to `main`; branch work is verified through its PR (or run manually via `workflow_dispatch`).
 - **Shared setup.** `.github/actions/setup-cme` is the single place that pins the uv version (0.13.5), the engine Python (3.12.12) and `uv sync --frozen`. The root `ci.yaml` intentionally does not use it: the engine and the root application keep independent CI (`custom-memory-engine/PLAN/INDEPENDENCE_BOUNDARY.md` §4).

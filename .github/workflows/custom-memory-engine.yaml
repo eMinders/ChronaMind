@@ -17,9 +17,11 @@ on:
 permissions:
   contents: read
 
-# One run per PR (superseded PR runs are cancelled); pushes to main are never cancelled.
+# One group per PR (a new push cancels the superseded PR run). Pushes to main get one group per commit:
+# GitHub replaces a *pending* run in a shared group even with cancel-in-progress false, so a ref-keyed
+# group let rapid merges evict each other's queued runs and left intermediate commits unverified.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
