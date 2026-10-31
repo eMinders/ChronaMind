@@ -153,8 +153,8 @@ mechanism · `verify` — implemented, needs verification work.
 | RL-091 | Invariants 1–9 suite | **no issue, no directory** | W1 `E-004` (#52) |
 | RL-092 | Clock/queue determinism | **no issue**; logic exists in 25 inline tests | W1 `E-016` (#67) |
 | RL-093 | 8-worker + HNSW study | **no issue, no test file** | W1→W3 under `E-036`/`E-037` measurement |
-| RL-094 | §G testing matrix gate | drafted (`RL-094.md`) but **no issue** | replaced by gates G0–G8 |
-| RL-100–105 | Pilot & H1–H4 | drafted only | W6 `R-010` under #76 |
+| RL-094 | §G testing matrix gate | drafted (`RL-094.md`) but **no issue** | replaced by gates G0–G8; its **J7** sign-off role is carried by gate **G-TS** (`V2-D42`, r7), required before G5 |
+| RL-100–105 | Pilot & H1–H4 | drafted only | W6 `R-010` under #76; the **J8** pilot freeze (signed `PilotFreeze`) is part of **G-TS** (`V2-D42`, r7) |
 | RL-120–122 | PDT app | drafted only | W5 `UM-*` + W7 `A-011` |
 | RL-130–132 | Thesis/release | drafted only | W8 #80 |
 

@@ -3,6 +3,7 @@
 import pytest
 from psycopg.errors import InsufficientPrivilege
 
+from custom_memory_engine.schema import migrate
 from custom_memory_engine.security import (
     USER_TABLES,
     RlsProvisioningError,
@@ -14,20 +15,7 @@ from custom_memory_engine.security import (
 )
 from custom_memory_engine.security.provisioning import RLS_SQL, _sections
 
-SCHEMA_SQL_TABLES: tuple[str, ...] = (
-    "app_user",
-    "session",
-    "turn",
-    "predicate_schema",
-    "memory_version",
-    "memory_evidence",
-    "memory_derivation",
-    "memory_embedding",
-    "memory_conflict",
-    "audit_event",
-    "deletion_request",
-    "job",
-)
+SCHEMA_SQL_TABLES: tuple[str, ...] = migrate.TABLES
 
 
 class _UntouchedConnection:
@@ -94,7 +82,7 @@ async def test_provisioning_rejects_unsafe_identifiers_before_touching_the_conne
 
 def test_user_tables_are_every_table_except_the_shared_catalog() -> None:
     assert set(USER_TABLES) == set(SCHEMA_SQL_TABLES) - {"predicate_schema"}
-    assert len(USER_TABLES) == 11
+    assert len(USER_TABLES) == 12  # 11 v1 tables + scope_grant (migration 2)
 
 
 def test_rls_sql_grants_cover_every_user_table_and_only_reads_the_catalog() -> None:

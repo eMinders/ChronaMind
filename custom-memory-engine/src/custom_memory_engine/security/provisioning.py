@@ -29,7 +29,16 @@ USER_TABLES = (
     "audit_event",
     "deletion_request",
     "job",
+    "scope_grant",  # migration 2 (V2-D36)
 )
+
+
+# Exact least-privilege grant set (#47 §3.1). Anything else on any relation in the
+# engine schema — including TRUNCATE, REFERENCES or TRIGGER, which bypass or sidestep
+# row-level security — is an extra grant and fails verification.
+TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
+USER_TABLE_GRANTS = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
+CATALOG_GRANTS = {"predicate_schema": frozenset({"SELECT"})}
 
 
 class RlsProvisioningError(InvalidParameterValue):
@@ -113,6 +122,68 @@ async def verify_runtime_role(connection: AsyncConnection, role_name: str) -> No
         raise RlsProvisioningError("runtime_role_has_dangerous_attribute")
 
 
+def expected_grants(relation: str) -> frozenset[str]:
+    """Return the exact privilege set the runtime role must hold on ``relation``."""
+    if relation in USER_TABLES:
+        return USER_TABLE_GRANTS
+    return CATALOG_GRANTS.get(relation, frozenset())
+
+
+async def privilege_violations(connection: AsyncConnection, schema_name: str, role_name: str) -> list[str]:
+    """Return every deviation from the least-privilege contract, as static codes.
+
+    Checked through the catalog (``has_*_privilege``), so grants via ``PUBLIC`` or role
+    membership count exactly as a direct grant would. An empty list is the pass condition.
+    """
+    schema_name, role_name = _validated(schema_name, role_name)
+    violations: list[str] = []
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            "SELECT c.relname, p.privilege, pg_catalog.has_table_privilege(%(role)s, c.oid, p.privilege) "
+            "FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+            "CROSS JOIN unnest(%(privileges)s::text[]) AS p(privilege) "
+            "WHERE n.nspname = %(schema)s AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') "
+            "ORDER BY c.relname, p.privilege",
+            {"role": role_name, "schema": schema_name, "privileges": list(TABLE_PRIVILEGES)},
+        )
+        for relation, privilege, held in await cursor.fetchall():
+            wanted = privilege in expected_grants(relation)
+            if held and not wanted:
+                violations.append(f"extra_{privilege.lower()}_on_{relation}")
+            elif wanted and not held:
+                violations.append(f"missing_{privilege.lower()}_on_{relation}")
+        await cursor.execute(
+            "SELECT pg_catalog.has_schema_privilege(%(role)s, %(schema)s, 'CREATE'), "
+            "pg_catalog.has_schema_privilege(%(role)s, %(schema)s, 'USAGE'), "
+            "pg_catalog.has_schema_privilege(%(role)s, 'public', 'CREATE'), "
+            "pg_catalog.has_database_privilege(%(role)s, pg_catalog.current_database(), 'CREATE'), "
+            "EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members AS m "
+            "        JOIN pg_catalog.pg_roles AS r ON r.oid = m.member WHERE r.rolname = %(role)s)",
+            {"role": role_name, "schema": schema_name},
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return [*violations, "privilege_catalog_unreadable"]
+    schema_create, schema_usage, public_create, database_create, has_memberships = row
+    if schema_create:
+        violations.append("extra_create_on_engine_schema")
+    if not schema_usage:
+        violations.append("missing_usage_on_engine_schema")
+    if public_create:
+        violations.append("extra_create_on_public_schema")
+    if database_create:
+        violations.append("extra_create_on_database")
+    if has_memberships:
+        violations.append("runtime_role_inherits_other_roles")
+    return violations
+
+
+async def verify_privileges(connection: AsyncConnection, schema_name: str, role_name: str) -> None:
+    """Raise unless the role holds exactly the least-privilege grant set."""
+    if await privilege_violations(connection, schema_name, role_name):
+        raise RlsProvisioningError("runtime_role_privileges_not_least")
+
+
 async def provision_runtime_role(
     connection: AsyncConnection,
     schema_name: str,
@@ -138,12 +209,16 @@ async def provision_runtime_role(
         )
     await verify_forced_rls(connection, schema_name)
     await verify_runtime_role(connection, role_name)
+    await verify_privileges(connection, schema_name, role_name)
 
 
 __all__ = [
     "USER_TABLES",
     "RlsProvisioningError",
+    "expected_grants",
+    "privilege_violations",
     "provision_runtime_role",
     "verify_forced_rls",
+    "verify_privileges",
     "verify_runtime_role",
 ]
