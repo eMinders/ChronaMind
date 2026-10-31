@@ -1,6 +1,7 @@
 # Four-Channel Contract
 
-**Task:** `MA-013` · **Status:** specification plus an executable reference model; the database
+**Task:** `MA-013` · **Status: proposed, not yet frozen.** It freezes when the Project Owner decides the proposals
+in section 5 (G0b requires `MA-013` frozen). Specification plus an executable reference model; the database
 implementation belongs to `E-017`, the fuzz to `E-035`. **References:** `ARCHITECTURE_V2.md` sections 2.2, 2.3,
 7, 9.1-9.3, `V2-D24`, `V2-D28`, `INVARIANT_LEDGER.md` (`I1′`, `I14`), `THREAT_MODEL.md` (T-10).
 
@@ -21,16 +22,16 @@ day or the query.
 | `stale` | boolean, **derived** (section 9.2) | never stored |
 | `open_contradiction` | boolean, **derived** | see 2.2 |
 
-Output: one of `facts`, `hypotheses`, `procedures`, `conflicts`, or `audit_only`.
+Output: one of `facts`, `hypotheses`, `procedures`, `conflicts`, or `none`.
 
-`audit_only` is not a fifth answer channel. It is where `retired` artifacts live: excluded from every answer
-channel, visible to `audit_as_of`, still inside the deletion closure (section 2.3 of the architecture). The
-acceptance criterion "maps to exactly one channel" is therefore read as *exactly one of the four answer
-channels, or the audit-only set*, which is the only reading under which `retired` is total.
+`none` is not a fifth answer channel; it means "rendered in no channel" (the name `MA-013`'s issue and `E-017`
+use). It is where `retired` artifacts go: excluded from every answer channel, visible to `audit_as_of`, still
+inside the deletion closure (section 2.3 of the architecture). "Maps to exactly one output" is therefore exactly
+one of the four answer channels, or `none`, which is the only reading under which `retired` is total.
 
 ```text
 channel(kind, lifecycle, verification, stale, open_contradiction):
-    if lifecycle == retired:                                    → audit_only
+    if lifecycle == retired:                                    → none
     if lifecycle == contested or open_contradiction:            → conflicts
     if lifecycle == inferred:
         if kind == abstraction and verification == verified and not stale:
@@ -53,10 +54,20 @@ these rules there are **60 legal tuples** (15 episode, 17 claim, 15 procedure, 1
 | `hypotheses` | 11 |
 | `procedures` | 1 |
 | `conflicts` | 24 |
-| `audit_only` | 20 |
+| `none` | 20 |
 
-`conflicts` and `audit_only` are large only because `contested` and `retired` artifacts may carry the history
+`conflicts` and `none` are large only because `contested` and `retired` artifacts may carry the history
 of their verification; their routing does not depend on it.
+
+**Legality versus the transition table on `main` (`V2-D38`).** The legality rules above are stricter than
+`model.axes.TRANSITIONS`, whose creation and transition rules do not depend on `kind`. Measured with
+`model.axes` itself: the 16 legal `(kind, lifecycle)` pairs are all reachable, and exactly **four** more are
+reachable that this contract declares illegal: `abstraction/asserted`, `abstraction/observed`, `episode/asserted`
+and `procedure/observed`. (`abstraction/asserted` is reached by `contested → asserted` after `inferred →
+contested`, which would turn an inference into a fact by adjudication, against `I1′`.) Every output of the v1
+backfill (`map_v1_version`) is legal. Closing the gap is proposal **C-P1** in section 5. Until it is decided,
+`test_the_gap_with_the_kind_blind_transition_table_is_exactly_the_proposal` pins the gap to exactly these four
+pairs, so neither document can drift silently.
 
 ### 1.2 The contract is executed, not only written
 
@@ -115,8 +126,14 @@ Without (5) an expired preference would still render as a verified fact.
 
 The admission flow in section 2.2 ends in `rejected, with reason code`, and v1 stores `candidate`,
 `conflict_pending` and `rejected` rows. The closed lifecycle table has no such values. They are gate
-decisions, not artifacts, and have no channel. How v1 staging rows are migrated is an open question recorded in
-`MIGRATION_RISK.md` (`M1`, finding 2).
+decisions, not artifacts, and have no channel. How v1 staging rows are migrated is decided by `V2-D38` (`candidate`
+and `rejected` → `retired` with a reason code; `MIGRATION_RISK.md` D2).
+
+### 2.6 Episodes
+
+An `observed` episode is a fact: it is a record of what a declared source said, with provenance (section 9.1
+puts `observed` in `facts`). Episodes are never `asserted`, since nothing about them is adjudicated, and an `inferred`
+episode (a reconstructed event) is a hypothesis like any inference.
 
 ### 2.5 `procedures` is about eligibility; matching is retrieval
 
@@ -135,7 +152,7 @@ Membership decides *where*; these rules decide *what*. They are testable against
 | R3 | The bound is exactly: support count `k`, opportunity count `o`, `confidence_lower`, `coverage`, `method_id@version`, `verified_on`, `expires_at`. An item missing any of them is not renderable. | 7 |
 | R4 | A `hypotheses` item carries its support summary and uncertainty and a visible label: `unverified`, or `verified, needs re-verification` when stale. | `I1′`, 9.2 |
 | R5 | A `conflicts` item shows **both sides** with ids and states; it never merges them or picks one. | 9.1, Invariant 6 |
-| R6 | Provenance to a scope the caller cannot read is opaque: no content, and no more than the data `THREAT_MODEL.md` T-10 allows (open question: whether the scope path itself may be shown). | 9.3, `I17` |
+| R6 | Provenance to a scope the caller cannot read is opaque: a per-caller opaque handle with **no** content, scope path, scope kind or source type (**decided, `V2-D37`**; `scope.provenance.render_bundle`). | 9.3, `I17`, `V2-D37` |
 | R7 | Each channel has its own token budget; the result reports per-channel consumption (`coverage`) so a caller can see that `hypotheses` crowded out `facts`. A floor for `facts` is reserved before `hypotheses` is filled. | 9.3 |
 | R8 | The temporal predicate is a **filter**, never a score term. | 9.3, v1 |
 
@@ -168,26 +185,40 @@ def test_P6_every_abstraction_in_facts_renders_with_its_bound(corpus, q, b):
 @given(corpus(), query(), budgets())
 def test_P7_channel_budgets_and_coverage(corpus, q, b):      # each channel <= its cap; facts floor honoured
 @given(corpus(), query(), scope_selectors())
-def test_P8_provenance_to_unreadable_scope_is_opaque(corpus, q, sel):    # T-10
+def test_P8_provenance_to_unreadable_scope_is_opaque(corpus, q, sel):    # T-10, V2-D37
+    # no opaque reference contains a foreign scope path, scope id, source type or content
+    for item in all_items(assemble(corpus, q, sel)):
+        for ref in item.provenance:
+            assert ref.is_opaque or reader_can_read(sel, ref.scope)
 @given(corpus(), deletion())
 def test_P9_deleting_a_source_never_promotes_to_facts(corpus, d):         # monotone: facts only shrink
 ```
 
-## 5. Open items for the owner
+## 5. Proposals for the Project Owner (each a requested `V2-Dnn`)
 
-1. **2.2 (`contradicts` and Tier B)** is a security-relevant gap in the API contract as written; it needs a
-   decision before `E-017` and a mention in `API_V2.md`.
-2. **2.1 and 2.3** change what some artifacts render as; both need a `V2-Dnn` record.
-3. `ARCHITECTURE_V2.md` section 9.1 says `conflicts` contains "`asserted` artifacts with an open `contradicts`
-   association" while `facts` contains "`lifecycle ∈ {observed, asserted}` with valid provenance". Read
-   independently those overlap; the function above resolves the overlap in favour of `conflicts`. The
-   architecture text should say so.
+`MA-013` freezes when these are decided. None is in force today. Each says what changes for `E-017` if it is
+rejected.
+
+| ID | Proposal | Basis | If rejected |
+|---|---|---|---|
+| C-P1 | Creation and `contested → asserted` become **kind-conditioned** (`E-016` enforces it in the database): an abstraction is created only `inferred` and can never reach `asserted`/`observed`; an episode is never `asserted`; a procedure is never `observed` | Section 1.1 legality; `I1′`; #67 requires `inferred → asserted` to be unrepresentable, and `inferred → contested → asserted` reaches the same state | The four pairs must be routed; `abstraction/asserted` would then be a fact without a bound, contradicting `I14` |
+| C-P2 | A verified *inferred claim or procedure* stays in `hypotheses`; only an abstraction renders a verified result as a bounded fact (section 2.1) | 9.1, `I1′` | Verified inferred claims render as facts without a bound |
+| C-P3 | `stale` is the OR of five causes, including `now > expires_at` (section 2.3) | 9.2, section 7, `USER_MODEL.md` | Expired verified abstractions keep rendering in `facts` |
+| C-P4 | Only a `contradicts` edge between two grounded endpoints, created by the grounding policy or a user, opens a contradiction; Tier B `link(contradicts)` cannot demote a grounded fact (section 2.2). Needs a matching rule in `API_V2.md` | Tier B may not adjudicate (`API_V2.md` TB rules) | **Security gap:** any Tier B service can move any grounded fact out of `facts` |
+| C-P5 | `refuted` always retires the artifact (`inferred → retired`); `inferred ∧ refuted` is illegal (section 1) | 2.3 transition table | A sixth input combination must be routed |
+| C-P6 | `ARCHITECTURE_V2.md` 9.1 text: an asserted artifact with an open contradiction is in `conflicts`, not `facts` (the overlap in 9.1 resolved in favour of `conflicts`) | Invariant 6 | 9.1 stays ambiguous |
+
+Decided already and only cited here: opaque provenance (`V2-D37`, R6); staging rows (`V2-D38`, section 2.4).
+
+Answers to #56's open questions: Q1 inferred procedures → `hypotheses` (C-P2); Q2 verified inferred claims →
+`hypotheses` (C-P2); Q3 refuted → always `retired` (C-P5); Q4 observed episodes → `facts` (section 2.6);
+Q5 opaque provenance → `V2-D37` (R6).
 
 ## 6. Acceptance traceability (`MA-013`)
 
 | Criterion | Where |
 |---|---|
-| Membership is total: every legal tuple maps to exactly one channel | 1, 1.1, 1.2; `test_every_legal_tuple_belongs_to_exactly_one_channel` (60 cases) |
+| Membership is total: every legal tuple maps to exactly one output | 1, 1.1, 1.2; `test_every_legal_tuple_belongs_to_exactly_one_channel` (60 cases); consistency with `V2-D38`: `test_every_v1_backfill_output_is_a_legal_tuple`, `test_the_gap_with_the_kind_blind_transition_table_is_exactly_the_proposal` |
 | Contested content appears only in `conflicts` (consistent with Invariant 6) | 1, `test_contested_content_appears_only_in_conflicts` |
 | A bounded abstraction in `facts` carries its support statement as part of the rendered item | R2, R3; property P6 |
 | Deliverable: property-test sketch | 4 |

@@ -3,7 +3,8 @@
 Channel membership is a pure function of ``(kind, lifecycle, verification, stale, open_contradiction)``.
 This model enumerates every *legal* tuple and checks the contract exhaustively: each tuple belongs to
 exactly one of the four answer channels or to the audit-only set, and the forbidden memberships of
-``ARCHITECTURE_V2.md`` sections 2.2 and 9.1 never occur. ``E-017`` must implement the same function
+``ARCHITECTURE_V2.md`` sections 2.2 and 9.1 never occur. The fifth output, ``none``, means "rendered in no
+answer channel" (``retired``; still visible to ``audit_as_of``). ``E-017`` must implement the same function
 against the database; ``E-035`` fuzzes the assembled output.
 
 The five channel predicates below are written independently from the statements in section 9.1 so that
@@ -18,10 +19,12 @@ from typing import Literal
 
 import pytest
 
+from custom_memory_engine.model import axes
+
 Kind = Literal["episode", "claim", "procedure", "abstraction"]
 Lifecycle = Literal["observed", "asserted", "inferred", "contested", "retired"]
 Verification = Literal["none", "unverified", "verified", "refuted"]
-Channel = Literal["facts", "hypotheses", "procedures", "conflicts", "audit_only"]
+Channel = Literal["facts", "hypotheses", "procedures", "conflicts", "none"]
 
 KINDS: tuple[Kind, ...] = ("episode", "claim", "procedure", "abstraction")
 LIFECYCLES: tuple[Lifecycle, ...] = ("observed", "asserted", "inferred", "contested", "retired")
@@ -96,7 +99,7 @@ def in_conflicts(i: Item) -> bool:
     return i.lifecycle == "contested" or (i.lifecycle in GROUNDED and i.open_contradiction)
 
 
-def in_audit_only(i: Item) -> bool:
+def in_none(i: Item) -> bool:
     return i.lifecycle == "retired"
 
 
@@ -105,7 +108,7 @@ PREDICATES = {
     "hypotheses": in_hypotheses,
     "procedures": in_procedures,
     "conflicts": in_conflicts,
-    "audit_only": in_audit_only,
+    "none": in_none,
 }
 
 
@@ -114,7 +117,7 @@ def channel_of(item: Item) -> Channel:
     if not is_legal(item):
         raise ValueError("illegal_artifact_tuple")
     if item.lifecycle == "retired":
-        return "audit_only"
+        return "none"
     if item.lifecycle == "contested" or item.open_contradiction:
         return "conflicts"
     if item.lifecycle == "inferred":
@@ -181,7 +184,7 @@ def test_a_stale_verified_abstraction_is_demoted_to_hypotheses() -> None:
 def test_retired_content_is_in_no_answer_channel() -> None:
     retired = [i for i in ITEMS if i.lifecycle == "retired"]
     assert retired
-    assert all(channel_of(i) == "audit_only" for i in retired)
+    assert all(channel_of(i) == "none" for i in retired)
 
 
 def test_a_verified_inferred_claim_or_procedure_is_still_a_hypothesis() -> None:
@@ -215,5 +218,43 @@ def test_every_channel_is_reachable() -> None:
         "hypotheses",
         "procedures",
         "conflicts",
-        "audit_only",
+        "none",
     }
+
+
+# --- Consistency with the closed lifecycle table on main (V2-D38, ``model.axes``) -------------------------
+
+#: (kind, lifecycle) pairs that ``model.axes`` can reach today (its creation and transition rules are
+#: kind-blind) but that this contract declares illegal. ``CHANNELS.md`` section 1.1 proposes a ``V2-Dnn``
+#: making creation and ``contested -> asserted`` kind-conditioned, which ``E-016`` would enforce; until the
+#: Project Owner decides, the gap is pinned here so that neither side can drift silently.
+KIND_CONDITIONED_PROPOSAL: frozenset[tuple[str, str]] = frozenset(
+    {("abstraction", "asserted"), ("abstraction", "observed"), ("episode", "asserted"), ("procedure", "observed")}
+)
+
+
+def _reachable_through_axes() -> set[tuple[str, str]]:
+    created = {target for source, target in axes.TRANSITIONS if source is None}
+    seen, frontier = set(created), set(created)
+    while frontier:
+        frontier = {t for s, t in axes.TRANSITIONS if s in frontier} - seen
+        seen |= frontier
+    return {(kind, lifecycle) for kind in axes.KINDS for lifecycle in seen}
+
+
+def test_the_model_uses_exactly_the_axes_vocabulary() -> None:
+    assert set(KINDS) == set(axes.KINDS)
+    assert set(LIFECYCLES) == set(axes.LIFECYCLES)
+
+
+def test_every_v1_backfill_output_is_a_legal_tuple() -> None:
+    legal = {(k, lc) for k in KINDS for lc in LEGAL_LIFECYCLE[k]}
+    for status, layer, derived in product(axes.V1_STATUSES, axes.V1_LAYERS, (False, True)):
+        mapped = axes.map_v1_version(status, layer, derived)
+        assert (mapped.kind, mapped.lifecycle) in legal, (status, layer, derived)
+
+
+def test_the_gap_with_the_kind_blind_transition_table_is_exactly_the_proposal() -> None:
+    legal = {(k, lc) for k in KINDS for lc in LEGAL_LIFECYCLE[k]}
+    assert _reachable_through_axes() - legal == KIND_CONDITIONED_PROPOSAL
+    assert legal <= _reachable_through_axes()
