@@ -570,9 +570,11 @@ def load_split(split: str) -> SuiteDDataset:
         raise SuiteRunError("test_split_reserved_for_confirmatory_phase")
     dataset = generate_suite_d("dev")
     digest = hashlib.sha256((dataset.model_dump_json(indent=2) + "\n").encode()).hexdigest()
-    manifest = dict(
-        reversed(line.split()) for line in MANIFEST_PATH.read_text(encoding="utf-8").splitlines() if line.strip()
-    )
+    manifest: dict[str, str] = {}
+    for line in MANIFEST_PATH.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            manifest[parts[1]] = parts[0]
     if manifest.get("own_D_dev.json") != digest:
         raise SuiteRunError("suite_d_dev_does_not_match_frozen_manifest")
     return dataset
