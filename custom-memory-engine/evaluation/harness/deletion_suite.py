@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -80,15 +81,16 @@ from evaluation.baselines.embedding import OnnxBgeEmbedder
 from evaluation.harness.leak_scanner import log_sink_probe
 from evaluation.stats.clopper_pearson import cp_upper
 from research.benchmarks.own_D.generator import (
+    MANIFEST_PATH,
     DeletionEventSpec,
     DeletionProbe,
     DeletionScenario,
     SuiteDDataset,
+    generate_suite_d,
 )
 
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 SCHEMA_SQL = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema/001_full_schema.sql"
-DATA_DIR = Path(__file__).resolve().parents[2] / "research/benchmarks/own_D/data"
 TOKEN_BUDGET = 2000
 VECTOR_TOP_K = 10
 CP_TAIL = 0.025  # one-sided 97.5%, STATISTICS.md §4 and V2-D18/D19
@@ -559,9 +561,21 @@ class _LogCapture(logging.Handler):
 
 
 def load_split(split: str) -> SuiteDDataset:
+    """Regenerate the split deterministically and verify it against the frozen manifest.
+
+    The data directory is not committed (it is reproducible), so the runner never trusts
+    a local file: it regenerates and refuses any byte-level mismatch with ``MANIFEST.txt``.
+    """
     if split != "dev":
         raise SuiteRunError("test_split_reserved_for_confirmatory_phase")
-    return SuiteDDataset.model_validate_json((DATA_DIR / "own_D_dev.json").read_text(encoding="utf-8"))
+    dataset = generate_suite_d("dev")
+    digest = hashlib.sha256((dataset.model_dump_json(indent=2) + "\n").encode()).hexdigest()
+    manifest = dict(
+        reversed(line.split()) for line in MANIFEST_PATH.read_text(encoding="utf-8").splitlines() if line.strip()
+    )
+    if manifest.get("own_D_dev.json") != digest:
+        raise SuiteRunError("suite_d_dev_does_not_match_frozen_manifest")
+    return dataset
 
 
 async def run_suite(
