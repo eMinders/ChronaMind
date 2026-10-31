@@ -1,3 +1,5 @@
+> **Direction notice (2026-10-31).** This 24-week `P0`–`P13` calendar is **superseded for post-v1.0.0 work** by [`V2/ROADMAP_V2.md`](V2/ROADMAP_V2.md) (waves `W0`–`W8`, each closed by a falsifiable gate), approved as the canonical implementation plan on 2026-10-31 ([`V2/APPROVAL.md`](V2/APPROVAL.md)). The V2 plan has no fixed calendar; effort is given in `S`/`M`/`L` units. The table below is retained as the v1 plan of record and is not rewritten. Still in force from v1: the risk register, testing matrix, reproducibility rules and Definition of Done in [`../PROJECT_ROADMAP.md`](../PROJECT_ROADMAP.md) §§F–I.
+
 # 24-Week Execution Schedule (`research-lab/`)
 
 **Scope:** Maps Phases `P0`–`P13` (`RL-001`–`RL-132`) onto a 24-week (two-semester) academic calendar with explicit review gates (`J4`–`J9`) and schedule slack.

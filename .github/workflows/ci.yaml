@@ -1,19 +1,36 @@
 name: CI
 
+# Root application (app/, evals/) lint, format and type check. Runs on every PR and on main:
+# root `ruff check .` also covers custom-memory-engine/, so a path filter here would be unsafe.
+
 on:
   pull_request:
   push:
-    branches: [master]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0 (Node 24)
         with:
+          version: "0.13.5"
           python-version: "3.13"
-      - run: uv sync --all-extras --all-groups
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyright
+      - name: uv sync --locked
+        run: uv sync --locked --all-extras --all-groups
+      - name: ruff check
+        run: uv run --no-sync ruff check .
+      - name: ruff format --check
+        run: uv run --no-sync ruff format --check .
+      - name: pyright
+        run: uv run --no-sync pyright
