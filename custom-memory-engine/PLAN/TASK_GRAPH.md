@@ -1,3 +1,5 @@
+> **Direction notice (2026-10-31).** The `RL-001`–`RL-132` task graph is **superseded for post-v1.0.0 planning** by [`V2/ROADMAP_V2.md`](V2/ROADMAP_V2.md) (waves `W0`–`W8`), approved as the canonical implementation plan on 2026-10-31 ([`V2/APPROVAL.md`](V2/APPROVAL.md)). No new work is scheduled from this file. What still binds: the task definitions below as the **historical v1 record** that the evidence-status audit `E-001` classifies; for the measured status of each `RL-*` task see [`V2/STATUS_AUDIT.md`](V2/STATUS_AUDIT.md), not the status column here. Nothing below is rewritten.
+
 # Task Graph (`RL-001` – `RL-132`)
 
 **Single Source of Truth for Task Definitions:** Every Research Lab task (`RL-001`–`RL-132`) across Phases `P0`–`P13` is specified below.  
