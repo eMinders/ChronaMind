@@ -58,6 +58,7 @@ jobs:
           python3 validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md
           diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
           uv run --no-sync python scripts/check_statistics.py
+          uv run --no-sync python scripts/check_test_split_gate.py
 
   default-install:
     runs-on: ubuntu-24.04
