@@ -20,6 +20,8 @@ from psycopg.errors import InsufficientPrivilege
 from psycopg.pq import TransactionStatus
 
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
+from custom_memory_engine.engine.deletion import delete_memory
+from custom_memory_engine.engine.ingest import TurnInput, apply_candidate, persist_turn
 from custom_memory_engine.engine.predicates import current_state, fetch_versions
 from custom_memory_engine.engine.retrieval import rank_versions
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, commit_initial_version
@@ -27,11 +29,13 @@ from custom_memory_engine.security import (
     USER_TABLES,
     RlsProvisioningError,
     TenantScopeError,
+    privilege_violations,
     provision_runtime_role,
     tenant_scope,
     verify_forced_rls,
     verify_runtime_role,
 )
+from evaluation.stats.clopper_pearson import cp_upper
 from research.benchmarks.own_I.generator import generate_suite_i
 
 pytestmark = pytest.mark.integration
@@ -325,7 +329,9 @@ async def test_suite_i_dev_probes_report_zero_cross_user_exposure_under_the_rest
         rejections = 0
         own_visible = 0
         probes = 0
+        exposed_scenarios = 0
         for scenario in dataset.scenarios:
+            before = exposures
             for probe in scenario.probes:
                 probes += 1
                 requested = probe.requested_scope_user_id
@@ -365,7 +371,15 @@ async def test_suite_i_dev_probes_report_zero_cross_user_exposure_under_the_rest
                                 (f"%{probe.expected_own_canary}%",),
                             )
                             own_visible += (await cursor.fetchone() or (0,))[0]
-        print(f"Suite I dev: probes={probes} cross_user_exposures={exposures} scope_rejections={rejections}")
+            exposed_scenarios += int(exposures > before)
+        scenarios = len(dataset.scenarios)
+        bound = cp_upper(exposed_scenarios, scenarios)  # one-sided 97.5% (STATISTICS.md §4)
+        print(
+            f"Suite I dev: probes={probes} cross_user_exposures={exposures} scope_rejections={rejections} "
+            f"exposed_scenarios={exposed_scenarios}/{scenarios} cp_upper_97_5={bound:.6f}"
+        )
+        assert exposed_scenarios == 0
+        assert abs(bound - (1 - 0.025 ** (1 / scenarios))) < 1e-9
         assert probes == dataset.total_probes
         assert exposures == 0
         assert rejections > 0, "the suite includes scope-mismatch probes that must be rejected"
@@ -379,3 +393,74 @@ async def test_suite_i_dev_probes_report_zero_cross_user_exposure_under_the_rest
                 "SELECT count(*) FROM memory_version WHERE content LIKE %s", (f"%{sample.user_b_canary}%",)
             )
             assert (await cursor.fetchone() or (0,))[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_privilege_catalog_assertion_is_exact_and_detects_extra_or_missing_grants(
+    database: tuple[DatabaseConfig, str, str],
+) -> None:
+    """#47 acceptance: no privileges beyond §3.1 — asserted from the catalog, both directions."""
+    _, schema, role = database
+    async with connect(database) as conn:
+        assert await privilege_violations(conn, schema, role) == []
+        await conn.execute(sql.SQL("GRANT TRUNCATE ON memory_version TO {}").format(sql.Identifier(role)))
+        await conn.execute(sql.SQL("REVOKE DELETE ON job FROM {}").format(sql.Identifier(role)))
+        await conn.execute(
+            sql.SQL("GRANT CREATE ON SCHEMA {} TO {}").format(sql.Identifier(schema), sql.Identifier(role))
+        )
+        found = await privilege_violations(conn, schema, role)
+    assert "extra_truncate_on_memory_version" in found
+    assert "missing_delete_on_job" in found
+    assert "extra_create_on_engine_schema" in found
+
+
+@pytest.mark.asyncio
+async def test_deletion_runs_under_the_restricted_role_and_cannot_cross_tenants(
+    database: tuple[DatabaseConfig, str, str],
+) -> None:
+    """The real write and delete paths, including the gate's memory_conflict update, run as the role."""
+    _, schema, role = database
+    async with connect(database) as conn:
+        await conn.execute(
+            "INSERT INTO predicate_schema VALUES ('badge', 'single', 'semantic') ON CONFLICT DO NOTHING"
+        )
+        await seed_user(conn, schema, "u2", "u2 private BADGE-U2-SECRET")
+        await conn.execute("SELECT set_config('app.user_id', '', false)")
+        for index, text in enumerate(["my badge is AAA111", "my badge is now BBB222"]):
+            moment = MAR10.replace(hour=index + 1)
+            async with tenant_scope(conn, "u1", role=role):
+                await persist_turn(
+                    conn,
+                    TurnInput(f"t{index}", "u1", "s-u1", index + 1, "user", text, moment),
+                    schema_name=schema,
+                    create_user=True,
+                )
+                await apply_candidate(
+                    conn,
+                    CandidateVersionInput(
+                        version_id=f"u1-v{index}",
+                        memory_key="badge",
+                        user_id="u1",
+                        subject_key="user",
+                        predicate_key="badge",
+                        content=text,
+                        valid_from=moment,
+                        evidence=(EvidenceInput(turn_id=f"t{index}", evidence_span=text, evidence_role="user"),),
+                    ),
+                    evidence_turns=(("user", text),),
+                    schema_name=schema,
+                    replay_time=moment,
+                )
+        async with tenant_scope(conn, "u1", role=role):
+            receipt = await delete_memory(
+                conn, "u1", scope="memory", target_ref="badge", schema_name=schema, replay_time=NOW
+            )
+        assert receipt.deleted_versions == 3
+        with pytest.raises(InsufficientPrivilege):
+            async with tenant_scope(conn, "u1", role=role):
+                await delete_memory(conn, "u2", scope="all", schema_name=schema, replay_time=NOW)
+        async with tenant_scope(conn, "u1", role=role):
+            cursor = await conn.execute("SELECT count(*) FROM memory_version")
+            assert (await cursor.fetchone() or (1,))[0] == 0  # u1 has nothing left, u2 is invisible
+        cursor = await conn.execute("SELECT count(*) FROM memory_version WHERE user_id = 'u2'")
+        assert (await cursor.fetchone() or (0,))[0] == 1  # superuser control: u2 untouched
