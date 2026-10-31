@@ -88,7 +88,7 @@ mechanical guarantee that the plan stays consistent as it is edited.
 | `E-011` | M2 + M9: `scope` hierarchy, trailing-separator path, RLS on `path_with_prefix`, `user_id` generated column | Must keep suite `I` green; `MA-011`'s test is the acceptance | L |
 | `E-012` | M3: `event_range` rename, `observed_at`, `event_basis` (**single transaction**: drop → rename → recreate constraint → replay `bitemporal_checks.sql`) | Highest-risk migration; see `MIGRATION_RISK.md` | M |
 | `E-013` | M4: generalised `SOURCE (type, ref, span, content_hash)`; `type='external'` allowed | Backfill `('turn', …)` | M |
-| `E-014` | M6: `ASSOCIATION`, `ENTITY` (principal-scoped), `INFERENCE_METHOD`, `ABSTRACTION_STATS`, `VERIFICATION`, `NEGATIVE_CONSTRAINT` | Association has no deletion cascade | L |
+| `E-014` | M6: `ASSOCIATION`, `ENTITY` (principal-scoped), `METHOD`, `ABSTRACTION_STATS`, `VERIFICATION`, `NEGATIVE_CONSTRAINT` | Association has no deletion cascade | L |
 | `E-015` | **Admission policy split**: `ground()` (v1 gate generalised over source types) and `assess_soundness()` (the ledger + CP-bound rule from `STATISTICS.md` §4.2) | Pure functions first, DB effects after — mirrors v1's `gate.evaluate` / `record_decision` split | L |
 | `E-016` | **Lifecycle state machine** with the closed transition table; illegal transitions raise | No silent coercion | M |
 | `E-017` | **Channel assembly** per `CHANNELS.md`: four channels, bounded-abstraction rendering, hypothesis channel | `MA-013` is the spec | M |
@@ -141,7 +141,13 @@ domains and record why tool-grounded memory needs a different substrate.
 attempt; `E-037`'s chain-longer-than-any-bound test is green; the extended suite `D`
 reports zero leaks on 11 channels with a scenario-level CP bound ≤ `u*`; a
 positive control leaks **through an abstraction** (or the probes are judged insensitive).
-Retrieval P95 at v1 scale within 2× of the 27 ms baseline, or the regression is documented.
+Retrieval **P95** at v1 scale within 2× of the **27 ms dense-channel P50** reference, or the
+regression is documented. The reference figure is the P50, not a P95: in the frozen
+evidence (`reports/benchmarks/retrieval_2000.json`, 2,000 candidates) the dense P50 is
+`26.99 ms` and the dense P95 is `29.41 ms` (fused P95 `29.84 ms`). Anchoring on the
+smaller figure is the stricter reading (54 ms vs 59 ms) and is kept deliberately; see
+`audits/PLAN_CORRECTION_REGISTER.md` (A5) and `E-002` (#51), which records the exact
+comparison basis before W3 measures anything.
 
 ---
 

@@ -65,7 +65,8 @@ so the least-validated content is the most speculative. For a conversational ass
 that is tolerable; for an engine whose differentiator is reflection it inverts the
 guarantee.
 
-**Consequences.** `INFERENCE_METHOD` registry becomes append-only and versioned, which
+**Consequences.** The `METHOD` registry (physical table; `INFERENCE_METHOD` was the
+first-draft name, retired in `ARCHITECTURE_V2.md` §2.1) becomes append-only and versioned, which
 is what makes cognition ablations replayable (same principle as `RL-032`'s extraction
 cache). Promotion from hypothesis to fact requires *new evidence* creating a new
 artifact plus a `corroborated_by` association — never a status flip.

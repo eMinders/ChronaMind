@@ -215,3 +215,92 @@ action of `E-003` (#77), or it can be a standalone docs PR. V2 approval is still
 | Issue footers #50–#80 | Updated from "Proposed … not yet committed" to the approved status, with a visible *Update (r4.2)* note |
 | Publication | `PLAN/V2/`, the direction notices and `scripts/check_statistics.py` committed to `main` (see the commit list in the r4.2 report) |
 | Roadmap execution | **None.** No W0/W0b/W1 task executed, no implementation PR opened, no roadmap engine change. The only code change was the PR #49 fix, within that PR's scope |
+
+---
+
+## 10. r5: issue readiness and specification audit
+
+**Scope:** specifications only — every open issue rewritten as a self-contained engineering
+specification. No engine code, test, schema or migration changed; no issue closed, retitled,
+relabelled or re-milestoned.
+
+| Item | Result |
+|---|---|
+| Issues rewritten | **33 of 33** (#46, #47, #50–#80). All needed change: previous bodies carried no requirements, no open questions and no verification steps, and several carried acceptance criteria that were wrong |
+| Implementation issues | Nine sections each: context, scope (in/out/preserved), requirements (mandatory vs recommended), open questions/blockers, dependencies, acceptance criteria, testing/verification, deliverables, definition of done |
+| Trackers (#72–#76, #79, #80) | Wave structure kept: objective, boundaries, tasks, entry and exit gate, gate verification, open decisions, risks. 64 tracked tasks in total (7+9+16+13+6+8+5) |
+| Conventions introduced | Items added during the audit tagged **[r5]**; reviewer decides whether a new item gates an in-flight PR or becomes a follow-up. Contradictions recorded as proposals, never fixed inside the approved documents |
+| In-flight work protected | PRs #87/#88 and claims on #55/#56/#57/#59 were live during the audit. Those bodies carry a banner listing exactly which requirements are new relative to the text each PR targeted |
+
+**Findings raised (not resolved) by r5:** the `LIKE` wildcard leak, missing ACL storage,
+provenance opacity, the Tier B five-call list, the `archived` retention value, the CP-bound
+application point, non-turn grounding, `V2-D13` gating, and the test-split gate. Each is
+carried as an open question in the affected issue and is consolidated in
+[`audits/OPEN_DECISIONS_AND_BLOCKERS.md`](audits/OPEN_DECISIONS_AND_BLOCKERS.md) by r6.
+
+---
+
+## 11. r6: plan corrections and final readiness audit (2026-11-01)
+
+**Scope:** planning artefacts only. Every finding from r5 was **independently re-derived**
+from the repository, the frozen evidence, or a live database; none was carried over on the
+authority of the earlier report. The approved V2 plan was treated as the governing baseline
+but not assumed correct.
+
+### 11.1 Corrections applied (controlled)
+
+Applied only where an approved normative statement already fixed the intended value or name,
+so each edit restores intent instead of choosing it.
+
+| # | Finding | Correction | Evidence |
+|---|---|---|---|
+| A1 | `STATISTICS.md` §4.2 printed `CP_upper(0,29) = 0.0981` — the one-sided **95%** figure under a one-sided **97.5%** heading | Corrected to **0.1194** (`confidence_lower = 0.8806`; verdict unchanged: still not admissible at τ=0.90). Dated note added | Computed three ways: `scipy beta.ppf`, binomial-tail search, and the repo's own `cp_upper` — all 0.119445. Every other row verified correct |
+| A2 | Nothing checked the document's numerical tables; the script printed the right value and never compared it | `scripts/check_statistics.py` now parses §4.2 and asserts every row and every admissibility verdict | Negative test: reverting the cell to `0.0981` fails with two named findings; restoring it exits 0 |
+| A4 | `METHOD` vs `INFERENCE_METHOD` after §2.1 declared one name | `M6` and `E-014` now say `METHOD`; the `V2-D07` line keeps the old name only as an explicit historical note | §2.1 is the authoritative statement |
+| A5 | G3 called the 27 ms reference a **P95**; it is the dense **P50** | Clause rewritten to name the reference a P50 and give the real figures (dense P95 29.41, fused P95 29.84). **The gate value and threshold are unchanged** — relabelling to 29.41 would have loosened it from ≈54 ms to ≈59 ms | `reports/benchmarks/retrieval_2000.json`, frozen |
+
+### 11.2 Findings withdrawn
+
+| # | Finding | Why withdrawn |
+|---|---|---|
+| A3 | `APPROVAL.md` breaches the no-personal-names rule | Not a violation. The rule is scoped to `research-lab/` files, and that directory does not exist here; the mechanical check scans only the three files passed on its command line. `elewashy` is a GitHub account handle, which `ASSIGNMENTS.md` explicitly uses. No change made |
+| C1 | 31 dependency cycles in the issue graph | An artefact of the r5 issue formatting: consumer lists sat inside `## Dependencies`. Bodies reformatted so consumers live in `## Consumed by`; the graph is now **acyclic**, verified by DFS and by a topological sort. No dependency added, removed or weakened |
+
+### 11.3 Left open, requiring Project Owner approval
+
+Nine blockers, none resolved by this audit: **B-01** `LIKE` wildcard tenant leak
+(*reproduced on PostgreSQL 16*), **B-02** missing ACL/membership storage, **B-03** provenance
+rendering vs `I17`, **B-04** `V2-D07`'s five calls vs §8.1's 23 operations, **B-05**
+`archived` as a retention value, **B-06** CP-bound application point, **B-07** non-turn
+grounding, **B-08** `V2-D13` absent from every gate and G0b unsatisfiable while `M5`/`M7` are
+unowned, **B-09** no test-split gate. Full alternatives, impact and deadlines:
+[`audits/OPEN_DECISIONS_AND_BLOCKERS.md`](audits/OPEN_DECISIONS_AND_BLOCKERS.md).
+
+### 11.4 Issue bodies changed
+
+Three, each removing a claim made false by 11.1: **#65** (A4 rewording), **#66** and **#74**
+(A1/A2 past tense). Sixteen further bodies were reformatted by 11.2/C1 with no semantic
+change. No issue was closed, retitled, relabelled, re-milestoned, or had a relationship
+altered. Reconciliation: [`audits/ISSUE_PLAN_RECONCILIATION.md`](audits/ISSUE_PLAN_RECONCILIATION.md).
+
+### 11.5 State at the end of r6
+
+| Check | Result |
+|---|---|
+| Frozen record | `md5sum -c validation/document_hashes.txt` → **5/5 OK** |
+| Mechanical checks | **ALL HARD CHECKS PASSED** |
+| CP bounds | `diff` against `validation/cp_bounds.output.txt` → **identical** |
+| Statistics | `scripts/check_statistics.py` → **exit 0**, all assertions pass |
+| Plan references | `check_plan_refs.py` on `PLAN/V2` → **0 findings**; also 0 when the new `audits/` files are included |
+| Issue states | **33 open / 33 closed**, unchanged |
+| Open PRs | **9**, all open and untouched (#82–#90) |
+| Roadmap implementation | **None started.** No engine, test, schema or migration change |
+
+**Deliverables:** [`audits/PLAN_CORRECTION_REGISTER.md`](audits/PLAN_CORRECTION_REGISTER.md),
+[`audits/OPEN_DECISIONS_AND_BLOCKERS.md`](audits/OPEN_DECISIONS_AND_BLOCKERS.md),
+[`audits/ISSUE_PLAN_RECONCILIATION.md`](audits/ISSUE_PLAN_RECONCILIATION.md),
+[`audits/FINAL_READINESS_AUDIT.md`](audits/FINAL_READINESS_AUDIT.md).
+
+**Verdict:** the plan is **more consistent but not yet unblocked**. W0 remains ready to start
+on authorisation; **W0b cannot be declared until B-01, B-02, B-03 and B-08 are decided**, and
+no roadmap work was begun or is authorised by this audit.

@@ -575,7 +575,7 @@ Additive, so the v1 regression suite keeps running.
 | M3 | `valid_range` → `event_range`; add `observed_at`, `event_basis`. **Apply as one transaction:** drop `no_bitemporal_overlap`, rename, recreate the exclusion constraint on `event_range`, replay `validation/bitemporal_checks.sql`. | yes (view) |
 | M4 | `memory_evidence.turn_id` → `SOURCE (type, ref, span, content_hash)`, permitting `type='external'`. Backfill `('turn', turn_id, span)`. | yes |
 | M5 | `predicate_schema` becomes **optional metadata**; `predicate_key` nullable. When absent, the conflict detector is the sole single-valued arbiter and its accuracy is logged. | yes |
-| M6 | Add `ASSOCIATION`, `ENTITY` (principal-scoped), `INFERENCE_METHOD`, `ABSTRACTION_STATS`, `VERIFICATION`, `NEGATIVE_CONSTRAINT` (sticky dissent). | new tables |
+| M6 | Add `ASSOCIATION`, `ENTITY` (principal-scoped), `METHOD`, `ABSTRACTION_STATS`, `VERIFICATION`, `NEGATIVE_CONSTRAINT` (sticky dissent). | new tables |
 | M7 | `archived` status retained as a *retention* value for compatibility; new code uses `retention` + `retired`. | yes |
 | M8 | Add `um_facet` nullable tag + index; backfill `NULL`. `claim`/`abstraction` retention forced to `durable` (`CHECK`), existing `working`-like rows unaffected because v1 had no such value. | yes |
 | M9 | `scope.path` `CHECK` for trailing separator + `path_with_prefix` generated column + `text_pattern_ops` index (fixes the `/u/4` vs `/u/42` leak). | yes |
