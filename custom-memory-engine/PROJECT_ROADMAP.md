@@ -1,3 +1,7 @@
+> **Direction notice (2026-10-31).** This phase plan (`P0`–`P13`) is **superseded for post-v1.0.0 work** (V2 approved as the canonical plan by the Project Owner on 2026-10-31; [`PLAN/V2/APPROVAL.md`](PLAN/V2/APPROVAL.md)) by [`PLAN/V2/ROADMAP_V2.md`](PLAN/V2/ROADMAP_V2.md) (waves `W0`–`W8`). The `P0`–`P13` table below is retained as the v1 execution record; the risk register (§F), testing matrix (§G), reproducibility rules (§H) and Definition of Done (§I) remain in force and are incorporated into the V2 plan. §A's status summary is stale relative to the repository — see `E-001` in [`PLAN/V2/ROADMAP_V2.md`](PLAN/V2/ROADMAP_V2.md).
+
+---
+
 # Project Roadmap — Bi-Temporal Memory Engine (`research-lab/`)
 
 **Authority:** Operationalizes [`Graduation_Project_Proposal.md`](Graduation_Project_Proposal.md) (V4) and [`TECHNICAL_SPECIFICATION.md`](TECHNICAL_SPECIFICATION.md).  

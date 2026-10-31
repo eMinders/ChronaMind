@@ -1,3 +1,7 @@
+> **Direction notice (2026-10-31).** The project direction has been revised and **approved** (Project Owner, 2026-10-31; [`PLAN/V2/APPROVAL.md`](PLAN/V2/APPROVAL.md)): ChronaMind is being rebuilt as a **general-purpose cognitive memory engine** with a strict substrate / cognition / application separation. The canonical implementation plan is [`PLAN/V2/`](PLAN/V2/README.md). Roadmap implementation will be authorised separately. Everything below remains accurate as the **v1 record** (specification, benchmarks, harness, engine, evaluands) and as the v1.0.0 substrate baseline; the phase plan in `PROJECT_ROADMAP.md` and `PLAN/` is superseded for post-v1 work. `Graduation_Project_Proposal.md` is unchanged and still governs the `H1`–`H4` protocol.
+
+---
+
 # Custom Memory Engine (`custom-memory-engine/`)
 
 Unified research specification, benchmark corpus, evaluation harness, and implementation workspace for **ChronaMind**: *A Bi-Temporal, Write-Governed, Lineage-Deletable Memory Engine for Long-Term Conversational Agents*.
