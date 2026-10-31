@@ -198,7 +198,8 @@ from a source in scope B. Deleting a seed in B must reconcile the dependent in A
 locks. If another transaction deletes in A while its closure reaches B, taking locks in discovery order
 (own scope first) deadlocks: T1 holds B and waits for A, T2 holds A and waits for B.
 
-**Proposed rule (`V2-Dnn`, open: needs the `I9` per-scope key decision):**
+**Rule (decided, `V2-D51`; implemented as `scope.locks`):** the key is the scope's owner namespace
+`/u/<user>/` in W1 (`MIGRATION_RISK.md` D10, v1-equivalent); a finer per-scope key would not change the rule.
 1. Compute the closure **without** scope locks (a read under the snapshot), and collect its scope set `S`.
 2. Acquire every lock in `S` in **one global order** (byte order of the scope path) before any write.
 3. Recompute the closure under the locks. If its scope set grew beyond `S`, roll back and retry with the
@@ -207,8 +208,13 @@ locks. If another transaction deletes in A while its closure reaches B, taking l
 4. A cycle of waits is then impossible: every transaction takes locks in the same total order. PostgreSQL's
    deadlock detector (`40P01`) remains the backstop; the retry must be explicit (tenacity), never silent.
 
-Falsification tests: `test_cross_scope_deletions_in_opposite_directions_do_not_deadlock` (two scopes A and B
-with `A:x ← B:s` and `B:y ← A:t`; delete `s` and `t` concurrently; both commit, `x` and `y` are reconciled) and
+Verified now on the lock model (`tests/test_scope_locks.py`, exhaustive over every interleaving):
+`test_opposite_closures_in_discovery_order_can_deadlock` and `test_discovery_order_deadlocks_for_some_three_way_cycle`
+reproduce the deadlock; `test_the_same_closures_in_global_order_cannot_deadlock` and
+`test_no_combination_of_closures_in_global_order_can_deadlock` show the rule removes it;
+`test_closure_growth_under_the_locks_requires_a_retry` covers step 3. Database tests owned by `E-037`:
+`test_cross_scope_deletions_in_opposite_directions_do_not_deadlock` (two scopes A and B with `A:x ← B:s` and
+`B:y ← A:t`; delete `s` and `t` concurrently; both commit, `x` and `y` are reconciled) and
 `test_closure_growth_under_lock_triggers_a_retry_not_a_partial_deletion`.
 
 **Threshold independence (#57 section 3.7).** The argument holds for every threshold `t ≥ 1`: Lemmas 1-3 and the
@@ -216,23 +222,15 @@ Theorem never use its value. The model checks `t ∈ {1, 2}` exhaustively and
 `test_support_exactly_at_threshold_is_rederived_and_one_below_is_retired` checks `t ∈ {1, 2, 3}`. The
 database tests must parameterise `τ` the same way, because `V2-D30` leaves its value open.
 
-## 7. Open questions for the owner
+## 7. Decisions (r9; formerly open questions)
 
-1. **Retired-by-deletion artifacts keep their content.** The `retire` branch keeps the row, and a retired
-   artifact "remains visible to `audit_as_of`" and "remains in the deletion closure" (section 2.3). An
-   abstraction retired because its support fell below threshold may still *contain* statements derived in
-   part from deleted material. If so, the storage channel and channel 9 (abstraction statements) of the
-   scanner will find them. Decide whether retire-by-deletion tombstones the content (keeping id, scope, type
-   and reason) or whether this is an accepted, documented exception to the deletion boundary.
-2. **Non-summary dependents with a surviving source** keep their stored text (section 4). Decide whether
-   `consolidation`/`corroboration` dependents must also be re-derived, or whether their text is declared
-   independent of any single source.
-3. **Lock order for cross-scope closures** (section 6.1): adopt the global-order rule as a `V2-Dnn` together
-   with the `I9` per-scope key.
-4. **Transitive re-derivation** (section 3): confirm the corrected rule (every dependent of a re-derived source
-   is regenerated). It is stricter and closes a deletion-boundary gap; its cost is more re-derivation work.
-5. **Wording.** Section 10 of the architecture should distinguish the classify order (sources first) from the
-   apply order (dependents first); the current "closure order (deepest first)" is correct only for the second.
+| # | Question | Decision | Record | Verified by |
+|---|---|---|---|---|
+| 1 | Do retired-by-deletion artifacts keep their content? | **No: tombstone.** Id, scope, kind, lifecycle `retired`, reason `source_deleted` and the audit row stay; content, statements, rendered bounds and vectors are removed in the deletion transaction. The deletion boundary (`I13`, scanner channels 1-11) outranks audit convenience; `audit_as_of` still shows that the artifact existed and why it was retired | `V2-D50` | `E-037` scanner suite (channels 9-11); model: `retired` has no content-bearing output |
+| 2 | Non-summary dependents with a surviving source | **Re-derived, whatever their derivation type.** No text is declared source-independent. A dependent that has no re-derivation builder is retired (and so tombstoned) | `V2-D50` | `E-037`; v1 behaviour (summary-only) recorded as superseded in section 4 |
+| 3 | Lock order for cross-scope closures | **Adopted** (section 6.1), key = owner namespace in W1 | `V2-D51` | `tests/test_scope_locks.py` |
+| 4 | Transitive re-derivation | **Adopted**: a dependent is `alive` only if every source is alive | `V2-D50` | `tests/test_deletion_order_model.py` (old rule 698 counterexamples, new 0) |
+| 5 | Wording of architecture section 10 | **Corrected**: classify sources-first, apply dependents-first | `V2-D50` | `ARCHITECTURE_V2.md` section 10 note |
 
 ## 8. Acceptance traceability (`MA-014`)
 

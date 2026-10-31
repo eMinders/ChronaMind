@@ -24,9 +24,8 @@ database (commands are in section 4). Everything else is analysis and is labelle
 
 ### 1.1 Decision register
 
-Every decision this review needs. Status **approved** means a recorded `V2-Dnn` exists on `main`; **proposed**
-means a new `V2-Dnn` is requested from the Project Owner and is not yet in force. Nothing here is applied by this
-document.
+Every decision this review needs. Status **approved** means a recorded `V2-Dnn` exists on `main`. Since r9 every
+row is approved (`V2-D49`, `V2-D45`); nothing here is applied by this document: each migration's task applies it.
 
 | # | Decision | Status | Record / proposal | Affects |
 |---|---|---|---|---|
@@ -35,13 +34,13 @@ document.
 | D3 | `archived` as a "retention value" (M7) | **approved** | `V2-D38` (`archived` → `retired` + `durable`); owner `E-010` per `V2-D43` | `E-010` |
 | D4 | `M5` optional `predicate_key` | **approved: deferred past W1** | `V2-D43` | — |
 | D5 | Prefix matching in `M9` policies | **approved** | `V2-D35` (`starts_with`, never `LIKE`); the policies enforce the ACL from `app.user_id` and `scope_grant`, not a selector GUC (`V2-D45`, `scope.access.rls_read_using`) | `E-011` |
-| D6 | `layer` is many-to-one onto `kind` (M1 finding 1) | **proposed** | Keep `layer` **stored and dual-written** until the last v1 reader is removed; it is the lossless discriminator for `semantic` vs `opinion` | `E-010` |
-| D7 | Backfilled `persona` rows (section 2.1) | **proposed** | `abstraction/inferred` per `V2-D38`, plus a zero ledger (`s = k = u = o = 0`, `verification_status = unverified`) created by `E-014`; `o = 0` is "insufficient evidence", so they can never be verified or rendered in `facts` | `E-010`, `E-014` |
-| D8 | `observed_at` backfill source (M3) | **proposed** | `lower(recorded_range)` for believed rows; the evidencing turn's `occurred_at` for rows with `recorded_range IS NULL` | `E-012` |
-| D9 | M3 rename in place vs drop-and-recreate | **proposed** | Rename in place (measured equivalent; 3.2 ms vs 48 s `ACCESS EXCLUSIVE` at 400k rows). This **changes #63's literal steps 1-3** and needs owner sign-off | `E-012` |
-| D10 | Exclusion-constraint key after M2: `user_id` or scope | **proposed** | Keep `user_id` in W1 (v1-equivalent for the conversational case); switch to the scope key only with the per-scope `I9` decision | `E-011`, `E-012` |
-| D11 | `user_id` as a **generated** column (M2, `ARCHITECTURE_V2.md` section 12) | **proposed: do not generate** | Measured (section 2, M2): a generated `user_id` supports every dependent but breaks every v1 `INSERT` that names `user_id`, which rules out a dual-write window. Keep `user_id` **stored** with `CHECK (scope_path = '/u/' \|\| user_id \|\| '/')` while the scope is personal. This amends section 12's wording | `E-011` |
-| D12 | Global `job.idempotency_key` uniqueness (oracle, `THREAT_MODEL.md` T-13) | **proposed** | Scope it by the `I9` key in `M2` | `E-011` |
+| D6 | `layer` is many-to-one onto `kind` (M1 finding 1) | **approved** (`V2-D49`) | Keep `layer` **stored and dual-written** until the last v1 reader is removed; it is the lossless discriminator for `semantic` vs `opinion` | `E-010` |
+| D7 | Backfilled `persona` rows (section 2.1) | **approved** (`V2-D49`) | `abstraction/inferred` per `V2-D38`, plus a zero ledger (`s = k = u = o = 0`, `verification_status = unverified`) created by `E-014`; `o = 0` is "insufficient evidence", so they can never be verified or rendered in `facts` | `E-010`, `E-014` |
+| D8 | `observed_at` backfill source (M3) | **approved** (`V2-D49`) | `COALESCE(lower(recorded_range), (SELECT min(t.occurred_at) FROM memory_evidence e JOIN turn t ON t.id = e.turn_id WHERE e.version_id = v.id), lower(valid_range))`: believed rows use belief start, unbelieved evidenced rows the earliest evidencing turn, and the rest (unadjudicated derived candidates, which map to `retired`) the event start, counted in the migration report. Total: `valid_range` is never empty or lower-infinite (`valid_wellformed`) | `E-012` |
+| D9 | M3 rename in place vs drop-and-recreate | **approved** (`V2-D49`) | Rename in place (measured equivalent; 3.2 ms vs 48 s `ACCESS EXCLUSIVE` at 400k rows). This **changes #63's literal steps 1-3** and needs owner sign-off | `E-012` |
+| D10 | Exclusion-constraint key after M2: `user_id` or scope | **approved** (`V2-D49`) | Keep `user_id` in W1 (v1-equivalent for the conversational case); switch to the scope key only with the per-scope `I9` decision | `E-011`, `E-012` |
+| D11 | `user_id` as a **generated** column (M2, `ARCHITECTURE_V2.md` section 12) | **approved: do not generate** (`V2-D49`) | Measured (section 2, M2): a generated `user_id` supports every dependent but breaks every v1 `INSERT` that names `user_id`, which rules out a dual-write window. Keep `user_id` **stored** with `CHECK (scope_path = '/u/' \|\| user_id \|\| '/')` while the scope is personal. This amends section 12's wording | `E-011` |
+| D12 | Global `job.idempotency_key` uniqueness (oracle, `THREAT_MODEL.md` T-13) | **approved** (`V2-D49`) | Scope it by the `I9` key in `M2`: `UNIQUE (user_id, idempotency_key)`. Measured in v1: `test_clock_queue_db.py` asserts that a key colliding with **another tenant's** key raises `JobIdentityConflict`, which is the oracle; `E-011` replaces that assertion as a recorded superseded v1 behaviour (Tier-A wall rule) | `E-011` |
 | D13 | `app_user.id` must be a valid scope user segment | **approved** (`V2-D45`) | v1 ids may contain `/` (`security.validate_user_id` allows it); `'/u/' \|\| id \|\| '/'` would then forge a path inside another tenant's subtree. M2 refuses to run if any id fails `scope.paths.user_scope`, and adds `CHECK` `app_user_id_is_scope_segment` so no such id can be created afterwards | `E-011` |
 
 ## 2. Per-migration review

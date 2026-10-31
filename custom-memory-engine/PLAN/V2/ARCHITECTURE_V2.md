@@ -545,6 +545,15 @@ for each dependent in closure order (deepest first):
     else:                              → retire(reason='source_deleted')
 ```
 
+> **r9 (`V2-D50`, `V2-D51`; `DELETION_ORDER.md`).** Two orders, not one: dependents are **classified**
+> sources-first (a dependent is judged after every one of its sources) and changes are **applied**
+> dependents-first ("deepest first" above is the apply order). A dependent is `alive` only if every source is
+> alive; a dependent of a *re-derived* source is itself re-derived (transitive). Every dependent that keeps a
+> surviving source is re-derived, whatever its derivation type; one that cannot be re-derived is retired.
+> **Retire-by-deletion tombstones the content**: id, scope, kind, reason and audit row stay, content,
+> statements, bounds and vectors are removed in the same transaction. Locks for a cross-scope closure are
+> taken in one global order (`scope.locks.lock_order`).
+
 The critical rule: **`verified` ∧ deleted-source is impossible after commit.** Either
 the abstraction is re-derived on surviving support (and flagged stale), or it is
 retired. A `verified=true, stale=false` abstraction whose source was deleted is a
@@ -604,7 +613,7 @@ Additive, so the v1 regression suite keeps running.
 | Step | Change | Reversible |
 |---|---|---|
 | M1 | `layer` → `kind` + `lifecycle` + `retention` with backfill: `episodic→episode/(observed)`, `semantic→claim/(asserted or inferred by derivation presence)`, `opinion→claim`, `persona→abstraction`. | yes (derived columns) |
-| M2 | `user_id` → `scope` hierarchy; backfill `path='/u/<user_id>/'` (trailing separator mandatory), `visibility='private'`. Keep `user_id` as a generated column for v1 compatibility. | yes |
+| M2 | `user_id` → `scope` hierarchy; backfill `path='/u/<user_id>/'` (trailing separator mandatory), `visibility='private'`. Keep `user_id` **stored**, with `CHECK (scope_path = '/u/' \|\| user_id \|\| '/')`, for v1 compatibility (r9 `V2-D49`: a generated column breaks every v1 `INSERT` naming it); `app_user.id` constrained to a valid user segment (`V2-D45`). | yes |
 | M3 | `valid_range` → `event_range`; add `observed_at`, `event_basis`. **Apply as one transaction:** drop `no_bitemporal_overlap`, rename, recreate the exclusion constraint on `event_range`, replay `validation/bitemporal_checks.sql`. | yes (view) |
 | M4 | `memory_evidence.turn_id` → `SOURCE (type, ref, span, content_hash)`, permitting `type='external'`. Backfill `('turn', turn_id, span)`. | yes |
 | M5 | `predicate_schema` becomes **optional metadata**; `predicate_key` nullable. When absent, the conflict detector is the sole single-valued arbiter and its accuracy is logged. **Deferred past W1 (`V2-D43`, r7)**; revisit with `E-021`. | yes |

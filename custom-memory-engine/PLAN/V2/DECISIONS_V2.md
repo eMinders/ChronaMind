@@ -743,3 +743,51 @@ function total without weakening `I1′`.
 the four illegal pairs; abstraction cannot be confirmed); `tests/test_channel_membership_model.py` (60 legal
 tuples, exactly one output each; reachable space = legal space; C-P4 and C-P3 tests); `tests/test_tier_permissions.py`.
 **Status:** decided; `MA-013` frozen. Database enforcement is `E-016`, assembly `E-017` (W1).
+
+### V2-D49 — Migration decisions D6-D12 approved (resolves #59 follow-ups)
+
+**Decision.** `MIGRATION_RISK.md` §1.1 D6-D12 as recommended: (D6) `layer` stays stored and dual-written until the
+last v1 reader is removed; (D7) backfilled `persona` rows are `abstraction/inferred` with a zero ledger, so they can
+never be verified or render as facts; (D8) `observed_at` = belief start, else earliest evidencing turn, else event
+start (total; the last case is counted); (D9) M3 renames in place (3.2 ms vs 48 s `ACCESS EXCLUSIVE` at 400k rows),
+amending #63's literal steps; (D10) the exclusion-constraint and `I9` key stays `user_id` (the owner namespace) in
+W1; (D11) `user_id` stays **stored** with a consistency `CHECK`, not generated, amending §12 M2; (D12) `job`
+idempotency uniqueness is scoped per user.
+**Rationale.** Each was measured or checked against v1: D11 because a generated column breaks all 23 v1 `INSERT`s
+that name `user_id`; D12 because v1's own test shows a cross-tenant key collision is observable (T-13); D8 because
+the earlier rule had no value for unbelieved, unevidenced rows. D10 keeps the conversational profile exactly
+v1-equivalent; the global lock order (`V2-D51`) already handles cross-namespace closures under this key.
+**Implementation.** `MIGRATION_RISK.md` §1.1 and M1-M3; `ARCHITECTURE_V2.md` §12 M2; `ROADMAP_V2.md` `E-011`.
+**Verification.** The r8 measurements recorded in `MIGRATION_RISK.md` §4 (PostgreSQL 16.15). **Status:** decided;
+applied by `E-010`-`E-012`.
+
+### V2-D50 — Deletion reconciliation rules (resolves #57 follow-ups; N-5)
+
+**Decision.** (1) **Transitive re-derivation:** a dependent is `alive` only if every source is alive; a dependent
+of a re-derived source is re-derived. (2) **Every** dependent that keeps a surviving source is re-derived, whatever
+its derivation type; one with no re-derivation builder is retired. (3) **Retire-by-deletion tombstones content:**
+id, scope, kind, `retired`, reason `source_deleted` and the audit row stay; content, statements, rendered bounds
+and vectors are removed in the same transaction. (4) Classification is sources-first, application
+dependents-first (architecture §10 wording corrected).
+**Rationale.** The earlier rule left 698 nodes `alive` with a deleted node in their closure in the exhaustive model,
+i.e. content derived from deleted material survived deletion. Keeping a retired artifact's text, or a
+non-summary dependent's text, would let the leak scanner's storage and abstraction channels find deleted
+material. The deletion boundary is a security property; audit keeps the fact and reason of retirement.
+**Implementation.** `DELETION_ORDER.md` §§2-3, 7; `ARCHITECTURE_V2.md` §10.
+**Verification.** `tests/test_deletion_order_model.py` (alive-with-changed-closure 698 → 0; sources-first 0
+violations; dependents of re-derived sources). **Status:** decided; `E-037` implements it in the database (v1's
+summary-only re-derivation and depth-3 cap are recorded there as superseded v1 behaviour).
+
+### V2-D51 — Global lock order for cross-scope closures; W1 serialisation key (resolves #57 follow-up; `I9` for W1)
+
+**Decision.** A transaction whose closure touches several scopes computes the closure, acquires the serialisation
+lock of every key in **one global order** (UTF-8 byte order of the key) before its first write, recomputes the
+closure under the locks, and retries with the larger set if it grew (bounded, tenacity; `40P01` is only the
+backstop). In W1 the `I9` key of a scope is its owner namespace `/u/<user>/`, which equals v1's per-user lock.
+**Rationale.** Grants (`V2-D36`) allow an inference in one namespace from a readable source in another, so
+cross-namespace closures exist from W1. Discovery-order locking deadlocks on opposite closures and on three-way
+cycles; a total order cannot form a cycle of waits.
+**Implementation.** `scope.locks` (`serialisation_key`, `lock_order`, `must_retry`); `DELETION_ORDER.md` §6.1.
+**Verification.** `tests/test_scope_locks.py`: an exhaustive interleaving model reproduces the deadlock under
+discovery order (two-way and three-way) and finds none under the global order for every combination of closures
+tested. **Status:** decided; primitive verified; `E-011`/`E-037` acquire the locks in the database.
