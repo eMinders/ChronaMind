@@ -1,0 +1,488 @@
+{
+  "_comment": "Input to scripts/audit_status.py (E-001). Paths are relative to custom-memory-engine/ unless prefixed with '../'. kind: code (files + tests), doc (decision/spec files), config (files verified only by remote CI), none (nothing exists yet). STATUS_AUDIT.md is generated from this file; do not edit it by hand.",
+  "tasks": {
+    "RL-001": {
+      "kind": "doc",
+      "files": [
+        "PLAN/ARCHITECTURE.md",
+        "PLAN/INDEPENDENCE_BOUNDARY.md"
+      ]
+    },
+    "RL-002": {
+      "kind": "code",
+      "files": [
+        "pyproject.toml",
+        "src/custom_memory_engine/__init__.py",
+        "evaluation/__init__.py"
+      ],
+      "tests": [
+        "tests/test_boundaries.py"
+      ]
+    },
+    "RL-003": {
+      "kind": "code",
+      "files": [
+        "pyproject.toml",
+        "uv.lock",
+        ".env.example"
+      ],
+      "tests": [
+        "tests/test_config.py"
+      ]
+    },
+    "RL-004": {
+      "kind": "code",
+      "files": [
+        "compose.yaml",
+        "src/custom_memory_engine/schema/init_extensions.sql"
+      ],
+      "tests": [
+        "tests/test_database_compatibility.py"
+      ]
+    },
+    "RL-005": {
+      "kind": "config",
+      "files": [
+        "../.github/workflows/custom-memory-engine.yaml"
+      ],
+      "tests": [],
+      "note": "verified only by a remote CI run; no local test"
+    },
+    "RL-006": {
+      "kind": "code",
+      "files": [
+        "tests/test_boundaries.py"
+      ],
+      "tests": [
+        "tests/test_boundaries.py"
+      ]
+    },
+    "RL-010": {
+      "kind": "doc",
+      "files": [
+        "decisions/RL-010-scope-and-models.md"
+      ]
+    },
+    "RL-011": {
+      "kind": "code",
+      "files": [
+        "evaluation/pilot_plan.md",
+        "src/custom_memory_engine/pilot_rules.py"
+      ],
+      "tests": [
+        "tests/test_pilot_rules.py"
+      ]
+    },
+    "RL-012": {
+      "kind": "doc",
+      "files": [
+        "decisions/RL-012-postgres-pgvector.md"
+      ]
+    },
+    "RL-013": {
+      "kind": "doc",
+      "files": [
+        "decisions/RL-013-engine-runtime.md"
+      ]
+    },
+    "RL-014": {
+      "kind": "doc",
+      "files": [
+        "decisions/RL-014-a2b-and-suite-d.md"
+      ]
+    },
+    "RL-015": {
+      "kind": "doc",
+      "files": [
+        "decisions/RL-015-ethics-h5.md"
+      ]
+    },
+    "RL-016": {
+      "kind": "code",
+      "files": [
+        "decisions/RL-016-paired-d23-d24-d26.md",
+        "src/custom_memory_engine/protocols.py"
+      ],
+      "tests": [
+        "tests/test_protocols.py"
+      ]
+    },
+    "RL-020": {
+      "kind": "code",
+      "files": [
+        "research/benchmarks/longmemeval/fetch.py",
+        "research/benchmarks/longmemeval/MANIFEST.txt"
+      ],
+      "tests": [
+        "research/benchmarks/longmemeval/tests/test_longmemeval_adapter.py",
+        "tests/test_benchmarks_public.py"
+      ],
+      "note": "benchmark corpora are gitignored downloads; failures here mean they are not present in this checkout, not a code defect"
+    },
+    "RL-021": {
+      "kind": "code",
+      "files": [
+        "research/benchmarks/locomo/fetch.py",
+        "research/benchmarks/locomo/MANIFEST.txt"
+      ],
+      "tests": [
+        "research/benchmarks/locomo/tests/test_locomo_adapter.py"
+      ],
+      "note": "benchmark corpora are gitignored downloads; failures here mean they are not present in this checkout, not a code defect"
+    },
+    "RL-022": {
+      "kind": "code",
+      "files": [
+        "research/benchmarks/own_G/generator.py",
+        "research/benchmarks/own_I/generator.py"
+      ],
+      "tests": [
+        "tests/test_own_suites.py"
+      ]
+    },
+    "RL-023": {
+      "kind": "code",
+      "files": [
+        "research/benchmarks/own_D/generator.py"
+      ],
+      "tests": [
+        "tests/test_own_suites.py"
+      ]
+    },
+    "RL-024": {
+      "kind": "code",
+      "files": [
+        "research/benchmarks/own_T/generator.py"
+      ],
+      "tests": [
+        "tests/test_own_suites.py"
+      ]
+    },
+    "RL-025": {
+      "kind": "code",
+      "files": [
+        "research/benchmarks/ADAPTERS.md",
+        "research/benchmarks/scoring.py"
+      ],
+      "tests": [
+        "research/benchmarks/tests/test_scoring.py",
+        "research/benchmarks/tests/test_sources.py"
+      ]
+    },
+    "RL-026": {
+      "kind": "code",
+      "files": [
+        "research/benchmarks/splits/freeze.py",
+        "research/benchmarks/splits/FREEZE_LIST.md"
+      ],
+      "tests": [
+        "research/benchmarks/tests/test_splits.py"
+      ],
+      "note": "benchmark corpora are gitignored downloads; failures here mean they are not present in this checkout, not a code defect"
+    },
+    "RL-030": {
+      "kind": "code",
+      "files": [
+        "evaluation/harness/runner.py",
+        "evaluation/harness/models.py"
+      ],
+      "tests": [
+        "evaluation/harness/tests/test_runner.py",
+        "evaluation/harness/tests/test_artifacts.py"
+      ]
+    },
+    "RL-031": {
+      "kind": "code",
+      "files": [
+        "evaluation/baselines/factory.py",
+        "evaluation/baselines/b2_dense.py"
+      ],
+      "tests": [
+        "evaluation/baselines/tests/test_raw_baselines.py",
+        "evaluation/baselines/tests/test_factory.py"
+      ]
+    },
+    "RL-032": {
+      "kind": "code",
+      "files": [
+        "evaluation/harness/replay_cache.py"
+      ],
+      "tests": [
+        "evaluation/harness/tests/test_replay_cache.py"
+      ]
+    },
+    "RL-033": {
+      "kind": "code",
+      "files": [
+        "evaluation/judge/deterministic.py",
+        "evaluation/judge/llm_judge.py",
+        "evaluation/judge/validation_report.md"
+      ],
+      "tests": [
+        "evaluation/judge/tests/test_deterministic.py",
+        "evaluation/judge/tests/test_llm_judge.py"
+      ]
+    },
+    "RL-034": {
+      "kind": "code",
+      "files": [
+        "evaluation/stats/bootstrap.py",
+        "evaluation/stats/permutation.py",
+        "evaluation/stats/multiplicity.py",
+        "evaluation/stats/clopper_pearson.py"
+      ],
+      "tests": [
+        "evaluation/stats/tests/test_bootstrap.py",
+        "evaluation/stats/tests/test_permutation.py",
+        "evaluation/stats/tests/test_clopper_pearson.py"
+      ]
+    },
+    "RL-040": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/schema/001_full_schema.sql"
+      ],
+      "tests": [
+        "tests/integration/test_full_schema.py"
+      ]
+    },
+    "RL-041": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/schema/migrate.py"
+      ],
+      "tests": [
+        "tests/integration/test_migrations.py"
+      ]
+    },
+    "RL-042": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/engine/transactions.py"
+      ],
+      "tests": [
+        "tests/test_transactions.py",
+        "tests/integration/test_transactions_db.py"
+      ]
+    },
+    "RL-043": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/engine/predicates.py"
+      ],
+      "tests": [
+        "tests/test_predicates.py",
+        "tests/integration/test_predicates_db.py"
+      ]
+    },
+    "RL-044": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/clock/__init__.py",
+        "src/custom_memory_engine/queue/worker.py"
+      ],
+      "tests": [
+        "tests/test_clock.py",
+        "tests/test_queue.py",
+        "tests/integration/test_clock_queue_db.py"
+      ]
+    },
+    "RL-050": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/engine/retrieval.py"
+      ],
+      "tests": [
+        "tests/test_retrieval_render.py"
+      ]
+    },
+    "RL-051": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/engine/render.py"
+      ],
+      "tests": [
+        "tests/test_retrieval_render.py"
+      ],
+      "note": "mode classification lives in the caller/predicate, not a query_analyzer.py"
+    },
+    "RL-060": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/engine/gate.py"
+      ],
+      "tests": [
+        "tests/test_gate.py"
+      ]
+    },
+    "RL-061": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/consolidation/consolidator.py"
+      ],
+      "tests": [
+        "tests/test_consolidation.py"
+      ]
+    },
+    "RL-070": {
+      "kind": "code",
+      "files": [
+        "src/custom_memory_engine/engine/deletion.py",
+        "src/custom_memory_engine/deletion/closure.py",
+        "src/custom_memory_engine/deletion/scanner.py"
+      ],
+      "tests": [
+        "tests/test_deletion_modules.py",
+        "tests/integration/test_retrieval_deletion_db.py"
+      ],
+      "note": "harness-side leak_scanner.py named by the issue does not exist"
+    },
+    "RL-071": {
+      "kind": "none",
+      "files": [
+        "src/custom_memory_engine/security/rls.sql",
+        "src/custom_memory_engine/security/scoping.py"
+      ],
+      "note": "RLS policies exist in 001_full_schema.sql but there is no restricted role, grants or scoping guard"
+    },
+    "RL-072": {
+      "kind": "none",
+      "files": [
+        "src/custom_memory_engine/security/audit_guard.py"
+      ]
+    },
+    "RL-080": {
+      "kind": "none",
+      "files": [
+        "src/custom_memory_engine/optional/retention_ranking.py"
+      ]
+    },
+    "RL-081": {
+      "kind": "none",
+      "files": [
+        "src/custom_memory_engine/optional/persona.py"
+      ]
+    },
+    "RL-082": {
+      "kind": "none",
+      "files": [
+        "src/custom_memory_engine/optional/bm25.py"
+      ]
+    },
+    "RL-083": {
+      "kind": "none",
+      "files": [
+        "src/custom_memory_engine/optional/redis_queue.py"
+      ]
+    },
+    "RL-090": {
+      "kind": "none",
+      "files": [
+        "tests/integration/archival/test_t1_to_t5.py"
+      ],
+      "note": "T1-T4 exist inline in tests/integration/test_transactions_db.py; T5 and the extracted harness do not"
+    },
+    "RL-091": {
+      "kind": "none",
+      "files": [
+        "tests/integration/invariants/test_invariants_1_to_9.py"
+      ]
+    },
+    "RL-092": {
+      "kind": "none",
+      "files": [
+        "tests/integration/test_clock_and_queue.py"
+      ],
+      "note": "partial coverage in test_clock_queue_db.py and test_queue_regressions_db.py"
+    },
+    "RL-093": {
+      "kind": "none",
+      "files": [
+        "tests/integration/test_concurrency_and_hnsw.py"
+      ],
+      "note": "scripts/bench_retrieval.py is single-connection and is not this study"
+    },
+    "RL-094": {
+      "kind": "none",
+      "files": [
+        "tests/integration/report.md"
+      ]
+    },
+    "RL-100": {
+      "kind": "none",
+      "files": [
+        "evaluation/runs/pilot/FREEZE_LIST.md"
+      ]
+    },
+    "RL-101": {
+      "kind": "none",
+      "files": []
+    },
+    "RL-102": {
+      "kind": "none",
+      "files": []
+    },
+    "RL-103": {
+      "kind": "none",
+      "files": []
+    },
+    "RL-104": {
+      "kind": "none",
+      "files": [
+        "evaluation/judge/human_audit_kappa.md"
+      ]
+    },
+    "RL-105": {
+      "kind": "none",
+      "files": []
+    },
+    "RL-110": {
+      "kind": "none",
+      "files": [
+        "reports/analysis/confirmatory_results.md"
+      ]
+    },
+    "RL-111": {
+      "kind": "none",
+      "files": [
+        "reports/analysis/efficiency_and_cost.md"
+      ]
+    },
+    "RL-120": {
+      "kind": "none",
+      "files": [
+        "application/api"
+      ]
+    },
+    "RL-121": {
+      "kind": "none",
+      "files": [
+        "application/web"
+      ]
+    },
+    "RL-122": {
+      "kind": "none",
+      "files": [
+        "reports/analysis/usability_h5.md"
+      ]
+    },
+    "RL-130": {
+      "kind": "none",
+      "files": [
+        "reports/thesis"
+      ]
+    },
+    "RL-131": {
+      "kind": "none",
+      "files": [
+        "reports/reproducibility/reproduce_all.sh"
+      ]
+    },
+    "RL-132": {
+      "kind": "none",
+      "files": [
+        "research/benchmarks/RELEASE_MANIFEST.md"
+      ]
+    }
+  }
+}
