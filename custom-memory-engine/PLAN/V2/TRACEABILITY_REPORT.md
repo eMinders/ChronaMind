@@ -11,6 +11,9 @@ not, that no v1 work was lost, and that the backlog is executable in the intende
 
 ## 1. Coverage: every roadmap task accounted for
 
+> **r9 note (2026-11-01).** `E-039` (public API entry point, W1, issue #97) was added after this report, found
+> by `MA-017`'s coverage check (`V2-D52`); the roadmap now has 89 tasks. This report is otherwise kept as written.
+
 `ROADMAP_V2.md` contains **88 tasks** across 10 waves. Every one is mapped below.
 Counts were extracted mechanically from the roadmap's task tables, not counted by hand.
 Per-wave sum: 4 + 9 + 11 + 7 + 9 + **16** + 13 + 6 + 8 + 5 = **88**. *(r4.1: `TRANSITION_AUDIT.md`

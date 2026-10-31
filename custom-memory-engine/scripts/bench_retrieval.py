@@ -16,6 +16,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
+from typing import LiteralString, cast
 from uuid import uuid4
 
 from psycopg import AsyncConnection, sql
@@ -116,7 +117,7 @@ async def main() -> int:
     try:
         await connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await connection.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await connection.execute(SCHEMA_SQL.read_text(encoding="utf-8"), prepare=False)
+        await connection.execute(cast(LiteralString, SCHEMA_SQL.read_text(encoding="utf-8")), prepare=False)
         reference = await seed(connection, args.rows, args.users)
         query_embedding = embedding(random.Random(7))
         await connection.execute("SELECT set_config('app.user_id', 'bench-0', false)")
@@ -173,6 +174,8 @@ async def main() -> int:
             "AND recorded_range @> now() AND valid_range @> now()"
         )
         plan = await cursor.fetchone()
+        if plan is None:
+            raise RuntimeError("explain_returned_no_plan")
         results["temporal_scan"] = plan[0][0]["Plan"]
         print(__import__("json").dumps(results, indent=2, default=str))
         return 0
