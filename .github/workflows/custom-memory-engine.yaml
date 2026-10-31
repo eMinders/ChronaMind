@@ -47,6 +47,7 @@ jobs:
           diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
           uv run --no-sync python scripts/check_statistics.py
           uv run --no-sync python scripts/check_test_split_gate.py
+          python3 scripts/check_plan_refs.py
 
   verify:
     runs-on: ubuntu-24.04
