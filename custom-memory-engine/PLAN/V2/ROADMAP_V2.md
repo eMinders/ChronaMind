@@ -50,6 +50,11 @@ No plan survives that. One machine-checkable answer first.
 **G0.** 100% classified; v1.0.0 tagged; every declared invariant has a passing test or an
 explicit `UNENFORCED` marker.
 
+> **r9 (2026-11-01): G0 met.** 100% classified (`STATUS_AUDIT.md`, checked in CI by
+> `audit_status.py --check`); `cme-v1.0.0` tags `490904d` (`BASELINE.md` §7.1); every declared
+> invariant has a passing test or an explicit `UNENFORCED`/`PLANNED` marker
+> (`INVARIANT_LEDGER.md`, `tests/test_invariants_declared_and_enforced.py`). #50, #51, #52, #77 closed.
+
 ---
 
 ## 3. W0b — Meta-architecture audit & ABI hardening *(new wave)*

@@ -634,3 +634,26 @@ marker: it weakens `I5` and is one-way, and no W1 task needs it. `predicate_sche
 mandatory. Revisit with the coding profile (`E-021`, W2). `M7` is owned by `E-010`
 (`V2-D38`). With `V2-D13` resolved, every review item has a recorded decision, so G0b is
 satisfiable once `MA-017`/`MA-018` run green on that basis.
+
+---
+
+## 6. Decisions taken under Project Owner authorization (r9, 2026-11-01)
+
+The Project Owner approved the decisions that r8 left open and authorized the maintainer to make the remaining
+pre-W1 decisions (`APPROVAL.md` Amendment 2). As in §5, each record names what it resolves, its implementation
+and its verification. **W1 is not started by any of them:** implementations here are specifications, pure
+contract modules and tests; database and runtime work stays with the named W1 task.
+
+### V2-D44 — v1 baseline: `cme-v1.0.0` at `490904d`; E-004 criterion 3 superseded (resolves #51, #52)
+
+**Decision.** The frozen substrate baseline is the annotated tag `cme-v1.0.0` on
+`490904d632518b86e0f52ced1f3266b895c3c36b`. The engine package version at the tag stays `0.1.0` (a tag cannot
+change an existing commit; the tag is a baseline, not a release). E-004's criterion "Invariants 7 and 8 are not
+`ENFORCED`" is superseded: #46/#47 closed those halves in r7, and the ledger reports the remaining halves.
+**Rationale.** `490904d` is the commit every `BASELINE.md` figure was measured at; r7's migrations become
+post-tag additive changes, which the additivity rule requires. `cme-` avoids implying a version of the whole
+monorepo.
+**Implementation.** `BASELINE.md` §7.1; `INVARIANT_LEDGER.md` (criterion note); tag on `origin`.
+**Verification.** `git rev-parse 'cme-v1.0.0^{commit}'`; `tests/test_invariants_declared_and_enforced.py`
+(`test_gaps_closed_in_r7_are_enforced_with_tests`, `test_known_v1_gaps_are_reported_not_silently_passed`).
+**Status:** decided and verified.
