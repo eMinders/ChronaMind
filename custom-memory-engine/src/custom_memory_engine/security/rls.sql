@@ -5,7 +5,7 @@
 -- the migration path on purpose (the runner is checksum-bound to a single version).
 --
 --   {{role}}    the restricted runtime role (NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT)
---   {{schema}}  the isolated cme_* schema holding the twelve tables
+--   {{schema}}  the isolated cme_* schema holding the engine tables (migrations 1 and 2)
 --
 -- Sections are split on the marker lines below.
 
@@ -17,7 +17,8 @@ GRANT USAGE ON SCHEMA {{schema}} TO {{role}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   {{schema}}.app_user, {{schema}}.session, {{schema}}.turn, {{schema}}.memory_version,
   {{schema}}.memory_evidence, {{schema}}.memory_derivation, {{schema}}.memory_embedding,
-  {{schema}}.memory_conflict, {{schema}}.audit_event, {{schema}}.deletion_request, {{schema}}.job
+  {{schema}}.memory_conflict, {{schema}}.audit_event, {{schema}}.deletion_request, {{schema}}.job,
+  {{schema}}.scope_grant
   TO {{role}};
 -- predicate_schema is shared catalog, not user data: read-only.
 GRANT SELECT ON {{schema}}.predicate_schema TO {{role}};

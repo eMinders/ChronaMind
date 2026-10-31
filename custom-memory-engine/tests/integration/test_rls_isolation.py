@@ -40,7 +40,8 @@ from research.benchmarks.own_I.generator import generate_suite_i
 
 pytestmark = pytest.mark.integration
 
-SCHEMA_SQL = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema/001_full_schema.sql"
+SCHEMA_DIR = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema"
+MIGRATION_FILES = ("001_full_schema.sql", "002_scope_grants.sql")
 MAR10 = datetime(2026, 3, 10, tzinfo=UTC)
 NOW = datetime(2026, 10, 1, tzinfo=UTC)
 MODEL = "BAAI/bge-small-en-v1.5"
@@ -65,7 +66,8 @@ async def database() -> AsyncIterator[tuple[DatabaseConfig, str, str]]:
     ) as conn:
         await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await conn.execute(cast(LiteralString, SCHEMA_SQL.read_text(encoding="utf-8")), prepare=False)
+        for filename in MIGRATION_FILES:
+            await conn.execute(cast(LiteralString, (SCHEMA_DIR / filename).read_text(encoding="utf-8")), prepare=False)
         await provision_runtime_role(conn, schema, role)
     try:
         yield config, schema, role
@@ -153,7 +155,7 @@ async def test_provisioned_role_is_restricted_and_every_user_table_forces_rls(
             rows = await cursor.fetchall()
     # Recorded for the PR evidence: one line per table, all true/true.
     print("FORCE ROW LEVEL SECURITY verification:", *[f"{n}={e and f}" for n, e, f in rows])
-    assert len(rows) == 11
+    assert len(rows) == 12
     assert all(enabled and forced for _, enabled, forced in rows)
 
 
@@ -186,6 +188,13 @@ async def test_same_user_reads_succeed_and_other_tenants_are_invisible(
     async with connect(database) as conn:
         await seed_user(conn, schema, "u1", "u1 keeps a green notebook")
         await seed_user(conn, schema, "u2", "u2 keeps a red notebook")
+        await seed_user(conn, schema, "u3", "u3 keeps a blue notebook")
+        # A grant between two *other* tenants: u1 must not even learn that it exists.
+        await conn.execute(
+            "INSERT INTO scope_grant (id, owner_user_id, principal_id, scope_path, granted_at) "
+            "VALUES ('g-u2-u3', 'u2', 'u3', '/u/u2/', %s)",
+            (MAR10,),
+        )
         async with tenant_scope(conn, "u1", role=role):
             observed: dict[str, int] = {}
             for table in USER_TABLES:
@@ -195,11 +204,14 @@ async def test_same_user_reads_succeed_and_other_tenants_are_invisible(
         # Control, from a connection that bypasses RLS: the restricted role saw exactly the caller's rows,
         # and for every table that holds both tenants' data it saw strictly fewer rows than exist.
         for table in USER_TABLES:
-            owner_column = "id" if table == "app_user" else "user_id"
+            if table == "scope_grant":
+                visible_to_u1 = sql.SQL("'u1' IN (owner_user_id, principal_id)")
+            else:
+                visible_to_u1 = sql.SQL("{} = 'u1'").format(sql.Identifier("id" if table == "app_user" else "user_id"))
             async with conn.cursor() as cursor:
                 await cursor.execute(
-                    sql.SQL("SELECT count(*) FILTER (WHERE {col} = 'u1'), count(*) FROM {tbl}").format(
-                        col=sql.Identifier(owner_column), tbl=sql.Identifier(table)
+                    sql.SQL("SELECT count(*) FILTER (WHERE {cond}), count(*) FROM {tbl}").format(
+                        cond=visible_to_u1, tbl=sql.Identifier(table)
                     )
                 )
                 own, total = await cursor.fetchone() or (-1, -1)

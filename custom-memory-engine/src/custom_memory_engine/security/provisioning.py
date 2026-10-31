@@ -29,6 +29,7 @@ USER_TABLES = (
     "audit_event",
     "deletion_request",
     "job",
+    "scope_grant",  # migration 2 (V2-D36)
 )
 
 
