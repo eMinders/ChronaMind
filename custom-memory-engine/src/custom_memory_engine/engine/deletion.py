@@ -115,6 +115,7 @@ async def delete_memory(
     audit = sql.Identifier(schema_name, "audit_event")
     requests = sql.Identifier(schema_name, "deletion_request")
     jobs = sql.Identifier(schema_name, "job")
+    conflicts = sql.Identifier(schema_name, "memory_conflict")
 
     async with connection.transaction():
         async with connection.cursor(row_factory=tuple_row) as cursor:
@@ -308,7 +309,22 @@ async def delete_memory(
                     (user_id, edge_cleanup, edge_cleanup),
                 )
 
-            # Physical deletes cascade evidence, embeddings, conflicts and generated FTS data.
+            # A gate decision names the version it was compared against in
+            # ``existing_version_id``, which has no ON DELETE action. Clear references
+            # to doomed versions first; otherwise deleting a belief that was ever
+            # superseded through the gate fails with a foreign-key violation (R6).
+            # Rows whose *candidate* is doomed are removed by the cascade below;
+            # surviving candidates keep their content-free decision record.
+            if purge:
+                await cursor.execute(
+                    sql.SQL(
+                        "UPDATE {c} SET existing_version_id = NULL "
+                        "WHERE user_id = %s AND existing_version_id = ANY(%s)"
+                    ).format(c=conflicts),
+                    (user_id, purge),
+                )
+
+            # Physical deletes cascade evidence, embeddings, candidate conflicts and generated FTS data.
             if purge:
                 await cursor.execute(
                     sql.SQL("DELETE FROM {v} WHERE user_id = %s AND id = ANY(%s)").format(v=versions),

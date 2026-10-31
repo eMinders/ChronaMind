@@ -215,7 +215,7 @@ admissible(abstraction) ⟺
 | `o` | `CP_upper(0, o)` at one-sided 97.5% | Admissible at `τ = 0.90`? | Rendered as |
 |---|---|---|---|
 | 8 | 0.3694 | **No** (`confidence_lower = 0.631`) | hypothesis only |
-| 29 | 0.0981 | no (marginal; fails at 97.5%) | hypothesis only |
+| 29 | 0.1194 | **No** (`confidence_lower = 0.881`; fails at 97.5%) | hypothesis only |
 | **36** | 0.0974 | **yes** (bound just under 0.10) | "≤ 9.7% failure rate at 97.5% confidence" |
 | 40 | 0.0881 | yes | "≤ 8.8% at 97.5%" |
 | 100 | 0.0362 | yes | "≤ 3.6% at 97.5%" |
@@ -224,6 +224,21 @@ The r2 draft quoted `≈ 0.32` for `o = 8`; that is the **one-sided 95%** value
 (`1 − 0.05^{1/8} = 0.3123`), not the system convention. The correct figure is
 **0.3694**. This is precisely the inconsistency §4.2 now eliminates, and it is why the
 document carries a checked numerical table instead of prose approximations.
+
+> **Correction (plan audit r6, 2026-10-31).** The `o = 29` row previously printed
+> `CP_upper(0, 29) = 0.0981`. That is the **one-sided 95%** value, in the same class of
+> error this section corrects for `o = 8`, and it contradicted both the column heading
+> ("at one-sided 97.5%") and its own verdict. The system-convention value is
+> **0.1194** (`1 − 0.025^{1/29}`), giving `confidence_lower = 0.8806`. The verdict is
+> unchanged — still not admissible at `τ = 0.90` — but the row was arithmetically wrong.
+> `scripts/check_statistics.py` now asserts every row of this table, so the class of
+> error cannot recur silently. Recorded in `audits/PLAN_CORRECTION_REGISTER.md` (A1).
+
+> **Application point (r7, `V2-D40`).** This rule gates the `inferred → inferred(verified)`
+> transition, together with held-out verification; it does not gate creation. A
+> non-admissible abstraction is stored as an unverified hypothesis (the "hypothesis only"
+> rows above). The engine implementation is `custom_memory_engine.soundness.admission`,
+> tested equal to `evaluation/stats/clopper_pearson.py` and `validation/cp_bounds.py`.
 
 That is exactly the `H4`/deletion-bound logic, reused. It is the single most important
 consistency win of the revision: **the project already had the right instrument for
