@@ -24,6 +24,7 @@ SCHEMA_SQL = Path(__file__).with_name("001_full_schema.sql")
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, "001_full_schema.sql"),
     (2, "002_scope_grants.sql"),
+    (3, "003_association_cap.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -50,6 +51,7 @@ FUNCTIONS = (
     "enforce_archival_invariant",
     "guard_derivation_coverage",
     "guard_scope_grant_update",
+    "enforce_association_cap",
 )
 logger = structlog.get_logger(__name__)
 

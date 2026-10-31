@@ -509,7 +509,8 @@ async def test_source_checksum_drift_refuses_apply_and_reset_without_destroying_
         "UPDATE _cme_schema_migrations SET filename='other.sql' WHERE version=2",
         "ALTER TABLE _cme_schema_migrations DROP CONSTRAINT _cme_schema_migrations_checksum_sha256_check; "
         "ALTER TABLE _cme_schema_migrations ALTER COLUMN checksum_sha256 TYPE text[] USING ARRAY[checksum_sha256]",
-        "ALTER TABLE _cme_schema_migrations ALTER COLUMN version TYPE boolean USING version = 1",
+        "DELETE FROM _cme_schema_migrations WHERE version > 1; "
+        "ALTER TABLE _cme_schema_migrations ALTER COLUMN version TYPE boolean USING true",
     ],
 )
 async def test_invalid_or_unknown_migration_history_cannot_be_blessed_or_reset(
@@ -723,9 +724,10 @@ async def test_a_version_one_schema_is_pending_and_apply_advances_it_in_order(
         await seed_user(conn)
         # Reconstruct the exact pre-migration-2 state: drop its objects and its history row,
         # and re-record the version-1 catalog fingerprint as the head of history.
+        await conn.execute("DROP FUNCTION enforce_association_cap()")
         await conn.execute("DROP TABLE scope_grant")
         await conn.execute("DROP FUNCTION guard_scope_grant_update()")
-        await conn.execute("DELETE FROM _cme_schema_migrations WHERE version = 2")
+        await conn.execute("DELETE FROM _cme_schema_migrations WHERE version > 1")
         catalog = await runner._catalog(conn)
         await conn.execute("UPDATE _cme_schema_migrations SET catalog_sha256 = %s WHERE version = 1", (catalog,))
     pending = await runner.status()
