@@ -4,6 +4,7 @@ Reproduces the reported cross-tenant leak against a live server, then proves the
 replacement predicate is exact. Requires CME_TEST_DATABASE_URL (integration mark).
 """
 
+import os
 from collections.abc import AsyncIterator
 
 import pytest
@@ -19,6 +20,8 @@ pytestmark = pytest.mark.integration
 
 @pytest_asyncio.fixture
 async def connection() -> AsyncIterator[AsyncConnection]:
+    if not os.environ.get("CME_TEST_DATABASE_URL"):
+        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database")
     config = DatabaseConfig.from_environment()
     async with await AsyncConnection.connect(config.database_url.get_secret_value(), row_factory=tuple_row) as conn:
         yield conn
