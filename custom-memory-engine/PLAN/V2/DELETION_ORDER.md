@@ -240,4 +240,4 @@ database tests must parameterise `τ` the same way, because `V2-D30` leaves its 
 | Proof sketch covers depth, cycles, diamonds and concurrent deletions | section 3 (Lemmas 1-3, Theorem; P1 for cycles), 5.1 (diamond), 6.1 (concurrency) |
 | Every item in #57 section 3 has a named falsification test with its scenario | sections 5 and 5.1: depth (F2, depth-9), cycles (F9), diamonds and shared sources, rebuild-then-edge (F4), staleness (depth-9), concurrency (F13, 6.1), threshold (F8, parameterised) |
 | Relationship to both depth constants explicit | section 6 |
-| Lock order stated or open decision recorded | section 6.1 (proposed rule; open with the `I9` key) |
+| Lock order stated or open decision recorded | section 6.1 (decided, `V2-D51`; `scope.locks`) |

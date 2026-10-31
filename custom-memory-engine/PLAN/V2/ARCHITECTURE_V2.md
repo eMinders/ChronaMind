@@ -254,7 +254,8 @@ data between users whose ids share a prefix. `CHECK (path LIKE '/%') AND
 Rules:
 
 1. **Write** lands in exactly one scope. Writes into a scope the caller cannot read are
-   rejected before the row is constructed.
+   rejected before the row is constructed. **r9 (`V2-D53`):** writes and deletions land only in the
+   caller's own namespace; a grant is read membership only.
 2. **Read authority is a declared set, not a prefix guess.** A request carries
    `read_scopes: list[ScopeSelector]` where each selector is one of
    `exact(path)`, `subtree(path)`, `with_visibility(path, {project, shared})`.

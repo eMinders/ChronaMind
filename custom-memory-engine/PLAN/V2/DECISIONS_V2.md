@@ -664,7 +664,7 @@ monorepo.
 (b) Grammar: as in `API_V2.md` §6 (`scope.paths`): no case folding or normalisation, anything outside it is a
 `validation_error`. (c) ACL storage is `scope_grant` (`V2-D36`, unchanged). New in r9: **`exact(path)`** is a
 selector mode; the **write rule** authorizes `(scope, visibility)` only if the caller could read the row back
-through `exact(scope)`; the **RLS layer enforces the caller's ACL** (own namespace; `project`/`shared` inside an
+through `exact(scope)` (**amended by `V2-D53`**: own namespace only; grants are read-only); the **RLS layer enforces the caller's ACL** (own namespace; `project`/`shared` inside an
 active grant), computed in PostgreSQL from `app.user_id` and `scope_grant`, and does **not** take the selector
 set, so §5.1's `app.read_scope_prefixes` GUC is dropped. The 16-selector cap stays an application resource error.
 RLS policies must qualify the row's columns with the table name. M2 requires every `app_user.id` to be a valid
@@ -808,3 +808,18 @@ would.
 **Verification.** `tests/test_plan_coverage.py`: a fake invariant, table, operation, migration and channel each
 fail naming the element; bad owners, unreasoned deferrals and stray rows fail; the matrix is current; `SYNC_LOG.md`
 is compared, not modified. **Status:** decided and verified.
+
+### V2-D53 — Grants are read-only: writes and deletions land only in the caller's own namespace (amends V2-D45; resolves `THREAT_MODEL.md` §3.1 row 4)
+
+**Decision.** `scope.access.authorize_write` authorizes a write into `(scope, visibility)` only inside
+`/u/<caller>/`. A grant never authorizes a write; since `delete` carries `scope_writable`, a grant never authorizes
+a deletion either. Deletion receipts and epochs are therefore per namespace and count only the owner's deletions.
+**Rationale.** `V2-D45`'s first wording ("the caller could read the row back") let a grantee write `project`/
+`shared` rows into the owner's namespace and, through `delete`, remove the owner's project data, contradicting
+`V2-D36` ("read membership"). Found while resolving T-22 row 4. Collaborative writing into a shared project, if
+ever wanted, needs its own grant role and decision; nothing in W1 requires it.
+**Implementation.** `scope.access.authorize_write`; `API_V2.md` §6; `ARCHITECTURE_V2.md` §5 rule 1;
+`THREAT_MODEL.md` §3.1 rows 3-4 and T-22.
+**Verification.** `tests/test_scope_isolation.py`: `test_a_grant_never_authorizes_a_write_into_the_owners_namespace`
+(fails on the `V2-D45` wording, which authorized it), `test_every_authorized_write_is_readable_back_by_its_writer`.
+**Status:** decided and verified (primitive; `E-011`/`E-039` enforce it at runtime).

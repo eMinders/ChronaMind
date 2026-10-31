@@ -321,8 +321,10 @@ returned only to a selector whose path equals the row's scope (visibility is jud
 **Limit.** 1 to 16 selectors. Zero or more than 16 is `resource_limit` (`read_prefix_limit_exceeded`), and nothing
 is returned; there is no truncation.
 
-**Write rule.** A write into `(scope, visibility)` is authorized only if the caller could read that row back
-through `exact(scope)`; otherwise `forbidden`, before any row is constructed (`scope.access.authorize_write`).
+**Write rule (`V2-D53`).** A write (and therefore a `delete`, whose condition is `scope_writable`) is authorized
+only inside the caller's own namespace `/u/<caller>/`; otherwise `forbidden`, before any row is constructed
+(`scope.access.authorize_write`). A grant confers **read** membership only (`V2-D36`): a grantee can neither write
+nor delete in the owner's namespace. Every authorized write is readable back by its writer (§5 rule 1).
 
 **Two independent layers.** The application computes the read set and filters with `read_predicate`. RLS
 enforces the ACL alone, from `app.user_id` and `scope_grant` (`rls_read_using`); it never reads a value the
