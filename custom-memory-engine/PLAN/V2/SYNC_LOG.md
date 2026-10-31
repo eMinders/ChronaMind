@@ -383,3 +383,12 @@ not start W1. Details: `audits/W1_INTEGRATION_PR_REVIEW_AND_CI_REFACTOR_REPORT.m
 | Gates | G0 met (tag `cme-v1.0.0` → `490904d`); G0b met (`ROADMAP_V2.md` §3 r9 note) |
 | Security fixes | RLS column capture; grantee write/delete (`V2-D53`); M2 path forgery (D13); Tier B fact demotion (C-P4); kind-blind lifecycle (C-P1); job-key oracle (D12) |
 | W1 | **Not started.** Source changes this round: `api/contract.py`, `model/axes.py`, `scope/access.py`, `scope/locks.py` only |
+
+**Final verification (r9).** Fresh clone of `main` at `5792116b5903a13051b946701217c3af90eb30e9` with a new
+disposable PostgreSQL 16 (pgvector 0.8.7) and FalkorDB 6.0.3: full CI scope **2,098 passed, 0 skipped**; default
+install without a database **1,848 passed, 234 skipped** (environment-gated). ruff, ruff format and pyright clean
+(including `scripts/`); bitemporal `ALL ASSERTIONS PASSED`; frozen records 5/5; mechanical checks, CP bounds,
+statistics and G-TS integrity pass; `check_plan_refs.py`, `audit_status.py --check`, `plan_coverage.py --check`
+0 findings; actionlint clean; `cme-v1.0.0^{}` = `490904d`. GitHub: every first-parent `main` commit of r9
+(`1f34d45`, `5a9520b`, `68408fb`, `cf938b2`, `9596516`, `a2b5f8f`, `5792116`) green in both workflows; no open
+PR; open issues are W1-W8 only. This note is a documentation-only commit on top of `5792116`.
