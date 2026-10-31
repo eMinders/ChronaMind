@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from re import fullmatch
+from uuid import uuid4
 
 from psycopg import AsyncConnection, pq, sql
 from psycopg.errors import DeadlockDetected, ExclusionViolation, InsufficientPrivilege, SerializationFailure
@@ -156,6 +157,63 @@ def _job_epoch_start(job: Job) -> int | None:
     return value
 
 
+async def _discard_stale_job(
+    connection: AsyncConnection,
+    table: sql.Identifier,
+    schema_name: str,
+    user_id: str,
+    job: Job,
+    stale: StaleDeletionEpoch,
+    state: AttemptState,
+    replay_time: datetime | None,
+) -> WorkerResult:
+    """Terminally discard work prepared before a committed deletion, inside the caller's transaction.
+
+    Stale input must never reach a handler, and it must not stay ``queued``: the
+    selector would pick it first forever and starve every later job for the user.
+    The job is dead-lettered without charging an attempt (its handler never ran),
+    and a content-free audit event records why. Re-prepared work needs a fresh job
+    identity, because the stale job keeps its idempotency key.
+    """
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL(
+                "UPDATE {} SET status='dead_letter' WHERE id=%s AND user_id=%s AND status='queued' RETURNING id"
+            ).format(table),
+            (job.id, user_id),
+        )
+        if await cursor.fetchone() != (job.id,):
+            raise QueueError("stale_job_discard_identity_changed")
+        await cursor.execute(
+            sql.SQL(
+                "INSERT INTO {} (id, user_id, memory_ref, event_type, event_at, details) "
+                "VALUES (%s, %s, %s, 'job_discarded_stale_deletion_epoch', "
+                "COALESCE(%s::timestamptz, pg_catalog.transaction_timestamp()), %s)"
+            ).format(sql.Identifier(schema_name, "audit_event")),
+            (
+                f"audit-{uuid4().hex}",
+                user_id,
+                uuid4().hex,
+                replay_time,
+                Jsonb(
+                    {
+                        "job_id": job.id,
+                        "kind": job.kind,
+                        "epoch_start": stale.epoch_start,
+                        "current_epoch": stale.current_epoch,
+                    }
+                ),
+            ),
+        )
+    return WorkerResult(
+        status="dead_letter",
+        job_id=job.id,
+        attempts=job.attempts,
+        transaction_attempts=state.transaction_attempts,
+        reason="stale_deletion_epoch",
+    )
+
+
 def _terminal(job: Job, state: AttemptState) -> WorkerResult:
     if job.status in ("done", "dead_letter"):
         return WorkerResult(
@@ -196,7 +254,13 @@ async def _attempt(
         state.attempts = max(state.attempts, job.attempts)
         epoch_start = _job_epoch_start(job)
         if epoch_start is not None:
-            await require_current_deletion_epoch(connection, user_id, epoch_start, schema_name=schema_name)
+            try:
+                await require_current_deletion_epoch(connection, user_id, epoch_start, schema_name=schema_name)
+            except StaleDeletionEpoch as stale:
+                # Returning inside the transaction commits the discard and the audit event.
+                return await _discard_stale_job(
+                    connection, table, schema_name, user_id, job, stale, state, replay_time
+                )
         if state.attempts >= MAX_ATTEMPTS:
             await connection.execute(
                 sql.SQL("UPDATE {} SET status='dead_letter',attempts=%s WHERE id=%s AND user_id=%s").format(table),
@@ -304,8 +368,6 @@ async def process_one(
             state.transaction_attempts = attempt.retry_state.attempt_number
             with attempt:
                 return await _attempt(connection, user_id, handler, table, schema_name, replay_time, state)
-    except StaleDeletionEpoch:
-        raise
     except Exception as error:
         if state.selected is None:
             raise  # Unselected/precondition failures cannot consume a job.

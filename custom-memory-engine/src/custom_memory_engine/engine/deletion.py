@@ -315,18 +315,10 @@ async def delete_memory(
                     (user_id, purge),
                 )
 
-            for version_id, sources in surviving.items():
-                if version_id in summary_rebuilds:
-                    continue
-                for source in sources:
-                    await cursor.execute(
-                        sql.SQL(
-                            "INSERT INTO {d} (derived_version_id, source_version_id, user_id, derivation_type) "
-                            "VALUES (%s, %s, %s, 're_derivation')"
-                        ).format(d=derivations),
-                        (version_id, source, user_id),
-                    )
-
+        # Rebuild summaries before restoring other survivors' edges: a rebuild recreates the
+        # summary row and drops every edge that touches it, including edges *from* it to
+        # memories derived from it. Restoring those edges afterwards keeps that lineage, so
+        # a later deletion of the summary's remaining sources still reaches them.
         for version_id in sorted(summary_rebuilds, key=lambda item: (depths[item], item)):
             if summary_builder is None:
                 raise ReDerivationError("summary_builder_required")
@@ -341,15 +333,33 @@ async def delete_memory(
             )
 
         async with connection.cursor(row_factory=tuple_row) as cursor:
+            for version_id, sources in surviving.items():
+                if version_id in summary_rebuilds:
+                    continue
+                for source in sources:
+                    await cursor.execute(
+                        sql.SQL(
+                            "INSERT INTO {d} (derived_version_id, source_version_id, user_id, derivation_type) "
+                            "VALUES (%s, %s, %s, 're_derivation')"
+                        ).format(d=derivations),
+                        (version_id, source, user_id),
+                    )
+
+        async with connection.cursor(row_factory=tuple_row) as cursor:
             purged_jobs = 0
-            payload_patterns = [f"%{version_id}%" for version_id in evicted_ids]
-            if turn_ids or payload_patterns:
+            # A payload references an evicted version only when some JSON string value in it
+            # equals the version id exactly. A substring match would also purge surviving
+            # work that mentions e.g. ``v10`` when ``v1`` is deleted.
+            if turn_ids or evicted_ids:
                 await cursor.execute(
                     sql.SQL(
                         "DELETE FROM {j} WHERE user_id = %s AND status <> 'running' AND "
-                        "(turn_id = ANY(%s) OR payload::text ILIKE ANY(%s))"
+                        "(turn_id = ANY(%s) OR EXISTS ("
+                        "SELECT 1 FROM pg_catalog.unnest(%s::text[]) AS evicted(id) "
+                        "WHERE pg_catalog.jsonb_path_exists(payload, '$.** ? (@ == $id)', "
+                        "pg_catalog.jsonb_build_object('id', evicted.id))))"
                     ).format(j=jobs),
-                    (user_id, sorted(turn_ids), payload_patterns),
+                    (user_id, sorted(turn_ids), evicted_ids),
                 )
                 purged_jobs = max(cursor.rowcount, 0)
 

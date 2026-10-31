@@ -1,5 +1,6 @@
 """Retrieval ranking, lineage deletion and gate persistence over the full schema."""
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -11,6 +12,8 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection, sql
+from psycopg.errors import SerializationFailure
+from pydantic import JsonValue
 
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.deletion.closure import StaleDeletionEpoch, require_current_deletion_epoch
@@ -21,7 +24,7 @@ from custom_memory_engine.engine.gate import GateDecision, existing_relation, re
 from custom_memory_engine.engine.predicates import current_state
 from custom_memory_engine.engine.render import render_context
 from custom_memory_engine.engine.retrieval import RetrievalError, rank_versions, retrieve_current
-from custom_memory_engine.queue.contracts import NewJob
+from custom_memory_engine.queue.contracts import Job, JobIdentityConflict, NewJob
 from custom_memory_engine.queue.worker import enqueue, process_one
 
 pytestmark = pytest.mark.integration
@@ -395,6 +398,62 @@ async def test_delete_re_derives_a_dependent_with_a_surviving_source(database) -
         assert await cursor.fetchone() == (1,)
 
 
+async def test_dependent_of_a_rebuilt_summary_keeps_lineage_and_is_deleted_later(database) -> None:
+    """Regression: rebuilding a summary dropped the edges of memories derived *from* it.
+
+    The surviving dependent then lost its lineage, so deleting the summary's last
+    source later left content derived from deleted data behind.
+    """
+    _, schema = database
+    async with connect(database) as conn:
+        await identity(conn, "u1")
+        async with conn.transaction():
+            for version_id, content, key in (
+                ("src-a", "the user is vegetarian", "lineage-src-a"),
+                ("src-b", "the user avoids red meat", "lineage-src-b"),
+                ("summary", "the user eats a vegetarian diet", "summary"),
+                ("insight", "the user plans meals without meat", "insight"),
+            ):
+                await insert_version(
+                    conn,
+                    version_id,
+                    content,
+                    memory_key=key,
+                    predicate="diet_summary",
+                    subject="derived_sources",
+                    single_valued=False,
+                )
+            await conn.execute(
+                "INSERT INTO memory_derivation VALUES ('summary', 'src-a', 'u1', 'summary'), "
+                "('summary', 'src-b', 'u1', 'summary'), ('insight', 'summary', 'u1', 'consolidation')"
+            )
+
+        async def rebuild(summary_id: str, sources: Sequence[ActiveSource]) -> RebuiltSummary:
+            assert (summary_id, [source.version_id for source in sources]) == ("summary", ["src-b"])
+            return RebuiltSummary(
+                content="the user avoids red meat", embedding_model=MODEL, embedding=tuple(vector(0.3))
+            )
+
+        async with conn.transaction():
+            first = await delete_memory(
+                conn, "u1", target_ref="lineage-src-a", summary_builder=rebuild, schema_name=schema
+            )
+        assert (first.deleted_versions, first.rederived_dependents) == (1, 1)
+        cursor = await conn.execute(
+            "SELECT derived_version_id, source_version_id FROM memory_derivation ORDER BY 1, 2"
+        )
+        assert [tuple(row) for row in await cursor.fetchall()] == [("insight", "summary"), ("summary", "src-b")]
+
+        # Deleting the summary's last source must now reach the insight through lineage.
+        async with conn.transaction():
+            second = await delete_memory(conn, "u1", target_ref="lineage-src-b", schema_name=schema)
+        assert second.deleted_versions == 3  # src-b, summary, insight
+        cursor = await conn.execute(
+            "SELECT id FROM memory_version WHERE id IN ('src-b', 'summary', 'insight') ORDER BY id"
+        )
+        assert await cursor.fetchall() == []
+
+
 async def test_delete_summary_with_no_active_surviving_sources_does_not_rebuild(database) -> None:
     _, schema = database
     async with connect(database) as conn:
@@ -567,33 +626,223 @@ async def test_stale_worker_epoch_is_rejected(database) -> None:
             await require_current_deletion_epoch(conn, "u1", 0, schema_name=schema)
 
 
-async def test_worker_refuses_job_with_stale_deletion_epoch(database) -> None:
+def epoch_job(job_id: str, payload: JsonValue) -> NewJob:
+    return NewJob(id=job_id, user_id="u1", kind="extract", idempotency_key=job_id, payload=payload)
+
+
+async def job_rows(conn: AsyncConnection) -> list[tuple[object, ...]]:
+    cursor = await conn.execute("SELECT id, status, attempts FROM job ORDER BY id")
+    return await cursor.fetchall()
+
+
+async def stale_audit_details(conn: AsyncConnection) -> list[dict[str, object]]:
+    cursor = await conn.execute(
+        "SELECT details FROM audit_event WHERE event_type='job_discarded_stale_deletion_epoch' "
+        "ORDER BY details->>'job_id'"
+    )
+    return [row[0] for row in await cursor.fetchall()]
+
+
+async def test_worker_discards_job_with_stale_deletion_epoch(database) -> None:
     _, schema = database
     async with connect(database) as conn:
         await identity(conn, "u1")
         async with conn.transaction():
             await delete_memory(conn, "u1", target_ref="exercise", schema_name=schema)
-        await enqueue(
-            conn,
-            NewJob(
-                id="stale-epoch-job",
-                user_id="u1",
-                kind="extract",
-                idempotency_key="stale-epoch-job",
-                payload={"deletion_epoch": 0},
-            ),
-            schema_name=schema,
-        )
+        await enqueue(conn, epoch_job("stale-epoch-job", {"deletion_epoch": 0}), schema_name=schema)
 
-        async def handler(_connection: AsyncConnection, _job, _tick) -> None:
+        async def handler(_connection: AsyncConnection, _job: Job, _tick) -> None:
             pytest.fail("stale work must not reach its handler")
 
-        with pytest.raises(StaleDeletionEpoch, match="stale_deletion_epoch") as error:
-            await process_one(conn, "u1", handler, schema_name=schema)
-        assert error.value.epoch_start == 0
-        assert error.value.current_epoch == 1
+        result = await process_one(conn, "u1", handler, schema_name=schema)
+        assert (result.status, result.job_id, result.reason, result.attempts) == (
+            "dead_letter",
+            "stale-epoch-job",
+            "stale_deletion_epoch",
+            0,
+        )
+        # Terminal, not charged an attempt, payload untouched.
         cursor = await conn.execute("SELECT status, attempts, payload FROM job WHERE id='stale-epoch-job'")
-        assert await cursor.fetchone() == ("queued", 0, {"deletion_epoch": 0})
+        assert await cursor.fetchone() == ("dead_letter", 0, {"deletion_epoch": 0})
+        # Content-free audit record of exactly why the job was discarded.
+        assert await stale_audit_details(conn) == [
+            {"job_id": "stale-epoch-job", "kind": "extract", "epoch_start": 0, "current_epoch": 1}
+        ]
+        # Idempotent: the queue is now empty, and re-running is a no-op.
+        assert (await process_one(conn, "u1", handler, schema_name=schema)).status == "idle"
+
+
+async def test_stale_job_does_not_block_later_jobs_for_the_same_user(database) -> None:
+    """Regression: a stale head-of-queue job used to stay queued and starve the user."""
+    _, schema = database
+    async with connect(database) as conn:
+        await identity(conn, "u1")
+        # Two jobs capture epoch 0, then a deletion of an unrelated memory makes them stale.
+        await enqueue(conn, epoch_job("job-a-stale", {"deletion_epoch": 0}), schema_name=schema)
+        await enqueue(conn, epoch_job("job-b-stale", {"deletion_epoch": 0}), schema_name=schema)
+        async with conn.transaction():
+            await delete_memory(conn, "u1", target_ref="unrelated-key", schema_name=schema)
+        await enqueue(conn, epoch_job("job-c-current", {"deletion_epoch": 1}), schema_name=schema)
+        await enqueue(conn, epoch_job("job-d-no-epoch", None), schema_name=schema)
+
+        ran: list[str] = []
+
+        async def handler(_connection: AsyncConnection, job: Job, _tick) -> None:
+            ran.append(job.id)
+
+        outcomes = [await process_one(conn, "u1", handler, schema_name=schema) for _ in range(5)]
+        assert [(o.status, o.job_id, o.reason) for o in outcomes] == [
+            ("dead_letter", "job-a-stale", "stale_deletion_epoch"),
+            ("dead_letter", "job-b-stale", "stale_deletion_epoch"),
+            ("done", "job-c-current", None),
+            ("done", "job-d-no-epoch", None),
+            ("idle", None, None),
+        ]
+        assert ran == ["job-c-current", "job-d-no-epoch"]
+        assert await job_rows(conn) == [
+            ("job-a-stale", "dead_letter", 0),
+            ("job-b-stale", "dead_letter", 0),
+            ("job-c-current", "done", 1),
+            ("job-d-no-epoch", "done", 1),
+        ]
+        assert [d["job_id"] for d in await stale_audit_details(conn)] == ["job-a-stale", "job-b-stale"]
+
+
+async def test_deletion_committed_between_worker_retries_discards_the_pinned_job(database) -> None:
+    """A job that is current at its first attempt but stale at its retry must not run on the retry."""
+    _, schema = database
+    async with connect(database) as conn, connect(database) as deleter_conn:
+        await identity(conn, "u1")
+        await identity(deleter_conn, "u1")
+        await enqueue(conn, epoch_job("job-a-retry", {"deletion_epoch": 0}), schema_name=schema)
+        await enqueue(conn, epoch_job("job-b-after", {"deletion_epoch": 1}), schema_name=schema)
+        deleter_pid = deleter_conn.info.backend_pid
+        calls: list[str] = []
+        deletion: asyncio.Task[object] | None = None
+
+        async def run_deletion() -> object:
+            async with deleter_conn.transaction():
+                return await delete_memory(deleter_conn, "u1", target_ref="exercise", schema_name=schema)
+
+        async def handler(connection: AsyncConnection, job: Job, _tick) -> None:
+            nonlocal deletion
+            calls.append(job.id)
+            if job.id != "job-a-retry":
+                return
+            # Queue a deletion behind this worker's per-user advisory lock, wait until
+            # Postgres reports it waiting, then fail retryably. On rollback the deletion
+            # is granted the lock first, so the retry deterministically observes it.
+            deletion = asyncio.create_task(run_deletion())
+            for _ in range(500):
+                cursor = await connection.execute(
+                    "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted AND pid=%s",
+                    (deleter_pid,),
+                )
+                row = await cursor.fetchone()
+                if row is not None and row[0] == 1:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                pytest.fail("deletion never queued behind the worker lock")
+            raise SerializationFailure("injected_retryable_conflict")
+
+        first = await process_one(conn, "u1", handler, schema_name=schema)
+        assert deletion is not None
+        await deletion
+        assert (first.status, first.job_id, first.reason) == ("dead_letter", "job-a-retry", "stale_deletion_epoch")
+        assert first.transaction_attempts == 2
+        assert calls == ["job-a-retry"]  # the handler ran once (rolled back) and never on stale input
+        second = await process_one(conn, "u1", handler, schema_name=schema)
+        assert (second.status, second.job_id) == ("done", "job-b-after")
+        assert await job_rows(conn) == [("job-a-retry", "dead_letter", 0), ("job-b-after", "done", 1)]
+
+
+async def test_stale_epoch_takes_precedence_over_retry_budget_and_preserves_attempts(database) -> None:
+    _, schema = database
+    async with connect(database) as conn:
+        await identity(conn, "u1")
+        await enqueue(conn, epoch_job("job-a-spent", {"deletion_epoch": 0}), schema_name=schema)
+        await conn.execute("UPDATE job SET attempts = 3 WHERE id = 'job-a-spent'")
+        async with conn.transaction():
+            await delete_memory(conn, "u1", target_ref="exercise", schema_name=schema)
+
+        async def handler(_connection: AsyncConnection, _job: Job, _tick) -> None:
+            pytest.fail("stale work must not reach its handler")
+
+        result = await process_one(conn, "u1", handler, schema_name=schema)
+        assert (result.status, result.reason, result.attempts) == ("dead_letter", "stale_deletion_epoch", 3)
+        assert await job_rows(conn) == [("job-a-spent", "dead_letter", 3)]
+
+
+async def test_malformed_deletion_epoch_is_consumed_and_does_not_block_the_queue(database) -> None:
+    _, schema = database
+    async with connect(database) as conn:
+        await identity(conn, "u1")
+        await enqueue(conn, epoch_job("job-a-malformed", {"deletion_epoch": -1}), schema_name=schema)
+        await enqueue(conn, epoch_job("job-b-valid", {"deletion_epoch": 0}), schema_name=schema)
+        ran: list[str] = []
+
+        async def handler(_connection: AsyncConnection, job: Job, _tick) -> None:
+            ran.append(job.id)
+
+        first = await process_one(conn, "u1", handler, schema_name=schema)
+        second = await process_one(conn, "u1", handler, schema_name=schema)
+        assert (first.status, first.job_id, first.reason) == ("dead_letter", "job-a-malformed", "job_failed")
+        assert (second.status, second.job_id) == ("done", "job-b-valid")
+        assert ran == ["job-b-valid"]
+
+
+async def test_discarded_work_is_re_prepared_under_a_fresh_identity(database) -> None:
+    _, schema = database
+    async with connect(database) as conn:
+        await identity(conn, "u1")
+        await enqueue(conn, epoch_job("job-old", {"deletion_epoch": 0}), schema_name=schema)
+        async with conn.transaction():
+            await delete_memory(conn, "u1", target_ref="exercise", schema_name=schema)
+        ran: list[str] = []
+
+        async def handler(_connection: AsyncConnection, job: Job, _tick) -> None:
+            ran.append(job.id)
+
+        assert (await process_one(conn, "u1", handler, schema_name=schema)).reason == "stale_deletion_epoch"
+        # The discarded job keeps its identity, so re-using it with fresh input is refused...
+        with pytest.raises(JobIdentityConflict):
+            await enqueue(conn, epoch_job("job-old", {"deletion_epoch": 1}), schema_name=schema)
+        # ...and re-prepared work under a fresh identity runs normally.
+        await enqueue(conn, epoch_job("job-new", {"deletion_epoch": 1}), schema_name=schema)
+        assert (await process_one(conn, "u1", handler, schema_name=schema)).status == "done"
+        assert ran == ["job-new"]
+
+
+async def test_deletion_purges_only_jobs_that_reference_an_evicted_version_exactly(database) -> None:
+    """Regression: a substring match purged surviving work mentioning ``v10`` when ``v1`` was deleted."""
+    _, schema = database
+    async with connect(database) as conn:
+        await identity(conn, "u1")
+        payloads: dict[str, JsonValue] = {
+            "job-ref-top": {"version_id": "v1"},
+            "job-ref-nested": {"plan": {"inputs": [{"source": "v1p"}]}},
+            "job-ref-array": {"sources": ["v3", "v2"]},
+            "job-keep-superset-id": {"version_id": "v10"},
+            "job-keep-embedded": {"note": "derived from v1 earlier"},
+            "job-keep-wildcard": {"version_id": "vXp"},
+            "job-keep-surviving": {"version_id": "v3"},
+            "job-keep-no-payload": None,
+        }
+        for job_id, payload in payloads.items():
+            await enqueue(conn, epoch_job(job_id, payload), schema_name=schema)
+        async with conn.transaction():
+            receipt = await delete_memory(conn, "u1", target_ref="diet", schema_name=schema)
+        assert receipt.deleted_versions == 3  # v1, v1p and v2
+        assert receipt.purged_jobs == 3
+        cursor = await conn.execute("SELECT id FROM job ORDER BY id")
+        assert [row[0] for row in await cursor.fetchall()] == [
+            "job-keep-embedded",
+            "job-keep-no-payload",
+            "job-keep-superset-id",
+            "job-keep-surviving",
+            "job-keep-wildcard",
+        ]
 
 
 async def test_deletion_epoch_is_monotonic_and_scope_all_clears_every_version(database) -> None:
