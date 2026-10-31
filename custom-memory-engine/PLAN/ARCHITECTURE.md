@@ -1,3 +1,5 @@
+> **Direction notice (2026-10-31).** This v1 package architecture is **superseded for post-v1.0.0 design** by [`V2/ARCHITECTURE_V2.md`](V2/ARCHITECTURE_V2.md), approved as part of the canonical implementation plan on 2026-10-31 ([`V2/APPROVAL.md`](V2/APPROVAL.md)); where they conflict for V2 work, V2 wins. What still binds: this document's description of the **shipped v1 packages** (the code under `src/custom_memory_engine/` that V2 migrations extend additively) and the independence boundary it references. Nothing below is rewritten.
+
 # System & Package Architecture (`custom-memory-engine/`)
 
 **Authority:** Implements `Graduation_Project_Proposal.md` §§7–11 and `TECHNICAL_SPECIFICATION.md` under `D-ARCH` (**Option C — Hybrid Architecture**, [`../reference/ARCHITECTURE_DECISION_MATRIX.md`](../reference/ARCHITECTURE_DECISION_MATRIX.md)).

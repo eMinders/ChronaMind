@@ -1,0 +1,2343 @@
+{
+  "ablation": "A8",
+  "answerer": "extractive",
+  "cp_upper_one_sided_97_5": 1.0,
+  "embedding_model": "BAAI/bge-small-en-v1.5",
+  "incomplete_measurements": 0,
+  "leaking_scenarios": 20,
+  "never_stated_false_positives": 0,
+  "primary_channel_totals": {
+    "channel_1_storage_index_queue_cache_scan": 200,
+    "channel_2_lexical_search": 80,
+    "channel_3_vector_search": 80,
+    "channel_4_derived_memory_lookup": 120,
+    "channel_5_assembled_context": 80,
+    "channel_6_final_answer": 80,
+    "channel_7_application_logs": 0
+  },
+  "scenario_count": 20,
+  "scenarios": [
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_001_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_001_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_001_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_001_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_001_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_001"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_002_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_002_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_002_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_002_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_002_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_002"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_003_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_003_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_003_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_003_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_003_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_003"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_004_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_004_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_004_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_004_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_004_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_004"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_005_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_005_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_005_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_005_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_005_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_005"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_006_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_006_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_006_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_006_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_006_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_006"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_007_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_007_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_007_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_007_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_007_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_007"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_008_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_008_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_008_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_008_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_008_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_008"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_009_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_009_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_009_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_009_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_009_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_009"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_010_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_010_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_010_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_010_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_010_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_010"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_011_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_011_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_011_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_011_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_011_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_011"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_012_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_012_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_012_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_012_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_012_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_012"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_013_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_013_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_013_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_013_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_013_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_013"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_014_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_014_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_014_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_014_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_014_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_014"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_015_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_015_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_015_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_015_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_015_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_015"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_016_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_016_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_016_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_016_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_016_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_016"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_017_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_017_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_017_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_017_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_017_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_017"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_018_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_018_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_018_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_018_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_018_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_018"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_019_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_019_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_019_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_019_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_019_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_019"
+    },
+    {
+      "events": [
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 1,
+          "event_id": "own_D_dev_020_ev01_direct",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "direct_extracted_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 2,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 2,
+          "event_id": "own_D_dev_020_ev02_consolidated",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "consolidated_semantic_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 5,
+            "channel_2_lexical_search": 2,
+            "channel_3_vector_search": 2,
+            "channel_4_derived_memory_lookup": 4,
+            "channel_5_assembled_context": 2,
+            "channel_6_final_answer": 2,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 3,
+          "event_id": "own_D_dev_020_ev03_summary",
+          "expected_a8_leak_channels": [
+            "channel_1_storage_index_queue_cache_scan",
+            "channel_2_lexical_search",
+            "channel_3_vector_search",
+            "channel_4_derived_memory_lookup",
+            "channel_5_assembled_context",
+            "channel_6_final_answer"
+          ],
+          "incomplete_channels": [],
+          "leaked": true,
+          "lineage_structure": "multi_source_summary_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 4,
+          "event_id": "own_D_dev_020_ev04_superseded",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "superseded_closed_belief_memory",
+          "relearning_control": false,
+          "scored_in_primary": true
+        },
+        {
+          "channel_residuals": {
+            "channel_1_storage_index_queue_cache_scan": 0,
+            "channel_2_lexical_search": 0,
+            "channel_3_vector_search": 0,
+            "channel_4_derived_memory_lookup": 0,
+            "channel_5_assembled_context": 0,
+            "channel_6_final_answer": 0,
+            "channel_7_application_logs": 0
+          },
+          "deletion_epoch": 5,
+          "event_id": "own_D_dev_020_ev05_relearning_control",
+          "expected_a8_leak_channels": [],
+          "incomplete_channels": [],
+          "leaked": false,
+          "lineage_structure": "relearning_multi_turn_control",
+          "relearning_control": true,
+          "scored_in_primary": false
+        }
+      ],
+      "leaked": true,
+      "never_stated_false_positives": 0,
+      "scenario_id": "own_D_dev_020"
+    }
+  ],
+  "split": "dev",
+  "suite": "own_D"
+}
