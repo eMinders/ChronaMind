@@ -1,45 +1,47 @@
 name: Build and push to Docker Hub
 
+# Manual only. Until 2026-10-31 this workflow triggered on `master`, a branch that does not exist,
+# so it never ran (0 runs in the Actions history). Enabling automatic image publication on `main`
+# is a deployment decision for the Project Owner; until then it runs only when dispatched.
+
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-    branches:
-      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   build-and-push:
     name: Build and push to Docker Hub
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      REPOSITORY_NAME: ${{ github.event.repository.name }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install utilities
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y make
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
 
       - name: Sanitize repository name
-        id: sanitize
         run: |
-          REPO_NAME=$(echo "${{ github.event.repository.name }}" | sed 's/^\///' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
-          echo "REPO_NAME=${REPO_NAME}" >> "$GITHUB_ENV"
+          repo_name=$(printf '%s' "$REPOSITORY_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g')
+          echo "REPO_NAME=${repo_name}" >> "$GITHUB_ENV"
 
-      - name: Build Image
-        run: |
-          make docker-build ENV=production
+      - name: Build image
+        run: make docker-build ENV=production
 
       - name: Log in to Docker Hub
-        if: ${{ github.event_name == 'push' && env.DOCKER_USERNAME != '' }}
-        run: |
-          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login --username "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+        if: env.DOCKER_USERNAME != ''
+        env:
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: printf '%s' "$DOCKER_PASSWORD" | docker login --username "$DOCKER_USERNAME" --password-stdin
 
-      - name: Push Image
-        if: ${{ github.event_name == 'push' && env.DOCKER_USERNAME != '' }}
+      - name: Push image
+        if: env.DOCKER_USERNAME != ''
         run: |
-          docker tag fastapi-langgraph-template:production ${{ secrets.DOCKER_USERNAME }}/${{ env.REPO_NAME }}:production
-          docker push ${{ secrets.DOCKER_USERNAME }}/${{ env.REPO_NAME }}:production
+          docker tag fastapi-langgraph-template:production "$DOCKER_USERNAME/$REPO_NAME:production"
+          docker push "$DOCKER_USERNAME/$REPO_NAME:production"
