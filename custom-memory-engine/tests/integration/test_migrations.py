@@ -39,6 +39,7 @@ DOMAIN_TABLES = frozenset(
         "audit_event",
         "deletion_request",
         "job",
+        "scope_grant",
     }
 )
 HISTORY_TABLE = "_cme_schema_migrations"
@@ -218,7 +219,7 @@ async def test_cli_apply_status_and_confirmed_reset_use_the_explicit_database(
 
     assert (await invoke("status"))["state"] == "unapplied"
     applied = await invoke("apply")
-    assert applied["action"] == "applied" and applied["status"]["version"] == 1
+    assert applied["action"] == "applied" and applied["status"]["version"] == migrate.VERSION
     async with connect(database) as conn:
         await seed_user(conn)
         original = await table_oids(conn, database.schema_name)
@@ -226,7 +227,7 @@ async def test_cli_apply_status_and_confirmed_reset_use_the_explicit_database(
         assert await table_oids(conn, database.schema_name) == original
         await assert_seed_retained(conn)
         status = await invoke("status")
-        assert status["state"] == "applied" and status["version"] == 1
+        assert status["state"] == "applied" and status["version"] == migrate.VERSION
         reset = await invoke("reset", "--confirm-schema", database.schema_name)
         assert reset["action"] == "reset" and reset["status"]["state"] == "applied"
         assert set(await table_oids(conn, database.schema_name)) == DOMAIN_TABLES | {HISTORY_TABLE}
@@ -281,7 +282,7 @@ async def test_status_is_read_only_and_apply_is_idempotent_without_recreating_ta
         assert await cursor.fetchone() is None
     runner = migrate.MigrationRunner(database)
     first = await runner.apply()
-    assert first.action == "applied" and first.status.state == "applied" and first.status.version == 1
+    assert first.action == "applied" and first.status.state == "applied" and first.status.version == migrate.VERSION
     assert first.status.schema_name == database.schema_name
     assert len(first.status.checksum_sha256 or "") == 64
     async with connect(database) as conn:
@@ -294,8 +295,12 @@ async def test_status_is_read_only_and_apply_is_idempotent_without_recreating_ta
     async with connect(database) as conn:
         assert await table_oids(conn, database.schema_name) == original_oids
         await assert_seed_retained(conn)
-        cursor = await conn.execute("SELECT version,filename,checksum_sha256 FROM _cme_schema_migrations")
-        assert await cursor.fetchall() == [(1, "001_full_schema.sql", first.status.checksum_sha256)]
+        cursor = await conn.execute(
+            "SELECT version,filename,checksum_sha256 FROM _cme_schema_migrations ORDER BY version"
+        )
+        expected = [(version, filename, checksum) for version, filename, _, checksum in migrate._read_sources()]
+        assert await cursor.fetchall() == expected
+        assert first.status.checksum_sha256 == expected[-1][2]
 
 
 @pytest.mark.integration
@@ -318,7 +323,11 @@ async def test_clean_reset_clears_domain_data_preserves_foreign_schema_and_exten
             await conn.execute(sql.SQL("INSERT INTO {}.sentinel VALUES ('keep')").format(sql.Identifier(foreign)))
             await seed_user(conn)
             result = await runner.reset(confirm_schema=database.schema_name)
-            assert result.action == "reset" and result.status.state == "applied" and result.status.version == 1
+            assert (
+                result.action == "reset"
+                and result.status.state == "applied"
+                and result.status.version == migrate.VERSION
+            )
             assert set(await table_oids(conn, database.schema_name)) == DOMAIN_TABLES | {HISTORY_TABLE}
             for table in sorted(DOMAIN_TABLES):
                 cursor = await conn.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table)))
@@ -368,8 +377,8 @@ async def test_failed_first_install_rolls_back_extension_bootstrap_and_managed_s
     runner = migrate.MigrationRunner(fresh_database)
     original = runner._install
 
-    async def fail_after_install(conn, source, checksum):
-        await original(conn, source, checksum)
+    async def fail_after_install(conn, sources):
+        await original(conn, sources)
         await conn.execute("SELECT %s::integer", (CANARY,))
 
     monkeypatch.setattr(runner, "_install", fail_after_install)
@@ -424,8 +433,8 @@ async def test_failed_apply_rolls_back_schema_and_history_and_redacts_database_e
     runner = migrate.MigrationRunner(database)
     original = runner._install
 
-    async def fail_after_install(conn, source, checksum):
-        await original(conn, source, checksum)
+    async def fail_after_install(conn, sources):
+        await original(conn, sources)
         await conn.execute("SELECT %s::integer", (CANARY,))
 
     monkeypatch.setattr(runner, "_install", fail_after_install)
@@ -446,8 +455,8 @@ async def test_failed_reset_restores_original_schema_oids_history_and_data(
     await runner.apply()
     original = runner._install
 
-    async def fail_after_reinstall(conn, source, checksum):
-        await original(conn, source, checksum)
+    async def fail_after_reinstall(conn, sources):
+        await original(conn, sources)
         await conn.execute("SELECT %s::integer", (CANARY,))
 
     async with connect(database) as conn:
@@ -463,14 +472,22 @@ async def test_failed_reset_restores_original_schema_oids_history_and_data(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("drifted_file", [filename for _, filename in migrate.MIGRATIONS])
 async def test_source_checksum_drift_refuses_apply_and_reset_without_destroying_data(
-    database: migrate.MigrationConfig, monkeypatch: pytest.MonkeyPatch
+    database: migrate.MigrationConfig, monkeypatch: pytest.MonkeyPatch, drifted_file: str
 ) -> None:
     runner = migrate.MigrationRunner(database)
     await runner.apply()
-    source, _ = migrate._read_source()
-    changed = source + "\n-- changed source identity\n"
-    monkeypatch.setattr(migrate, "_read_source", lambda: (changed, hashlib.sha256(changed.encode()).hexdigest()))
+    original = migrate._read_one
+
+    def edited(filename: str) -> tuple[str, str]:
+        source, checksum = original(filename)
+        if filename != drifted_file:
+            return source, checksum
+        changed = source + "\n-- changed source identity\n"
+        return changed, hashlib.sha256(changed.encode()).hexdigest()
+
+    monkeypatch.setattr(migrate, "_read_one", edited)
     async with connect(database) as conn:
         await seed_user(conn)
         before = await table_oids(conn, database.schema_name)
@@ -487,9 +504,12 @@ async def test_source_checksum_drift_refuses_apply_and_reset_without_destroying_
     "tamper",
     [
         "DELETE FROM _cme_schema_migrations",
-        "UPDATE _cme_schema_migrations SET version=99",
+        "UPDATE _cme_schema_migrations SET version=99 WHERE version=2",
+        "DELETE FROM _cme_schema_migrations WHERE version=1",
+        "UPDATE _cme_schema_migrations SET filename='other.sql' WHERE version=2",
         "ALTER TABLE _cme_schema_migrations DROP CONSTRAINT _cme_schema_migrations_checksum_sha256_check; "
         "ALTER TABLE _cme_schema_migrations ALTER COLUMN checksum_sha256 TYPE text[] USING ARRAY[checksum_sha256]",
+        "DELETE FROM _cme_schema_migrations WHERE version > 1; "
         "ALTER TABLE _cme_schema_migrations ALTER COLUMN version TYPE boolean USING true",
     ],
 )
@@ -646,11 +666,11 @@ async def test_concurrent_applies_settle_to_one_installation_and_one_history_row
     first, second = migrate.MigrationRunner(database), migrate.MigrationRunner(database)
     results = await asyncio.wait_for(asyncio.gather(first.apply(), second.apply()), timeout=20)
     assert sorted(result.action for result in results) == ["applied", "unchanged"]
-    assert all(result.status.state == "applied" and result.status.version == 1 for result in results)
+    assert all(result.status.state == "applied" and result.status.version == migrate.VERSION for result in results)
     async with connect(database) as conn:
         assert set(await table_oids(conn, database.schema_name)) == DOMAIN_TABLES | {HISTORY_TABLE}
-        cursor = await conn.execute("SELECT version FROM _cme_schema_migrations")
-        assert await cursor.fetchall() == [(1,)]
+        cursor = await conn.execute("SELECT version FROM _cme_schema_migrations ORDER BY version")
+        assert await cursor.fetchall() == [(version,) for version, _ in migrate.MIGRATIONS]
 
 
 @pytest.mark.integration
@@ -691,3 +711,30 @@ async def test_clean_reset_passes_all_forty_three_assertions_against_the_real_fu
             "AND tgname='trg_memory_version_provenance'"
         )
         assert await cursor.fetchone() == ("O",)
+
+
+@pytest.mark.integration
+async def test_a_version_one_schema_is_pending_and_apply_advances_it_in_order(
+    database: migrate.MigrationConfig,
+) -> None:
+    """Upgrade path: a schema installed before migration 2 existed advances without data loss."""
+    runner = migrate.MigrationRunner(database)
+    await runner.apply()
+    async with connect(database) as conn:
+        await seed_user(conn)
+        # Reconstruct the exact pre-migration-2 state: drop its objects and its history row,
+        # and re-record the version-1 catalog fingerprint as the head of history.
+        await conn.execute("DROP FUNCTION enforce_association_cap()")
+        await conn.execute("DROP TABLE scope_grant")
+        await conn.execute("DROP FUNCTION guard_scope_grant_update()")
+        await conn.execute("DELETE FROM _cme_schema_migrations WHERE version > 1")
+        catalog = await runner._catalog(conn)
+        await conn.execute("UPDATE _cme_schema_migrations SET catalog_sha256 = %s WHERE version = 1", (catalog,))
+    pending = await runner.status()
+    assert (pending.state, pending.version) == ("pending", 1)
+    result = await runner.apply()
+    assert result.action == "applied" and (result.status.state, result.status.version) == ("applied", migrate.VERSION)
+    async with connect(database) as conn:
+        assert set(await table_oids(conn, database.schema_name)) == DOMAIN_TABLES | {HISTORY_TABLE}
+        await assert_seed_retained(conn)
+    assert (await runner.apply()).action == "unchanged"

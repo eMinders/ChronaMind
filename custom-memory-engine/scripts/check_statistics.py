@@ -10,6 +10,7 @@ Exit: 0 if every assertion holds, 1 otherwise.
 
 from __future__ import annotations
 
+import re
 import sys
 from math import ceil, log
 from pathlib import Path
@@ -18,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from validation.cp_bounds import cp_upper  # noqa: E402  (v1 asset, unchanged)
 
+ROOT = Path(__file__).resolve().parents[1]
 ALPHA = 0.05  # two-sided 95% == one-sided 97.5%; the single system convention
 TAU_CONF = 0.90
 TAU_COV = 0.60
@@ -53,6 +55,35 @@ def admitted(row: dict[str, float], counter: int) -> bool:
     if counter == 0 and cp_upper(0, int(row["o"])) > 1.0 - TAU_CONF:
         return False
     return True
+
+
+def audit_documented_table() -> list[str]:
+    """Assert the zero-counter table in ``STATISTICS.md`` §4.2 against computed bounds.
+
+    Parses the document instead of restating it, so a wrong value in the table is a
+    failure. This is the check whose absence let the ``o = 29`` row print a one-sided
+    95% figure under a one-sided 97.5% heading (plan audit r6, finding A1).
+    """
+    document = ROOT / "PLAN" / "V2" / "STATISTICS.md"
+    if not document.exists():
+        return ["PLAN/V2/STATISTICS.md not found"]
+    section = document.read_text(encoding="utf-8").split("### 4.2", 1)[-1].split("### 4.3", 1)[0]
+    pattern = re.compile(r"^\|\s*\**?(\d+)\**?\s*\|\s*([01]\.\d+)\s*\|", re.M)
+    quoted = {int(n): float(v) for n, v in pattern.findall(section)}
+    if not quoted:
+        return ["no rows parsed from the §4.2 zero-counter table"]
+    problems: list[str] = []
+    for o, printed in sorted(quoted.items()):
+        computed = cp_upper(0, o)
+        print(
+            f"  o={o:3d} printed={printed:.4f} computed={computed:.4f} "
+            f"delta={computed - printed:+.2e} admissible={1 - computed >= TAU_CONF}"
+        )
+        if abs(computed - printed) > 1e-4:
+            problems.append(f"§4.2 table o={o}: printed {printed} != computed {computed:.4f}")
+        if (1 - printed >= TAU_CONF) != (1 - computed >= TAU_CONF):
+            problems.append(f"§4.2 table o={o}: printed value implies a different verdict")
+    return problems
 
 
 CASES = {
@@ -111,6 +142,9 @@ def main() -> int:
         print(f"  n={n:3d} closed_form={closed:.6f} cp_upper={bisected:.6f} diff={diff:.2e}")
         if diff > 1e-9:
             failures.append(f"cp_upper(0,{n}) disagrees with closed form by {diff:.2e}")
+
+    print("\n== every number in the STATISTICS.md §4.2 table is reproduced ==")
+    failures.extend(audit_documented_table())
 
     print("\n== design-effect sensitivity (n=40 opportunities) ==")
     for rho, size in ((0.0, 1), (0.05, 4), (0.20, 4), (0.20, 8)):
