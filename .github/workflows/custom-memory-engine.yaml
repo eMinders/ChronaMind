@@ -24,18 +24,18 @@ jobs:
         image: pgvector/pgvector:0.8.7-pg16-bookworm@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
         env:
           POSTGRES_USER: cme_test
-          POSTGRES_PASSWORD: isolated_ci_only
+          POSTGRES_PASSWORD: isolated_ci_only  # pragma: allowlist secret
           POSTGRES_DB: cme_compatibility
         ports: ["5433:5432"]
         options: >-
           --health-cmd "pg_isready -U cme_test -d cme_compatibility"
           --health-interval 2s --health-timeout 3s --health-retries 30
     env:
-      CME_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility
-      CME_BASELINE_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility
+      CME_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility  # pragma: allowlist secret
+      CME_BASELINE_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility  # pragma: allowlist secret
       CME_BASELINE_TEST_FALKOR_PORT: "16389"
       CME_BASELINE_TEST_ASSETS: /tmp/chronamind-rl031-assets
-      PGPASSWORD: isolated_ci_only
+      PGPASSWORD: isolated_ci_only  # pragma: allowlist secret
     defaults:
       run:
         working-directory: custom-memory-engine
@@ -57,6 +57,7 @@ jobs:
           md5sum -c validation/document_hashes.txt
           python3 validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md
           diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
+          python3 scripts/check_plan_refs.py
 
   default-install:
     runs-on: ubuntu-24.04
