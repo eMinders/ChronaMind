@@ -161,8 +161,8 @@ def test_known_v1_gaps_are_reported_not_silently_passed(rows: list[Row]) -> None
     status = {r.invariant: r.status for r in rows}
     assert status["Invariant 7 / runtime role"] == "UNENFORCED"
     assert status["Invariant 8 / content-free audit"] == "UNENFORCED"
-    assert status["Invariant 8 / seven-channel scanner"] == "PARTIAL"
-    assert status["Invariant 9"] == "PARTIAL"
+    assert status["Invariant 8 / scanner channels 3, 5-7"] == "UNENFORCED"
+    assert status["Invariant 9 / end-to-end replay"] == "UNENFORCED"
     assert status["Invariant 10 / T1-T5 harness"] == "UNENFORCED"
 
 
