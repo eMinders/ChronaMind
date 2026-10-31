@@ -1,9 +1,12 @@
 # Public API Surface (v2.0 draft for freeze)
 
-**Task:** `MA-012` · **Status:** specification for the owner to freeze; nothing here is implemented.
+**Task:** `MA-012` · **Status:** canonical API reference since r7 (**`V2-D39`**, which also resolves the `V2-D07`
+five-call contradiction and retires `retract`). Executable form: `custom_memory_engine.api.contract`, held equal
+to this document and to `ARCHITECTURE_V2.md` section 8.1 by `tests/test_api_contract.py`. The operations listed
+in section 5 are **not** on the surface until a `V2-Dnn` approves them.
 **Extended by:** `MA-015` (the tier matrix check and `tests/test_tier_permissions.py`), `MA-011` (the scope
-selector table, section 6). **References:** `ARCHITECTURE_V2.md` sections 5 and 8, `V2-D07`, `CHARTER.md`
-section 1, `THREAT_MODEL.md`, `CHANNELS.md`.
+selector table, section 6). **References:** `ARCHITECTURE_V2.md` sections 5 and 8, `V2-D07`, `V2-D39`,
+`CHARTER.md` section 1, `THREAT_MODEL.md`, `CHANNELS.md`.
 
 `ARCHITECTURE_V2.md` section 8 states the principle: **every operation a tier needs appears in one list, and
 nothing outside it exists.** This document is that list. It freezes, for each operation, a signature, the tiers
