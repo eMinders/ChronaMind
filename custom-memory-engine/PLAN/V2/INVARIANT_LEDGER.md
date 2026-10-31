@@ -20,6 +20,15 @@ Citation syntax: `path::symbol`. For a site the symbol must occur in the file; f
 a test function or method defined in the file. A row may split an invariant (`Invariant 7 / runtime
 role`) so a gap in one half is not hidden by the other.
 
+**E-004 acceptance criterion 3 (#52) is superseded.** The issue was written when v1 `Invariant 7` and
+`Invariant 8` had known gaps (#47, #46) and required that they *not* be `ENFORCED`. Both gaps were closed on
+`main` in r7 (#47: `security/provisioning.py`, restricted runtime role, `tests/integration/test_rls_isolation.py`;
+#46: channels 3, 5-7 of the leak scanner, `tests/integration/test_leak_scanner_db.py`), so the rows for those
+halves are `ENFORCED`, and `test_gaps_closed_in_r7_are_enforced_with_tests` pins it. The criterion's purpose,
+that a known gap is reported and never silently passed, still holds for the remaining halves (`Invariant 8 /
+content-free audit`, `Invariant 9`, `Invariant 10`; `test_known_v1_gaps_are_reported_not_silently_passed`).
+Superseded by Project Owner decision, r9 (`APPROVAL.md` Amendment 2).
+
 ## v1 invariants (frozen baseline)
 
 | Invariant | Status | Enforcement site | Tests | Gap | Owner |

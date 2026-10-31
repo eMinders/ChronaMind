@@ -5,10 +5,8 @@
 command next to it in this session, not remembered from an earlier run. After this baseline, changes to v1
 tables must be additive (`PLAN/V2/ROADMAP_V2.md` section 2).
 
-> **The tag is not part of this document.** Which commit becomes `v1.0.0`, the tag name and the package
-> version are Project Owner decisions that are still open (section 7). Every figure below is pinned to the
-> commit it was measured at, `490904d`, and was reproduced on Linux at that commit (section 2), so it stays
-> true whichever commit is chosen; a different tag commit needs its own re-measurement.
+> **Tag: `cme-v1.0.0` → `490904d`** (decided r9, section 7.1). Every figure below is pinned to that commit
+> and was reproduced on Linux there (section 2). The engine package version at the tag stays `0.1.0`.
 
 ## 1. Environment
 
@@ -135,23 +133,21 @@ python -m evaluation.baselines.assets prepare --directory <dir>
 uv run pytest -q
 ```
 
-### 7.1 Decisions required before tagging (#51 section 4; Project Owner, open)
+### 7.1 Tagging decisions (#51 section 4; decided by the Project Owner, r9)
 
-| # | Decision | Options and consequence |
+| # | Decision | Outcome |
 |---|---|---|
-| 1 | **Which commit** | (a) `490904d`, the commit measured here: the pre-V2 substrate; every figure in this document reproduces there; r7's migrations 2 and 3 (`scope_grant`, association cap) are then post-tag additive migrations, as the additivity rule intends. (b) A later `main` commit: it must be re-measured first (at r8, `main` collects ~1,800+ tests), and the tag would include the r7 V2 primitives. **Recommendation: (a)** |
-| 2 | **Tag name** | The repository is a monorepo whose root package is `langgraph-fastapi-template` 0.1.0. A plain `v1.0.0` reads as the whole repository's version; `cme-v1.0.0` names the engine. **Recommendation: `cme-v1.0.0`** |
-| 3 | **Package version** | `custom-memory-engine/pyproject.toml` is `0.1.0` at `490904d`. A tag on an existing commit cannot change it; bumping to `1.0.0` would need a new commit (and so option (b)). **Recommendation: let the tag stand alone and record the mismatch** |
+| 1 | **Which commit** | **`490904d632518b86e0f52ced1f3266b895c3c36b`**, the commit measured here: the pre-V2 substrate, where every figure in this document reproduces. r7's migrations 2 and 3 (`scope_grant`, association cap) are post-tag additive migrations, as the additivity rule intends |
+| 2 | **Tag name** | **`cme-v1.0.0`** (annotated). The repository is a monorepo whose root package is `langgraph-fastapi-template`; a plain `v1.0.0` would read as the whole repository's version |
+| 3 | **Package version** | **Unchanged at `0.1.0`.** A tag on an existing commit cannot change it; the tag names the frozen baseline and is not a package release. Recorded mismatch: `cme-v1.0.0` contains `custom-memory-engine` `0.1.0` |
 
-None of these is decided by this document. The tag is outward-facing and is created by a maintainer after the
-decisions are recorded here.
-
-To tag, after the decisions above are recorded:
+Decided by the Project Owner's written instruction in the r9 session ("approve commit `490904d` as the
+baseline, using the tag `cme-v1.0.0`"; `APPROVAL.md` Amendment 2). The tag was created with:
 
 ```bash
-git tag -a <tag-name> -m "<tag-name>: frozen substrate baseline (PLAN/V2/BASELINE.md)" <decided-commit>
-git push origin <tag-name>
+git tag -a cme-v1.0.0 -m "cme-v1.0.0: frozen substrate baseline (PLAN/V2/BASELINE.md)" 490904d632518b86e0f52ced1f3266b895c3c36b
+git push origin cme-v1.0.0
 ```
 
-The tag is outward-facing and should be created by a maintainer deliberately; it is deliberately not created
-by this pull request.
+Check: `git rev-parse 'cme-v1.0.0^{commit}'` prints the commit above. Every command in this document, re-run on a
+checkout of the tag, reproduces its figure (sections 2-6).
