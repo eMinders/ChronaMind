@@ -282,3 +282,6 @@ guard evaluated without error on 10 issue-comment events at `bb67cf7` (all corre
 - #59 follow-ups: proposed decisions D6-D12 in `MIGRATION_RISK.md` §1.1 before `E-010`-`E-012`.
 - #57 follow-up: confirm the corrected transitive re-derivation rule and the cross-scope lock-order rule.
 - MA-017 (#60): still unclaimed; G0b also needs it green. **W1 remains not started.**
+
+> **r9 (2026-11-01).** Every item under "Remaining for the Project Owner" above was decided or completed;
+> see `R9_PRE_W1_COMPLETION_REPORT.md`. This report is otherwise kept as written.
