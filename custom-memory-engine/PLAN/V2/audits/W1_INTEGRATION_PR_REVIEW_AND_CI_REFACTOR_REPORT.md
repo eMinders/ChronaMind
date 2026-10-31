@@ -219,3 +219,66 @@ not repeated in r8, because no engine code changed.
 | 11 | Branch protection with required checks | admin rights | repository admin | Require `static`, `verify`, `default-install`, `checks` |
 | 12 | Observe PR dedup and cancellation on the next PR push (§E.5) | an open PR | maintainer | Confirm one engine run per push |
 | 13 | W1 `E-010`–`E-017` | G0, G0b, items 3–9 | Project Owner authorises | Start only after G0b is declared |
+
+---
+
+## J. Addendum (r8b): review findings resolved and PRs merged (2026-10-31)
+
+**Instruction.** The Project Owner instructed the maintainer session to resolve every PR review finding, push
+the changes, merge after verification, and **not to start W1 under any circumstances**.
+
+**Method.** Fixes were added as new commits on top of each author's branch, after merging `main` into it.
+Nothing was rebased or force-pushed, and no author commit was rewritten. Each PR was merged only after its
+findings were fixed with evidence, CI was green on the exact head (`--match-head-commit`), and the
+closing keywords in its body (and, after the near-miss below, its commit messages) matched the intended issue
+state. All merges use merge commits per repository convention, except #92 (squash; reason below).
+
+| PR | Fix commit(s) | Merge | Issue |
+|---|---|---|---|
+| #83 MA-018 checker | `a9d422c`, `415d5fd` (marker vocabulary, line numbers, alias records; 13 tests, 9 fail on the old checker) | `a8079c6` | #78 closed (all criteria) |
+| #82 E-003 notices | `799b7e4` (TASK_GRAPH, ARCHITECTURE notices) | `2a9af5c` | #77 closed |
+| #84 E-001 audit | `fa8e2c0`, `2d606fd` (missing-path exit, environment, r7 registry, CI `--check`; 29/6/1/24) | `eb7a75a` | #50 closed |
+| #85 E-004 ledger | `5d03e15` (r7 reconciliation; 29 cited tests collected and passing) | `4fcbc3c` | #52 **open** (see incident 1) |
+| #86 MA-010 threat model | `9c73d44` (T-21..T-23, r7 reconciliation, quoted conflicts) | `88012ac` | #53 closed |
+| #89 MA-016 migration risk | `7b1dda7` (decision register D1-D12, M2 measured on PG16, order, persona, rollbacks) | `7795f7d` | #59 closed |
+| #88 E-002 baseline | `f13d60c` (Linux reproduction at `490904d`; G3; gaps; open tag decisions) | `9c0f901` | #51 **open**: tag decisions are the owner's |
+| #90 MA-014 deletion order | `85e09a4` (proof corrected, rule fixed: old rule 698 counterexamples, new 0; both constants; lock order) | `9013e29` | #57 closed |
+| #91 MA-013 channels | `5b12f6e` (legality gap measured and pinned; `V2-D37`; `none`; proposals C-P1..C-P6) | `8180d5e` | #56 **open**: not frozen until C-P1..C-P6 are decided |
+| #87 RL-071 | `1cc6fb4` (merge of `main`, all conflicts resolved to `main`; empty net diff) | `9eb78c5` | #47 already closed |
+| #92 MA-012 | `f6c861c` (status cites `V2-D39`) | `68f2914` (squash) | #55 **open**: §5 gaps need owner decisions |
+
+**W1 not started (verified).** `git diff b907125 HEAD -- custom-memory-engine/src` is empty: no engine code,
+schema or migration changed. The MA-016 measurements ran inside rolled-back transactions on scratch schemas.
+
+**Verification (fresh clone of `f8777a6`).** Full CI scope: **1961 passed, 0 skipped**. No extras: **1727 passed,
+218 skipped** (the same 218 environment gates as the baseline). ruff, format and pyright clean; bitemporal `ALL
+ASSERTIONS PASSED`; frozen records 5/5; mechanical checks; CP bounds identical; statistics; G-TS integrity;
+`check_plan_refs.py` 0 findings; `audit_status.py --check` clean. Remote: every first-parent commit on `main` from
+`22636e1` to `f8777a6` (14 commits) has green `CI` and, where engine paths changed, green engine verification.
+
+**Incidents and corrections (recorded deliberately).**
+1. **#52 was auto-closed by mistake.** The PR body's `Closes #52` had CRLF line endings, so my edit to `Refs`
+   silently did not match, and my merge command did not gate on the closing-keyword count. #52 was reopened
+   with an explanation. All later merges went through a guard that refuses unless the keyword count, the
+   mergeable state and every check on the exact head are as intended.
+2. **Near-miss on #55.** My own commit message in #92 read "closes #55 criterion 4", which would have closed #55
+   once the commit reached `main`. #92 was squash-merged with an explicit keyword-free message, so that text never
+   reached `main`. Every merged branch was scanned for closing keywords in commit messages before merging.
+3. **CI concurrency defect in `22636e1` (mine).** Section E.2 said pushes to `main` are never cancelled. In fact
+   GitHub replaces a *pending* run in a shared group even with `cancel-in-progress: false`, so rapid merges
+   cancelled runs for `7795f7d` and `9eb78c5`. Fixed in `f8777a6` (main-push groups keyed on the commit SHA);
+   both cancelled runs were re-run and passed. E.2's statement is superseded by this paragraph.
+
+**Live CI evidence obtained in this round** (closing §E.5's open items): a PR branch push produced exactly
+one engine run (`pull_request` only; #83 at `415d5fd`); same-repo, non-draft PRs ran the Claude review; the
+engine workflow correctly did not run on #87, whose diff touches no engine path; the `@claude` author-association
+guard evaluated without error on 10 issue-comment events at `bb67cf7` (all correctly skipped).
+
+**Remaining for the Project Owner** (unchanged in kind; now concrete):
+- #51: choose the `v1.0.0` commit, tag name and version (`BASELINE.md` §7.1; recommendation `490904d`, `cme-v1.0.0`).
+- #52: confirm that criterion 3 is superseded by the closure of #46/#47, then close.
+- #55: decide the seven `API_V2.md` §5 gaps (`create_entity`, `register_method` block W1 API integration).
+- #56 / G0b: decide C-P1..C-P6 in `CHANNELS.md` §5 (C-P4 is a security item); only then is MA-013 frozen.
+- #59 follow-ups: proposed decisions D6-D12 in `MIGRATION_RISK.md` §1.1 before `E-010`-`E-012`.
+- #57 follow-up: confirm the corrected transitive re-derivation rule and the cross-scope lock-order rule.
+- MA-017 (#60): still unclaimed; G0b also needs it green. **W1 remains not started.**

@@ -356,3 +356,17 @@ Actions, with direct-to-`main` delivery. **Baseline:** `main` @ `b907125`. Full 
 
 **Still open:** G0, G0b, `MA-013`, `MA-017`, PilotFreeze (unsigned; human action), open decisions
 `V2-D14`, `D16`, `D17`, `D30`, `D31`, `D32`, `D34`, and N-1–N-6.
+
+## 14. r8b: review findings resolved, 11 PRs merged (2026-10-31)
+
+**Authority:** Project Owner instruction to resolve every review finding, push, merge after verification, and
+not start W1. Details: `audits/W1_INTEGRATION_PR_REVIEW_AND_CI_REFACTOR_REPORT.md` §J.
+
+| Item | Result |
+|---|---|
+| PRs | All 11 merged after fixes on top of the authors' branches (no rebase or force-push): #83, #82, #84, #85, #86, #89, #88, #90, #91, #87, #92 (squash) |
+| Issues closed | #78, #77, #50, #53, #59, #57 (all acceptance criteria met with evidence) |
+| Issues kept open | #51 (tag decisions), #52 (criterion 3 needs owner confirmation; reopened after an accidental auto-close), #55 (API §5 gaps), #56 (MA-013 not frozen: C-P1..C-P6) |
+| CI | `f8777a6` fixes a defect from `22636e1`: main-push concurrency replaced pending runs; now keyed on the commit SHA |
+| Tests | Fresh clone of `f8777a6`: 1961 passed (full CI scope); no extras 1727 passed, 218 skipped; every gate green |
+| W1 | **Not started.** No change under `custom-memory-engine/src` since `b907125` |
