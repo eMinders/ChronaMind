@@ -19,7 +19,7 @@ ADAPTER_VERSION = "rl031-v1"
 # ``P`` plus every engine ablation the adapter can actually configure. Ablations are
 # separate systems (``D-ENG-01``: ``P − A2`` is a real paired contrast), so their ids must
 # pass the same frozen-configuration validation as ``P``.
-ENGINE_SYSTEM_IDS = frozenset({"P", "A1", "A2", "A2b"})
+ENGINE_SYSTEM_IDS = frozenset({"P", "A1", "A2", "A2b", "A8"})
 EVIDENCE_METRICS = (
     "evidence_recall_at_k",
     "diagnostic_evidence_recall_at_k",

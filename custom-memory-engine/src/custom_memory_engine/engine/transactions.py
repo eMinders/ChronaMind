@@ -18,7 +18,7 @@ from custom_memory_engine.clock.allocation import ClockError, ClockTick, allocat
 
 logger = structlog.get_logger(__name__)
 
-type AblationMode = Literal["P", "A1", "A2", "A2b"]
+type AblationMode = Literal["P", "A1", "A2", "A2b", "A8"]
 type VersionStatus = Literal["candidate", "conflict_pending", "rejected", "active", "archived"]
 type MemoryLayer = Literal["episodic", "semantic", "opinion", "persona"]
 type ValidFromBasis = Literal["explicit", "inferred"]

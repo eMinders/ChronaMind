@@ -230,6 +230,7 @@ def plan_consolidation(
     user_id: str,
     content: str,
     version_id: str | None = None,
+    memory_key: str | None = None,
     layer: ConsolidationLayer = "semantic",
     derivation_type: DerivationType = "consolidation",
     single_valued: bool = False,
@@ -243,6 +244,8 @@ def plan_consolidation(
         raise ConsolidationError("nonblank_user_id_required")
     if not isinstance(content, str) or not content.strip():
         raise ConsolidationError("nonblank_consolidated_content_required")
+    if memory_key is not None and (not isinstance(memory_key, str) or not memory_key.strip()):
+        raise ConsolidationError("nonblank_memory_key_required")
     if layer != "semantic":
         # A derived row is a belief about the user, so it is ``semantic``. Episodic
         # rows are turn-grounded and must carry evidence, which a derived row lacks.
@@ -280,13 +283,13 @@ def plan_consolidation(
         raise ConsolidationError("sources_must_share_subject_and_predicate")
     subject_key, predicate_key = next(iter(keys))
 
-    memory_key = sorted(source.memory_key for source in sources)[0]
+    resolved_memory_key = memory_key or sorted(source.memory_key for source in sources)[0]
     valid_from, valid_until = _covering_interval(sources)
 
     return ConsolidationPlan(
         user_id=user_id,
         version_id=resolved_id,
-        memory_key=memory_key,
+        memory_key=resolved_memory_key,
         subject_key=subject_key,
         predicate_key=predicate_key,
         content=content,
@@ -330,6 +333,7 @@ async def consolidate(
     *,
     content: str,
     version_id: str | None = None,
+    memory_key: str | None = None,
     layer: ConsolidationLayer = "semantic",
     derivation_type: DerivationType = "consolidation",
     single_valued: bool = False,
@@ -349,6 +353,7 @@ async def consolidate(
         user_id=user_id,
         content=content,
         version_id=version_id,
+        memory_key=memory_key,
         layer=layer,
         derivation_type=derivation_type,
         single_valued=single_valued,

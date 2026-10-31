@@ -164,11 +164,11 @@ def test_p_without_engine_options_is_a_domain_error(tmp_path: Path) -> None:
         assemble_adapter(config("P", selected), selected, cast(ModelServices, FakeServices(selected)), options)
 
 
-@pytest.mark.parametrize("ablation", ["A1", "A2", "A2b"])
+@pytest.mark.parametrize("ablation", ["A1", "A2", "A2b", "A8"])
 def test_engine_ablation_options_are_carried_into_the_adapter(ablation: str, tmp_path: Path) -> None:
     """Ablations are first-class systems: each must be constructible under its own id."""
     selected = settings()
-    mode = cast("Literal['P', 'A1', 'A2', 'A2b']", ablation)
+    mode = cast("Literal['P', 'A1', 'A2', 'A2b', 'A8']", ablation)
     options = RuntimeOptions(
         assets_directory=tmp_path,
         postgres_dsn=SecretStr(TEST_DSN),
@@ -394,6 +394,7 @@ def test_clean_interpreter_factory_construction_imports_no_heavy_optional_sdk(tm
     program = """
 import json,sys
 from pathlib import Path
+sys.path.insert(0,sys.argv[2])
 from evaluation.baselines.factory import create_adapter,RuntimeOptions,LocalGraphOptions
 from pydantic import SecretStr
 from evaluation.baselines.tests.helpers import config,settings
@@ -411,7 +412,17 @@ for name in ('mem0','graphiti_core','onnxruntime','tokenizers','tiktoken'):
 print(json.dumps({'status':'lazy_factory_verified'}))
 """
     result = subprocess.run(
-        [sys.executable, "-c", program, str(tmp_path)], capture_output=True, text=True, check=False, timeout=30
+        [
+            sys.executable,
+            "-c",
+            program,
+            str(tmp_path),
+            str(Path(__file__).resolve().parents[3] / "src"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"status": "lazy_factory_verified"}

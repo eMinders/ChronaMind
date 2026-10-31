@@ -41,6 +41,28 @@ commit rolls back the uncommitted `running` transition, leaving the job queued;
 there is no durable running lease to expire. A lost response after a successful
 commit is safe to redeliver because the durable job is already `done`.
 
+Slow-path jobs whose prepared input depends on memory state may include an integer
+`deletion_epoch` in an object-shaped payload. The worker compares it with the
+current per-user deletion epoch before invoking the handler (both take the same
+per-user advisory lock, so a deletion cannot interleave). A stale job is never run
+and is not charged an attempt. In the same transaction it is moved to
+`dead_letter`, and a content-free `job_discarded_stale_deletion_epoch` audit event
+records the job id and both epochs. `process_one` returns
+`WorkerResult(status="dead_letter", reason="stale_deletion_epoch")`, so the next
+call proceeds to the user's next job. A stale job must not stay `queued`: the
+selector orders by `next_run_at, id`, so it would be picked first forever and
+starve the user's queue. To re-prepare work against surviving data, enqueue it
+under a **fresh job identity** (new `id` and `idempotency_key`, and a new
+`candidate_fingerprint` when `turn_id` is set). The discarded job keeps its
+original identity.
+
+A committed deletion also purges non-running jobs whose `turn_id` belongs to a
+deleted turn, or whose payload contains a deleted or rebuilt version id as an
+**exact JSON string value** anywhere in the document. Producers must reference
+versions as whole string values: an id embedded inside a longer string is not
+matched, and a different id that merely contains it (`v10` versus `v1`) is not
+purged.
+
 `process_one` owns its root transactions and requires an **idle connection**.
 It rejects an existing caller transaction rather than committing it or retrying
 only a savepoint. `enqueue` can compose through a nested savepoint and preserves
