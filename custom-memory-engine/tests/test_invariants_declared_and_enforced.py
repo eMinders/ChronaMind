@@ -111,7 +111,7 @@ def unresolved(row: Row, root: Path = ROOT) -> list[str]:
             problems.append(f"test_file_missing:{test}")
         elif not symbol:
             problems.append(f"test_symbol_required:{test}")
-        elif target.suffix == ".py" and symbol not in _test_names(target):
+        elif target.suffix == ".py" and (not symbol.startswith("test") or symbol not in _test_names(target)):
             problems.append(f"test_not_defined:{test}")
     return problems
 
@@ -159,11 +159,22 @@ def test_every_declared_invariant_is_enforced_or_explicitly_marked(rows: list[Ro
 
 def test_known_v1_gaps_are_reported_not_silently_passed(rows: list[Row]) -> None:
     status = {r.invariant: r.status for r in rows}
-    assert status["Invariant 7 / runtime role"] == "UNENFORCED"
     assert status["Invariant 8 / content-free audit"] == "UNENFORCED"
-    assert status["Invariant 8 / scanner channels 3, 5-7"] == "UNENFORCED"
     assert status["Invariant 9 / end-to-end replay"] == "UNENFORCED"
     assert status["Invariant 10 / T1-T5 harness"] == "UNENFORCED"
+
+
+def test_gaps_closed_in_r7_are_enforced_with_tests(rows: list[Row]) -> None:
+    """#47 (restricted runtime role) and #46 (seven-channel harness probes) closed on main in r7."""
+    by_name = {r.invariant: r for r in rows}
+    for name in ("Invariant 7 / runtime role", "Invariant 8 / scanner channels 3, 5-7"):
+        assert by_name[name].status == "ENFORCED"
+        assert by_name[name].tests
+
+
+def test_r7_primitives_are_partial_until_integrated_by_w1(rows: list[Row]) -> None:
+    status = {r.invariant: r.status for r in rows}
+    assert status["I1′"] == status["I7"] == status["I17"] == "PARTIAL"
 
 
 def test_removing_a_ledger_row_is_detected(rows: list[Row]) -> None:
@@ -187,11 +198,11 @@ def test_citing_a_test_that_does_not_exist_is_detected(rows: list[Row]) -> None:
 
 
 def test_an_unenforced_row_must_say_what_is_missing_and_who_owns_it(rows: list[Row]) -> None:
-    target = next(r for r in rows if r.invariant == "Invariant 7 / runtime role")
+    target = next(r for r in rows if r.invariant == "Invariant 8 / content-free audit")
     mutated = [replace(target, gap="", owners=()) if r is target else r for r in rows]
     problems = validate(mutated, declared_invariants(), defined_tasks())
-    assert "Invariant 7 / runtime role:gap_required" in problems
-    assert "Invariant 7 / runtime role:owner_required" in problems
+    assert "Invariant 8 / content-free audit:gap_required" in problems
+    assert "Invariant 8 / content-free audit:owner_required" in problems
 
 
 def test_an_enforced_claim_without_a_test_is_detected(rows: list[Row]) -> None:
@@ -211,3 +222,10 @@ def test_a_ledger_row_for_an_undeclared_invariant_is_detected(rows: list[Row]) -
     assert "ledger_row_for_undeclared_invariant:Invariant 99" in validate(
         [*rows, phantom], declared_invariants(), defined_tasks()
     )
+
+
+def test_citing_a_helper_instead_of_a_test_is_detected(rows: list[Row]) -> None:
+    target = next(r for r in rows if r.invariant == "Invariant 2")
+    broken = replace(target, tests=("tests/test_invariants_declared_and_enforced.py::parse_ledger",))
+    mutated = [broken if r is target else r for r in rows]
+    assert any("test_not_defined" in p for p in validate(mutated, declared_invariants(), defined_tasks()))
