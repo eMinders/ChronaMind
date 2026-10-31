@@ -19,7 +19,14 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, f
 from rich.console import Console
 
 SCHEMA_SQL = Path(__file__).with_name("001_full_schema.sql")
-VERSION = 1
+# Ordered, append-only. A shipped entry is never edited or removed: its source checksum
+# is recorded at apply time and any later change is reported as drift (MA-016 X1).
+MIGRATIONS: tuple[tuple[int, str], ...] = (
+    (1, "001_full_schema.sql"),
+    (2, "002_scope_grants.sql"),
+    (3, "003_association_cap.sql"),
+)
+VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
 HISTORY_TABLE = "_cme_schema_migrations"
 TABLES = (
@@ -35,6 +42,7 @@ TABLES = (
     "audit_event",
     "deletion_request",
     "job",
+    "scope_grant",
 )
 FUNCTIONS = (
     "clock_now",
@@ -42,6 +50,8 @@ FUNCTIONS = (
     "enforce_provenance",
     "enforce_archival_invariant",
     "guard_derivation_coverage",
+    "guard_scope_grant_update",
+    "enforce_association_cap",
 )
 logger = structlog.get_logger(__name__)
 
@@ -91,7 +101,7 @@ class MigrationConfig(BaseModel):
 class MigrationStatus(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     schema_name: str
-    state: Literal["unapplied", "applied", "unmanaged", "drifted"]
+    state: Literal["unapplied", "applied", "pending", "unmanaged", "drifted"]
     version: int | None = None
     checksum_sha256: str | None = None
     reason: str | None = None
@@ -103,15 +113,25 @@ class MigrationResult(BaseModel):
     status: MigrationStatus
 
 
-def _read_source() -> tuple[str, str]:
+def _read_one(filename: str) -> tuple[str, str]:
     try:
-        source = SCHEMA_SQL.read_text(encoding="utf-8")
+        source = SCHEMA_SQL.with_name(filename).read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         raise MigrationError("migration_source_unreadable") from None
     if not source.strip():
         raise MigrationError("migration_source_empty")
     # Universal-newline reading binds the same migration on Windows and Linux.
     return source, hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _read_sources() -> tuple[tuple[int, str, str, str], ...]:
+    """Return ``(version, filename, source, checksum)`` for every declared migration."""
+    return tuple((version, filename, *_read_one(filename)) for version, filename in MIGRATIONS)
+
+
+def _read_source() -> tuple[str, str]:
+    """Source and checksum of migration 1 (kept for callers that inspect the base schema)."""
+    return _read_one(MIGRATIONS[0][1])
 
 
 # Live structure is checked independently of the ledger's source checksum. Row
@@ -212,7 +232,9 @@ class MigrationRunner:
         rows.append(await cursor.fetchall())
         return hashlib.sha256(json.dumps(rows, ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
 
-    async def _status(self, connection: AsyncConnection, checksum: str) -> MigrationStatus:
+    async def _status(
+        self, connection: AsyncConnection, sources: tuple[tuple[int, str, str, str], ...]
+    ) -> MigrationStatus:
         schema = self.config.schema_name
         cursor = await connection.execute(
             """SELECT pg_catalog.obj_description(n.oid,'pg_namespace'),
@@ -230,29 +252,56 @@ class MigrationRunner:
             # A malformed history must not abort a read-only status inspection.
             async with connection.transaction():
                 cursor = await connection.execute(
-                    sql.SQL("SELECT version,filename,checksum_sha256,catalog_sha256 FROM {}.{}").format(
+                    sql.SQL("SELECT version,filename,checksum_sha256,catalog_sha256 FROM {}.{} ORDER BY 1").format(
                         sql.Identifier(schema), sql.Identifier(HISTORY_TABLE)
                     )
                 )
                 history = await cursor.fetchall()
         except Error:
             return MigrationStatus(schema_name=schema, state="drifted", reason="invalid_history")
-        if len(history) != 1 or type(history[0][0]) is not int or history[0][0:2] != (VERSION, SCHEMA_SQL.name):
+        # History must be a non-empty, gap-free prefix of the declared migration list.
+        if not history or len(history) > len(sources):
             return MigrationStatus(schema_name=schema, state="drifted", reason="unsupported_history")
-        _, _, recorded_checksum, catalog_checksum = history[0]
-        if not all(
-            isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value)
-            for value in (recorded_checksum, catalog_checksum)
-        ):
-            return MigrationStatus(schema_name=schema, state="drifted", reason="invalid_history")
-        fields = {"schema_name": schema, "version": VERSION, "checksum_sha256": recorded_checksum}
-        if recorded_checksum != checksum:
-            return MigrationStatus(**fields, state="drifted", reason="source_checksum_mismatch")
-        if catalog_checksum != await self._catalog(connection):
+        for row, (version, filename, _, _) in zip(history, sources, strict=False):
+            if type(row[0]) is not int or tuple(row[0:2]) != (version, filename):
+                return MigrationStatus(schema_name=schema, state="drifted", reason="unsupported_history")
+            if not all(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) for value in row[2:4]):
+                return MigrationStatus(schema_name=schema, state="drifted", reason="invalid_history")
+        current = history[-1][0]
+        fields = {"schema_name": schema, "version": current, "checksum_sha256": history[-1][2]}
+        for row, (_, _, _, checksum) in zip(history, sources, strict=False):
+            if row[2] != checksum:
+                return MigrationStatus(**fields, state="drifted", reason="source_checksum_mismatch")
+        if history[-1][3] != await self._catalog(connection):
             return MigrationStatus(**fields, state="drifted", reason="catalog_drift")
+        if len(history) < len(sources):
+            return MigrationStatus(**fields, state="pending", reason="newer_migrations_available")
         return MigrationStatus(**fields, state="applied")
 
-    async def _install(self, connection: AsyncConnection, source: str, checksum: str) -> None:
+    async def _record(self, connection: AsyncConnection, version: int, filename: str, checksum: str) -> None:
+        catalog = await self._catalog(connection)
+        await connection.execute(
+            sql.SQL("INSERT INTO {} (version,filename,checksum_sha256,catalog_sha256) VALUES (%s,%s,%s,%s)").format(
+                sql.Identifier(HISTORY_TABLE)
+            ),
+            (version, filename, checksum, catalog),
+        )
+
+    async def _apply_from(
+        self, connection: AsyncConnection, sources: tuple[tuple[int, str, str, str], ...], start: int
+    ) -> None:
+        """Apply migrations after version ``start`` in order, recording each one's catalog."""
+        await self._scope(connection)
+        for version, filename, source, checksum in sources:
+            if version <= start:
+                continue
+            cursor = await connection.execute(cast(LiteralString, source), prepare=False, binary=False)
+            while cursor.nextset():
+                pass
+            await self._record(connection, version, filename, checksum)
+
+    async def _install(self, connection: AsyncConnection, sources: tuple[tuple[int, str, str, str], ...]) -> None:
+        _, base_filename, source, checksum = sources[0]
         # Install shared extensions before making the managed schema the creation
         # target. They never belong to, or get erased by, clean reset.
         for extension in ("vector", "btree_gist"):
@@ -284,29 +333,27 @@ class MigrationRunner:
                 applied_at timestamptz NOT NULL DEFAULT transaction_timestamp()
             )""").format(sql.Identifier(HISTORY_TABLE))
         )
-        catalog = await self._catalog(connection)
-        await connection.execute(
-            sql.SQL("INSERT INTO {} (version,filename,checksum_sha256,catalog_sha256) VALUES (%s,%s,%s,%s)").format(
-                sql.Identifier(HISTORY_TABLE)
-            ),
-            (VERSION, SCHEMA_SQL.name, checksum, catalog),
-        )
+        await self._record(connection, sources[0][0], base_filename, checksum)
+        await self._apply_from(connection, sources, sources[0][0])
 
     async def status(self) -> MigrationStatus:
-        _, checksum = _read_source()
+        sources = _read_sources()
         async with self._connection() as connection:
-            return await self._status(connection, checksum)
+            return await self._status(connection, sources)
 
     async def apply(self) -> MigrationResult:
-        source, checksum = _read_source()
+        sources = _read_sources()
         async with self._connection() as connection:
-            status = await self._status(connection, checksum)
+            status = await self._status(connection, sources)
             if status.state == "applied":
                 return MigrationResult(action="unchanged", status=status)
-            if status.state != "unapplied":
+            if status.state == "pending" and status.version is not None:
+                await self._apply_from(connection, sources, status.version)
+            elif status.state == "unapplied":
+                await self._install(connection, sources)
+            else:
                 raise MigrationError(status.reason or "schema_not_applicable")
-            await self._install(connection, source, checksum)
-            status = await self._status(connection, checksum)
+            status = await self._status(connection, sources)
             if status.state != "applied":
                 raise MigrationError("migration_verification_failed")
         logger.info(
@@ -317,10 +364,10 @@ class MigrationRunner:
     async def reset(self, *, confirm_schema: str) -> MigrationResult:
         if confirm_schema != self.config.schema_name:
             raise MigrationError("reset_schema_confirmation_required")
-        source, checksum = _read_source()
+        sources = _read_sources()
         async with self._connection() as connection:
-            status = await self._status(connection, checksum)
-            if status.state not in {"unapplied", "applied"} and not (
+            status = await self._status(connection, sources)
+            if status.state not in {"unapplied", "applied", "pending"} and not (
                 status.state == "drifted" and status.reason == "catalog_drift"
             ):
                 raise MigrationError(status.reason or "schema_not_resettable")
@@ -338,8 +385,8 @@ class MigrationRunner:
                 await connection.execute(
                     sql.SQL("DROP SCHEMA {} RESTRICT").format(sql.Identifier(self.config.schema_name))
                 )
-            await self._install(connection, source, checksum)
-            status = await self._status(connection, checksum)
+            await self._install(connection, sources)
+            status = await self._status(connection, sources)
             if status.state != "applied":
                 raise MigrationError("migration_verification_failed")
         logger.info("schema_migration_completed", action="reset", schema_name=self.config.schema_name, version=VERSION)
