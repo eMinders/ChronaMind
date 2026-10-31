@@ -100,3 +100,61 @@ def test_empty_directory_is_a_finding(tmp_path: Path) -> None:
 def test_committed_v2_plan_is_consistent() -> None:
     findings = checker.run_checks(ROOT / "PLAN" / "V2")
     assert [f.render() for f in findings] == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Review finding B1: current-use statements that merely contain "not" or "correctly".
+        "Admission rule (current, normative): it does not change; confidence_lower = 1 \u2212 CP_upper(k, o).\n",
+        "The bound is correctly 1 \u2212 CP_upper(k, o) for every artifact.\n",
+        "Admission treats the bound 1 \u2212 CP_upper(k, o) as final.\n",
+    ],
+)
+def test_current_use_of_the_superseded_formula_is_not_excused_by_ordinary_words(tmp_path: Path, line: str) -> None:
+    assert any(k == "stale_formula" for k, _ in _kinds(_base(tmp_path, line)))
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "**Correction (r3):** the r1/r2 form `1 \u2212 CP_upper(k, o)` treated `u` as successes and\n",
+        "| `SD-006` | `X-ignore-undetermined` ablation: the r2 rule (`1 \u2212 CP_upper(k, o)`) |\n",
+        "`1 \u2212 CP_upper(k, o)`, which treats every undetermined item as a success. That is not a\n",
+        "| **r3:** `1 \u2212 CP_upper(k, o)` used `u` as success | admission bound | **CRITICAL FIX** |\n",
+    ],
+)
+def test_marked_uses_of_the_superseded_formula_pass(tmp_path: Path, line: str) -> None:
+    assert not any(k == "stale_formula" for k, _ in _kinds(_base(tmp_path, line)))
+
+
+def test_every_finding_kind_reports_file_and_line(tmp_path: Path) -> None:
+    extra = "\nSee E-999.\n\n## Scope\n\n## Scope\n\n[x](MISSING.md)\n\nUses 1 \u2212 CP_upper(k, o).\n"
+    findings = checker.run_checks(_base(tmp_path, extra))
+    by_kind = {f.kind: f for f in findings}
+    assert set(by_kind) == {"undefined_task", "duplicate_heading", "broken_link", "stale_formula"}
+    lines = ROADMAP.count("\n") + 1  # first line of ``extra`` in ROADMAP_V2.md
+    assert by_kind["undefined_task"].line == lines + 1
+    assert by_kind["duplicate_heading"].line == lines + 5
+    assert by_kind["broken_link"].line == lines + 7
+    assert by_kind["stale_formula"].line == lines + 9
+    for finding in findings:
+        assert finding.render().startswith(f"ROADMAP_V2.md:{finding.line}: {finding.kind}: ")
+
+
+@pytest.mark.parametrize(
+    "alias_row",
+    [
+        "| `SD-001` | metrics module (was `C-013`) |\n",
+        "| `UM-010` | user model (`C-013` renamed) |\n",
+        "| `E-037` | deletion *(moved from `C-013`/W6)* |\n",
+        "| `E-037` | deletion, formerly `C-013` |\n",
+        "Moves: `C-013` \u2192 `E-001` in W3.\n",
+    ],
+)
+def test_retired_aliases_are_defined_only_by_an_explicit_alias_record(tmp_path: Path, alias_row: str) -> None:
+    reference = "Later text cites C-013.\n"
+    assert ("undefined_task", "C-013") in _kinds(_base(tmp_path, reference))
+    other = tmp_path / "aliased"
+    other.mkdir()
+    assert _kinds(_base(other, alias_row + reference)) == set()
