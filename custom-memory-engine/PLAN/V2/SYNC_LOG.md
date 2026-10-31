@@ -240,7 +240,7 @@ carried as an open question in the affected issue and is consolidated in
 
 ---
 
-## 11. r6: plan corrections and final readiness audit (2026-11-01)
+## 11. r6: plan corrections and final readiness audit (2026-10-31; originally mis-dated 2026-11-01, corrected in r7)
 
 **Scope:** planning artefacts only. Every finding from r5 was **independently re-derived**
 from the repository, the frozen evidence, or a live database; none was carried over on the
@@ -304,3 +304,37 @@ altered. Reconciliation: [`audits/ISSUE_PLAN_RECONCILIATION.md`](audits/ISSUE_PL
 **Verdict:** the plan is **more consistent but not yet unblocked**. W0 remains ready to start
 on authorisation; **W0b cannot be declared until B-01, B-02, B-03 and B-08 are decided**, and
 no roadmap work was begun or is authorised by this audit.
+
+---
+
+## 12. r7: blocker resolution, V1 completion and direct delivery (2026-10-31)
+
+**Authority:** explicit Project Owner authorization (`APPROVAL.md` Amendment 1).
+**Baseline:** `main` @ `490904d`. Every change was pushed directly to `main` as fast-forward
+commits, never force-pushed. Full status: `audits/R7_RESOLUTION_REPORT.md`.
+
+| Item | Result |
+|---|---|
+| B-01 … B-09 | Each has a decision (`DECISIONS_V2.md` §5: `V2-D35`–`V2-D43`, `V2-D13`), an implementation and tests. Wiring into the `M1`–`M9` structures is W1 integration, named per blocker |
+| #46 (`RL-070`) | Seven-channel harness probes, Suite D runner under `P`/`A8`, recorded frozen-model reports. `P`: 0/20 leak, 0 incomplete; `A8`: 20/20, exact match with the generator's expectations |
+| #47 (`RL-071`) | PR #87's commit cherry-picked (authorship kept), plus a catalog privilege assertion, the suite `I` CP bound, and write/delete paths under the role |
+| Engine defect found | Deleting a gate-superseded belief failed (FK on `memory_conflict.existing_version_id`). Fixed with a regression test |
+| Migration runner | Multi-version (`MIGRATIONS`, `pending` state), migrations 2 (`scope_grant`) and 3 (association cap) |
+| Reused PR work | #87 (`RL-071`) and #92 (`MA-012`, `API_V2.md`) cherry-picked. Both PRs were left open for their author, with a comment |
+| CI | `check_statistics.py` and `check_test_split_gate.py` added as steps |
+| Tests | Fresh-clone CI-equivalent: 1792 passed (baseline 1402 passed + 21 skipped); no-extras job 1558 passed |
+
+**Errors made during r7 and corrected (recorded deliberately):**
+
+1. Pushed head `85b2c06` **failed CI**. The Suite D runner read `research/benchmarks/own_D/data/`,
+   which is gitignored; local runs passed only because a generated copy existed. Fixed in
+   `0846330`: the split is now regenerated and checked against `MANIFEST.txt`. Verification has
+   since run from a fresh clone of the committed HEAD.
+2. The fresh clone then exposed three pyright errors that an earlier local check had not
+   surfaced, because its output was misread as clean. Fixed in `75c56e4`.
+3. The r6 documents were dated **2026-11-01**; the actual date was 2026-10-31. Corrected in
+   place, with the original noted.
+
+**Still open (not resolved by r7):** G0b is not declared (`MA-013`, `MA-017`). The signed
+`PilotFreeze` for confirmatory runs is a human action. Open decisions `V2-D14`, `D16`, `D17`,
+`D30`, `D31`, `D32` and `D34` were not taken.

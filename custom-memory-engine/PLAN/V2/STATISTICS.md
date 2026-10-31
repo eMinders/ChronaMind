@@ -225,7 +225,7 @@ The r2 draft quoted `≈ 0.32` for `o = 8`; that is the **one-sided 95%** value
 **0.3694**. This is precisely the inconsistency §4.2 now eliminates, and it is why the
 document carries a checked numerical table instead of prose approximations.
 
-> **Correction (plan audit r6, 2026-11-01).** The `o = 29` row previously printed
+> **Correction (plan audit r6, 2026-10-31).** The `o = 29` row previously printed
 > `CP_upper(0, 29) = 0.0981`. That is the **one-sided 95%** value, in the same class of
 > error this section corrects for `o = 8`, and it contradicted both the column heading
 > ("at one-sided 97.5%") and its own verdict. The system-convention value is
@@ -233,6 +233,12 @@ document carries a checked numerical table instead of prose approximations.
 > unchanged — still not admissible at `τ = 0.90` — but the row was arithmetically wrong.
 > `scripts/check_statistics.py` now asserts every row of this table, so the class of
 > error cannot recur silently. Recorded in `audits/PLAN_CORRECTION_REGISTER.md` (A1).
+
+> **Application point (r7, `V2-D40`).** This rule gates the `inferred → inferred(verified)`
+> transition, together with held-out verification; it does not gate creation. A
+> non-admissible abstraction is stored as an unverified hypothesis (the "hypothesis only"
+> rows above). The engine implementation is `custom_memory_engine.soundness.admission`,
+> tested equal to `evaluation/stats/clopper_pearson.py` and `validation/cp_bounds.py`.
 
 That is exactly the `H4`/deletion-bound logic, reused. It is the single most important
 consistency win of the revision: **the project already had the right instrument for

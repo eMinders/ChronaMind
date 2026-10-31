@@ -1,5 +1,11 @@
 # Open Decisions and Blockers
 
+> **Status update (r7, 2026-10-31): all nine blockers are RESOLVED.** Under the Project
+> Owner's explicit authorization, each received a recorded decision (`DECISIONS_V2.md` §5)
+> and an implementation with tests on `main`. The analysis below is the r6 record and is
+> preserved unchanged except for the one-line **Resolution (r7)** under each heading.
+> Current status, including what remains as W1 integration: `R7_RESOLUTION_REPORT.md`.
+
 **Status:** Audit deliverable. Not approval, and not a decision.
 **Audit:** r6 — Plan Corrections & Final Readiness Audit.
 **Baseline audited:** `main` @ `490904d` (plus the nine open PRs read as proposals only).
@@ -30,6 +36,8 @@ behaviour exists meanwhile, and the latest point at which the decision must be m
 ---
 
 ## B-01 — `LIKE` wildcard expansion in scope selectors (Critical)
+
+**Resolution (r7):** `V2-D35` — `starts_with` over canonical paths; `LIKE` forbidden. `scope.paths`; `tests/integration/test_scope_matching_db.py`.
 
 **Conflicting requirements.**
 - `ARCHITECTURE_V2.md` §5 rule 4 (approved, normative): RLS enforces the read predicate with
@@ -90,6 +98,8 @@ written against a leaky predicate.
 
 ## B-02 — No storage or lifecycle for project/shared access lists (High)
 
+**Resolution (r7):** `V2-D36` — option 1, minimal: `scope_grant` (migration 2) + fail-closed read-set resolution. `scope.access`; `tests/integration/test_scope_access_db.py`.
+
 **Conflicting requirements.**
 - `ARCHITECTURE_V2.md` §5 rule 2 (normative): selectors include
   `with_visibility(path, {project, shared})`.
@@ -135,6 +145,8 @@ selector can be rejected safely until then.
 
 ## B-03 — Provenance rendering can disclose an unreadable scope (High)
 
+**Resolution (r7):** `V2-D37` — option 1: opaque per-caller HMAC handle + derivation type only. `scope.provenance`; `tests/test_scope_provenance.py`.
+
 **Conflicting requirements.** Two approved, normative statements:
 - `ARCHITECTURE_V2.md` §9.3: cross-scope provenance is rendered as "an opaque reference
   (**id + scope + type**)" when the caller cannot read the source scope.
@@ -177,6 +189,8 @@ controlled correction; (2) adds a mechanism and is an amendment.
 
 ## B-04 — `V2-D07`'s five-call list contradicts the approved API surface (Medium)
 
+**Resolution (r7):** `V2-D39` — option 1: §8.1 / `API_V2.md` canonical; `retract` does not exist. `api.contract`; `tests/test_api_contract.py`.
+
 **Conflicting requirements.**
 - `DECISIONS_V2.md` `V2-D07` (ADOPTED): Tier B uses "only: `query`, `infer`, `verify`,
   `retract`, `stats`."
@@ -215,6 +229,8 @@ correction that preserves intent.
 ---
 
 ## B-05 — `archived` cannot be a retention value (Medium)
+
+**Resolution (r7):** `V2-D38` — option 1: `archived` → `retired` + `durable`. `model.axes`; `tests/integration/test_model_backfill_db.py`.
 
 **Conflicting requirements.**
 - `ARCHITECTURE_V2.md` §2.1 (normative): `retention ∈ {working, session, durable}`.
@@ -257,6 +273,8 @@ auditability.
 ---
 
 ## B-06 — Is the CP bound applied at inference, or at verification? (Medium)
+
+**Resolution (r7):** `V2-D40` — option 1: the bound gates verification, not creation. `soundness.admission`; `tests/test_soundness_admission.py`.
 
 **Conflicting requirements.**
 - `ARCHITECTURE_V2.md` §2.2 (normative flowchart): `G2` includes
@@ -302,6 +320,8 @@ encode the choice.
 
 ## B-07 — Grounding rules for evidence sources other than turns (Medium)
 
+**Resolution (r7):** `V2-D41` — option 1: per-type grounding (`turn`, `external`; `artifact` never). `grounding.sources`; `tests/test_grounding_sources.py`.
+
 **Conflicting requirements.**
 - `ARCHITECTURE_V2.md` §2.2 `G1a`: "evidence exists in a **declared source type**".
 - Migration `M4` permits `SOURCE(type='external')`.
@@ -334,6 +354,8 @@ source type is rejected, never passed.
 ---
 
 ## B-08 — `V2-D13` is a W1 blocker that is not in any gate, and G0b is unsatisfiable meanwhile (High)
+
+**Resolution (r7):** `V2-D13` (degree cap, default 32, DB-enforced) and `V2-D43` (`M5` deferred, `M7` owned by `E-010`). `tests/integration/test_association_cap_db.py`.
 
 **Conflicting requirements.**
 - `DECISIONS_V2.md` §4: `V2-D13` (association-types cap per artifact, suggested default 32)
@@ -372,6 +394,8 @@ but it is still a decision taken by the implementer.
 ---
 
 ## B-09 — No V2 gate certifies test-split integrity before W6 (Medium)
+
+**Resolution (r7):** `V2-D42` — gate G-TS (J5 + coverage + J7/J8 + one-shot), required before G5. `evaluation/harness/split_gate.py`; CI `scripts/check_test_split_gate.py`.
 
 **Conflicting requirements.**
 - `PLAN/CONTRIBUTING.md` §2: confirmatory test splits may run **only once**, after gates

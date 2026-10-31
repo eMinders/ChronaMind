@@ -1,5 +1,9 @@
 # Plan Correction Register
 
+> **Superseded status (r7, 2026-10-31).** This r6 document is preserved as written. Every
+> blocker it lists is now resolved; see `R7_RESOLUTION_REPORT.md` and `DECISIONS_V2.md` §5.
+
+
 **Status:** Audit deliverable. Records corrections and dispositions; it does not approve
 anything.
 **Audit:** r6 — Plan Corrections & Final Readiness Audit.

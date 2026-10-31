@@ -32,7 +32,7 @@ enum forces a 6-way dispatch in every query and makes adding a new capability a 
 migration. See `CRITIQUE.md` F1.
 
 **Consequences.**
-- `archived` survives as a *retention* value only, for backward compatibility.
+- ~~`archived` survives as a *retention* value only, for backward compatibility.~~ **Superseded by `V2-D38` (r7):** v1 `archived` maps to `lifecycle='retired'`, `retention='durable'`; the retention enum has no `archived`.
 - Query code selects on independent predicates rather than one enum.
 - `A10` is retired as an ablation; the persona feature becomes "user-model
   abstractions" and is gated by the F3 verification rules instead.
@@ -163,6 +163,11 @@ transaction, and `validation/bitemporal_checks.sql` must be replayed against it.
 
 **Status:** ADOPTED · **Extends:** `D-ARCH` / `PLAN/INDEPENDENCE_BOUNDARY.md` from a
 repo-boundary rule to a **tier** rule.
+
+> **Amended by `V2-D39` (r7, 2026-10-31).** The enumeration below is superseded by
+> `ARCHITECTURE_V2.md` §8.1 / `API_V2.md` (23 operations, 17 Tier B); `retract` never
+> existed (the operation is `retract_own`). The invariant, the credential rule and the
+> prohibitions are unchanged. Original text preserved:
 
 **Decision.** Tier B (reflection, consolidation, pattern discovery, user modelling)
 uses only: `query`, `infer`, `verify`, `retract`, `stats`. It has no DB credentials
@@ -470,7 +475,7 @@ the mechanism is what produces the result.
 ## 4. Open decisions after the review
 | ID | Question | Owner | Needed before |
 |---|---|---|---|
-| V2-D13 | Association-types cap per artifact (default suggestion: 32) | engine lead | W1 |
+| ~~V2-D13~~ | ~~Association-types cap per artifact (default suggestion: 32)~~ — **resolved (r7)**, see §5 | engine lead | W1 |
 | V2-D14 | Retention default per profile and abstraction expiry (suggest: 180 d for preferences, 365 d for constraints and decision patterns, 14 d for context; re-verified rather than renewed) | product + methods | W5 |
 | V2-D16 | Whether `S8` (fact/hypothesis labelling detectability) runs at all; ethics determination required first | supervisor | W7 |
 | V2-D17 | Public API stability policy: semver with deprecation windows vs "experimental" prefix for Tier B | engine lead | W7 |
@@ -480,3 +485,152 @@ the mechanism is what produces the result.
 | V2-D34 | `K` (dissent persistence window) confirmation: default 7 reflection cycles, frozen pre-test | methods | W4 |
 
 `V2-D15` is **resolved** by `V2-D23` (conformal is for intervals only; admission uses CP bounds).
+`V2-D13` is **resolved** in §5 (r7). The other rows remain open; r7 did not decide them.
+
+
+---
+
+## 5. Decisions taken under Project Owner authorization (r7, 2026-10-31)
+
+The Project Owner authorized resolving blockers B-01–B-09
+(`audits/OPEN_DECISIONS_AND_BLOCKERS.md`) using the approved Charter, Architecture,
+Statistics and existing code as the governing constraints, choosing the least
+scope-expanding option consistent with them. Each decision below names what it resolves,
+its implementation, and the test that verifies it. **Status legend:** *Implemented and
+verified* = code and tests on `main`, CI green. *W1 integration* = the primitive is done; the
+named W1 task wires it into structures that do not exist yet (they are created by `M1`–`M9`).
+
+### V2-D35 — Scope matching is literal prefix matching; `LIKE` is forbidden (resolves B-01; extends V2-D27)
+
+**Decision.** Subtree membership is decided by `pg_catalog.starts_with` over **canonical**
+paths (leading and trailing `/`; segments that contain no `/`, NUL or control
+characters; engine scope segments restricted to `[a-z0-9-]`). `LIKE`/`ILIKE` must never be
+used for scope filtering. Selector sets are non-empty and capped at 16 (§5.1) and are never
+silently truncated.
+**Rationale.** `LIKE` treats `_`/`%` as wildcards, so `/u/a_b/` matched tenant `/u/aXb/`
+(reproduced on PostgreSQL 16.15). The `V2-D27` trailing separator is necessary but not
+sufficient: the wildcard sits *inside* the identifier.
+**Implementation.** `custom_memory_engine.scope.paths` (`ScopePath`, `parse_scope`,
+`subtree_predicate` → `psycopg.sql.Composed`).
+**Verification.** `tests/test_scope_paths.py`, `tests/integration/test_scope_matching_db.py`
+(includes the reproduced leak). **Status:** implemented and verified; `E-011` uses
+`subtree_predicate` for the RLS/read predicates.
+
+### V2-D36 — Minimal scope-membership ACL (resolves B-02)
+
+**Decision.** Migration 2 adds `scope_grant(owner, principal, scope_path, role='member',
+granted_at, revoked_at)`. Only the owner of `/u/<owner>/` may grant inside it (no implicit
+or cross-tenant sharing); no self-grant; revocation is append-only; forced RLS shows a
+grant only to its owner and grantee. Read sets: own namespace always; another namespace
+only through an active grant whose subtree contains the selector; `private` never across
+users; a selector broader than every grant is **denied, not narrowed**; a `private` row
+matches only a selector equal to its own path (§5 rule 3).
+**Rationale.** §5 rules 2–3 required membership that had no storage. Option 2 (defer
+sharing) was rejected because it leaves normative rules unimplementable; broader
+collaboration features (roles beyond `member`, delegation) are out of scope.
+**Implementation.** `schema/002_scope_grants.sql`; multi-version runner (`schema/migrate.py`,
+the `MA-016` X1 prerequisite); `custom_memory_engine.scope.access` (`resolve_read_set`,
+`row_visible`, `read_predicate`); restricted role covers `scope_grant` (12 tables).
+**Verification.** `tests/test_scope_access.py`; `tests/integration/test_scope_access_db.py`
+(under the restricted role: SQL predicate = reference semantics on every row; forged,
+cross-namespace, wildcard and self grants rejected; revocation final);
+`tests/integration/test_migrations.py` (three-version history, drift, gaps, upgrade path).
+**Status:** storage and authorization implemented and verified. *W1 integration:* `E-011`
+applies `read_predicate` to rows once `M2` adds `scope_path`/`visibility`.
+
+### V2-D37 — Unreadable provenance renders as an opaque handle (resolves B-03; corrects §9.3)
+
+**Decision.** A source the caller cannot read renders as `OpaqueReference(opaque_ref,
+derivation_type)` only, where `opaque_ref = HMAC-SHA256(key, caller ‖ NUL ‖ source_id)`
+truncated to 128 bits: stable per caller (lineage), uncorrelatable across callers,
+non-invertible. No scope, source id, source type or content. Opaque handles are never
+accepted as identifiers; lookups answer `forbidden` exactly as for unknown ids. The key is
+mandatory (≥ 32 bytes) and never printed.
+**Rationale.** §9.3's "id + scope + type" contradicts `I17` ("no existence oracle") and the
+§5.2 entity precedent; `I17` is the stronger, more specific rule.
+**Implementation.** `custom_memory_engine.scope.provenance`.
+**Verification.** `tests/test_scope_provenance.py` (adversarial three-tenant cases).
+**Status:** implemented and verified. *W1 integration:* `E-017` renders bundles with it.
+
+### V2-D38 — `archived` maps to `retired`; retention is never used for belief (resolves B-05; corrects M7)
+
+**Decision.** v1 `archived` → `lifecycle='retired'`, `retention='durable'`.
+`conflict_pending` → `contested`; `rejected` and unadjudicated `candidate` → `retired`;
+`active` → the `M1` layer mapping. The closed §2.3 transition table (including rule 1's
+`inferred → contested`) is executable. **M7 is owned by `E-010`** using `V1_BACKFILL_SQL`.
+**Rationale.** The retention enum has three values; `retired` is defined as exactly what v1
+`archived` meant (not believed, auditable, inside the deletion closure); `V2-D04`
+separates belief from cost.
+**Implementation.** `custom_memory_engine.model.axes`.
+**Verification.** `tests/test_model_axes.py`; `tests/integration/test_model_backfill_db.py`
+(SQL backfill = reference mapping on all 40 inputs). **Status:** implemented and verified.
+*W1 integration:* `E-010` adds the axis columns and runs the backfill.
+
+### V2-D39 — The public API is §8.1 / `API_V2.md`; `V2-D07` enumeration superseded (resolves B-04)
+
+**Decision.** `V2-D07`'s invariant and prohibitions stand; its five-call list does not.
+The 23 operations of §8.1 are canonical, `retract` does not exist, and unknown operations
+are `forbidden` exactly like unpermitted ones. `API_V2.md` (`MA-012`, from PR #92) is the
+reference document.
+**Implementation.** `custom_memory_engine.api.contract` (`OPERATIONS`, `authorize`,
+`validate_contract` enforcing TB1–TB4 and legal transitions).
+**Verification.** `tests/test_api_contract.py` parses both documents (tier matrix and all 23
+signatures) and requires exact equality. **Status:** implemented and verified.
+
+### V2-D40 — The CP bound gates verification, not creation (resolves B-06)
+
+**Decision.** `infer` stores a structurally sound candidate as `inferred`,
+`verified=false`, in `hypotheses`. `inferred → inferred(verified=true)` requires
+`STATISTICS.md` §4.2 admissibility **and** held-out verification (`V2-D21`). §2.2 G2's
+"rejected" branch applies to structural soundness failures only.
+**Rationale.** `STATISTICS.md` §4.1 point 3 (an abstraction must be stored to be tested)
+and §4.2's "hypothesis only" rendering. Nothing is weakened: one-sided 97.5%,
+`confidence_lower = 1 − CP_upper(k + u, o)`, coverage and refutation gates, documented
+default thresholds (`V2-D30` remains open on final values).
+**Implementation.** `custom_memory_engine.soundness.admission` (exact bound, no
+`evaluation/` import). **Verification.** `tests/test_soundness_admission.py` (equality with
+both reference implementations on 104 `(k, n)` pairs; §4.2 table; `o = 35/36` boundary; r3
+regression). **Status:** implemented and verified. *W1 integration:* `E-015`.
+
+### V2-D41 — Grounding per declared source type (resolves B-07)
+
+**Decision.** Closed types: `turn` (declared fact; exactly the v1 rule), `external`
+(imported; ref, captured content matching the declared canonical SHA-256, verbatim span,
+aware `fetched_at` not in the future and within the caller's `max_age`; outside the
+deletion boundary), `artifact` (inferred; never evidence). Any other type fails closed;
+every item must ground. `content_hash` canonicalisation: NFC, LF line endings, UTF-8,
+SHA-256 hex.
+**Implementation.** `custom_memory_engine.grounding.sources`. **Verification.**
+`tests/test_grounding_sources.py` (turn grounding proven identical to the v1 gate; valid,
+incomplete, contradictory, stale, future, inferred, unsupported). **Status:** implemented and
+verified. *W1 integration:* `E-013` (`M4` `SOURCE`) and `E-015`.
+
+### V2-D13 — Association degree cap (resolved, r7; resolves B-08)
+
+**Decision.** The cap bounds an artifact's association **degree** (rows where it is either
+endpoint); a cap on *types* would be vacuous (closed set of 10). Default **32**, the plan's
+recorded suggestion; profiles may declare 1–1024. **The value is a resource bound, not a
+derived research result**: no approved document establishes a number, and `V2-D04` only
+requires that one exist and be profile-declared. Enforced in PostgreSQL by
+`enforce_association_cap()` (migration 3): self-loops rejected, writers serialized per
+endpoint by a transaction advisory lock, both directions counted, `UPDATE` covered.
+**Verification.** `tests/integration/test_association_cap_db.py` (20 concurrent writers commit
+exactly the cap; removing the lock was shown to overshoot). **Status:** implemented and
+verified. *W1 integration:* `E-014` attaches it via `model.association.attach_cap_trigger`.
+
+### V2-D42 — Gate G-TS: J5/J7/J8 remain in force before any confirmatory run (resolves B-09)
+
+**Decision.** G-TS = J5 (`verify_frozen_splits`) + coverage (every `SuiteId` frozen) + J7/J8
+(signed `PilotFreeze` at a git tag) + one-shot claim. It is required **before G5** (W5 consumes
+the `own_P` test split), not only before W6.
+**Implementation.** `evaluation/harness/split_gate.py`; `scripts/check_test_split_gate.py`
+(CI). **Verification.** `evaluation/harness/tests/test_split_gate.py`. **Status:** implemented
+and verified; no confirmatory run is authorized (no signed `PilotFreeze` exists).
+
+### V2-D43 — M5 deferred; M7 owned (G0b satisfiability, B-08)
+
+**Decision.** `M5` (optional `predicate_schema`) is **deferred** past W1 with an explicit
+marker: it weakens `I5` and is one-way, and no W1 task needs it. `predicate_schema` stays
+mandatory. Revisit with the coding profile (`E-021`, W2). `M7` is owned by `E-010`
+(`V2-D38`). With `V2-D13` resolved, every review item has a recorded decision, so G0b is
+satisfiable once `MA-017`/`MA-018` run green on that basis.

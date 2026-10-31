@@ -78,18 +78,27 @@ the current design and passes on the corrected one. `MA-012`/`MA-013` are frozen
 W1 code will be written against them. `MA-017`/`MA-018` run green — they are the
 mechanical guarantee that the plan stays consistent as it is edited.
 
+> **r7 (2026-10-31).** The review blockers B-01–B-09 now have recorded decisions
+> (`DECISIONS_V2.md` §5: `V2-D35`–`V2-D43`, `V2-D13`), each implemented and tested on `main`.
+> `MA-011`'s cross-tenant test now exists for the scope primitive
+> (`tests/integration/test_scope_matching_db.py`: it reproduces the `LIKE` leak and shows the
+> `starts_with` predicate is exact). `MA-012` is frozen in `API_V2.md` and executable in
+> `custom_memory_engine.api.contract`. `M5` is explicitly deferred and `M7` owned (`V2-D43`).
+> **G0b is not declared by this note:** it still requires `MA-013` frozen and `MA-017`
+> green, which are open PRs/tasks.
+
 ---
 
 ## 4. W1 — Substrate v2
 
 | ID | Task | Notes | Effort |
 |---|---|---|---|
-| `E-010` | M1: `kind`, `lifecycle`, `retention` + backfill + dual-write window | Additive; v1 tests keep passing | L |
-| `E-011` | M2 + M9: `scope` hierarchy, trailing-separator path, RLS on `path_with_prefix`, `user_id` generated column | Must keep suite `I` green; `MA-011`'s test is the acceptance | L |
+| `E-010` | M1: `kind`, `lifecycle`, `retention` + backfill + dual-write window; **M7** (`V2-D38`) | Additive; v1 tests keep passing. r7: mapping and backfill SQL ready in `model.axes`; runner is multi-version | L |
+| `E-011` | M2 + M9: `scope` hierarchy, trailing-separator path, RLS on `path_with_prefix`, `user_id` generated column | Must keep suite `I` green; `MA-011`'s test is the acceptance. r7: use `scope.paths.subtree_predicate` and `scope.access.read_predicate` (never `LIKE`) | L |
 | `E-012` | M3: `event_range` rename, `observed_at`, `event_basis` (**single transaction**: drop → rename → recreate constraint → replay `bitemporal_checks.sql`) | Highest-risk migration; see `MIGRATION_RISK.md` | M |
 | `E-013` | M4: generalised `SOURCE (type, ref, span, content_hash)`; `type='external'` allowed | Backfill `('turn', …)` | M |
-| `E-014` | M6: `ASSOCIATION`, `ENTITY` (principal-scoped), `METHOD`, `ABSTRACTION_STATS`, `VERIFICATION`, `NEGATIVE_CONSTRAINT` | Association has no deletion cascade | L |
-| `E-015` | **Admission policy split**: `ground()` (v1 gate generalised over source types) and `assess_soundness()` (the ledger + CP-bound rule from `STATISTICS.md` §4.2) | Pure functions first, DB effects after — mirrors v1's `gate.evaluate` / `record_decision` split | L |
+| `E-014` | M6: `ASSOCIATION`, `ENTITY` (principal-scoped), `METHOD`, `ABSTRACTION_STATS`, `VERIFICATION`, `NEGATIVE_CONSTRAINT` | Association has no deletion cascade. r7: attach the degree cap with `model.association.attach_cap_trigger` (`V2-D13`) | L |
+| `E-015` | **Admission policy split**: `ground()` (v1 gate generalised over source types) and `assess_soundness()` (the ledger + CP-bound rule from `STATISTICS.md` §4.2) | Pure functions first, DB effects after — mirrors v1's `gate.evaluate` / `record_decision` split. r7: the pure functions exist — `grounding.sources.ground` (`V2-D41`) and `soundness.admission` (`V2-D40`) | L |
 | `E-016` | **Lifecycle state machine** with the closed transition table; illegal transitions raise | No silent coercion | M |
 | `E-017` | **Channel assembly** per `CHANNELS.md`: four channels, bounded-abstraction rendering, hypothesis channel | `MA-013` is the spec | M |
 | `E-018` | **Conformance suite**: enumerate `(kind × retention × lifecycle × facet)` legal tuples; assert storable, queryable, deletable, correctly channelled; assert `claim`/`abstraction` cannot take `working` | This is what makes "type-completeness" real | M |
@@ -99,6 +108,10 @@ mechanical guarantee that the plan stays consistent as it is edited.
 **G1 (type-completeness).** `E-018` passes for every legal tuple; v1 suite (1,374 passing of 1,395 collected at full CI scope,
 adapted for renamed columns) green; the six requested memory types each creatable,
 queryable, deletable via config only; `MA-011`'s isolation test green.
+**Added in r7 (strengthening only):** no scope filter uses `LIKE` (`V2-D35`); read sets
+are resolved through `scope_grant` with forced RLS (`V2-D36`); the association degree cap
+is attached by trigger and its concurrency test passes (`V2-D13`); provenance to unreadable
+scopes renders opaque (`V2-D37`).
 
 ---
 
@@ -207,6 +220,10 @@ discriminate its baselines is not an instrument.**
 | `UM-013` | **Facet decay**: half-life per facet, `stale` transition, re-verification rather than silent renewal | "Evolving" requires expiry | M |
 | `UM-014` | **Protected-attribute deny-list** + conformance test | Sensitive-attribute inference is refused, not discouraged | M |
 | `C-025` | **Contradiction watcher**: `contradicts` associations → automatic retirement/confirmation prompts | Keeps abstractions honest over time | M |
+
+**G5 entry requires gate G-TS (`V2-D42`, r7):** J5 frozen-split integrity and coverage
+(`scripts/check_test_split_gate.py`, CI) plus a signed `PilotFreeze` (J7/J8) and a one-shot
+claim for `own_P`. No confirmatory split may be read before G-TS passes.
 
 **G5 (abstraction precision).** On `own_P` test split, precision@verified is significantly
 higher than `X-freeform` (Holm-adjusted, cluster bootstrap, scenario as resampling unit),

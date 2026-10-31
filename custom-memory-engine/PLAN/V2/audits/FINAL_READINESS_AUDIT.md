@@ -1,7 +1,11 @@
 # Final Readiness Audit
 
+> **Superseded status (r7, 2026-10-31).** This r6 document is preserved as written. Every
+> blocker it lists is now resolved; see `R7_RESOLUTION_REPORT.md` and `DECISIONS_V2.md` §5.
+
+
 **Status:** Audit deliverable. Independent review of the corrected plan.
-**Audit:** r6 — Plan Corrections & Final Readiness Audit, 2026-11-01.
+**Audit:** r6 — Plan Corrections & Final Readiness Audit, 2026-10-31 (originally mis-dated 2026-11-01; corrected in r7).
 **Baseline:** `main` @ `490904d` at audit start; the corrections in this audit are uncommitted
 working-tree changes.
 **Posture:** written as a reviewer who did not write the corrections, and who treats the
