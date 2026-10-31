@@ -657,3 +657,29 @@ monorepo.
 **Verification.** `git rev-parse 'cme-v1.0.0^{commit}'`; `tests/test_invariants_declared_and_enforced.py`
 (`test_gaps_closed_in_r7_are_enforced_with_tests`, `test_known_v1_gaps_are_reported_not_silently_passed`).
 **Status:** decided and verified.
+
+### V2-D45 — Scope isolation design frozen; RLS enforces the ACL, not the selectors (resolves #54 / MA-011; amends §5.1)
+
+**Decision.** (a) Matching is `starts_with` over canonical paths, never `LIKE` (`V2-D35`, unchanged).
+(b) Grammar: as in `API_V2.md` §6 (`scope.paths`): no case folding or normalisation, anything outside it is a
+`validation_error`. (c) ACL storage is `scope_grant` (`V2-D36`, unchanged). New in r9: **`exact(path)`** is a
+selector mode; the **write rule** authorizes `(scope, visibility)` only if the caller could read the row back
+through `exact(scope)`; the **RLS layer enforces the caller's ACL** (own namespace; `project`/`shared` inside an
+active grant), computed in PostgreSQL from `app.user_id` and `scope_grant`, and does **not** take the selector
+set, so §5.1's `app.read_scope_prefixes` GUC is dropped. The 16-selector cap stays an application resource error.
+RLS policies must qualify the row's columns with the table name. M2 requires every `app_user.id` to be a valid
+user segment and adds a `CHECK` for it (`MIGRATION_RISK.md` D13).
+**Rationale.** Rule 4 requires two layers, neither trusted alone. A selector GUC is set *by the application*, so
+an application bug that widens the prefixes also widens RLS: the layers were not independent. The ACL-only
+policy reads nothing the application computed. Measured on PostgreSQL 16.15: with an **unqualified** `scope_path`
+in the grant sub-query, the column binds to `scope_grant.scope_path` and any caller holding one grant reads every
+tenant's `project`/`shared` rows; qualification closes it. v1 ids may contain `/` (`validate_user_id` allows it),
+which would forge a path inside another tenant's subtree at the M2 backfill.
+**Implementation.** `scope.access` (`Selector.exact/subtree/with_visibility`, `authorize_write`,
+`acl_readable`, `rls_read_using`); `API_V2.md` §6; `ARCHITECTURE_V2.md` §5.1 amendment; `MIGRATION_RISK.md`
+D5, D13 and M2.
+**Verification.** `tests/test_scope_isolation.py` and `tests/integration/test_scope_isolation.py` over the
+shared cases: the r2 `LIKE` design fails cases 1 and 5, `LIKE` with the separator fails case 5, `starts_with`
+passes all; the RLS layer alone returns exactly the ACL for every caller, grant set, revocation and unusable
+identity; the application read set is contained in the ACL (exhaustive); the unqualified policy is shown to
+leak. **Status:** decided and verified on scratch tables; `E-011` applies it to the real schema.

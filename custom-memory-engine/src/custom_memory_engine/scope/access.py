@@ -15,9 +15,22 @@ caller's grants (§5 rule 2). The rules, each fail-closed:
    row's scope path; ``project``/``shared`` rows match any selector whose subtree
    contains them.
 
-``row_visible`` is the reference semantics; ``read_predicate`` is the SQL that
-``E-011`` uses on rows carrying ``scope_path``/``visibility`` (migration M2). The
-two are tested against each other on PostgreSQL.
+5. **Exact selectors** (``exact(path)``, API §6) match rows whose scope equals the path,
+   at every requested visibility; a subtree selector also matches descendants.
+6. **Writes** (§5 rule 1): a write into ``(scope, visibility)`` is authorized only if the
+   caller could read that row back through an exact selector; otherwise ``forbidden``,
+   before any row is constructed (:func:`authorize_write`).
+
+Two independent layers (§5 rule 4, ``V2-D45``):
+
+* the **application layer** computes the read set from the request's selectors
+  (:func:`resolve_read_set`); ``row_visible`` is its reference semantics and
+  ``read_predicate`` its SQL twin, which ``E-011`` uses in queries;
+* the **RLS layer** enforces the caller's *ACL* only, computed inside PostgreSQL from
+  ``app.user_id`` and ``scope_grant`` (:func:`rls_read_using`; reference
+  :func:`acl_readable`). It does not trust any value the application computed, so a bug
+  or bypass in the application layer cannot widen what RLS returns. Every application
+  read set is contained in the ACL (tested exhaustively).
 """
 
 from __future__ import annotations
@@ -42,6 +55,7 @@ VISIBILITIES: tuple[Visibility, ...] = get_args(Visibility.__value__)
 CROSS_USER_VISIBILITIES: frozenset[Visibility] = frozenset({"project", "shared"})
 
 type DenialReason = Literal["no_active_grant", "private_not_readable_across_users"]
+type SelectorMode = Literal["subtree", "exact"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,16 +64,39 @@ class Selector:
 
     path: ScopePath
     visibilities: frozenset[Visibility]
+    mode: SelectorMode = "subtree"
 
     @classmethod
-    def of(cls, path: object, visibilities: Iterable[object] = ("private", "project", "shared")) -> Selector:
+    def of(
+        cls,
+        path: object,
+        visibilities: Iterable[object] = VISIBILITIES,
+        mode: object = "subtree",
+    ) -> Selector:
         wanted = frozenset(visibilities)
         if not wanted:
             raise ScopeError("selector_visibility_required")
         unknown = wanted - set(VISIBILITIES)
         if unknown:
             raise ScopeError("selector_visibility_invalid")
-        return cls(parse_scope(path), frozenset(wanted))  # type: ignore[arg-type]
+        if mode not in ("subtree", "exact"):
+            raise ScopeError("selector_mode_invalid")
+        return cls(parse_scope(path), frozenset(wanted), mode)  # type: ignore[arg-type]
+
+    @classmethod
+    def exact(cls, path: object) -> Selector:
+        """``exact(path)``: rows whose scope equals ``path``."""
+        return cls.of(path, VISIBILITIES, "exact")
+
+    @classmethod
+    def subtree(cls, path: object) -> Selector:
+        """``subtree(path)``: rows at ``path`` or below it."""
+        return cls.of(path, VISIBILITIES, "subtree")
+
+    @classmethod
+    def with_visibility(cls, path: object, visibilities: Iterable[object]) -> Selector:
+        """``with_visibility(path, {project, shared})``: a subtree restricted to the named visibilities."""
+        return cls.of(path, visibilities, "subtree")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +105,7 @@ class ReadEntry:
 
     path: str
     visibilities: frozenset[Visibility]
+    mode: SelectorMode = "subtree"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,13 +135,13 @@ def resolve_read_set(
     if len(selectors) > MAX_READ_SCOPE_PREFIXES:
         raise ScopeError("read_prefix_limit_exceeded")
     grants = tuple(parse_scope(path) for path in active_grants)
-    entries: dict[str, set[Visibility]] = {}
+    entries: dict[tuple[str, SelectorMode], set[Visibility]] = {}
     denied: list[Denial] = []
     for selector in selectors:
         if not isinstance(selector, Selector):
             raise ScopeError("selector_required")
         if selector.path.is_within(own):
-            entries.setdefault(selector.path.text, set()).update(selector.visibilities)
+            entries.setdefault((selector.path.text, selector.mode), set()).update(selector.visibilities)
             continue
         if not any(selector.path.is_within(grant) for grant in grants):
             denied.append(Denial(selector.path.text, "no_active_grant"))
@@ -112,8 +150,8 @@ def resolve_read_set(
         if not allowed:
             denied.append(Denial(selector.path.text, "private_not_readable_across_users"))
             continue
-        entries.setdefault(selector.path.text, set()).update(allowed)
-    return ReadSet(tuple(ReadEntry(path, frozenset(v)) for path, v in entries.items()), tuple(denied))
+        entries.setdefault((selector.path.text, selector.mode), set()).update(allowed)
+    return ReadSet(tuple(ReadEntry(path, frozenset(v), mode) for (path, mode), v in entries.items()), tuple(denied))
 
 
 def row_visible(read_set: ReadSet, row_scope_path: object, row_visibility: object) -> bool:
@@ -127,7 +165,7 @@ def row_visible(read_set: ReadSet, row_scope_path: object, row_visibility: objec
     for entry in read_set.entries:
         if row_visibility not in entry.visibilities:
             continue
-        if row_visibility == "private":
+        if entry.mode == "exact" or row_visibility == "private":
             if row_path.text == entry.path:
                 return True
         elif row_path.is_within(parse_scope(entry.path)):
@@ -145,6 +183,10 @@ def read_predicate(read_set: ReadSet, path_column: str, visibility_column: str) 
     clauses: list[sql.Composable] = []
     params: list[object] = []
     for entry in read_set.entries:
+        if entry.mode == "exact":
+            clauses.append(sql.SQL("({} = %s AND {} = ANY(%s::text[]))").format(path, visibility))
+            params.extend([entry.path, sorted(entry.visibilities)])
+            continue
         if "private" in entry.visibilities:
             clauses.append(sql.SQL("({} = %s AND {} = 'private')").format(path, visibility))
             params.append(entry.path)
@@ -157,6 +199,87 @@ def read_predicate(read_set: ReadSet, path_column: str, visibility_column: str) 
     if not clauses:
         return sql.Composed([sql.SQL("false")]), []
     return sql.SQL("({})").format(sql.SQL(" OR ").join(clauses)), params
+
+
+def acl_readable(
+    caller_user_id: object, active_grants: Iterable[object], row_scope_path: object, row_visibility: object
+) -> bool:
+    """Reference semantics of the RLS layer: the caller's ACL, independent of any selector.
+
+    A row is readable if it lies in the caller's own namespace (any visibility), or if it is
+    ``project``/``shared`` and lies inside an active grant. Anything malformed fails closed.
+    """
+    if row_visibility not in VISIBILITIES:
+        return False
+    try:
+        own = user_scope(caller_user_id)
+        row_path = parse_scope(row_scope_path)
+        grants = tuple(parse_scope(path) for path in active_grants)
+    except ScopeError:
+        return False
+    if row_path.is_within(own):
+        return True
+    return row_visibility in CROSS_USER_VISIBILITIES and any(row_path.is_within(g) for g in grants)
+
+
+def authorize_write(
+    caller_user_id: object, scope: object, visibility: object, active_grants: Iterable[object]
+) -> ScopePath:
+    """§5 rule 1: return the target scope if the caller could read the written row back.
+
+    Raises ``ScopeError('forbidden')`` otherwise (the API maps it to ``forbidden``). It runs before
+    any row is constructed and reveals nothing about why: an unknown scope and an unauthorized one are
+    the same error.
+    """
+    try:
+        target = parse_scope(scope)
+        selector = Selector.of(target.text, (visibility,), "exact")
+        read_set = resolve_read_set(caller_user_id, (selector,), active_grants)
+    except ScopeError:
+        raise ScopeError("forbidden") from None
+    if not row_visible(read_set, target.text, visibility):
+        raise ScopeError("forbidden")
+    return target
+
+
+_CALLER = sql.SQL("NULLIF(pg_catalog.current_setting('app.user_id', true), '')")
+
+
+def rls_read_using(
+    table: str,
+    path_column: str = "scope_path",
+    visibility_column: str = "visibility",
+    grant_table: tuple[str, ...] = ("scope_grant",),
+) -> sql.Composed:
+    """The RLS ``USING`` expression that ``E-011`` attaches to every scoped table (``V2-D45``).
+
+    Static SQL (a policy cannot take bind parameters). It reads the caller only from
+    ``app.user_id`` (set by ``security.tenant_scope``) and grants only from ``scope_grant``,
+    whose own RLS shows a grantee its grants. An unset identity, or one containing the
+    separator, reads nothing.
+
+    The row's columns are qualified with ``table`` (the policy's table name, unqualified).
+    Unqualified, a ``scope_path`` column inside the grant sub-query would bind to
+    ``scope_grant.scope_path`` and make every grant match every row (measured: the isolation
+    suite fails that way), so qualification is mandatory, not stylistic.
+    """
+    for column in (table, path_column, visibility_column):
+        if not column.isidentifier():
+            raise ScopeError("untrusted_column_reference")
+    if not 1 <= len(grant_table) <= 2 or not all(part.isidentifier() for part in grant_table):
+        raise ScopeError("untrusted_column_reference")
+    return sql.SQL(
+        "(pg_catalog.strpos(COALESCE({caller}, '/'), '/') = 0 AND ("
+        "pg_catalog.starts_with({path}, '/u/' || {caller} || '/') "
+        "OR ({visibility} IN ('project', 'shared') AND EXISTS ("
+        "SELECT 1 FROM {grants} AS g WHERE g.principal_id = {caller} AND g.revoked_at IS NULL "
+        "AND pg_catalog.starts_with({path}, g.scope_path)))))"
+    ).format(
+        caller=_CALLER,
+        path=sql.Identifier(table, path_column),
+        visibility=sql.Identifier(table, visibility_column),
+        grants=sql.Identifier(*grant_table),
+    )
 
 
 async def active_grant_paths(
@@ -193,10 +316,14 @@ __all__ = [
     "ReadEntry",
     "ReadSet",
     "Selector",
+    "SelectorMode",
     "Visibility",
+    "acl_readable",
     "active_grant_paths",
+    "authorize_write",
     "read_predicate",
     "resolve",
     "resolve_read_set",
+    "rls_read_using",
     "row_visible",
 ]
