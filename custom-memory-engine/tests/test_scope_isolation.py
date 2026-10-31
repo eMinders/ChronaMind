@@ -126,8 +126,26 @@ def test_write_the_caller_could_not_read_back_is_forbidden(scope: str, visibilit
     assert error.value.code == "forbidden"
 
 
-def test_write_into_a_granted_project_scope_is_authorized() -> None:
-    assert authorize_write("4", "/u/42/p/", "project", ("/u/42/",)).text == "/u/42/p/"
+@pytest.mark.parametrize("visibility", ["private", "project", "shared"])
+def test_a_grant_never_authorizes_a_write_into_the_owners_namespace(visibility: str) -> None:
+    """V2-D53: grants are read membership; otherwise a grantee could write, and `delete` (scope_writable)
+    could remove, the owner's project data."""
+    with pytest.raises(ScopeError) as error:
+        authorize_write("4", "/u/42/p/", visibility, ("/u/42/",))
+    assert error.value.code == "forbidden"
+    assert acl_readable("4", ("/u/42/",), "/u/42/p/", "project"), "the same grant still reads"
+
+
+def test_every_authorized_write_is_readable_back_by_its_writer() -> None:
+    """§5 rule 1 still holds: nothing is written where its writer could not read it."""
+    for user, scope, visibility in itertools.product(
+        USERS, ["/u/4/", "/u/4/p/a/", "/u/42/", "/u/42/p/"], ["private", "project", "shared"]
+    ):
+        try:
+            target = authorize_write(user, scope, visibility, ("/u/42/",))
+        except ScopeError:
+            continue
+        assert acl_readable(user, (), target.text, visibility)
 
 
 def test_selector_modes_are_validated() -> None:

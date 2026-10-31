@@ -17,9 +17,10 @@ caller's grants (§5 rule 2). The rules, each fail-closed:
 
 5. **Exact selectors** (``exact(path)``, API §6) match rows whose scope equals the path,
    at every requested visibility; a subtree selector also matches descendants.
-6. **Writes** (§5 rule 1): a write into ``(scope, visibility)`` is authorized only if the
-   caller could read that row back through an exact selector; otherwise ``forbidden``,
-   before any row is constructed (:func:`authorize_write`).
+6. **Writes** (§5 rule 1, ``V2-D53``): a write into ``(scope, visibility)`` is authorized only
+   inside the caller's own namespace ``/u/<caller>/``. A grant confers **read** membership
+   only (``V2-D36``): a grantee can neither write nor delete in the owner's namespace.
+   Anything else is ``forbidden``, before any row is constructed (:func:`authorize_write`).
 
 Two independent layers (§5 rule 4, ``V2-D45``):
 
@@ -223,21 +224,22 @@ def acl_readable(
 
 
 def authorize_write(
-    caller_user_id: object, scope: object, visibility: object, active_grants: Iterable[object]
+    caller_user_id: object, scope: object, visibility: object, active_grants: Iterable[object] = ()
 ) -> ScopePath:
-    """§5 rule 1: return the target scope if the caller could read the written row back.
+    """§5 rule 1 (``V2-D53``): return the target scope if it lies in the caller's own namespace.
 
-    Raises ``ScopeError('forbidden')`` otherwise (the API maps it to ``forbidden``). It runs before
-    any row is constructed and reveals nothing about why: an unknown scope and an unauthorized one are
-    the same error.
+    ``active_grants`` is accepted and deliberately ignored: grants are read-only (``V2-D36``), so
+    holding one never authorizes a write or a deletion. Raises ``ScopeError('forbidden')`` otherwise
+    (the API maps it to ``forbidden``); it runs before any row is constructed and reveals nothing about
+    why. The written row is always readable back by its writer, which keeps rule 1 satisfied.
     """
+    del active_grants  # read membership only
     try:
+        own = user_scope(caller_user_id)
         target = parse_scope(scope)
-        selector = Selector.of(target.text, (visibility,), "exact")
-        read_set = resolve_read_set(caller_user_id, (selector,), active_grants)
     except ScopeError:
         raise ScopeError("forbidden") from None
-    if not row_visible(read_set, target.text, visibility):
+    if visibility not in VISIBILITIES or not target.is_within(own):
         raise ScopeError("forbidden")
     return target
 
