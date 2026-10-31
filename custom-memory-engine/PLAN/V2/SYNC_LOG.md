@@ -338,3 +338,21 @@ commits, never force-pushed. Full status: `audits/R7_RESOLUTION_REPORT.md`.
 **Still open (not resolved by r7):** G0b is not declared (`MA-013`, `MA-017`). The signed
 `PilotFreeze` for confirmatory runs is a human action. Open decisions `V2-D14`, `D16`, `D17`,
 `D30`, `D31`, `D32` and `D34` were not taken.
+
+## 13. r8: PR audit, W1 gate check and CI/CD refactor (2026-10-31)
+
+**Authority:** Project Owner instruction to continue V2, review/merge ready PRs and refactor GitHub
+Actions, with direct-to-`main` delivery. **Baseline:** `main` @ `b907125`. Full status:
+`audits/W1_INTEGRATION_PR_REVIEW_AND_CI_REFACTOR_REPORT.md`.
+
+| Item | Result |
+|---|---|
+| W1 (`E-010`–`E-017`) | **Not started.** Entry gate G0b is not met (`MA-013` not frozen, `MA-017` not implemented, G0 not met), and `APPROVAL.md` Amendment 1 excludes W1 beyond the r7 primitives. Status comment posted on #61–#68 |
+| PR reviews | All 11 open PRs reviewed against full diffs and linked issues, with findings reproduced. `REQUEST_CHANGES`: #82–#86, #88–#91. `COMMENT` (already on `main`; author to close): #87, #92 |
+| Merges / issue closures | **None.** No PR met the merge conditions; no issue's acceptance criteria are fully met on `main` (#55 checked: two criteria open) |
+| New findings for the owner | N-1 channel legality vs `V2-D38` transitions; N-2 §11 `I3` still names `INFERENCE_METHOD`; N-3 no `create_entity`/`register_method`; N-4 Tier B `contradicts` demotion; N-5 transitive re-derivation content; N-6 `v1.0.0` tag commit |
+| CI | `22636e1`: duplicate PR runs removed (−39% engine job-seconds per PR push); root CI now runs on `main` (it targeted `master`); `deploy.yaml` (never ran) made manual-only; commit-SHA pins, least privilege, timeouts, concurrency; `static` job split out (37 s feedback); shared `setup-cme` action. Gate-command diff: none dropped. Verified on real runners |
+| Tests | Local and remote at `22636e1`: 1792 passed (full CI scope); no-extras 1558 passed, 218 skipped. Frozen records 5/5 OK |
+
+**Still open:** G0, G0b, `MA-013`, `MA-017`, PilotFreeze (unsigned; human action), open decisions
+`V2-D14`, `D16`, `D17`, `D30`, `D31`, `D32`, `D34`, and N-1–N-6.

@@ -89,6 +89,7 @@ than a store of its own**.
 | 12 | [`APPROVAL.md`](APPROVAL.md) | Formal approval record: approver, date, scope, and what approval does **not** authorise (roadmap implementation). |
 | 13 | [`API_V2.md`](API_V2.md) | The frozen public API surface (`MA-012`): 23 operations, tier matrix, signatures and errors. Executable form: `custom_memory_engine.api.contract`. |
 | 14 | [`audits/R7_RESOLUTION_REPORT.md`](audits/R7_RESOLUTION_REPORT.md) | r7: how B-01–B-09 were resolved, what is verified, what remains W1 integration, and #46/#47 completion evidence. The r6 audit documents in `audits/` are preserved history. |
+| 15 | [`audits/W1_INTEGRATION_PR_REVIEW_AND_CI_REFACTOR_REPORT.md`](audits/W1_INTEGRATION_PR_REVIEW_AND_CI_REFACTOR_REPORT.md) | r8: review of every open PR, why W1 has not started (G0/G0b unmet), new owner findings N-1–N-6, and the GitHub Actions refactor with before/after measurements. |
 
 ---
 
