@@ -34,7 +34,7 @@ document.
 | D2 | v1 `status` → `lifecycle`/`retention`, incl. staging rows `candidate`/`rejected` (→ `retired`, reason-coded) | **approved** | `V2-D38` (`model.axes.map_v1_version`, `V1_BACKFILL_SQL`) | `E-010` |
 | D3 | `archived` as a "retention value" (M7) | **approved** | `V2-D38` (`archived` → `retired` + `durable`); owner `E-010` per `V2-D43` | `E-010` |
 | D4 | `M5` optional `predicate_key` | **approved: deferred past W1** | `V2-D43` | — |
-| D5 | Prefix matching in `M9` policies | **approved** | `V2-D35` (`starts_with`, never `LIKE`) | `E-011` |
+| D5 | Prefix matching in `M9` policies | **approved** | `V2-D35` (`starts_with`, never `LIKE`); the policies enforce the ACL from `app.user_id` and `scope_grant`, not a selector GUC (`V2-D45`, `scope.access.rls_read_using`) | `E-011` |
 | D6 | `layer` is many-to-one onto `kind` (M1 finding 1) | **proposed** | Keep `layer` **stored and dual-written** until the last v1 reader is removed; it is the lossless discriminator for `semantic` vs `opinion` | `E-010` |
 | D7 | Backfilled `persona` rows (section 2.1) | **proposed** | `abstraction/inferred` per `V2-D38`, plus a zero ledger (`s = k = u = o = 0`, `verification_status = unverified`) created by `E-014`; `o = 0` is "insufficient evidence", so they can never be verified or rendered in `facts` | `E-010`, `E-014` |
 | D8 | `observed_at` backfill source (M3) | **proposed** | `lower(recorded_range)` for believed rows; the evidencing turn's `occurred_at` for rows with `recorded_range IS NULL` | `E-012` |
@@ -42,6 +42,7 @@ document.
 | D10 | Exclusion-constraint key after M2: `user_id` or scope | **proposed** | Keep `user_id` in W1 (v1-equivalent for the conversational case); switch to the scope key only with the per-scope `I9` decision | `E-011`, `E-012` |
 | D11 | `user_id` as a **generated** column (M2, `ARCHITECTURE_V2.md` section 12) | **proposed: do not generate** | Measured (section 2, M2): a generated `user_id` supports every dependent but breaks every v1 `INSERT` that names `user_id`, which rules out a dual-write window. Keep `user_id` **stored** with `CHECK (scope_path = '/u/' \|\| user_id \|\| '/')` while the scope is personal. This amends section 12's wording | `E-011` |
 | D12 | Global `job.idempotency_key` uniqueness (oracle, `THREAT_MODEL.md` T-13) | **proposed** | Scope it by the `I9` key in `M2` | `E-011` |
+| D13 | `app_user.id` must be a valid scope user segment | **approved** (`V2-D45`) | v1 ids may contain `/` (`security.validate_user_id` allows it); `'/u/' \|\| id \|\| '/'` would then forge a path inside another tenant's subtree. M2 refuses to run if any id fails `scope.paths.user_scope`, and adds `CHECK` `app_user_id_is_scope_segment` so no such id can be created afterwards | `E-011` |
 
 ## 2. Per-migration review
 
@@ -105,9 +106,9 @@ Format: **Pre** preconditions · **Txn** statements in the single transaction ·
 
 ### M2 — scope hierarchy (`E-011`, with `M9`)
 
-- **Pre:** `MA-011` decisions recorded (selector semantics; the `LIKE` finding in `THREAT_MODEL.md` T-02); every existing `app_user.id` checked: `SELECT id FROM app_user WHERE id LIKE '%/%'` must return nothing (a `/` in an id would forge a path, T-03).
+- **Pre:** `MA-011` decisions recorded (`V2-D35`, `V2-D36`, `V2-D45`). D13 preflight: every existing `app_user.id` is a valid user segment. The check must return no rows: `SELECT id FROM app_user WHERE id ~ '[/[:cntrl:]]' OR id IN ('.', '..') OR id <> btrim(id) OR id = '' OR length(id) > 256` (a `/` in an id would forge a path, T-03).
 - **Coverage (#59 section 3.6, measured on the r8 catalog):** 12 RLS-protected tables. **Ten carry `user_id`** and each gets `scope_path` + `visibility`: `memory_version`, `memory_evidence`, `memory_derivation`, `memory_embedding`, `memory_conflict`, `turn`, `session`, `job`, `audit_event`, `deletion_request`. Dependents of `user_id` there: 10 foreign keys to `app_user`, 10 isolation policies, `job_extraction_idempotent` (UNIQUE), `no_bitemporal_overlap` (EXCLUDE), and indexes `memory_version_temporal_idx`, `memory_version_memory_key_idx`, `memory_version_open_belief_idx`, `memory_derivation_source_idx`. `app_user` is the principal table (its policy keys on `id`; no scope column), and `scope_grant` keys on `owner_user_id`/the grantee (already scope-aware, r7).
-- **Txn (with D11):** (1) on each of the ten tables, add `scope_path text`, `visibility text`; (2) backfill `scope_path = '/u/' || user_id || '/'`, `visibility = 'private'`; (3) `CHECK (scope_path = '/u/' || user_id || '/') NOT VALID` then `VALIDATE`; (4) the path-shape `CHECK` and `path_with_prefix` (M9); (5) rewrite the ten isolation policies to the scope predicate over `app.read_scope_prefixes` using `starts_with` (D5); `user_id` stays stored, so its FKs, UNIQUE, EXCLUDE and indexes are untouched.
+- **Txn (with D11):** (1) on each of the ten tables, add `scope_path text`, `visibility text`; (2) backfill `scope_path = '/u/' || user_id || '/'`, `visibility = 'private'`; (3) `CHECK (scope_path = '/u/' || user_id || '/') NOT VALID` then `VALIDATE`; (4) the path-shape `CHECK` and `path_with_prefix` (M9); (5) `ALTER TABLE app_user ADD CONSTRAINT app_user_id_is_scope_segment CHECK (id !~ '[/[:cntrl:]]' AND id NOT IN ('.', '..') AND id = btrim(id) AND id <> '' AND length(id) <= 256)` (D13); (6) rewrite the ten isolation policies to `USING (rls_read_using('<table>'))`, the ACL predicate (D5, `V2-D45`; the table name qualifies the row columns, which is mandatory); `user_id` stays stored, so its FKs, UNIQUE, EXCLUDE and indexes are untouched.
 - **Fail (analysis):**
   1. PostgreSQL 16 cannot turn an existing column into a generated one. A generated `user_id` must **replace** the stored one (`DROP COLUMN … CASCADE`, re-add, recreate dependents). **Measured (PostgreSQL 16.15, rolled-back transaction on the full r8 schema):** a plain `DROP COLUMN user_id` is refused (`policy job_isolation … depends on column user_id`); after the swap, a `STORED` generated `user_id = split_part(scope_path, '/', 3)` **does** carry the foreign key (a row for an unknown user is rejected with `job_user_id_fkey`), the `job_extraction_idempotent` UNIQUE, the RLS policy, the `no_bitemporal_overlap` GiST exclusion constraint and the temporal index.
   2. **Measured, and decisive for D11:** with a generated `user_id`, a v1-style `INSERT` that names `user_id` fails: `cannot insert a non-DEFAULT value into column "user_id"`. 23 `INSERT` statements in 8 engine files name it, so a generated column forces every v1 write path to change in the same migration, with no dual-write window. The stored-plus-`CHECK` alternative was measured too: a v1 `INSERT` without `scope_path` succeeds, a consistent dual-write succeeds, and an inconsistent one (`user_id = 'u42'`, `scope_path = '/u/u4/'`) is rejected by the `CHECK`.
@@ -120,6 +121,8 @@ Format: **Pre** preconditions · **Txn** statements in the single transaction ·
     WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), ''));
   ALTER TABLE t DROP CONSTRAINT t_scope_matches_user;
   ALTER TABLE t DROP COLUMN path_with_prefix, DROP COLUMN visibility, DROP COLUMN scope_path;
+  -- once, after the ten tables:
+  ALTER TABLE app_user DROP CONSTRAINT app_user_id_is_scope_segment;
   DELETE FROM _cme_schema_migrations WHERE version = <M2 version>;
   ```
   No data is lost: `scope_path` is derivable from `user_id` while every scope is personal.

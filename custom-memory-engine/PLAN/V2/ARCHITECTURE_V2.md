@@ -297,6 +297,14 @@ number of selectors per transaction at a declared limit (default 16); exceeding 
 resource error, not a security bypass. A caller needing more must decompose the query —
 which is the correct behaviour for a memory engine whose batches should be scoped.
 
+> **r9 amendment (`V2-D45`).** RLS does **not** take the selector set. It enforces the caller's
+> **ACL** (own namespace at any visibility; `project`/`shared` rows inside an active
+> `scope_grant`), computed inside PostgreSQL from `app.user_id` alone
+> (`scope.access.rls_read_using`). The selector set, its 16-selector cap and the
+> resource error stay in the application layer (`scope.access.resolve_read_set`). This makes
+> the two layers independent, as rule 4 requires: a compromised or buggy application cannot
+> widen RLS by sending broader prefixes. The `app.read_scope_prefixes` GUC is not used.
+
 ### 5.2 Entity opacity across scopes
 
 `ENTITY` is global to a *principal*, not to the database, and this is a deliberate

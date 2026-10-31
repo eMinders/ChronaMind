@@ -232,19 +232,39 @@ surface until a `V2-Dnn` record approves it.
 | 5.6 | **Scope creation and access grants** | section 5 ("the caller is authorised for it") | How a caller comes to be authorised is undefined; it determines the whole read and write set | State that scope administration is outside the engine API (identity layer), or add operations. |
 | 5.7 | Revise (narrow or widen an inferred element) | `USER_MODEL.md` section 3 | Described as "creates a new artifact, retires the old, links `refines`" | A composition of `infer`, `refute`/`retract_own` and `link`; document it rather than add a primitive. |
 
-## 6. Scope selectors (completed by `MA-011`)
+## 6. Scope selectors (`MA-011`, decided: `V2-D35`, `V2-D36`, `V2-D45`)
 
-Carried from `ARCHITECTURE_V2.md` 5 so this file is self-contained. `MA-011` owns the precise semantics and the
-failing-first isolation test.
+Executable form: `custom_memory_engine.scope.paths` (grammar, matching) and `custom_memory_engine.scope.access`
+(read set, write rule, both enforcement layers). Isolation suite: `tests/test_scope_isolation.py` and
+`tests/integration/test_scope_isolation.py`, over the shared cases in `tests/scope_isolation_cases.py`, which
+`E-011` re-runs on the real schema.
 
-| Selector | Meaning | Notes |
-|---|---|---|
-| `exact(path)` | rows whose scope equals `path` | `path` always ends in `/` |
-| `subtree(path)` | rows whose scope path starts with `path` | prefix matching must be exact (`starts_with`), not `LIKE`: see `THREAT_MODEL.md` T-02 |
-| `with_visibility(path, {project, shared})` | `subtree`, restricted to the named visibilities | a `private` row is returned only when the selector equals the row's own scope |
+**Grammar.** A path starts and ends with `/`; the root is `/`. A user namespace is `/u/<user>/`, where `<user>`
+is any v1 user id that is non-blank, has no surrounding whitespace, no `/`, no control character, is not `.` or
+`..`, and is at most 256 characters. Every other segment matches `[a-z0-9][a-z0-9-]*`, at most 128 characters;
+depth at most 16. No case folding or Unicode normalisation is applied: anything outside the grammar is
+rejected (`validation_error`), never rewritten.
 
-The effective read set is the union of selectors **intersected with the caller's access**. Ancestors are never
-implicit.
+| Selector | Meaning |
+|---|---|
+| `exact(path)` | rows whose scope equals `path`, at every visibility |
+| `subtree(path)` | rows at `path` or below it; matching is `pg_catalog.starts_with` over canonical paths, never `LIKE` (`V2-D35`) |
+| `with_visibility(path, {project, shared})` | `subtree`, restricted to the named visibilities |
+
+**Read set.** The union of the selectors, intersected with the caller's ACL (`V2-D36`): own namespace at every
+visibility; another namespace only inside an active grant and never `private`. A selector broader than every
+grant is denied, not narrowed. Nothing is implicit: ancestors are read only when named. A `private` row is
+returned only to a selector whose path equals the row's scope (visibility is judged at the reading selector).
+
+**Limit.** 1 to 16 selectors. Zero or more than 16 is `resource_limit` (`read_prefix_limit_exceeded`), and nothing
+is returned; there is no truncation.
+
+**Write rule.** A write into `(scope, visibility)` is authorized only if the caller could read that row back
+through `exact(scope)`; otherwise `forbidden`, before any row is constructed (`scope.access.authorize_write`).
+
+**Two independent layers.** The application computes the read set and filters with `read_predicate`. RLS
+enforces the ACL alone, from `app.user_id` and `scope_grant` (`rls_read_using`); it never reads a value the
+application computed. Each layer is tested alone; the application read set is proven contained in the ACL.
 
 ## 7. Acceptance traceability (`MA-012`)
 
