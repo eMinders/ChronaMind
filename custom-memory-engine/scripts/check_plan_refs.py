@@ -10,7 +10,12 @@ Checks every ``*.md`` under ``PLAN/V2/``:
 * migration ids (``M1`` ... ``M9``) are defined in ARCHITECTURE_V2;
 * no heading is duplicated within one file;
 * relative markdown links resolve;
-* the superseded r1/r2 admission bound ``1 − CP_upper(k, o)`` appears only on lines that mark it.
+* the superseded r1/r2 admission bound ``1 − CP_upper(k, o)`` appears only on lines that mark it;
+* operation names (MA-012 criterion 5): in ROADMAP_V2 and ARCHITECTURE_V2, every call-form name
+  ```name(``` is an operation of the API_V2 §3 matrix, a selector of its §6 table, or a name its §7.1 table
+  declares (composition or internal function); a name §7.1 marks ``retired`` (``retract``) may appear only on a
+  line that also says ``retired``, ``superseded``, ``does not exist`` or ``never``. Skipped when API_V2.md is
+  absent.
 
 Retired aliases. A task id that was renamed or moved is defined by any of these ROADMAP_V2 forms:
 ``(was `C-013`)``, ``` `C-024` renamed ```, ``moved from `R-014` ``, ``formerly `X` `` and
@@ -56,6 +61,12 @@ HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 LINK = re.compile(r"\]\((?!https?:|mailto:|#)([^)\s#]+)")
 FENCE = re.compile(r"^(```|~~~).*?^\1[ \t]*$", re.M | re.S)
 
+OPERATION_SCOPE = ("ROADMAP_V2.md", "ARCHITECTURE_V2.md")
+CALL_FORM = re.compile(r"`([a-z][a-z0-9_]*)\(")
+MATRIX_ROW = re.compile(r"^\|\s*\d+\s*\|[^|]*\|\s*`([a-z][a-z0-9_]*)`\s*\|", re.M)
+SELECTOR_ROW = re.compile(r"^\|\s*`([a-z][a-z0-9_]*)\(", re.M)
+NAME_ROW = re.compile(r"^\|\s*`([a-z][a-z0-9_]*)`\s*\|\s*(composition|internal function|retired)\s*\|", re.M)
+RETIRED_MARKER = re.compile(r"\bretired\b|\bsuperseded\b|does not exist|\bnever\b", re.I)
 STALE_FORMULA = re.compile(r"1\s*[-−]\s*CP_upper\(k,\s*o\)")
 STALE_MARKER = re.compile(
     r"\bsuperseded\b|\bcorrection\b|\br[12]\b|X-ignore-undetermined|\bablation\b|\bpositive control\b"
@@ -171,6 +182,35 @@ def check_stale_formulas(docs: dict[str, str]) -> list[Finding]:
     return findings
 
 
+def api_names(api_text: str) -> tuple[set[str], set[str]]:
+    """Return (known names, retired names) declared by API_V2.md (see module docstring)."""
+    known = set(MATRIX_ROW.findall(api_text)) | set(SELECTOR_ROW.findall(api_text))
+    retired: set[str] = set()
+    for name, kind in NAME_ROW.findall(api_text):
+        (retired if kind == "retired" else known).add(name)
+    return known, retired
+
+
+def check_operations(docs: dict[str, str]) -> list[Finding]:
+    """Report undefined call-form operation names and unmarked uses of retired operations."""
+    if "API_V2.md" not in docs:
+        return []
+    known, retired = api_names(docs["API_V2.md"])
+    retired_ref = re.compile(r"`(" + "|".join(map(re.escape, sorted(retired))) + r")`") if retired else None
+    findings: list[Finding] = []
+    for name in OPERATION_SCOPE:
+        for number, line in enumerate(docs.get(name, "").splitlines(), start=1):
+            for called in CALL_FORM.findall(line):
+                if called not in known and called not in retired:
+                    findings.append(Finding(name, "undefined_operation", called, number))
+            hits = set(CALL_FORM.findall(line)) & retired
+            if retired_ref is not None:
+                hits |= set(retired_ref.findall(line))
+            if hits and not RETIRED_MARKER.search(line):
+                findings.extend(Finding(name, "retired_operation", hit, number) for hit in sorted(hits))
+    return findings
+
+
 def run_checks(directory: Path) -> list[Finding]:
     """Run every check over ``directory`` and return all findings."""
     docs = load_documents(directory)
@@ -181,6 +221,7 @@ def run_checks(directory: Path) -> list[Finding]:
         *check_headings(docs),
         *check_links(directory, docs),
         *check_stale_formulas(docs),
+        *check_operations(docs),
     ]
 
 

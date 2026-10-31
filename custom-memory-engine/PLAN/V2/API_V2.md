@@ -1,11 +1,13 @@
-# Public API Surface (v2.0 draft for freeze)
+# Public API Surface (v2.0, frozen)
 
-**Task:** `MA-012` · **Status:** canonical API reference since r7 (**`V2-D39`**, which also resolves the `V2-D07`
-five-call contradiction and retires `retract`). Executable form: `custom_memory_engine.api.contract`, held equal
-to this document and to `ARCHITECTURE_V2.md` section 8.1 by `tests/test_api_contract.py`. The operations listed
-in section 5 are **not** on the surface until a `V2-Dnn` approves them.
+**Task:** `MA-012` (with `MA-015`) · **Status: frozen (r9).** Canonical since r7 (`V2-D39`, which resolves the
+`V2-D07` five-call contradiction and retires `retract`); completed by `V2-D46` (the section 5 gaps) and
+`V2-D47` (tiers and admin). Executable form: `custom_memory_engine.api.contract`, held equal to this document and
+to `ARCHITECTURE_V2.md` section 8.1 by `tests/test_api_contract.py` and `tests/test_tier_permissions.py`. A change
+to the surface needs a new `V2-Dnn`.
 **Extended by:** `MA-015` (the tier matrix check and `tests/test_tier_permissions.py`), `MA-011` (the scope
 selector table, section 6). **References:** `ARCHITECTURE_V2.md` sections 5 and 8, `V2-D07`, `V2-D39`,
+`V2-D45`-`V2-D48`,
 `CHARTER.md` section 1, `THREAT_MODEL.md`, `CHANNELS.md`.
 
 `ARCHITECTURE_V2.md` section 8 states the principle: **every operation a tier needs appears in one list, and
@@ -53,53 +55,77 @@ QueryResult    { facts[], hypotheses[], procedures[], conflicts[], provenance_bu
 Receipt        { id, effect, recorded_at }     # content-free
 ```
 
-## 3. Operations and tiers
+## 3. Operations and tiers (the tier matrix, `MA-015`)
 
-`✓` = permitted, `—` = not permitted (calling it is `forbidden`). 23 operations, ten capability classes,
-exactly as in `ARCHITECTURE_V2.md` 8.1. This table is the **tiers matrix**; `MA-015` turns it into
-`tests/test_tier_permissions.py`.
+`✓` = permitted, `—` = not permitted (calling it is `forbidden`). **29 operations, eleven capability classes**:
+the 23 of `ARCHITECTURE_V2.md` 8.1 as approved (`V2-D39`) plus the six added by `V2-D46` (`dissent`,
+`create_entity`, `register_method`, `create_scope`, `grant_access`, `revoke_access`). 18 are open to Tier B.
 
-| # | Class | Operation | Tier B | Tier C |
-|---|---|---|:-:|:-:|
-| 1 | Ingest | `ingest_episode` | ✓ | ✓ |
-| 2 | Ingest | `ingest_artifact` | ✓ | ✓ |
-| 3 | Read | `query` | ✓ | ✓ |
-| 4 | Read | `refine` | ✓ | ✓ |
-| 5 | Read | `get` | ✓ | ✓ |
-| 6 | Read | `provenance` | ✓ | ✓ |
-| 7 | Write (grounded) | `assert` | ✓ | ✓ |
-| 8 | Write (grounded) | `retract_own` | ✓ | ✓ |
-| 9 | Write (inferred) | `infer` | ✓ | — |
-| 10 | Write (inferred) | `verify` | ✓ | — |
-| 11 | Write (inferred) | `refute` | ✓ | — |
-| 12 | Structure | `link` | ✓ | ✓ |
-| 13 | Structure | `unlink` | ✓ | ✓ |
-| 14 | Structure | `link_entity` | ✓ | ✓ |
-| 15 | Structure | `record_outcome` | ✓ | ✓ |
-| 16 | Adjudicate | `adjudicate` | **—** | ✓ |
-| 17 | Maintain | `purge_working` | — | ✓ |
-| 18 | Maintain | `expire` | — | ✓ |
-| 19 | Maintain | `rebuild_index` | — | ✓ |
-| 20 | Delete | `delete` | **—** | ✓ |
-| 21 | Export | `export` | — | ✓ |
-| 22 | Observe | `stats` | ✓ | ✓ |
-| 23 | Observe | `cost` | ✓ | ✓ |
+**Tiers (`V2-D47`).** There are two tiers, taken from the authenticated credential. **Admin is a role within
+Tier C**, not a third tier: an admin-only operation (`Admin` ✓, `Tier C` —) needs a Tier C credential that holds
+the admin role; an admin may call every Tier C operation. Tier B never holds the admin role.
 
-"Administrative" operations (rows 17-19) are a role *within* Tier C, not a third tier. A deployment may further
-restrict them; it may never grant them to Tier B.
+**Conditions** apply to every tier that may call the operation; each code is defined in
+`custom_memory_engine.api.contract.Condition` and must be enforced by the implementing task:
+`evidence_required` (non-empty source evidence), `own_lineage_only` (Tier B: only artifacts its own method
+lineage produced; Tier C: its own assertions), `scope_writable` (`scope.access.authorize_write`),
+`targets_readable` (every named artifact, association, entity or result is in the caller's read set; otherwise
+`forbidden`, indistinguishable from absent), `registered_method` (the method is in the `METHOD` registry),
+`namespace_owner_only` (the scope is inside the caller's own `/u/<caller>/`), `grounded_endpoint_protected`
+(a Tier B `contradicts` edge never demotes a grounded artifact, `V2-D48`).
 
-### 3.1 The Tier B rules (each is a requirement for `MA-015`'s test)
+| # | Class | Operation | Tier B | Tier C | Admin | Conditions |
+|---|---|---|:-:|:-:|:-:|---|
+| 1 | Ingest | `ingest_episode` | ✓ | ✓ | ✓ | `scope_writable` |
+| 2 | Ingest | `ingest_artifact` | ✓ | ✓ | ✓ | `evidence_required`, `scope_writable` |
+| 3 | Read | `query` | ✓ | ✓ | ✓ | — |
+| 4 | Read | `refine` | ✓ | ✓ | ✓ | `targets_readable` |
+| 5 | Read | `get` | ✓ | ✓ | ✓ | `targets_readable` |
+| 6 | Read | `provenance` | ✓ | ✓ | ✓ | `targets_readable` |
+| 7 | Write (grounded) | `assert` | ✓ | ✓ | ✓ | `evidence_required`, `scope_writable` |
+| 8 | Write (grounded) | `retract_own` | ✓ | ✓ | ✓ | `own_lineage_only`, `targets_readable` |
+| 9 | Write (inferred) | `infer` | ✓ | — | — | `registered_method`, `scope_writable`, `targets_readable` |
+| 10 | Write (inferred) | `verify` | ✓ | — | — | `own_lineage_only`, `targets_readable` |
+| 11 | Write (inferred) | `refute` | ✓ | — | — | `evidence_required`, `own_lineage_only`, `targets_readable` |
+| 12 | Structure | `link` | ✓ | ✓ | ✓ | `grounded_endpoint_protected`, `targets_readable` |
+| 13 | Structure | `unlink` | ✓ | ✓ | ✓ | `targets_readable` |
+| 14 | Structure | `create_entity` | ✓ | ✓ | ✓ | `scope_writable` |
+| 15 | Structure | `link_entity` | ✓ | ✓ | ✓ | `targets_readable` |
+| 16 | Structure | `record_outcome` | ✓ | ✓ | ✓ | `targets_readable` |
+| 17 | Adjudicate | `adjudicate` | — | ✓ | ✓ | `targets_readable` |
+| 18 | Adjudicate | `dissent` | — | ✓ | ✓ | `targets_readable` |
+| 19 | Maintain | `purge_working` | — | — | ✓ | `scope_writable` |
+| 20 | Maintain | `expire` | — | — | ✓ | `scope_writable` |
+| 21 | Maintain | `rebuild_index` | — | — | ✓ | — |
+| 22 | Maintain | `register_method` | — | — | ✓ | — |
+| 23 | Delete | `delete` | — | ✓ | ✓ | `scope_writable` |
+| 24 | Export | `export` | — | ✓ | ✓ | — |
+| 25 | Scope | `create_scope` | — | ✓ | ✓ | `namespace_owner_only` |
+| 26 | Scope | `grant_access` | — | ✓ | ✓ | `namespace_owner_only` |
+| 27 | Scope | `revoke_access` | — | ✓ | ✓ | `namespace_owner_only` |
+| 28 | Observe | `stats` | ✓ | ✓ | ✓ | `targets_readable` |
+| 29 | Observe | `cost` | ✓ | ✓ | ✓ | — |
 
-| ID | Rule | Test (`tests/test_tier_permissions.py`, `MA-015`) |
+### 3.1 The structural rules (`MA-015`)
+
+Each rule is a static code returned by `api.contract.contract_violations`. `tests/test_tier_permissions.py`
+checks it on the real matrix **and** shows it failing on a deliberately broken copy. These tests check the
+**specification**, not runtime enforcement: the implementing tasks (`E-014`-`E-017`, `A-017`) enforce it at
+runtime by calling `api.contract.authorize` and honouring each condition.
+
+| ID | Rule | Test |
 |---|---|---|
-| TB1 | **Tier B cannot delete.** It may only `retract_own` an artifact whose method it produced. | `test_tier_b_cannot_delete` |
-| TB2 | **Tier B cannot adjudicate.** A reflection service must not silence a conflict. | `test_tier_b_cannot_adjudicate` |
-| TB3 | Tier B cannot write a grounded claim without source evidence. | `test_tier_b_assert_requires_evidence` |
-| TB4 | No Tier B operation moves anything to `asserted`; `inferred → asserted` does not exist. | `test_no_operation_promotes_inferred_to_asserted` |
-| TB5 | `verify` and `refute` accept only the artifact's own method lineage. | `test_tier_b_verify_and_refute_own_lineage_only` |
-| TB6 | Tier B can create `inferred` artifacts and refute its own. | `test_tier_b_can_infer_and_refute_own` |
-| TB7 | Tier B cannot write to a scope it cannot read. | `test_tier_b_cannot_write_unreadable_scope` |
-| TB8 | Every operation is assigned to a tier set; none is unassigned. | `test_every_operation_is_assigned` |
+| TB1 | **Tier B cannot delete.** It may only `retract_own` an artifact of its own method lineage. | `test_tb1_tier_b_cannot_delete` |
+| TB2 | **Tier B cannot adjudicate** (`adjudicate`, `dissent`). A reflection service must not silence a conflict or a user's dissent. | `test_tb2_tier_b_cannot_adjudicate` |
+| TB3 | Every operation that creates `asserted` requires source evidence (Tier B and Tier C alike). | `test_tb3_grounded_writes_require_evidence` |
+| TB4 | Nothing moves to `asserted` except Tier C adjudication of a `contested` item; `inferred → asserted` does not exist. | `test_tb4_only_tier_c_adjudication_promotes_to_asserted` |
+| TB5 | A Tier B lifecycle change (`retract_own`, `verify`, `refute`) applies to its own method lineage only. | `test_tb5_tier_b_lifecycle_changes_are_own_lineage_only` |
+| TB6 | Tier B can `infer` and `refute`. | `test_tb6_tier_b_can_infer_and_refute` |
+| TB7 | A Tier B operation that creates an artifact requires a writable scope. | `test_tb7_tier_b_creation_requires_writable_scope` |
+| TB8 | Every operation is assigned to at least one tier, and the matrix equals this document and `ARCHITECTURE_V2.md` 8.1. | `test_tb8_every_operation_is_assigned_and_documented` |
+| TB9 | Tier B has no Maintain, Export or Scope operation: it cannot change access, bulk-read or administer. | `test_tb9_tier_b_has_no_maintain_export_or_scope_operation` |
+| TB10 | A Tier B operation that names existing artifacts requires them to be readable. | `test_tb10_tier_b_targets_must_be_readable` |
+| AD1 | Admin-only operations are Tier C operations, and need the admin role. | `test_ad1_admin_only_operations_need_tier_c_and_the_role` |
 
 ## 4. Operation reference
 
@@ -171,9 +197,16 @@ required. It is the only Tier B way to change an inferred artifact's lifecycle. 
 **`link(ctx, from, to, type, weight?) → AssociationId`** · **`unlink(ctx, association_id) → Receipt`**
 Association edges (`related_to`, `contradicts`, `refines`, `specialises`, `instance_of`, `caused_by`,
 `precedes`, `part_of`, `corroborated_by`, `supersedes`). Associations are **not provenance** and do not cascade.
-Both endpoints must be readable and the caller must be authorised on the endpoint scopes. **Open question
-(`CHANNELS.md` 2.2):** a `contradicts` edge created by Tier B must not demote a grounded artifact out of
-`facts`. *Errors:* `forbidden`, `validation_error` (unknown type).
+Both endpoints must be readable and the caller must be authorised on the endpoint scopes. **`contradicts`
+(`V2-D48`, C-P4):** only an edge between two grounded endpoints created by the grounding policy or a Tier C
+caller opens a contradiction (both endpoints then render in `conflicts`). A Tier B `contradicts` edge is stored
+as an association with `origin='tier_b'` and has **no** channel effect; a Tier B caller with counter-evidence
+against its own inference uses `refute`. *Errors:* `forbidden`, `validation_error` (unknown type).
+
+**`create_entity(ctx, scope, entity_type, label, idempotency_key) → EntityId`** (`V2-D46`)
+Creates a principal-scoped, opaque entity (`ARCHITECTURE_V2.md` 5.2, `V2-D25`) in a scope the caller may write.
+The `EntityId` is engine-generated; `label` is content and follows the scope's read rules. A replay with the same
+key returns the same id. *Errors:* `forbidden` (scope not writable), `validation_error`.
 
 **`link_entity(ctx, entity_a, entity_b, relation) → Receipt`**
 Links two entities and requires authorisation on **both** scopes; otherwise it fails with the same `forbidden`
@@ -186,8 +219,16 @@ procedure), `forbidden`.
 ### 4.6 Adjudicate — Tier C only
 
 **`adjudicate(ctx, artifact_id, decision: confirm|deny, note?) → Receipt`**
-Resolves a `contested` artifact: `confirm → asserted`, `deny → retired`, with an adjudication record. *Errors:*
-`precondition_failed` (artifact not `contested`), `forbidden` (including every Tier B call, TB2).
+Resolves a `contested` artifact: `confirm → asserted`, `deny → retired`, with an adjudication record.
+`confirm` is legal only for kinds that may be `asserted` (claim, procedure; `V2-D48`): a contested abstraction or
+episode can only be denied. *Errors:* `precondition_failed` (artifact not `contested`, or `confirm` on a kind that
+cannot be asserted), `forbidden` (including every Tier B call, TB2).
+
+**`dissent(ctx, artifact_id, note?) → Receipt`** (`V2-D46`)
+The user rejects an inference (`USER_MODEL.md` §3 "Contest", `V2-D33`): `inferred → retired` with
+`reason='user_dissent'`, and a `NEGATIVE_CONSTRAINT` recorded so the same element cannot be silently re-learned
+(`I16`). No evidence is required: the user is the authority over their own model. Tier C only (TB2): a cognition
+service must not dissent on the user's behalf. *Errors:* `precondition_failed` (not `inferred`), `forbidden`.
 
 ### 4.7 Maintain — Tier C only
 
@@ -195,6 +236,12 @@ Resolves a `contested` artifact: `confirm → asserted`, `deny → retired`, wit
 claims and abstractions are untouched (retention floors). **`expire(ctx, scope, as_of?) → Receipt`** — applies
 retention expiry; recorded as a scope event, not a deletion of knowledge. **`rebuild_index(ctx, index:
 fts|vector|closure_hash) → JobId`** — queues an index rebuild. *Errors:* `forbidden`, `validation_error`.
+All Maintain operations are **admin-only** (`V2-D47`).
+
+**`register_method(ctx, name, version, params_schema_hash, description, idempotency_key) → MethodId`** (`V2-D46`)
+Appends an inference method to the immutable `METHOD` registry (`I3`); `infer` accepts only registered methods.
+`(name, version)` is unique and never updated: re-registering it with the same hash returns the existing id,
+with a different hash is `precondition_failed`. Admin-only.
 
 ### 4.8 Delete — Tier C only
 
@@ -209,28 +256,43 @@ Tier B call, TB1), `validation_error`, `retryable_conflict`.
 User-facing data export of the caller's read set; excludes content whose deletion is pending. A snapshot made
 before a deletion must not be served after it (channel 11). *Errors:* `forbidden`, `resource_limit`.
 
-### 4.10 Observe
+### 4.10 Scope — Tier C only (`V2-D46`)
+
+Scope administration is part of the engine API, because it decides every read set (`ARCHITECTURE_V2.md` 8:
+"nothing outside it exists"). Tier B has none of it (TB9).
+
+**`create_scope(ctx, parent, segment, kind, idempotency_key) → ScopePath`** — creates `parent + segment + '/'`
+with `kind ∈ {project, session, task, shared}` inside the caller's own namespace (`personal` scopes are the
+`/u/<user>/` roots, created with the user). The segment follows the `API_V2.md` §6 grammar. *Errors:*
+`validation_error` (grammar), `forbidden` (outside the caller's namespace).
+
+**`grant_access(ctx, scope, principal, idempotency_key) → GrantId`** — a `scope_grant` row (`V2-D36`): `principal`
+may read the `project`/`shared` rows of the subtree, never `private` ones. Only the namespace owner may grant.
+An unknown principal is `forbidden`, the same as an unauthorised scope. **`revoke_access(ctx, grant_id) →
+Receipt`** — sets `revoked_at` once; grants are append-only. *Errors:* `forbidden`, `precondition_failed`
+(already revoked).
+
+### 4.11 Observe
 
 **`stats(ctx, artifact_id) → Stats`** returns counts, coverage, refutation attempts, verification status and the
 *ids* of support and counter items. Item **content** is returned only if the caller could read it through
 `query`. **`cost(ctx, window) → CostReport`** returns tokens, latency and counts for the caller's own activity.
 Neither returns another scope's content or counts. *Errors:* `forbidden`.
 
-## 5. Referenced elsewhere but absent from the frozen surface
+## 5. Gaps found in review, and how each was closed (`V2-D46`)
 
-These are used or implied by other V2 documents and have **no operation** in section 8.1. They are listed so the
-rule "no roadmap task references an operation absent from this document" can be enforced. None is added to the
-surface until a `V2-Dnn` record approves it.
+The r6 review found seven things other V2 documents relied on that 8.1 did not contain. Each is now decided.
+Nothing outside sections 3-4 exists.
 
-| # | Gap | Where it appears | Why it matters | Proposal |
-|---|---|---|---|---|
-| 5.1 | **A Tier C way to reject an inference** | `USER_MODEL.md` section 3 ("Contest": the inference goes `refuted` with `reason='user_dissent'`), `UM-012`, `V2-D33`, `A-011` | The user's dissent is the safety-critical path. `refute` is Tier B only and `adjudicate` handles `contested` artifacts only, so **a user in the application tier has no operation that rejects a hypothesis.** | Allow `refute` for Tier C with `reason='user_dissent'` and no evidence requirement, writing the negative constraint; or extend `adjudicate` to inferred artifacts. |
-| 5.2 | `move` | `ARCHITECTURE_V2.md` 5, rule 5 ("move is copy + retract") | Named as an operation but not listed | Define as a composition of `assert`/`ingest_artifact` into the new scope plus `retract_own`, with a `supersedes` association; not a new primitive. |
-| 5.3 | `ingest_artifact` payload | section 8.1 | Named without a definition (see 4.1) | Confirm the proposed meaning. |
-| 5.4 | **Creating an entity** | `ARCHITECTURE_V2.md` 5.2 ("entity ids are created only through the public API") | Only `link_entity` is listed, so there is no way to create the thing being linked | Add `create_entity` to the Structure class. |
-| 5.5 | **Registering an inference method** | section 4 (`METHOD` is an append-only registry), `infer` requires "a registered inference method" | Nothing writes the registry | An administrative `register_method`, Tier C, append-only. |
-| 5.6 | **Scope creation and access grants** | section 5 ("the caller is authorised for it") | How a caller comes to be authorised is undefined; it determines the whole read and write set | State that scope administration is outside the engine API (identity layer), or add operations. |
-| 5.7 | Revise (narrow or widen an inferred element) | `USER_MODEL.md` section 3 | Described as "creates a new artifact, retires the old, links `refines`" | A composition of `infer`, `refute`/`retract_own` and `link`; document it rather than add a primitive. |
+| # | Gap | Decision |
+|---|---|---|
+| 5.1 | A Tier C way to reject an inference (`USER_MODEL.md` §3, `UM-012`, `V2-D33`) | New operation **`dissent`** (Adjudicate, Tier C): `inferred → retired`, `reason='user_dissent'`, negative constraint. `refute` stays Tier B and evidenced |
+| 5.2 | `move` (`ARCHITECTURE_V2.md` 5 rule 5) | **Composition, not a primitive:** `assert`/`ingest_artifact` into the target scope with the original's sources as evidence, `link(new, old, supersedes)`, then `retract_own(old)`, each with an idempotency key. A partial move leaves both copies readable: no loss, no leak |
+| 5.3 | `ingest_artifact` payload | **Confirmed** as in 4.1: an externally formed claim or procedure through the grounding policy |
+| 5.4 | Creating an entity | New operation **`create_entity`** (Structure, Tier B and C) |
+| 5.5 | Registering an inference method | New operation **`register_method`** (Maintain, admin-only, append-only) |
+| 5.6 | Scope creation and access grants | New class **Scope**: `create_scope`, `grant_access`, `revoke_access`, Tier C only. Identity (who a principal is) stays outside the engine |
+| 5.7 | Revise an inferred element (`USER_MODEL.md` §3) | **Composition:** `infer` the narrowed or widened element, `link(new, old, refines)`, then `refute`/`retract_own(old)` (Tier B) or `dissent(old)` (user) |
 
 ## 6. Scope selectors (`MA-011`, decided: `V2-D35`, `V2-D36`, `V2-D45`)
 
@@ -266,10 +328,24 @@ through `exact(scope)`; otherwise `forbidden`, before any row is constructed (`s
 enforces the ACL alone, from `app.user_id` and `scope_grant` (`rls_read_using`); it never reads a value the
 application computed. Each layer is tested alone; the application read set is proven contained in the ACL.
 
-## 7. Acceptance traceability (`MA-012`)
+## 7. Acceptance traceability (`MA-012`, `MA-015`)
 
 | Criterion | Where |
 |---|---|
-| Every operation in the architecture appears exactly once with signature, tier permissions and error contract | section 3 (23 rows, once each), section 4, section 1.1 |
-| "Tier B cannot delete or adjudicate" is stated and traceable to a test | 3.1 (TB1, TB2 and the test names `MA-015` must create) |
-| No roadmap task references an operation absent from this document (checked by `MA-018`) | section 5 lists every gap; `MA-018`'s checker does not yet inspect operation names (follow-up) |
+| All operations present exactly once, each with signature, tiers and error contract | section 3 (29 rows: the 23 of 8.1 plus `V2-D46`), section 4, section 1.1; `tests/test_api_contract.py` |
+| Every Tier B prohibition stated and labelled for `MA-015` | 3.1 (TB1-TB10, AD1), each with a test in `tests/test_tier_permissions.py` |
+| No-oracle error rule with exact codes | 1.1 (`forbidden` for absent and unreadable alike; static codes) |
+| `V2-D07` contradiction resolved by an approved record, cited | header (`V2-D39`) |
+| Every operation name used in `ROADMAP_V2.md` / `ARCHITECTURE_V2.md` exists here | `scripts/check_plan_refs.py` (`check_operations`, using section 3, section 6 and 7.1), run in CI |
+| `MA-015`: every operation one row with Tier B, Tier C and admin permissions and conditions | section 3 |
+
+### 7.1 Names the plan uses that are not operations
+
+| Name | Kind | Meaning |
+|---|---|---|
+| `move` | composition | section 5.2 |
+| `revise` | composition | section 5.7 |
+| `ground` | internal function | grounding policy (`E-015`), called by `assert`/`ingest_artifact` |
+| `assess_soundness` | internal function | soundness policy (`E-015`), called by `infer` |
+| `ledger` | internal function | CP-bound helper (`SD-002`, `STATISTICS.md`) |
+| `retract` | retired | the `V2-D07` five-call name; never an operation (`V2-D39`), use `retract_own` |

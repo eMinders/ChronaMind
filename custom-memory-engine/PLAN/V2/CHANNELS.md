@@ -1,7 +1,7 @@
 # Four-Channel Contract
 
-**Task:** `MA-013` · **Status: proposed, not yet frozen.** It freezes when the Project Owner decides the proposals
-in section 5 (G0b requires `MA-013` frozen). Specification plus an executable reference model; the database
+**Task:** `MA-013` · **Status: frozen (r9, `V2-D48`).** Every proposal in section 5 is decided; a change needs a
+new `V2-Dnn`. Specification plus an executable reference model; the database
 implementation belongs to `E-017`, the fuzz to `E-035`. **References:** `ARCHITECTURE_V2.md` sections 2.2, 2.3,
 7, 9.1-9.3, `V2-D24`, `V2-D28`, `INVARIANT_LEDGER.md` (`I1′`, `I14`), `THREAT_MODEL.md` (T-10).
 
@@ -59,15 +59,15 @@ these rules there are **60 legal tuples** (15 episode, 17 claim, 15 procedure, 1
 `conflicts` and `none` are large only because `contested` and `retired` artifacts may carry the history
 of their verification; their routing does not depend on it.
 
-**Legality versus the transition table on `main` (`V2-D38`).** The legality rules above are stricter than
-`model.axes.TRANSITIONS`, whose creation and transition rules do not depend on `kind`. Measured with
-`model.axes` itself: the 16 legal `(kind, lifecycle)` pairs are all reachable, and exactly **four** more are
-reachable that this contract declares illegal: `abstraction/asserted`, `abstraction/observed`, `episode/asserted`
-and `procedure/observed`. (`abstraction/asserted` is reached by `contested → asserted` after `inferred →
-contested`, which would turn an inference into a fact by adjudication, against `I1′`.) Every output of the v1
-backfill (`map_v1_version`) is legal. Closing the gap is proposal **C-P1** in section 5. Until it is decided,
-`test_the_gap_with_the_kind_blind_transition_table_is_exactly_the_proposal` pins the gap to exactly these four
-pairs, so neither document can drift silently.
+**Legality is enforced by the lifecycle table on `main` (`V2-D38`, `V2-D48`).** `model.axes.TRANSITIONS` is
+kind-blind; before r9 it reached exactly **four** pairs this contract declares illegal: `abstraction/asserted`,
+`abstraction/observed`, `episode/asserted` and `procedure/observed` (`abstraction/asserted` via `inferred →
+contested → asserted`, which would turn an inference into a fact by adjudication, against `I1′`). Decision C-P1
+added `axes.LEGAL_LIFECYCLE`; `require_transition(source, target, kind)` and `validate_axes` reject any
+lifecycle illegal for the kind. `test_the_lifecycle_table_reaches_exactly_the_legal_tuple_space` shows the
+reachable pairs now **equal** the 16 legal ones, and `test_without_kind_conditioning_four_illegal_pairs_would_be_reachable`
+(in `tests/test_model_axes.py`) keeps the mutation visible. Every output of the v1 backfill is legal. `E-016`
+enforces the same table in the database.
 
 ### 1.2 The contract is executed, not only written
 
@@ -87,7 +87,7 @@ the specification and not a tautology of one `if` chain):
 ## 2. Decisions the specification left implicit
 
 Each of these is a choice this document had to make to make the function total. They are stated here so they
-can be challenged; the first three need a `V2-Dnn` record before `E-017`.
+can be challenged. All are decided by `V2-D48` (r9).
 
 ### 2.1 A verified *inferred claim or procedure* is a hypothesis
 
@@ -102,10 +102,13 @@ Section 9.1 moves an `asserted` artifact with "an open `contradicts` association
 demote any grounded fact out of `facts` by linking a `contradicts` edge to it**, which is the same power as
 adjudicating a conflict, which the architecture denies to Tier B on purpose.
 
-Proposed definition: an `open_contradiction` exists only where a `contradicts` association is `open`, **both
+**Decided (`V2-D48`, C-P4):** an `open_contradiction` exists only where a `contradicts` association is `open`, **both
 endpoints are grounded** (`observed` or `asserted`), and the edge was created by the grounding policy or by a
 user. A `contradicts` edge from or to an inferred artifact acts on the **inferred** artifact (it can move it
-`inferred → contested`, which requires grounded counter-evidence, section 2.3) and never on a grounded one.
+`inferred → contested`, which requires grounded counter-evidence, section 2.3) and never on a grounded one. A
+Tier B `contradicts` edge is stored as an association (`origin='tier_b'`) with no channel effect. The rule is on
+the API matrix (`link`: `grounded_endpoint_protected`, `API_V2.md` 4.5) and in the reference model
+(`opens_contradiction`, `test_a_tier_b_contradicts_edge_never_demotes_a_grounded_fact`).
 
 ### 2.3 Staleness has five causes, not one
 
@@ -194,21 +197,21 @@ def test_P8_provenance_to_unreadable_scope_is_opaque(corpus, q, sel):    # T-10,
 def test_P9_deleting_a_source_never_promotes_to_facts(corpus, d):         # monotone: facts only shrink
 ```
 
-## 5. Proposals for the Project Owner (each a requested `V2-Dnn`)
+## 5. Decisions (`V2-D48`, r9)
 
-`MA-013` freezes when these are decided. None is in force today. Each says what changes for `E-017` if it is
-rejected.
+All six proposals were accepted under Project Owner authority (`APPROVAL.md` Amendment 2), each because the
+alternative weakened `I1′`, `I14` or Tier B's inability to adjudicate.
 
-| ID | Proposal | Basis | If rejected |
+| ID | Decision | Basis | Verification |
 |---|---|---|---|
-| C-P1 | Creation and `contested → asserted` become **kind-conditioned** (`E-016` enforces it in the database): an abstraction is created only `inferred` and can never reach `asserted`/`observed`; an episode is never `asserted`; a procedure is never `observed` | Section 1.1 legality; `I1′`; #67 requires `inferred → asserted` to be unrepresentable, and `inferred → contested → asserted` reaches the same state | The four pairs must be routed; `abstraction/asserted` would then be a fact without a bound, contradicting `I14` |
-| C-P2 | A verified *inferred claim or procedure* stays in `hypotheses`; only an abstraction renders a verified result as a bounded fact (section 2.1) | 9.1, `I1′` | Verified inferred claims render as facts without a bound |
-| C-P3 | `stale` is the OR of five causes, including `now > expires_at` (section 2.3) | 9.2, section 7, `USER_MODEL.md` | Expired verified abstractions keep rendering in `facts` |
-| C-P4 | Only a `contradicts` edge between two grounded endpoints, created by the grounding policy or a user, opens a contradiction; Tier B `link(contradicts)` cannot demote a grounded fact (section 2.2). Needs a matching rule in `API_V2.md` | Tier B may not adjudicate (`API_V2.md` TB rules) | **Security gap:** any Tier B service can move any grounded fact out of `facts` |
-| C-P5 | `refuted` always retires the artifact (`inferred → retired`); `inferred ∧ refuted` is illegal (section 1) | 2.3 transition table | A sixth input combination must be routed |
-| C-P6 | `ARCHITECTURE_V2.md` 9.1 text: an asserted artifact with an open contradiction is in `conflicts`, not `facts` (the overlap in 9.1 resolved in favour of `conflicts`) | Invariant 6 | 9.1 stays ambiguous |
+| C-P1 | Lifecycle legality is **kind-conditioned**: an abstraction is never `asserted`/`observed`, an episode never `asserted`, a procedure never `observed`; `adjudicate(confirm)` on a contested abstraction or episode is `precondition_failed` | `I1′`, `I14`; #67 requires `inferred → asserted` unrepresentable, and `inferred → contested → asserted` reached it | `tests/test_model_axes.py` (reachable = legal per kind; mutation shows the four pairs), `test_the_lifecycle_table_reaches_exactly_the_legal_tuple_space` |
+| C-P2 | A verified *inferred claim or procedure* stays in `hypotheses`; only an abstraction renders a verified result as a bounded fact (2.1) | 9.1, `I1′` | `test_a_verified_inferred_claim_or_procedure_is_still_a_hypothesis` |
+| C-P3 | `stale` is the OR of five causes, including `now > expires_at` (2.3) | 9.2, section 7, `USER_MODEL.md` | `test_each_staleness_cause_alone_demotes_a_verified_abstraction` (each cause alone); property P4 |
+| C-P4 | Only a `contradicts` edge between two grounded endpoints, created by the grounding policy or Tier C, opens a contradiction; a Tier B edge has no channel effect (2.2). **Security:** closes the path by which any Tier B service could move any fact out of `facts` | Tier B may not adjudicate (TB2) | `test_a_tier_b_contradicts_edge_never_demotes_a_grounded_fact`; `API_V2.md` `link` condition `grounded_endpoint_protected` (`tests/test_tier_permissions.py`) |
+| C-P5 | `refuted` always retires the artifact (`inferred → retired`); `inferred ∧ refuted` is illegal (section 1) | 2.3 transition table | `test_illegal_tuples_are_rejected_rather_than_routed` |
+| C-P6 | An asserted artifact with an open contradiction is in `conflicts`, not `facts`; `ARCHITECTURE_V2.md` 9.1 now says so | Invariant 6 | `test_a_settled_item_with_an_open_contradiction_is_not_a_fact` |
 
-Decided already and only cited here: opaque provenance (`V2-D37`, R6); staging rows (`V2-D38`, section 2.4).
+Decided earlier and cited here: opaque provenance (`V2-D37`, R6); staging rows (`V2-D38`, section 2.4).
 
 Answers to #56's open questions: Q1 inferred procedures → `hypotheses` (C-P2); Q2 verified inferred claims →
 `hypotheses` (C-P2); Q3 refuted → always `retired` (C-P5); Q4 observed episodes → `facts` (section 2.6);
@@ -218,7 +221,7 @@ Q5 opaque provenance → `V2-D37` (R6).
 
 | Criterion | Where |
 |---|---|
-| Membership is total: every legal tuple maps to exactly one output | 1, 1.1, 1.2; `test_every_legal_tuple_belongs_to_exactly_one_channel` (60 cases); consistency with `V2-D38`: `test_every_v1_backfill_output_is_a_legal_tuple`, `test_the_gap_with_the_kind_blind_transition_table_is_exactly_the_proposal` |
+| Membership is total: every legal tuple maps to exactly one output | 1, 1.1, 1.2; `test_every_legal_tuple_belongs_to_exactly_one_channel` (60 cases); consistency with `V2-D38`/`V2-D48`: `test_every_v1_backfill_output_is_a_legal_tuple`, `test_the_lifecycle_table_reaches_exactly_the_legal_tuple_space` |
 | Contested content appears only in `conflicts` (consistent with Invariant 6) | 1, `test_contested_content_appears_only_in_conflicts` |
 | A bounded abstraction in `facts` carries its support statement as part of the rendered item | R2, R3; property P6 |
 | Deliverable: property-test sketch | 4 |

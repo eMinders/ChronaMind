@@ -220,7 +220,7 @@ discriminate its baselines is not an instrument.**
 | `C-027` | **Cognition cost accounting**: tokens + latency per abstraction produced | Feeds G6 frontier | M |
 | `UM-010` | **User-model inference** (`C-024` renamed, now explicitly required): preferences, goals, constraints, context, decision patterns as abstractions with the full ledger | **Not de-scopeable** (see §12) | L |
 | `UM-011` | **Facet routing + trust ladder**: `provisional` → form only; `verified` → recommendations; `verified ∧ unexpired ∧ provenance-rendered` → decision support | `USER_MODEL.md` §4 | M |
-| `UM-012` | **Sticky dissent**: user rejection → `refuted(reason='user_dissent')` + `NEGATIVE_CONSTRAINT(predicate, scope, method_family)`; scheduler consults it before proposing; lifting requires new grounded evidence and is recorded | Safety-critical; `UM8` must be 0 (`V2-D33`) | M |
+| `UM-012` | **Sticky dissent**: user rejection → the `dissent` operation (`inferred → retired`, `reason='user_dissent'`, `V2-D46`) + `NEGATIVE_CONSTRAINT(predicate, scope, method_family)`; scheduler consults it before proposing; lifting requires new grounded evidence and is recorded | Safety-critical; `UM8` must be 0 (`V2-D33`) | M |
 | `UM-015` | **`X-nosticky` variant** + dissent-persistence test across `K = 7` scheduler cycles | Needed for `S18`; without it the mechanism is unproven | M |
 | `UM-013` | **Facet decay**: half-life per facet, `stale` transition, re-verification rather than silent renewal | "Evolving" requires expiry | M |
 | `UM-014` | **Protected-attribute deny-list** + conformance test | Sensitive-attribute inference is refused, not discouraged | M |

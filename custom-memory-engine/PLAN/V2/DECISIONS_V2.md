@@ -683,3 +683,63 @@ shared cases: the r2 `LIKE` design fails cases 1 and 5, `LIKE` with the separato
 passes all; the RLS layer alone returns exactly the ACL for every caller, grant set, revocation and unusable
 identity; the application read set is contained in the ACL (exhaustive); the unqualified policy is shown to
 leak. **Status:** decided and verified on scratch tables; `E-011` applies it to the real schema.
+
+### V2-D46 — The API gaps are closed: six operations, two compositions (resolves #55 criterion 5; N-3)
+
+**Decision.** `API_V2.md` §5's seven gaps: (5.1) **`dissent`** (Adjudicate, Tier C): the user rejects an
+inference, `inferred → retired` with `reason='user_dissent'` and a negative constraint (`V2-D33`, `I16`); no
+evidence, because the user is the authority over their own model; Tier B may not dissent for them. (5.2) `move`
+and (5.7) *revise* are **compositions** of existing operations with an idempotency key per step, not
+primitives. (5.3) `ingest_artifact`'s payload is confirmed. (5.4) **`create_entity`** (Structure, Tier B and
+C, writable scope). (5.5) **`register_method`** (Maintain, admin-only, append-only: same `(name, version)` with
+the same hash is idempotent, with a different hash `precondition_failed`). (5.6) a **Scope** class,
+`create_scope`/`grant_access`/`revoke_access`, Tier C, namespace owner only; identity itself stays outside the
+engine. The surface is 29 operations, 18 for Tier B.
+**Rationale.** §8's principle is "nothing outside the list exists". Each gap was something another approved
+document relied on (`ARCHITECTURE_V2.md` 5.2 entity creation, §4 the method registry, `USER_MODEL.md` §3 the
+user's dissent, §5 grants). Compositions were kept as compositions when every step already had a primitive and a
+partial run is safe; new primitives were added only where nothing could express the effect. Access changes are
+Tier C so a cognition service can never widen any read set.
+**Implementation.** `api.contract` (`OPERATIONS`); `API_V2.md` §§3-5, 7.1; `ARCHITECTURE_V2.md` 8.1;
+`USER_MODEL.md` §3; `ROADMAP_V2.md` `UM-012`.
+**Verification.** `tests/test_api_contract.py` (registry = both documents, signatures); `tests/test_tier_permissions.py`;
+`scripts/check_plan_refs.py` `check_operations` (every call-form operation name in `ROADMAP_V2.md` and
+`ARCHITECTURE_V2.md` resolves; it found the stale `refuted(reason='user_dissent')` in `UM-012`).
+**Status:** specified and verified as a contract; runtime implementations belong to `E-014`-`E-017` and `A-017`.
+
+### V2-D47 — Two tiers; admin is a role within Tier C; conditions are part of the matrix (resolves #58 / MA-015)
+
+**Decision.** Callers are Tier B or Tier C, from the authenticated credential. **Admin** is a role held by some
+Tier C credentials, never by Tier B. The Maintain operations (`purge_working`, `expire`, `rebuild_index`,
+`register_method`) are admin-only; an admin may call every Tier C operation. Every matrix row carries the
+conditions its callers must satisfy, as closed codes (`api.contract.Condition`). The structural rules TB1-TB10 and
+AD1 (`API_V2.md` §3.1) are checked by `api.contract.contract_violations`.
+**Rationale.** `ROADMAP_V2.md` said "admin" while §8.1 had two columns and called Maintain "administrative"; a
+third tier would need its own credential path and threat analysis for no capability the role cannot express. The
+r8 matrix marked conditions ("only with evidence", "own lineage") in prose that no test could see; as codes they
+are machine-checked and the implementing task cannot miss one.
+**Implementation.** `api.contract` (`authorize(..., admin=)`, `contract_violations`, `Condition`); `API_V2.md` §3.
+**Verification.** `tests/test_tier_permissions.py`: each rule holds on the real matrix and fails with its own
+code on a deliberately broken copy. **Status:** decided and verified (specification; runtime enforcement by the
+implementing tasks).
+
+### V2-D48 — Channel contract decisions C-P1..C-P6; MA-013 frozen (resolves #56; N-1, N-4)
+
+**Decision.** All six `CHANNELS.md` §5 proposals are accepted. **C-P1:** lifecycle legality is kind-conditioned
+(`axes.LEGAL_LIFECYCLE`; `require_transition(source, target, kind)`, `validate_axes`): an abstraction is never
+`asserted` or `observed`, an episode never `asserted`, a procedure never `observed`. **C-P2:** a verified inferred
+claim or procedure stays a hypothesis. **C-P3:** `stale` is the OR of five causes. **C-P4 (security):** only a
+`contradicts` edge between two grounded endpoints, created by the grounding policy or Tier C, opens a
+contradiction; a Tier B edge has no channel effect (matrix condition `grounded_endpoint_protected` on `link`).
+**C-P5:** `refuted` always retires. **C-P6:** a grounded artifact with an open contradiction is in `conflicts`;
+`ARCHITECTURE_V2.md` 9.1 corrected.
+**Rationale.** C-P1: the kind-blind table let `inferred → contested → asserted` turn an abstraction into an
+unbounded fact, against `I1′` and `I14`. C-P4: without it any Tier B service could demote any fact by linking a
+`contradicts` edge, which is adjudication, denied to Tier B on purpose (TB2). The others make the membership
+function total without weakening `I1′`.
+**Implementation.** `model.axes`; `api.contract` (`link` condition); `CHANNELS.md` (frozen); `ARCHITECTURE_V2.md`
+9.1; `API_V2.md` 4.5-4.6.
+**Verification.** `tests/test_model_axes.py` (reachable = legal per kind; the kind-blind mutation reaches exactly
+the four illegal pairs; abstraction cannot be confirmed); `tests/test_channel_membership_model.py` (60 legal
+tuples, exactly one output each; reachable space = legal space; C-P4 and C-P3 tests); `tests/test_tier_permissions.py`.
+**Status:** decided; `MA-013` frozen. Database enforcement is `E-016`, assembly `E-017` (W1).

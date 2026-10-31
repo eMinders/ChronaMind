@@ -222,29 +222,34 @@ def test_every_channel_is_reachable() -> None:
     }
 
 
-# --- Consistency with the closed lifecycle table on main (V2-D38, ``model.axes``) -------------------------
-
-#: (kind, lifecycle) pairs that ``model.axes`` can reach today (its creation and transition rules are
-#: kind-blind) but that this contract declares illegal. ``CHANNELS.md`` section 1.1 proposes a ``V2-Dnn``
-#: making creation and ``contested -> asserted`` kind-conditioned, which ``E-016`` would enforce; until the
-#: Project Owner decides, the gap is pinned here so that neither side can drift silently.
-KIND_CONDITIONED_PROPOSAL: frozenset[tuple[str, str]] = frozenset(
-    {("abstraction", "asserted"), ("abstraction", "observed"), ("episode", "asserted"), ("procedure", "observed")}
-)
+# --- Consistency with the lifecycle table on main (V2-D38, V2-D48, ``model.axes``) ------------------------
 
 
 def _reachable_through_axes() -> set[tuple[str, str]]:
-    created = {target for source, target in axes.TRANSITIONS if source is None}
-    seen, frontier = set(created), set(created)
-    while frontier:
-        frontier = {t for s, t in axes.TRANSITIONS if s in frontier} - seen
-        seen |= frontier
-    return {(kind, lifecycle) for kind in axes.KINDS for lifecycle in seen}
+    """(kind, lifecycle) pairs reachable from creation under ``axes.require_transition(..., kind)``."""
+    pairs: set[tuple[str, str]] = set()
+    for kind in axes.KINDS:
+
+        def ok(source: str | None, target: str, kind: str = kind) -> bool:
+            try:
+                axes.require_transition(source, target, kind)  # type: ignore[arg-type]
+            except axes.AxisError:
+                return False
+            return True
+
+        seen = {t for t in axes.LIFECYCLES if ok(None, t)}
+        frontier = set(seen)
+        while frontier:
+            frontier = {t for s in frontier for t in axes.LIFECYCLES if ok(s, t)} - seen
+            seen |= frontier
+        pairs |= {(kind, lifecycle) for lifecycle in seen}
+    return pairs
 
 
-def test_the_model_uses_exactly_the_axes_vocabulary() -> None:
+def test_the_model_uses_exactly_the_axes_vocabulary_and_legality() -> None:
     assert set(KINDS) == set(axes.KINDS)
     assert set(LIFECYCLES) == set(axes.LIFECYCLES)
+    assert {k: frozenset(v) for k, v in LEGAL_LIFECYCLE.items()} == axes.LEGAL_LIFECYCLE
 
 
 def test_every_v1_backfill_output_is_a_legal_tuple() -> None:
@@ -254,7 +259,57 @@ def test_every_v1_backfill_output_is_a_legal_tuple() -> None:
         assert (mapped.kind, mapped.lifecycle) in legal, (status, layer, derived)
 
 
-def test_the_gap_with_the_kind_blind_transition_table_is_exactly_the_proposal() -> None:
+def test_the_lifecycle_table_reaches_exactly_the_legal_tuple_space() -> None:
+    """C-P1 (V2-D48): no illegal (kind, lifecycle) pair is reachable, and every legal pair is."""
     legal = {(k, lc) for k in KINDS for lc in LEGAL_LIFECYCLE[k]}
-    assert _reachable_through_axes() - legal == KIND_CONDITIONED_PROPOSAL
-    assert legal <= _reachable_through_axes()
+    assert _reachable_through_axes() == legal
+
+
+# --- C-P4 (V2-D48): who may open a contradiction --------------------------------------------------------
+
+Origin = Literal["grounding_policy", "tier_c", "tier_b"]
+
+
+def opens_contradiction(origin: Origin, endpoint_lifecycles: tuple[Lifecycle, Lifecycle]) -> bool:
+    """A ``contradicts`` edge sets ``open_contradiction`` only if both endpoints are grounded and it was
+    created by the grounding policy or by a Tier C caller. A Tier B edge is stored as an association and
+    has **no** channel effect: Tier B may not adjudicate (TB2), and demoting a fact is adjudication.
+    """
+    return origin in ("grounding_policy", "tier_c") and all(lc in GROUNDED for lc in endpoint_lifecycles)
+
+
+def test_a_tier_b_contradicts_edge_never_demotes_a_grounded_fact() -> None:
+    fact = Item("claim", "asserted", "none", False, False)
+    assert channel_of(fact) == "facts"
+    for other in LIFECYCLES:
+        demoted = Item("claim", "asserted", "none", False, opens_contradiction("tier_b", ("asserted", other)))
+        assert channel_of(demoted) == "facts"
+
+
+def test_grounding_policy_or_user_contradiction_between_grounded_items_moves_both_to_conflicts() -> None:
+    for origin in ("grounding_policy", "tier_c"):
+        flag = opens_contradiction(origin, ("asserted", "observed"))  # type: ignore[arg-type]
+        assert channel_of(Item("claim", "asserted", "none", False, flag)) == "conflicts"
+
+
+def test_a_contradiction_against_an_inference_is_not_an_open_contradiction() -> None:
+    """Counter-evidence against an inference goes through ``refute`` (inferred -> contested), not an edge."""
+    assert not opens_contradiction("tier_c", ("asserted", "inferred"))
+
+
+# --- C-P3 (V2-D48): staleness is the OR of five causes ---------------------------------------------------
+
+
+def stale_of(
+    closure_changed: bool, support_below_threshold: bool, source_retired: bool, method_changed: bool, expired: bool
+) -> bool:
+    """``CHANNELS.md`` 2.3. ``E-037``/``E-038`` compute the inputs; any one of them makes the item stale."""
+    return closure_changed or support_below_threshold or source_retired or method_changed or expired
+
+
+@pytest.mark.parametrize("cause", range(5))
+def test_each_staleness_cause_alone_demotes_a_verified_abstraction(cause: int) -> None:
+    flags = [False] * 5
+    assert channel_of(Item("abstraction", "inferred", "verified", stale_of(*flags), False)) == "facts"
+    flags[cause] = True
+    assert channel_of(Item("abstraction", "inferred", "verified", stale_of(*flags), False)) == "hypotheses"

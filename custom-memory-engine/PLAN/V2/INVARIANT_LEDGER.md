@@ -60,9 +60,9 @@ its test.
 
 | Invariant | Status | Enforcement site | Tests | Gap | Owner |
 |---|---|---|---|---|---|
-| I1′ | `PARTIAL` | `src/custom_memory_engine/model/axes.py::TRANSITIONS` | `tests/test_model_axes.py::test_transition_table_is_closed_and_has_no_promotion_from_inferred` | The closed transition table (`V2-D38`) is a pure primitive: no `lifecycle` column, database trigger or channel assembly enforces it yet. | `E-016`, `E-017`, `E-035` |
+| I1′ | `PARTIAL` | `src/custom_memory_engine/model/axes.py::TRANSITIONS`, `src/custom_memory_engine/model/axes.py::LEGAL_LIFECYCLE` | `tests/test_model_axes.py::test_transition_table_is_closed_and_has_no_promotion_from_inferred`, `tests/test_model_axes.py::test_reachable_lifecycles_per_kind_are_exactly_the_legal_ones`, `tests/test_model_axes.py::test_an_inference_cannot_become_a_fact_through_adjudication_for_an_abstraction` | The closed, kind-conditioned transition table (`V2-D38`, `V2-D48`) is a pure primitive: no `lifecycle` column, database trigger or channel assembly enforces it yet. | `E-016`, `E-017`, `E-035` |
 | I2 | `PLANNED` | | | Generalised provenance needs `SOURCE`; v1 `Invariant 1` covers turn evidence only. | `E-013` |
-| I3 | `PLANNED` | | | The immutable method registry does not exist. | `E-014` |
+| I3 | `PLANNED` | | | The immutable method registry does not exist; its only writer is specified (`register_method`, admin-only, append-only, `V2-D46`). | `E-014` |
 | I4 | `PLANNED` | | | The three-clock model needs `observed_at` and the `event_range` rename. | `E-012` |
 | I5 | `PLANNED` | | | Scope-level exclusivity depends on the scope hierarchy; v1 `Invariant 4` covers the per-user case. | `E-011`, `E-012` |
 | I6 | `PLANNED` | | | Retention orthogonality needs the retention axis and its reachability property test. | `E-010`, `E-018`, `E-020` |
@@ -75,5 +75,5 @@ its test.
 | I13 | `PLANNED` | | | Needs deletion ordering and closure-hash staleness. | `E-037`, `E-038` |
 | I14 | `PLANNED` | | | Needs channel assembly and the fuzz suite. | `E-017`, `E-035` |
 | I15 | `PLANNED` | | | Needs the opportunity ledger on the abstraction artifact. | `C-010`, `C-021` |
-| I16 | `PLANNED` | | | Needs `NEGATIVE_CONSTRAINT` and the sticky-dissent path. | `E-014`, `UM-012` |
+| I16 | `PLANNED` | | | Needs `NEGATIVE_CONSTRAINT` and the sticky-dissent path; the user's operation is specified (`dissent`, `V2-D46`). | `E-014`, `UM-012` |
 | I17 | `PARTIAL` | `src/custom_memory_engine/scope/provenance.py::render_bundle` | `tests/test_scope_provenance.py::test_unreadable_source_renders_without_scope_id_or_type`, `tests/test_scope_provenance.py::test_handle_is_stable_per_caller_and_uncorrelatable_across_callers` | Per-caller opaque provenance handles exist (`V2-D37`); retrieval output does not use them yet, and entity opacity needs `ENTITY`. | `E-011`, `E-014`, `E-017` |

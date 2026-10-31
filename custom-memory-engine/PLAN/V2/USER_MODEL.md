@@ -91,7 +91,7 @@ not previously specify:
 | **Strengthen** | New evidence raises confidence; support set grows. | Evidence row + confidence delta |
 | **Weaken** | New counterevidence lowers confidence below threshold → `provisional`, or → `refuted`. | Counter row + delta |
 | **Revise** | Scope narrows/widens ("always" → "in code review"). Creates a *new* artifact, retires the old, links `refines`. | New artifact + association |
-| **Contest** | User assertion overrides an inference. Inference goes `refuted` with `reason='user_dissent'`; a new asserted claim is created. | Adjudication record |
+| **Contest** | User assertion overrides an inference. The user's `dissent` operation (`API_V2.md` 4.6, `V2-D46`) moves the inference `inferred → retired` with `reason='user_dissent'` and records the negative constraint; a new asserted claim is created with `assert` when the user states the correction. | Adjudication record |
 
 **The critical rule (this is the one that makes it trustworthy):**
 
