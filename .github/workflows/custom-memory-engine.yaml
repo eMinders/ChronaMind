@@ -1,15 +1,53 @@
 name: Custom Memory Engine verification
 
+# Jobs (each check name is a stable identity referenced by issue Definitions of Done):
+#   static          lint, format, type check, frozen research records (no services; fast feedback)
+#   verify          full CI-scope pytest + bitemporal SQL against PostgreSQL/pgvector and FalkorDB
+#   default-install pytest on the default install (no optional extras): proves extras stay optional
+# The three jobs are independent and run in parallel.
+
 on:
   push:
-    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml"]
+    branches: [main]
+    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml", ".github/actions/setup-cme/**"]
   pull_request:
-    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml"]
+    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml", ".github/actions/setup-cme/**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# One run per PR (superseded PR runs are cancelled); pushes to main are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: custom-memory-engine
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: ./.github/actions/setup-cme
+        with:
+          extras: baselines
+      - name: ruff check
+        run: uv run --no-sync ruff check src tests research/benchmarks evaluation
+      - name: ruff format --check
+        run: uv run --no-sync ruff format --check src tests research/benchmarks evaluation
+      - name: pyright
+        run: uv run --no-sync pyright
+      - name: Research reference consistency
+        run: |
+          md5sum -c validation/document_hashes.txt
+          python3 validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md
+          diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
+          uv run --no-sync python scripts/check_statistics.py
+          uv run --no-sync python scripts/check_test_split_gate.py
+
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -24,39 +62,34 @@ jobs:
         image: pgvector/pgvector:0.8.7-pg16-bookworm@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
         env:
           POSTGRES_USER: cme_test
-          POSTGRES_PASSWORD: isolated_ci_only
+          POSTGRES_PASSWORD: isolated_ci_only  # pragma: allowlist secret (disposable service container)
           POSTGRES_DB: cme_compatibility
         ports: ["5433:5432"]
         options: >-
           --health-cmd "pg_isready -U cme_test -d cme_compatibility"
           --health-interval 2s --health-timeout 3s --health-retries 30
     env:
-      CME_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility
-      CME_BASELINE_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility
+      CME_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility  # pragma: allowlist secret
+      CME_BASELINE_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility  # pragma: allowlist secret
       CME_BASELINE_TEST_FALKOR_PORT: "16389"
       CME_BASELINE_TEST_ASSETS: /tmp/chronamind-rl031-assets
-      PGPASSWORD: isolated_ci_only
+      PGPASSWORD: isolated_ci_only  # pragma: allowlist secret
     defaults:
       run:
         working-directory: custom-memory-engine
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
-      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7 (Node 24)
+      - uses: ./.github/actions/setup-cme
         with:
-          version: "0.13.5"
-      - run: uv sync --frozen --extra baselines --python 3.12.12
+          extras: baselines
       - name: Prepare immutable local model assets
         run: uv run --no-sync python -m evaluation.baselines.assets prepare --directory "$CME_BASELINE_TEST_ASSETS"
-      - run: uv run --no-sync ruff check src tests research/benchmarks evaluation && uv run --no-sync ruff format --check src tests research/benchmarks evaluation
-      - run: uv run --no-sync pyright
-      - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
-      - run: uv run --no-sync pytest -q
-      - run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql
-      - name: Research reference consistency
-        run: |
-          md5sum -c validation/document_hashes.txt
-          python3 validation/mechanical_checks.py Graduation_Project_Proposal.md Methodology_and_Consistency_Checklist.md CHANGELOG.md
-          diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
+      - name: Install database extensions
+        run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
+      - name: pytest (full CI scope, PostgreSQL integration and RLS)
+        run: uv run --no-sync pytest -q
+      - name: Bitemporal assertions (reduced-schema v1 asset)
+        run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql
 
   default-install:
     runs-on: ubuntu-24.04
@@ -66,8 +99,6 @@ jobs:
         working-directory: custom-memory-engine
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
-      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7 (Node 24)
-        with:
-          version: "0.13.5"
-      - name: Verify default installation without optional vendor/model packages
-        run: uv sync --frozen --python 3.12.12 && uv run --no-sync pytest -q
+      - uses: ./.github/actions/setup-cme
+      - name: pytest on the default install (no optional vendor/model packages)
+        run: uv run --no-sync pytest -q

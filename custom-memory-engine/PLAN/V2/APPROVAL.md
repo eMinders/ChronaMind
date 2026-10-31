@@ -56,3 +56,18 @@
 |---|---|---|
 | 2026-10-31 | Proposed (r1–r4.1) | `README.md` revisions, `SYNC_LOG.md` §1–§8 |
 | 2026-10-31 | **Approved / Canonical Implementation Plan** | this file |
+
+---
+
+## Amendment 1 — r7 blocker resolution (2026-10-31)
+
+The original record above is unchanged. This amendment records a later instruction.
+
+| Field | Value |
+|---|---|
+| **Authority** | The Project Owner, by explicit written instruction to the maintainer session, authorized the maintainer to "resolve all nine blockers B-01 through B-09", to "make the necessary architectural decisions, using the approved V2 Charter, Architecture, research objectives, security principles, and existing code as the governing constraints", to implement them, to complete #46 and #47, and to publish directly to `main`. The same instruction supersedes the earlier "no roadmap implementation" restriction for that scope |
+| **Recorded by** | `elewashy` |
+| **Amends (approved normative text)** | `ARCHITECTURE_V2.md` §5 rule 4 (`V2-D35`), §5 rules 2–3 storage (`V2-D36`), §9.3 (`V2-D37`), §12 M7 (`V2-D38`) and M5 (`V2-D43`), §2.2 G2/G1a (`V2-D40`, `V2-D41`); `DECISIONS_V2.md` `V2-D07` enumeration (`V2-D39`); resolves open `V2-D13`; adds gate G-TS (`V2-D42`) |
+| **Constraint honoured** | Least scope-expanding option consistent with the Charter in every case. No security, statistical, temporal, provenance, deletion or isolation guarantee was weakened. No gate threshold or acceptance criterion was lowered (G1 and G5 were strengthened only) |
+| **Not covered** | Open decisions outside B-01–B-09 (`V2-D14`, `D16`, `D17`, `D30`, `D31`, `D32`, `D34`) remain open. Declaring G0b, or starting W1 beyond the blocker primitives, is not part of this amendment |
+| **Record** | `DECISIONS_V2.md` §5; `audits/R7_RESOLUTION_REPORT.md`; `SYNC_LOG.md` §12 |
