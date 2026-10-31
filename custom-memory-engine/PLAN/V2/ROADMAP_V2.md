@@ -92,6 +92,21 @@ mechanical guarantee that the plan stays consistent as it is edited.
 > **G0b is not declared by this note:** it still requires `MA-013` frozen and `MA-017`
 > green, which are open PRs/tasks.
 
+> **r9 (2026-11-01): G0b met** (G0 met first, §2). Evidence per clause:
+> 1. *Every review issue has a recorded decision or a tested rejection:* B-01-B-09 (`V2-D35`-`V2-D43`,
+>    `V2-D13`); r8 findings N-1-N-6 (`V2-D48`, `I3` text, `V2-D46`, `V2-D48` C-P4, `V2-D50`, `V2-D44`); every
+>    open item of `THREAT_MODEL.md`, `MIGRATION_RISK.md`, `CHANNELS.md`, `DELETION_ORDER.md` and `API_V2.md`
+>    decided (`V2-D44`-`V2-D53`).
+> 2. *`MA-011`'s cross-tenant test fails on the flawed design and passes on the corrected one:*
+>    `tests/test_scope_isolation.py`, `tests/integration/test_scope_isolation.py` (#54 closed).
+> 3. *`MA-012`/`MA-013` frozen:* `API_V2.md` (29 operations, `V2-D46`/`V2-D47`), `CHANNELS.md` (`V2-D48`)
+>    (#55, #56, #58 closed).
+> 4. *`MA-017`/`MA-018` green in CI:* `scripts/plan_coverage.py --check` and `tests/test_plan_coverage.py`
+>    (70 elements, 0 unowned); `scripts/check_plan_refs.py` incl. operation names (#60, #78 closed).
+>
+> **Clearing G0b does not start W1.** W1 begins only on an explicit Project Owner instruction
+> (`APPROVAL.md` Amendment 2). Report: `audits/R9_PRE_W1_COMPLETION_REPORT.md`.
+
 ---
 
 ## 4. W1 — Substrate v2

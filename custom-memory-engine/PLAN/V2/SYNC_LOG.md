@@ -370,3 +370,16 @@ not start W1. Details: `audits/W1_INTEGRATION_PR_REVIEW_AND_CI_REFACTOR_REPORT.m
 | CI | `f8777a6` fixes a defect from `22636e1`: main-push concurrency replaced pending runs; now keyed on the commit SHA |
 | Tests | Fresh clone of `f8777a6`: 1961 passed (full CI scope); no extras 1727 passed, 218 skipped; every gate green |
 | W1 | **Not started.** No change under `custom-memory-engine/src` since `b907125` |
+
+## 15. r9: owner decisions applied, G0 and G0b met (2026-11-01)
+
+**Authority:** `APPROVAL.md` Amendment 2. Details: `audits/R9_PRE_W1_COMPLETION_REPORT.md`.
+
+| Item | Result |
+|---|---|
+| Decisions | `V2-D44`-`V2-D53` (`DECISIONS_V2.md` §6) |
+| PRs | #93, #94, #95, #96, #98, #99, and the G0b declaration PR |
+| Issues closed | #51, #52, #54, #55, #56, #58, #60; created #97 (`E-039`, W1, planning only) |
+| Gates | G0 met (tag `cme-v1.0.0` → `490904d`); G0b met (`ROADMAP_V2.md` §3 r9 note) |
+| Security fixes | RLS column capture; grantee write/delete (`V2-D53`); M2 path forgery (D13); Tier B fact demotion (C-P4); kind-blind lifecycle (C-P1); job-key oracle (D12) |
+| W1 | **Not started.** Source changes this round: `api/contract.py`, `model/axes.py`, `scope/access.py`, `scope/locks.py` only |
