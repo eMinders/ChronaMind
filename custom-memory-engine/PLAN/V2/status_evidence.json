@@ -349,21 +349,31 @@
       "files": [
         "src/custom_memory_engine/engine/deletion.py",
         "src/custom_memory_engine/deletion/closure.py",
-        "src/custom_memory_engine/deletion/scanner.py"
+        "src/custom_memory_engine/deletion/scanner.py",
+        "evaluation/harness/leak_scanner.py",
+        "evaluation/harness/deletion_suite.py"
       ],
       "tests": [
         "tests/test_deletion_modules.py",
-        "tests/integration/test_retrieval_deletion_db.py"
+        "tests/integration/test_retrieval_deletion_db.py",
+        "tests/integration/test_leak_scanner_db.py",
+        "evaluation/harness/tests/test_leak_scanner.py",
+        "evaluation/harness/tests/test_deletion_suite.py"
       ],
-      "note": "harness-side leak_scanner.py named by the issue does not exist"
+      "note": "harness-side seven-channel probes and Suite D runner added in r7 (#46 closed)"
     },
     "RL-071": {
-      "kind": "none",
+      "kind": "code",
       "files": [
         "src/custom_memory_engine/security/rls.sql",
-        "src/custom_memory_engine/security/scoping.py"
+        "src/custom_memory_engine/security/scoping.py",
+        "src/custom_memory_engine/security/provisioning.py"
       ],
-      "note": "RLS policies exist in 001_full_schema.sql but there is no restricted role, grants or scoping guard"
+      "tests": [
+        "tests/integration/test_rls_isolation.py",
+        "tests/test_security_scoping.py"
+      ],
+      "note": "restricted NOSUPERUSER NOBYPASSRLS runtime role, grants and tenant-scoping guard (3d0f7bb, 84e504f; #47 closed)"
     },
     "RL-072": {
       "kind": "none",

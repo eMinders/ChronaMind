@@ -121,3 +121,63 @@ def test_every_audited_row_cites_a_test_or_says_unverified() -> None:
     for result in audit.audit(claims, registry, {}):
         cell = audit._cell(result)
         assert "tests:" in cell or cell.startswith("UNVERIFIED"), result.task
+
+
+def _registry_with(tmp_path: Path, entry: dict) -> Path:
+    """A copy of the real registry with RL-001 replaced, written to ``tmp_path``."""
+    data = json.loads(audit.REGISTRY.read_text(encoding="utf-8"))
+    data["tasks"]["RL-001"] = entry
+    path = tmp_path / "status_evidence.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("field", ["files", "tests"])
+def test_a_missing_cited_evidence_path_exits_non_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], field: str
+) -> None:
+    entry = {"kind": "code", "files": ["README.md"], "tests": ["tests/test_audit_status.py"]}
+    entry[field] = ["does/not/exist.py"]
+    monkeypatch.setattr(audit, "REGISTRY", _registry_with(tmp_path, entry))
+    assert audit.main(["--check"]) == 1
+    assert "missing_evidence_path:RL-001:does/not/exist.py" in capsys.readouterr().out
+
+
+def test_expected_deliverables_of_a_not_started_task_may_be_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = {"kind": "none", "files": ["src/not_built_yet.py"]}
+    monkeypatch.setattr(audit, "REGISTRY", _registry_with(tmp_path, entry))
+    assert audit.main(["--check"]) == 0
+
+
+def test_removed_task_and_unknown_id_exit_non_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = json.loads(audit.REGISTRY.read_text(encoding="utf-8"))
+    del data["tasks"]["RL-001"]
+    data["tasks"]["RL-999"] = {"kind": "none", "files": []}
+    path = tmp_path / "status_evidence.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(audit, "REGISTRY", path)
+    assert audit.main(["--check"]) == 1
+
+
+def test_report_records_its_generation_environment(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "model.bin").write_text("x", encoding="utf-8")
+    rows = dict(audit.environment({"CME_BASELINE_TEST_ASSETS": str(assets)}, root=tmp_path))
+    assert "not set" in rows["Database (`CME_TEST_DATABASE_URL`)"]
+    assert "not configured" in rows["FalkorDB"]
+    assert rows["Prepared model assets (`CME_BASELINE_TEST_ASSETS`)"] == "present"
+    assert "absent" in rows["Benchmark corpus `longmemeval`"]
+
+
+def test_rendering_is_deterministic_for_the_same_inputs() -> None:
+    claims = audit.parse_task_graph(audit.TASK_GRAPH.read_text(encoding="utf-8"))
+    registry = audit.load_registry(audit.REGISTRY)
+    junit = {"tests.test_audit_status": audit.Outcome(passed=1, ran=True)}
+    env_rows = [("Database (`CME_TEST_DATABASE_URL`)", "set, reachable")]
+    first = audit.render(audit.audit(claims, registry, junit), True, env_rows)
+    second = audit.render(audit.audit(claims, registry, junit), True, env_rows)
+    assert first == second
+    assert "## Generation environment" in first
