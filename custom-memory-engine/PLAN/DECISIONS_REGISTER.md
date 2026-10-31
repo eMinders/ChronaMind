@@ -1,3 +1,7 @@
+> **Direction notice (2026-10-31).** `D-01`–`D-27` remain the v1 decision record. New decisions (`V2-D01`–`V2-D34`) and the formal **supersessions** of the decisions affected by the cognitive-engine direction (`layer` enum, persona layer, lineage depth, archival semantics, retrieval design) are recorded in [`V2/DECISIONS_V2.md`](V2/DECISIONS_V2.md). The Project Owner approved V2 as the canonical implementation plan on 2026-10-31 ([`V2/APPROVAL.md`](V2/APPROVAL.md)). `V2/DECISIONS_V2.md` therefore wins where the two conflict for post-v1.0.0 work, and this register remains the v1 decision record.
+
+---
+
 # Decisions Register (`custom-memory-engine/`)
 
 **Single Source of Truth:** This register tracks every architectural, methodological, and engineering decision for the Custom Memory Engine workspace.  
