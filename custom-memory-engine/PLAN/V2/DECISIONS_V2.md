@@ -791,3 +791,20 @@ cycles; a total order cannot form a cycle of waits.
 **Verification.** `tests/test_scope_locks.py`: an exhaustive interleaving model reproduces the deadlock under
 discovery order (two-way and three-way) and finds none under the global order for every combination of closures
 tested. **Status:** decided; primitive verified; `E-011`/`E-037` acquire the locks in the database.
+
+### V2-D52 — Plan coverage is mechanical; `E-039` owns the public API entry point (resolves #60 / MA-017)
+
+**Decision.** Architecture elements (4 kinds, 7 tables, 17 invariants, 4 channels, 29 operations, 9 migrations)
+are extracted from `ARCHITECTURE_V2.md`; owners come from `INVARIANT_LEDGER.md` (invariants) and `COVERAGE.md`
+(the rest); `scripts/plan_coverage.py` fails CI on any unowned element. The coverage run found that no task owned
+the public API entry point itself (authorization, condition codes, error contract): each operation's behaviour
+had a task, the dispatch layer had none. New W1 task **`E-039`** owns it. `M5` stays deferred (`V2-D43`); `M7` is
+owned by `E-010`.
+**Rationale.** `SYNC_LOG.md` §3's hand-written matrix had silently missed `SCOPE`, `M5` and `M7`; a matrix that is
+generated and enforced cannot drift. Without `E-039`, W1 operations would each re-implement authorization, or none
+would.
+**Implementation.** `scripts/plan_coverage.py`; `PLAN/V2/COVERAGE.md`; generated `PLAN/V2/COVERAGE_MATRIX.md`;
+`ROADMAP_V2.md` `E-039`; CI static job (`plan_coverage.py --check`).
+**Verification.** `tests/test_plan_coverage.py`: a fake invariant, table, operation, migration and channel each
+fail naming the element; bad owners, unreasoned deferrals and stray rows fail; the matrix is current; `SYNC_LOG.md`
+is compared, not modified. **Status:** decided and verified.

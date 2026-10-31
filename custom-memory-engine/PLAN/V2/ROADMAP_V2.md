@@ -109,6 +109,7 @@ mechanical guarantee that the plan stays consistent as it is edited.
 | `E-018` | **Conformance suite**: enumerate `(kind × retention × lifecycle × facet)` legal tuples; assert storable, queryable, deletable, correctly channelled; assert `claim`/`abstraction` cannot take `working` | This is what makes "type-completeness" real | M |
 | `E-019` | **Profile schema**: kinds, extractors, operators, retention defaults, scope root, render conventions, facet vocabulary | Config only; no code branches on profile name | M |
 | `E-020` | M8: `um_facet` tag + index; retention floor `CHECK` | Needed before `C-024`, not before | S |
+| `E-039` | **Public API entry point** (r9, found by `MA-017`): one callable per `API_V2.md` operation; tier and admin role from the authenticated credential; `api.contract.authorize` on every call; every condition code enforced; static error contract (§1.1). Each operation is wired as its owning task lands; it never adds an operation outside `API_V2.md` | Without it no task owns the dispatch layer, authorization or the error contract; `E-018`'s conformance suite drives the engine through it | M |
 
 **G1 (type-completeness).** `E-018` passes for every legal tuple; v1 suite (1,374 passing of 1,395 collected at full CI scope,
 adapted for renamed columns) green; the six requested memory types each creatable,

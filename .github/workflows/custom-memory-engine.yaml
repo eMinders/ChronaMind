@@ -37,9 +37,9 @@ jobs:
         with:
           extras: baselines
       - name: ruff check
-        run: uv run --no-sync ruff check src tests research/benchmarks evaluation
+        run: uv run --no-sync ruff check src tests research/benchmarks evaluation scripts
       - name: ruff format --check
-        run: uv run --no-sync ruff format --check src tests research/benchmarks evaluation
+        run: uv run --no-sync ruff format --check src tests research/benchmarks evaluation scripts
       - name: pyright
         run: uv run --no-sync pyright
       - name: Research reference consistency
@@ -51,6 +51,7 @@ jobs:
           uv run --no-sync python scripts/check_test_split_gate.py
           python3 scripts/check_plan_refs.py
           python3 scripts/audit_status.py --check
+          uv run --no-sync python scripts/plan_coverage.py --check
 
   verify:
     runs-on: ubuntu-24.04
