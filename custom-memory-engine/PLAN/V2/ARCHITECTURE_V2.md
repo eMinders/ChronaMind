@@ -119,14 +119,20 @@ flowchart TB
     G2 --> G2a["≥1 source memory + a registered inference method"]
     G2 --> G2b["method version + parameters recorded (replayable)"]
     G2 --> G2c["support / counter / undetermined ledger (STATISTICS.md §2)"]
-    G2 --> G2d["partially identified CP upper bound on failure rate ≥ τ (STATISTICS.md §4)"]
     G2 -->|pass| HYP["lifecycle = inferred (hypothesis)"]
-    G2 -->|fail| REJ["rejected, with reason code"]
+    G2 -->|structural failure| REJ["rejected, with reason code"]
     CONT -->|user confirms| LIVE
     CONT -->|user denies| REJ
-    HYP -->|verified on held-out data| VER["verified = true<br/>still lifecycle=inferred"]
+    HYP -->|"admissible: CP bound ≥ τ (STATISTICS.md §4.2)<br/>AND verified on held-out data"| VER["verified = true<br/>still lifecycle=inferred"]
     VER -->|new grounded evidence contradicts| CONT
 ```
+
+> **r7 (`V2-D40`, resolves B-06).** The CP bound gates **verification**, not creation. The
+> earlier diagram listed it as `G2d` under the creation gate with `fail → rejected`, which
+> contradicted `STATISTICS.md` §4.1–4.2 (an abstraction must be stored to be tested; a
+> below-τ result renders as "hypothesis only"). G2 now rejects only on structural failures
+> (`G2a`–`G2c`). **r7 (`V2-D41`, resolves B-07):** `G1a`'s declared source types are
+> `turn`, `external` and — never as evidence — `artifact`; see `DECISIONS_V2.md`.
 
 **The invariant that replaces v1 Invariant 1 (traceability):**
 
@@ -255,7 +261,10 @@ Rules:
    The effective read set is the **union of selectors, intersected with the caller's
    ACL and with `visible_to_user`**. Ancestors are *not* implicitly readable; they must
    be named. This resolves the V2 ambiguity "+ any ancestor the query explicitly
-   names" — the rule is now: nothing is implicit.
+   names" — the rule is now: nothing is implicit. **ACL storage (`V2-D36`, r7):**
+   membership is a row in `scope_grant` (migration 2); a cross-user selector is authorized
+   only by an active grant whose subtree contains it, and is denied — not narrowed — if
+   broader.
 3. **Visibility is `private | project | shared`, and it is evaluated against the scope
    being read, not the scope where the row lives.** A `private` row is returned only
    when the reading selector's path equals the row's own scope path. A `project` row
@@ -264,7 +273,10 @@ Rules:
    not thereby become readable from a sibling project.
 4. **RLS is defence in depth, not the primary check.** The application computes and
    validates the read set; RLS enforces the same predicate in SQL with
-   `path_with_prefix LIKE ANY(...)` and a `text_pattern_ops` index. A bug in either
+   `pg_catalog.starts_with(scope_path, prefix)` over canonical paths and a
+   `text_pattern_ops` index. **`LIKE` is forbidden for scope matching** (`V2-D35`, r7): the
+   approved text said `path_with_prefix LIKE ANY(...)`, under which `_`/`%` inside an id act
+   as wildcards and `/u/a_b/` matched tenant `/u/aXb/` (reproduced on PostgreSQL 16). A bug in either
    layer is caught by the isolation suite; neither layer is trusted alone (v1's
    Invariant 7 principle, preserved).
 5. **Scope identity is immutable.** ``move`` is implemented as *copy + retract* with a
@@ -480,8 +492,10 @@ Consequences that matter:
   cannot be materialised.
 - **Provenance never widens authorization.** If an abstraction in scope `A` is derived
   from a source in scope `B`, the provenance of that source is rendered as an opaque
-  reference (id + scope + type) unless the caller can also read `B`. Otherwise
-  provenance would be a cross-scope read oracle.
+  reference unless the caller can also read `B`. Otherwise provenance would be a
+  cross-scope read oracle. **r7 (`V2-D37`):** the opaque reference is a per-caller HMAC
+  handle plus the derivation type of the caller's own edge — *no* scope, source id or
+  source type. The approved text read "(id + scope + type)", which contradicted `I17`.
 - **Cost and coverage returned** per stage; `coverage` per channel (how much of the
   budget each channel consumed) so a caller can see if `hypotheses` crowded out
   `facts`.
@@ -574,9 +588,9 @@ Additive, so the v1 regression suite keeps running.
 | M2 | `user_id` → `scope` hierarchy; backfill `path='/u/<user_id>/'` (trailing separator mandatory), `visibility='private'`. Keep `user_id` as a generated column for v1 compatibility. | yes |
 | M3 | `valid_range` → `event_range`; add `observed_at`, `event_basis`. **Apply as one transaction:** drop `no_bitemporal_overlap`, rename, recreate the exclusion constraint on `event_range`, replay `validation/bitemporal_checks.sql`. | yes (view) |
 | M4 | `memory_evidence.turn_id` → `SOURCE (type, ref, span, content_hash)`, permitting `type='external'`. Backfill `('turn', turn_id, span)`. | yes |
-| M5 | `predicate_schema` becomes **optional metadata**; `predicate_key` nullable. When absent, the conflict detector is the sole single-valued arbiter and its accuracy is logged. | yes |
-| M6 | Add `ASSOCIATION`, `ENTITY` (principal-scoped), `INFERENCE_METHOD`, `ABSTRACTION_STATS`, `VERIFICATION`, `NEGATIVE_CONSTRAINT` (sticky dissent). | new tables |
-| M7 | `archived` status retained as a *retention* value for compatibility; new code uses `retention` + `retired`. | yes |
+| M5 | `predicate_schema` becomes **optional metadata**; `predicate_key` nullable. When absent, the conflict detector is the sole single-valued arbiter and its accuracy is logged. **Deferred past W1 (`V2-D43`, r7)**; revisit with `E-021`. | yes |
+| M6 | Add `ASSOCIATION`, `ENTITY` (principal-scoped), `METHOD`, `ABSTRACTION_STATS`, `VERIFICATION`, `NEGATIVE_CONSTRAINT` (sticky dissent). | new tables |
+| M7 | ~~`archived` status retained as a *retention* value for compatibility~~ **(r7, `V2-D38`):** v1 `archived` → `lifecycle='retired'`, `retention='durable'`; the v1 `status` column stays as the read-compatibility source. Owner `E-010` (`model.axes.V1_BACKFILL_SQL`). | yes |
 | M8 | Add `um_facet` nullable tag + index; backfill `NULL`. `claim`/`abstraction` retention forced to `durable` (`CHECK`), existing `working`-like rows unaffected because v1 had no such value. | yes |
 | M9 | `scope.path` `CHECK` for trailing separator + `path_with_prefix` generated column + `text_pattern_ops` index (fixes the `/u/4` vs `/u/42` leak). | yes |
 
