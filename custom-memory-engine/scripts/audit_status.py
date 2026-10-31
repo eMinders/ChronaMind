@@ -225,8 +225,20 @@ def _span(results: list[Result], first: str, last: str) -> list[Result]:
     return [r for r in results if first <= r.task <= last]
 
 
+DRIFT_NOTICE_DOCS = (
+    ("`PLAN/PROJECT_STATUS.md` section 1", 'Engine work "Not Yet Executed"', "PLAN/PROJECT_STATUS.md", "E-003"),
+    ("`PROJECT_ROADMAP.md` section A", '`P0` "READY TO START"', "PROJECT_ROADMAP.md", "E-003"),
+    ("`PLAN/SCHEDULE.md`", "24-week `P0`-`P13` calendar", "PLAN/SCHEDULE.md", "E-003"),
+)
+
+
+def _has_direction_notice(relative: str) -> bool:
+    head = (ROOT / relative).read_text(encoding="utf-8")[:2500]
+    return "Direction notice" in head and "V2/" in head
+
+
 def reconciliation(results: list[Result]) -> list[str]:
-    """Measured answers to the two contradictions recorded in TRANSITION_AUDIT.md section 2."""
+    """Measured resolution of every drift item in TRANSITION_AUDIT.md section 2."""
 
     def tally(rows: list[Result]) -> str:
         counts = Counter(r.classification for r in rows)
@@ -234,17 +246,44 @@ def reconciliation(results: list[Result]) -> list[str]:
 
     p0 = _span(results, "RL-001", "RL-006")
     engine = _span(results, "RL-040", "RL-061")
-    return [
+    lines = [
         "## Reconciliation with the transition audit",
         "",
-        "`PLAN/TASK_GRAPH.md` marks Phase P0 `Complete`; `PLAN/PROJECT_STATUS.md` section 1 says engine work",
-        '(`P4`-`P7`) is "Not Yet Executed". Measured results settle both:',
+        "Each row of `PLAN/V2/TRANSITION_AUDIT.md` section 2 (planning-document drift), checked against the",
+        "repository by this script.",
         "",
-        f"- **P0 (`RL-001`-`RL-006`)**: {tally(p0)}. The `Complete` claim is supported by the evidence above,",
-        "  except where a row is listed under discrepancies.",
-        f'- **Engine P4-P7 (`RL-040`-`RL-061`)**: {tally(engine)}. The "Not Yet Executed" statement is stale;',
-        "  the code and tests exist. `PROJECT_STATUS.md` carries a direction notice (`E-003`) pointing here.",
+        "| Document | Claim | Measured | Resolution |",
+        "|---|---|---|---|",
     ]
+    for doc, claim, relative, task in DRIFT_NOTICE_DOCS:
+        noted = _has_direction_notice(relative)
+        verdict = "direction notice present" if noted else "**OPEN: no direction notice**"
+        lines.append(f"| {doc} | {claim} | {verdict} | closed by `{task}`; nothing rewritten |")
+    lines.append(
+        f"| `PLAN/PROJECT_STATUS.md` section 1 | engine `P4`-`P7` not executed | `RL-040`-`RL-061`: {tally(engine)}"
+        " | stale claim; code and tests exist |"
+    )
+    lines.append(
+        f"| `PLAN/TASK_GRAPH.md` | Phase P0 `Complete` | `RL-001`-`RL-006`: {tally(p0)}"
+        " | supported except rows listed under discrepancies; retained as the v1 record |"
+    )
+    workflow_claim = ROOT.parent / ".github" / "workflows" / "research-lab.yaml"
+    workflow_real = ROOT.parent / ".github" / "workflows" / "custom-memory-engine.yaml"
+    lines.append(
+        "| Issue #12 title | `.github/workflows/research-lab.yaml` | "
+        f"claimed file {'exists' if workflow_claim.exists() else 'missing'}; "
+        f"`custom-memory-engine.yaml` {'exists' if workflow_real.exists() else 'missing'}"
+        " | the evidence registry cites the real file (`RL-005`) |"
+    )
+    refactoring = (ROOT / "REFACTORING.md").read_text(encoding="utf-8")
+    stale = "peer review on `#45`" in refactoring
+    lines.append(
+        "| `REFACTORING.md` section 6 | remaining work: peer review on `#45` | "
+        f"sentence {'still present' if stale else 'absent'}; `RL-061` is "
+        f"{next(r.classification for r in results if r.task == 'RL-061')} | "
+        "historical sentence kept (additive-only policy); no action |"
+    )
+    return lines
 
 
 def _git_sha() -> str:
@@ -263,7 +302,7 @@ def _cell(result: Result) -> str:
         tests = ", ".join(f"`{t}`" for t in result.tests[:2])
         more_t = f" (+{len(result.tests) - 2})" if len(result.tests) > 2 else ""
         return f"{files}{more}; tests: {tests}{more_t}"
-    return f"{files}{more}"
+    return f"{files}{more}; tests: UNVERIFIED (no executable test)"
 
 
 def render(results: list[Result], ran_tests: bool) -> str:

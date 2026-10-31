@@ -61,7 +61,11 @@
       "kind": "doc",
       "files": [
         "decisions/RL-010-scope-and-models.md"
-      ]
+      ],
+      "tests": [
+        "tests/test_boundaries.py"
+      ],
+      "note": "memo existence and reference links are checked by test_six_memos_and_reference_links; the decision content itself is not testable"
     },
     "RL-011": {
       "kind": "code",
@@ -77,25 +81,41 @@
       "kind": "doc",
       "files": [
         "decisions/RL-012-postgres-pgvector.md"
-      ]
+      ],
+      "tests": [
+        "tests/test_boundaries.py"
+      ],
+      "note": "memo existence and reference links are checked by test_six_memos_and_reference_links; the decision content itself is not testable"
     },
     "RL-013": {
       "kind": "doc",
       "files": [
         "decisions/RL-013-engine-runtime.md"
-      ]
+      ],
+      "tests": [
+        "tests/test_boundaries.py"
+      ],
+      "note": "memo existence and reference links are checked by test_six_memos_and_reference_links; the decision content itself is not testable"
     },
     "RL-014": {
       "kind": "doc",
       "files": [
         "decisions/RL-014-a2b-and-suite-d.md"
-      ]
+      ],
+      "tests": [
+        "tests/test_boundaries.py"
+      ],
+      "note": "memo existence and reference links are checked by test_six_memos_and_reference_links; the decision content itself is not testable"
     },
     "RL-015": {
       "kind": "doc",
       "files": [
         "decisions/RL-015-ethics-h5.md"
-      ]
+      ],
+      "tests": [
+        "tests/test_boundaries.py"
+      ],
+      "note": "memo existence and reference links are checked by test_six_memos_and_reference_links; the decision content itself is not testable"
     },
     "RL-016": {
       "kind": "code",

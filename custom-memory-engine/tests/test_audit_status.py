@@ -105,3 +105,19 @@ def test_committed_registry_covers_every_task_graph_row() -> None:
     registry = json.loads(audit.REGISTRY.read_text(encoding="utf-8"))["tasks"]
     assert claims
     assert audit.check_registry(claims, registry) == []
+
+
+def test_reconciliation_covers_every_transition_audit_row() -> None:
+    claims = audit.parse_task_graph(audit.TASK_GRAPH.read_text(encoding="utf-8"))
+    registry = json.loads(audit.REGISTRY.read_text(encoding="utf-8"))["tasks"]
+    text = "\n".join(audit.reconciliation(audit.audit(claims, registry, {})))
+    for marker in ("PROJECT_STATUS", "PROJECT_ROADMAP", "SCHEDULE", "TASK_GRAPH", "Issue #12", "REFACTORING"):
+        assert marker in text
+
+
+def test_every_audited_row_cites_a_test_or_says_unverified() -> None:
+    claims = audit.parse_task_graph(audit.TASK_GRAPH.read_text(encoding="utf-8"))
+    registry = json.loads(audit.REGISTRY.read_text(encoding="utf-8"))["tasks"]
+    for result in audit.audit(claims, registry, {}):
+        cell = audit._cell(result)
+        assert "tests:" in cell or cell.startswith("UNVERIFIED"), result.task
