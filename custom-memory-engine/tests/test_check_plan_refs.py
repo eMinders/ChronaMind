@@ -158,3 +158,56 @@ def test_retired_aliases_are_defined_only_by_an_explicit_alias_record(tmp_path: 
     other = tmp_path / "aliased"
     other.mkdir()
     assert _kinds(_base(other, alias_row + reference)) == set()
+
+
+API = """# API
+## 3. Operations
+| # | Class | Operation | Tier B | Tier C | Admin | Conditions |
+|---|---|---|:-:|:-:|:-:|---|
+| 1 | Read | `query` | ✓ | ✓ | ✓ | — |
+| 2 | Adjudicate | `dissent` | — | ✓ | ✓ | — |
+## 6. Selectors
+| Selector | Meaning |
+|---|---|
+| `subtree(path)` | below |
+## 7.1 Names
+| Name | Kind | Meaning |
+|---|---|---|
+| `move` | composition | copy + retract_own |
+| `ground` | internal function | policy |
+| `retract` | retired | use retract_own |
+"""
+
+
+def _with_api(tmp_path: Path, roadmap_extra: str) -> Path:
+    return _write(
+        tmp_path, ROADMAP_V2=ROADMAP + roadmap_extra, DECISIONS_V2=DECISIONS, ARCHITECTURE_V2=ARCH, API_V2=API
+    )
+
+
+@pytest.mark.parametrize(
+    "line", ["Calls `query(request)`.", "`dissent(id)` by the user.", "`subtree(p)`", "`move(x)`", "`ground()`"]
+)
+def test_declared_operations_selectors_and_names_resolve(tmp_path: Path, line: str) -> None:
+    assert _kinds(_with_api(tmp_path, line + "\n")) == set()
+
+
+def test_an_undeclared_operation_name_in_call_form_is_reported(tmp_path: Path) -> None:
+    """The MA-012 criterion-5 mutation: `UM-012` used to say `refuted(reason=...)`."""
+    assert _kinds(_with_api(tmp_path, "rejection → `refuted(reason='user_dissent')`\n")) == {
+        ("undefined_operation", "refuted")
+    }
+
+
+def test_a_retired_operation_is_reported_unless_the_line_marks_it(tmp_path: Path) -> None:
+    assert _kinds(_with_api(tmp_path, "Tier B calls `retract` on its own work.\n")) == {
+        ("retired_operation", "retract")
+    }
+    assert _kinds(_with_api(tmp_path, "`retract` is retired; it never existed.\n")) == set()
+
+
+def test_operation_check_is_skipped_without_api_v2(tmp_path: Path) -> None:
+    assert (
+        _kinds(_write(tmp_path, ROADMAP_V2=ROADMAP + "`refuted(x)`\n", DECISIONS_V2=DECISIONS, ARCHITECTURE_V2=ARCH))
+        == set()
+    )

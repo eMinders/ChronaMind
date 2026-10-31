@@ -392,12 +392,13 @@ operation a tier needs appears here, and nothing outside it exists.**
 | **Read** | `query`, `refine`, `get`, `provenance` | ✓ | ✓ | Channel-separated; provenance never widens the read set. |
 | **Write (grounded)** | `assert`, `retract_own` | ✓ | ✓ | Grounded writes go through the *grounding* policy; Tier B asserting about the world is allowed only with source evidence, which is what stops it inventing facts. |
 | **Write (inferred)** | `infer`, `verify`, `refute` | ✓ | — | Soundness policy. `verify`/`refute` accept only the artifact's own method lineage. |
-| **Structure** | `link`, `unlink`, `link_entity`, `record_outcome` | ✓ | ✓ | `record_outcome` is retrospective only; no execution. |
-| **Adjudicate** | `adjudicate` | — | ✓ | User/system correction of `contested` items. **Deliberately not available to Tier B**: a reflection service must not be able to silence a conflict by adjudicating it. |
-| **Maintain** | `purge_working`, `expire`, `rebuild_index` | — | ✓ | Administrative; `purge_working` is scope-scoped and audited. |
+| **Structure** | `link`, `unlink`, `create_entity`, `link_entity`, `record_outcome` | ✓ | ✓ | `record_outcome` is retrospective only; no execution. A Tier B `contradicts` link never demotes a grounded artifact (`V2-D48`). |
+| **Adjudicate** | `adjudicate`, `dissent` | — | ✓ | User/system correction of `contested` items. **Deliberately not available to Tier B**: a reflection service must not be able to silence a conflict by adjudicating it. |
+| **Maintain** | `purge_working`, `expire`, `rebuild_index`, `register_method` | — | ✓ | Administrative: admin role within Tier C (`V2-D47`); `purge_working` is scope-scoped and audited; the method registry is append-only. |
 | **Delete** | `delete` | **—** | ✓ | Tier B can never delete. It can only `retract_own` artifacts whose method it produced. |
 | **Export** | `export` | — | ✓ | User-facing data export; excludes content whose deletion is pending. |
 | **Observe** | `stats`, `cost` | ✓ | ✓ | Support/coverage/usage/cost; never content of other scopes. |
+| **Scope** | `create_scope`, `grant_access`, `revoke_access` | — | ✓ | Scope administration (`V2-D46`); owner of the namespace only; Tier B can never change access. |
 
 **The corrected rule:** Tier B *cannot delete*, *cannot adjudicate*, and *cannot write
 grounded claims without evidence*. It **can** propose inferences and link structure,
@@ -407,6 +408,11 @@ operation, so that sentence was self-contradictory. The precise rule is: Tier B 
 *create* artifacts in `inferred`, may *transition them to contested or retired* through
 `refute` when the refutation is evidenced, and has **no** operation that moves anything
 to `asserted`.
+
+> **r9 (`V2-D46`, `V2-D47`).** Six operations close gaps other sections relied on: `dissent` (§5 of
+> `USER_MODEL.md`: a user rejecting an inference), `create_entity` (§5.2), `register_method` (§4,
+> `I3`) and the Scope class. 29 operations, 18 for Tier B. `move` and *revise* are compositions,
+> not operations (`API_V2.md` §5). Admin is a role within Tier C.
 
 ### 8.2 `stats` is the only way Tier B sees evidence
 
@@ -452,10 +458,15 @@ flowchart LR
 
 | Channel | Contains | Never contains |
 |---|---|---|
-| **`facts`** | `lifecycle ∈ {observed, asserted}` with valid provenance, and `verified` abstractions presented **as verified summaries with their bound** | `inferred`, `contested`, `retired` |
+| **`facts`** | `lifecycle ∈ {observed, asserted}` with valid provenance and **no open contradiction**, and `verified`, fresh abstractions presented **as verified summaries with their bound** | `inferred` claims/procedures (even verified), `contested`, `retired`, anything with an open contradiction |
 | **`hypotheses`** | `lifecycle='inferred'` (verified or not), each with confidence lower bound, coverage, and support summary | anything asserted |
 | **`procedures`** | `kind='procedure'` with preconditions matched by the planner, plus `outcome_stats` | claims, abstractions |
 | **`conflicts`** | artifacts in `contested`, or `asserted` artifacts with an open `contradicts` association | anything settled |
+
+> **r9 (`V2-D48`, `CHANNELS.md` §5).** Membership is exactly the function in `CHANNELS.md` §1: a grounded
+> artifact with an open contradiction is in `conflicts`, not `facts` (C-P6); only a `contradicts` edge between
+> two grounded endpoints created by the grounding policy or Tier C opens one (C-P4); a verified inferred claim
+> stays in `hypotheses` (C-P2); `stale` is the OR of five causes (C-P3).
 
 **The overlap that had to be resolved:** the original draft said "`procedures`",
 "`facts`", and "`hypotheses`" but never said where a **contradiction** goes, and never
@@ -568,7 +579,7 @@ inference confidence, which is a consistency the first draft lacked.
 |---|---|---|
 | I1′ | Grounded-or-hypothesis: an artifact is rendered as knowledge only if grounded; inferred artifacts carry support + uncertainty and appear only in the hypothesis channel. | `CHECK` (inferred ⇒ derivation + method) + API channel contract + test |
 | I2 | Every artifact has provenance: evidence or derivation. No orphan rows. | Deferred constraint trigger (v1 Invariant 1, generalised) |
-| I3 | Inferred artifacts record method id, version, and parameter hash; the method registry is immutable and versioned. | FK to `INFERENCE_METHOD` + append-only |
+| I3 | Inferred artifacts record method id, version, and parameter hash; the method registry is immutable and versioned. | FK to `METHOD` + append-only (`register_method`, `V2-D46`) |
 | I4 | Event, observation, and belief clocks are distinct; belief time is never caller-supplied; belief time is strictly increasing per scope. | v1 Invariant 3 + `observed_at` requirement |
 | I5 | Single-valued exclusivity within a scope for declared single-valued predicates; open-domain content relies on the conflict detector, whose error rate is **measured**, not assumed. | Exclusion constraint (v1) + measured detector accuracy |
 | I6 | Retention is orthogonal: durability never changes answerability; retirement never changes retrievability-for-audit. | Property test over the reachability matrix |

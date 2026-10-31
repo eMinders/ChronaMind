@@ -52,6 +52,18 @@ TRANSITIONS: frozenset[tuple[Lifecycle | None, Lifecycle]] = frozenset(
     }
 )
 
+# Kind-conditioned legality (V2-D48, C-P1). The transition table above is kind-blind; this
+# is the set of lifecycles each kind may ever hold. Creation and every transition must land
+# inside it, so ``inferred → contested → asserted`` cannot turn an abstraction into a fact
+# (I1′, I14): an abstraction is never grounded, an episode is never adjudicated, and a
+# procedure is never a record of what a source said.
+LEGAL_LIFECYCLE: dict[Kind, frozenset[Lifecycle]] = {
+    "episode": frozenset({"observed", "inferred", "contested", "retired"}),
+    "claim": frozenset({"observed", "asserted", "inferred", "contested", "retired"}),
+    "procedure": frozenset({"asserted", "inferred", "contested", "retired"}),
+    "abstraction": frozenset({"inferred", "contested", "retired"}),
+}
+
 # §1 retention floors: only episodes and procedures may be working/session.
 SHORT_RETENTION_KINDS: frozenset[Kind] = frozenset({"episode", "procedure"})
 
@@ -69,13 +81,23 @@ def is_allowed_transition(source: Lifecycle | None, target: Lifecycle) -> bool:
     return (source, target) in TRANSITIONS
 
 
-def require_transition(source: Lifecycle | None, target: Lifecycle) -> None:
+def require_transition(source: Lifecycle | None, target: Lifecycle, kind: Kind | None = None) -> None:
+    """Raise unless ``source → target`` is in the closed table and, given ``kind``, legal for it.
+
+    ``kind=None`` checks the kind-blind table only (used where the operation is kind-generic,
+    e.g. the API contract). Every per-artifact check must pass the kind (``E-016``).
+    """
     if source is not None and source not in LIFECYCLES:
         raise AxisError("unknown_lifecycle")
     if target not in LIFECYCLES:
         raise AxisError("unknown_lifecycle")
     if not is_allowed_transition(source, target):
         raise AxisError("lifecycle_transition_not_permitted")
+    if kind is not None:
+        if kind not in KINDS:
+            raise AxisError("unknown_kind")
+        if target not in LEGAL_LIFECYCLE[kind] or (source is not None and source not in LEGAL_LIFECYCLE[kind]):
+            raise AxisError("lifecycle_not_legal_for_kind")
 
 
 def validate_axes(kind: object, lifecycle: object, retention: object) -> None:
@@ -86,6 +108,8 @@ def validate_axes(kind: object, lifecycle: object, retention: object) -> None:
         raise AxisError("unknown_lifecycle")
     if retention not in RETENTIONS:
         raise AxisError("unknown_retention")
+    if lifecycle not in LEGAL_LIFECYCLE[kind]:
+        raise AxisError("lifecycle_not_legal_for_kind")
     if retention != "durable" and kind not in SHORT_RETENTION_KINDS:
         raise AxisError("retention_floor_requires_durable")
 
@@ -163,6 +187,7 @@ ROW(
 
 __all__ = [
     "KINDS",
+    "LEGAL_LIFECYCLE",
     "LIFECYCLES",
     "RETENTIONS",
     "SHORT_RETENTION_KINDS",

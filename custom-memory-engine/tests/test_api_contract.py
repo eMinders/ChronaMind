@@ -1,4 +1,4 @@
-"""B-04 / V2-D39: the executable API contract equals ARCHITECTURE_V2 §8.1 and API_V2.md."""
+"""B-04 / V2-D39, V2-D46, V2-D47: the executable API contract equals ARCHITECTURE_V2 §8.1 and API_V2.md."""
 
 import re
 from pathlib import Path
@@ -26,17 +26,25 @@ def architecture_matrix() -> dict[str, tuple[str, frozenset[str]]]:
     return matrix
 
 
-def api_matrix() -> dict[str, tuple[str, frozenset[str]]]:
-    """Parse API_V2.md §3: # | class | operation | Tier B | Tier C."""
+def api_rows() -> dict[str, list[str]]:
+    """Parse API_V2.md §3: # | class | operation | Tier B | Tier C | Admin | conditions."""
     text = (PLAN / "API_V2.md").read_text(encoding="utf-8")
     section = text[text.index("## 3.") : text.index("### 3.1")]
-    matrix: dict[str, tuple[str, frozenset[str]]] = {}
+    rows: dict[str, list[str]] = {}
     for line in section.splitlines():
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if len(cells) == 5 and cells[0].isdigit():
-            name = cells[2].strip("`")
-            matrix[name] = (cells[1], frozenset(t for t, cell in (("B", cells[3]), ("C", cells[4])) if "✓" in cell))
-    return matrix
+        if len(cells) == 7 and cells[0].isdigit():
+            assert cells[2].strip("`") not in rows, cells[2]
+            rows[cells[2].strip("`")] = cells
+    return rows
+
+
+def api_matrix() -> dict[str, tuple[str, frozenset[str]]]:
+    """Tiers as §8.1 counts them: Tier C includes the admin role."""
+    return {
+        name: (cells[1], frozenset(t for t, cell in (("B", cells[3]), ("C", cells[5])) if "✓" in cell))
+        for name, cells in api_rows().items()
+    }
 
 
 def api_signatures() -> dict[str, tuple[str, ...]]:
@@ -58,9 +66,9 @@ def test_contract_is_structurally_valid() -> None:
     validate_contract()
 
 
-def test_twenty_three_operations_seventeen_for_tier_b() -> None:
-    assert len(OPERATIONS) == 23
-    assert sum("B" in op.tiers for op in OPERATIONS) == 17
+def test_twenty_nine_operations_eighteen_for_tier_b() -> None:
+    assert len(OPERATIONS) == 29
+    assert sum("B" in op.tiers for op in OPERATIONS) == 18
 
 
 def test_registry_equals_architecture_section_8_1() -> None:
@@ -69,6 +77,13 @@ def test_registry_equals_architecture_section_8_1() -> None:
 
 def test_registry_equals_api_v2_tier_matrix() -> None:
     assert registry() == api_matrix()
+
+
+def test_admin_column_and_conditions_equal_the_registry() -> None:
+    for name, cells in api_rows().items():
+        op = BY_NAME[name]
+        assert ("✓" in cells[4]) is ("C" in op.tiers and not op.admin_only), name
+        assert frozenset(re.findall(r"`([a-z_]+)`", cells[6])) == op.conditions, name
 
 
 def test_registry_inputs_equal_every_api_v2_signature() -> None:
@@ -96,13 +111,13 @@ def test_v2_d07_five_calls_remain_available_to_tier_b_except_the_nonexistent_one
 def test_tier_b_is_forbidden_from_destructive_and_adjudicating_operations(name: str) -> None:
     with pytest.raises(ContractError):
         authorize(name, "B")
-    authorize(name, "C")
+    authorize(name, "C", admin=True)
 
 
 def test_tier_c_cannot_run_inference_operations() -> None:
     for name in ("infer", "verify", "refute"):
         with pytest.raises(ContractError):
-            authorize(name, "C")
+            authorize(name, "C", admin=True)
 
 
 def test_tb4_only_adjudication_moves_an_existing_artifact_to_asserted() -> None:

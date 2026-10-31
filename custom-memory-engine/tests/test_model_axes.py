@@ -6,6 +6,7 @@ import pytest
 
 from custom_memory_engine.model.axes import (
     KINDS,
+    LEGAL_LIFECYCLE,
     LIFECYCLES,
     RETENTIONS,
     TRANSITIONS,
@@ -76,9 +77,9 @@ def test_retention_floor_rejects_short_retention_for_claims_and_abstractions() -
     for kind, retention in itertools.product(KINDS, RETENTIONS):
         if retention != "durable" and kind in ("claim", "abstraction"):
             with pytest.raises(AxisError):
-                validate_axes(kind, "asserted", retention)
+                validate_axes(kind, "retired", retention)
         else:
-            validate_axes(kind, "asserted", retention)
+            validate_axes(kind, "retired", retention)
 
 
 def test_transition_table_is_closed_and_has_no_promotion_from_inferred() -> None:
@@ -100,3 +101,61 @@ def test_require_transition_rejects_unknown_and_forbidden() -> None:
     assert error.value.code == "lifecycle_transition_not_permitted"
     with pytest.raises(AxisError):
         require_transition("archived", "retired")  # type: ignore[arg-type]
+
+
+# --- V2-D48 (C-P1): kind-conditioned legality -----------------------------------------------------------
+
+
+def _reachable(kind: str | None) -> set[str]:
+    """Lifecycles reachable from creation, honouring ``require_transition(kind=...)``."""
+
+    def ok(source: str | None, target: str) -> bool:
+        try:
+            require_transition(source, target, kind)  # type: ignore[arg-type]
+        except AxisError:
+            return False
+        return True
+
+    seen = {t for t in LIFECYCLES if ok(None, t)}
+    frontier = set(seen)
+    while frontier:
+        frontier = {t for s in frontier for t in LIFECYCLES if ok(s, t)} - seen  # type: ignore[arg-type]
+        seen |= frontier
+    return seen
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_reachable_lifecycles_per_kind_are_exactly_the_legal_ones(kind: str) -> None:
+    assert _reachable(kind) == set(LEGAL_LIFECYCLE[kind])  # type: ignore[index]
+
+
+def test_without_kind_conditioning_four_illegal_pairs_would_be_reachable() -> None:
+    """The mutation C-P1 removes: the kind-blind table reaches every lifecycle for every kind."""
+    blind = {(k, lc) for k in KINDS for lc in _reachable(None)}
+    legal = {(k, lc) for k in KINDS for lc in LEGAL_LIFECYCLE[k]}
+    assert blind - legal == {
+        ("abstraction", "asserted"), ("abstraction", "observed"), ("episode", "asserted"), ("procedure", "observed"),
+    }  # fmt: skip
+
+
+def test_an_inference_cannot_become_a_fact_through_adjudication_for_an_abstraction() -> None:
+    require_transition("inferred", "contested", "abstraction")
+    with pytest.raises(AxisError) as error:
+        require_transition("contested", "asserted", "abstraction")
+    assert error.value.code == "lifecycle_not_legal_for_kind"
+    require_transition("contested", "asserted", "claim")  # a contested claim may still be confirmed
+
+
+def test_validate_axes_rejects_illegal_kind_lifecycle_pairs() -> None:
+    for kind, lifecycle in itertools.product(KINDS, LIFECYCLES):
+        if lifecycle in LEGAL_LIFECYCLE[kind]:
+            validate_axes(kind, lifecycle, "durable")
+        else:
+            with pytest.raises(AxisError):
+                validate_axes(kind, lifecycle, "durable")
+
+
+def test_every_v1_backfill_output_is_legal_for_its_kind() -> None:
+    for status, layer, derived in itertools.product(V1_STATUSES, V1_LAYERS, (False, True)):
+        mapped = map_v1_version(status, layer, derived)
+        validate_axes(mapped.kind, mapped.lifecycle, mapped.retention)
