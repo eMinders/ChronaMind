@@ -290,15 +290,19 @@ def test_the_bound_agrees_with_the_reference_implementation_to_1e9(failures: int
 
 
 def test_confidence_lower_never_exceeds_the_superseded_formula_and_equals_it_only_without_undetermined() -> None:
-    for s, k, u in product(range(0, 9), range(0, 5), range(0, 7)):
+    """Property test over >= 1000 ledgers (issue #66 section 3.2): the grid below is 12 x 6 x 15 = 1,080."""
+    counted = 0
+    for s, k, u in product(range(0, 12), range(0, 6), range(0, 15)):
         if s + k + u == 0:
             continue
+        counted += 1
         o = s + k + u
         got = assess_with(soundness(s, k, u)).confidence_lower
         assert got is not None
         old = 1 - cp_upper(k, o)
         assert got <= old + 1e-12
         assert (abs(got - old) < 1e-12) == (u == 0), (s, k, u)
+    assert counted >= 1000, counted
 
 
 def test_confidence_lower_is_non_increasing_in_undetermined_for_a_fixed_resolved_count() -> None:
