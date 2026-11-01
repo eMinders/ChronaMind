@@ -150,7 +150,7 @@ def version(*, user: str = "u", status: str = "active") -> TemporalVersion:
             predicate_key="diet",
             single_valued=True,
             content="synthetic",
-            valid_range=dict(lower=PAST.isoformat(), upper=None, lower_inclusive=True, upper_inclusive=False),
+            event_range=dict(lower=PAST.isoformat(), upper=None, lower_inclusive=True, upper_inclusive=False),
             recorded_range=dict(lower=PAST.isoformat(), upper="infinity", lower_inclusive=True, upper_inclusive=True),
             layer="semantic",
             valid_from_basis="explicit",
@@ -166,10 +166,10 @@ def version(*, user: str = "u", status: str = "active") -> TemporalVersion:
 
 def test_full_version_ranges_and_results_roundtrip_with_literal_infinity_distinct_from_unbounded() -> None:
     row = version()
-    assert row.valid_range.upper is None
+    assert row.event_range.upper is None
     assert row.recorded_range.upper == "infinity" and row.recorded_range.upper_inclusive
     assert TemporalVersion.model_validate_json(row.model_dump_json()) == row
-    assert TimeRange.model_validate_json(row.valid_range.model_dump_json()) == row.valid_range
+    assert TimeRange.model_validate_json(row.event_range.model_dump_json()) == row.event_range
     result = TemporalResult(mode="current_state", user_id="u", versions=(row,))
     assert result.for_answer_context() == (row,)
     assert TemporalResult.model_validate_json(result.model_dump_json()) == result

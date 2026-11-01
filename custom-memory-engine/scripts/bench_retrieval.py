@@ -65,7 +65,7 @@ async def seed(conn: AsyncConnection, rows: int, users: int) -> datetime:
                 )
                 await conn.execute(
                     "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
-                    "single_valued, content, valid_range, recorded_range) VALUES "
+                    "single_valued, content, event_range, recorded_range) VALUES "
                     "(%s, %s, %s, 'active', 'user', %s, true, %s, tstzrange(%s, NULL, '[)'), "
                     "tstzrange(clock_now(), NULL, '[)'))",
                     (version_id, f"key-{index}", user, f"fact-{index}", content, start + timedelta(days=index % 365)),
@@ -178,7 +178,7 @@ async def main() -> int:
         cursor = await connection.execute(
             "EXPLAIN (ANALYZE, FORMAT JSON) SELECT id FROM memory_version m "
             "WHERE user_id = 'bench-0' AND status = 'active' "
-            "AND recorded_range @> now() AND valid_range @> now()"
+            "AND recorded_range @> now() AND event_range @> now()"
         )
         plan = await cursor.fetchone()
         if plan is None:

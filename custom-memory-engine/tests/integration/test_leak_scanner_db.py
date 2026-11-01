@@ -104,7 +104,7 @@ async def _insert_canary_version(conn: AsyncConnection, version_id: str, user: s
         await conn.execute(
             """INSERT INTO memory_version
                  (id, memory_key, user_id, status, subject_key, predicate_key, single_valued,
-                  content, valid_range, recorded_range, layer)
+                  content, event_range, recorded_range, layer)
                VALUES (%s, 'k1', %s, 'active', 'user', 'diet', true,
                        %s, tstzrange(%s, NULL), tstzrange(clock_now(), NULL, '[)'), 'semantic')""",
             (version_id, user, f"the user said {CANARY}", START),

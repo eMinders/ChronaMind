@@ -17,6 +17,10 @@ INSERT INTO predicate_schema (predicate_key, cardinality, default_layer) VALUES
 ON CONFLICT (predicate_key) DO NOTHING;
 
 ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_provenance;
+-- The scenarios below time-travel on purpose (app.clock is set backwards between them), which is exactly what the
+-- recorded-time watermark of migration 9 (THREAT_MODEL T-28) forbids to a real session. This design-check script is
+-- the owner replaying history, so it steps the watermark aside for its own run, as it does for provenance.
+ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_recorded_watermark;
 
 -- Supersession for a single-valued predicate: close-then-insert, one transaction, one recorded instant.
 CREATE FUNCTION supersede_single(p_new_id text, p_reissue_id text, p_user text, p_subject text,
@@ -26,12 +30,12 @@ DECLARE c timestamptz := clock_now(); old memory_version%ROWTYPE;
 BEGIN
   SELECT * INTO old FROM memory_version
    WHERE user_id = p_user AND subject_key = p_subject AND predicate_key = p_pred
-     AND status = 'active' AND recorded_range @> c AND valid_range @> p_new_vf FOR UPDATE;
+     AND status = 'active' AND recorded_range @> c AND event_range @> p_new_vf FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'no current belief to supersede'; END IF;
   UPDATE memory_version SET recorded_range = tstzrange(lower(recorded_range), c) WHERE id = old.id;   -- close first
-  IF lower(old.valid_range) < p_new_vf THEN                                                            -- re-issue only if non-empty
+  IF lower(old.event_range) < p_new_vf THEN                                                            -- re-issue only if non-empty
     INSERT INTO memory_version VALUES (p_reissue_id, old.memory_key, old.user_id, 'active', old.subject_key,
-      old.predicate_key, true, old.content, tstzrange(lower(old.valid_range), p_new_vf), tstzrange(c, NULL));
+      old.predicate_key, true, old.content, tstzrange(lower(old.event_range), p_new_vf), tstzrange(c, NULL));
   END IF;
   INSERT INTO memory_version VALUES (p_new_id, old.memory_key, old.user_id, 'active', old.subject_key,
       old.predicate_key, true, p_content, tstzrange(p_new_vf, NULL), tstzrange(c, NULL));
@@ -40,24 +44,24 @@ END $$;
 -- Query predicates (Section 7.4). All take user scope first.
 CREATE FUNCTION q_current(u text, rho timestamptz) RETURNS SETOF memory_version LANGUAGE sql STABLE AS
 $$ SELECT * FROM memory_version
-    WHERE user_id = u AND status = 'active' AND recorded_range @> rho AND valid_range @> rho $$;
+    WHERE user_id = u AND status = 'active' AND recorded_range @> rho AND event_range @> rho $$;
 
 CREATE FUNCTION q_historical(u text, t timestamptz, rho timestamptz) RETURNS SETOF memory_version LANGUAGE plpgsql STABLE AS
 $$ BEGIN
      IF t > rho THEN RAISE EXCEPTION 'historical-as-of requires t <= reference time'; END IF;
      RETURN QUERY SELECT * FROM memory_version
-       WHERE user_id = u AND status = 'active' AND recorded_range @> rho AND valid_range @> t;
+       WHERE user_id = u AND status = 'active' AND recorded_range @> rho AND event_range @> t;
    END $$;
 
 CREATE FUNCTION q_change(u text, w tstzrange, rho timestamptz) RETURNS SETOF memory_version LANGUAGE sql STABLE AS
 $$ SELECT * FROM memory_version
-    WHERE user_id = u AND status = 'active' AND recorded_range @> rho AND valid_range && w $$;
+    WHERE user_id = u AND status = 'active' AND recorded_range @> rho AND event_range && w $$;
 
 CREATE FUNCTION q_audit(u text, t timestamptz, beta timestamptz) RETURNS SETOF memory_version LANGUAGE plpgsql STABLE AS
 $$ BEGIN
      IF beta > clock_now() THEN RAISE EXCEPTION 'audit-as-of requires belief time <= clock'; END IF;
      RETURN QUERY SELECT * FROM memory_version
-       WHERE user_id = u AND status IN ('active','archived') AND recorded_range @> beta AND valid_range @> t;
+       WHERE user_id = u AND status IN ('active','archived') AND recorded_range @> beta AND event_range @> t;
    END $$;
 
 -- Assertion helpers.
@@ -105,7 +109,7 @@ INSERT INTO memory_version VALUES ('v2p','diet','u1','active','user','diet',true
 COMMIT;
 
 \echo '-- stored rows'
-SELECT id, content, valid_range, recorded_range FROM memory_version ORDER BY lower(recorded_range), id;
+SELECT id, content, event_range, recorded_range FROM memory_version ORDER BY lower(recorded_range), id;
 
 SELECT set_config('app.clock', '2026-10-01', false);   -- reference time "today"
 \echo '-- query predicates on the worked example (reference time 1 Oct)'
@@ -139,7 +143,7 @@ SELECT expect('replaced beliefs (recorded closed) = superseded',
   (SELECT array_agg(id ORDER BY id) FROM memory_version WHERE NOT upper_inf(recorded_range)), ARRAY['v1','v1p','v2']);
 SELECT expect('current belief about a past state (historical, valid-ended, not superseded)',
   (SELECT array_agg(id ORDER BY id) FROM memory_version
-    WHERE upper_inf(recorded_range) AND NOT upper_inf(valid_range)), ARRAY['v1pp']);
+    WHERE upper_inf(recorded_range) AND NOT upper_inf(event_range)), ARRAY['v1pp']);
 
 \echo '== Invariants 2, 3, 4 and the staging rule =='
 SELECT expect_error('inv 4: overlapping believed single-valued row rejected',
@@ -217,7 +221,7 @@ SELECT expect('after promotion: current = pescatarian (c2)',
 SELECT expect('after promotion: historical 20 Jul = fish (v2pp)',
   (SELECT array_agg(id ORDER BY id) FROM q_historical('u1','2026-07-20','2026-10-01') WHERE predicate_key='diet'), ARRAY['v2pp']);
 SELECT expect('promotion: recorded_from of c2 is the review time, not the turn time',
-  (SELECT array_agg(id) FROM memory_version WHERE id='c2' AND lower(recorded_range)='2026-09-02' AND lower(valid_range)='2026-09-01'), ARRAY['c2']);
+  (SELECT array_agg(id) FROM memory_version WHERE id='c2' AND lower(recorded_range)='2026-09-02' AND lower(event_range)='2026-09-01'), ARRAY['c2']);
 SELECT expect('audit t=10 Sep, beta=1 Sep (hold was not yet a belief)',
   (SELECT array_agg(id ORDER BY id) FROM q_audit('u1','2026-09-10','2026-09-01') WHERE predicate_key='diet'), ARRAY['v2p']);
 
@@ -256,5 +260,6 @@ SELECT expect('other memory items of the user survive',
 -- Restore invariant 1 enforcement. Keep this last so the harness never leaves a persistent database
 -- with the provenance trigger switched off.
 ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_provenance;
+ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_recorded_watermark;
 
 \echo 'ALL ASSERTIONS PASSED'

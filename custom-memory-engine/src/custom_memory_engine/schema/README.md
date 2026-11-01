@@ -36,7 +36,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–8** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–9** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -153,6 +153,27 @@ never evidence); `content_hash` is SHA-256 over the NFC-normalised, LF-newline U
   migration, not a profile setting.
 
 Tested by `tests/integration/test_migration_m4.py`.
+
+## Migration 9: the three clocks (`009_clocks.sql`, `E-012`, M3)
+
+`valid_range` becomes `event_range` **in place** (`V2-D49` D9: the exclusion constraint `no_bitemporal_overlap`, the `CHECK`
+`valid_wellformed` and `memory_version_temporal_idx` follow the column, so the constraint is never dropped and Invariant 4 has
+no unguarded window; this amends steps 1-3 of issue #63). The key stays `user_id` (D10). Three functions name the column
+(`guard_update`, `enforce_archival_invariant`, `guard_derivation_coverage`); they are rewritten from their own catalog
+definitions, which keeps their pinned `search_path`. `bitemporal_on_full.sql` is adapted (and steps the new watermark aside
+for its deliberate time travel, as it already does for provenance); its 43 assertions run on the whole migration chain.
+
+* **`observed_at`** (engine clock at ingest, fixed at creation) is backfilled per D8:
+  `COALESCE(lower(recorded_range), earliest evidencing turn, lower(event_range))`.
+* **`event_basis`** is inherited from `valid_from_basis`, which stays dual-written (supplying `event_basis` makes it
+  authoritative). Both are fixed at creation.
+* **T-28 watermark.** `clock_watermark(user_id, high)` is advanced by a `SECURITY DEFINER` trigger on every belief start or close,
+  and a write that would put recorded time before it fails with `recorded_time_moved_backwards`, whatever `app.clock` says.
+  The runtime role has no privilege on the table (the exact-grant matrix is unchanged); only the owner-run trigger writes it.
+  The namespace is the user until `E-011` moves it to the scope. Equal instants are allowed (supersession closes and opens at one).
+* **Rollback** (`rollback/009_clocks.sql`) restores version 8 exactly; the two columns come back at later attribute numbers.
+
+Tested by `tests/integration/test_migration_m3.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner

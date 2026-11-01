@@ -14,6 +14,7 @@ from psycopg import AsyncConnection, sql
 from psycopg.errors import CheckViolation, InvalidParameterValue, RaiseException, UniqueViolation
 
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
+from custom_memory_engine.schema import migrate
 
 pytestmark = pytest.mark.integration
 
@@ -138,7 +139,11 @@ async def apply_sql(conn: AsyncConnection, statements: list[str]) -> None:
         await conn.execute(cast(LiteralString, statement))
 
 
-SCHEMA_STATEMENTS = read_script(SCHEMA_SQL) if SCHEMA_SQL.is_file() else []
+# The whole migration chain, so the 43 bitemporal assertions and the invariant tests run on the schema the engine uses
+# (they replay bitemporal_on_full.sql, which names the V2 columns).
+SCHEMA_STATEMENTS = [
+    statement for _, filename in migrate.MIGRATIONS for statement in read_script(SCHEMA_SQL.with_name(filename))
+]
 CHECK_STATEMENTS = read_script(CHECKS_SQL) if CHECKS_SQL.is_file() else []
 
 
@@ -209,7 +214,8 @@ async def test_full_schema_creates_twelve_tables_and_named_constraints(
             "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename"
         )
         names = {row[0] for row in await cursor.fetchall()}
-        assert names == set(CANONICAL_TABLES)
+        # the twelve canonical tables, plus what later migrations add (scope grants, the clock watermark)
+        assert names == set(CANONICAL_TABLES) | {"scope_grant", "clock_watermark"}
         cursor = await conn.execute(
             """
             SELECT conname FROM pg_constraint
@@ -303,7 +309,7 @@ async def test_invariant_1_rejects_active_row_without_provenance(database: tuple
                     """
                     INSERT INTO memory_version (
                         id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content,
-                        valid_range, recorded_range
+                        event_range, recorded_range
                     ) VALUES (
                         'v1','diet','u1','active','user','diet',true,'vegetarian',
                         tstzrange(%s, NULL), tstzrange(%s, NULL)
@@ -323,7 +329,7 @@ async def test_invariant_1_accepts_evidence_or_derivation(database: tuple[Databa
                 """
                 INSERT INTO memory_version (
                     id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content,
-                    valid_range, recorded_range
+                    event_range, recorded_range
                 ) VALUES (
                     'v1','diet','u1','active','user','diet',true,'vegetarian',
                     tstzrange(%s, NULL), tstzrange(%s, NULL)
@@ -342,7 +348,7 @@ async def test_invariant_1_accepts_evidence_or_derivation(database: tuple[Databa
                 """
                 INSERT INTO memory_version (
                     id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content,
-                    valid_range, recorded_range, layer
+                    event_range, recorded_range, layer
                 ) VALUES (
                     'v2','diet-summary','u1','active','user','diet-summary',false,'vegetarian (derived)',
                     tstzrange(%s, NULL), tstzrange(%s, NULL), 'semantic'
@@ -372,7 +378,7 @@ async def test_guard_update_rejects_content_edit_and_allows_archival_branch(
                 """
                 INSERT INTO memory_version (
                     id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content,
-                    valid_range, recorded_range
+                    event_range, recorded_range
                 ) VALUES (
                     'v1','diet','u1','active','user','diet',true,'vegetarian',
                     tstzrange(%s, NULL), tstzrange(%s, NULL)
@@ -399,7 +405,7 @@ async def test_guard_update_rejects_content_edit_and_allows_archival_branch(
                 """
                 INSERT INTO memory_version (
                     id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content,
-                    valid_range, recorded_range
+                    event_range, recorded_range
                 ) VALUES (
                     'v1s','diet','u1','active','user','diet-summary',true,'vegetarian (summary)',
                     tstzrange(%s, NULL), tstzrange(%s, NULL)

@@ -40,6 +40,7 @@ DOMAIN_TABLES = frozenset(
         "deletion_request",
         "job",
         "scope_grant",
+        "clock_watermark",
     }
 )
 HISTORY_TABLE = "_cme_schema_migrations"
