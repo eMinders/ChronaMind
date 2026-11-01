@@ -3,7 +3,7 @@
 | Workflow | Trigger | Jobs (check names) | Purpose |
 |---|---|---|---|
 | `custom-memory-engine.yaml` | PRs and pushes to `main` touching `custom-memory-engine/**`, this workflow, or `.github/actions/setup-cme/**`; manual | `static`, `verify`, `default-install` (parallel) | Engine quality gates (below) |
-| `ci.yaml` | Every PR; pushes to `main`; manual | `checks` | Root application lint, format, type check. No path filter: root `ruff check .` also lints `custom-memory-engine/` |
+| `ci.yaml` | Every PR; pushes to `main`; manual | `checks`, `workflows` | `checks`: root application lint, format, type check (no path filter: root `ruff check .` also lints `custom-memory-engine/`). `workflows`: actionlint over every workflow, pinned by digest |
 | `claude-code-review.yml` | Same-repository, non-draft PRs | `claude-review` | Advisory automated review; **not** the peer review required by `custom-memory-engine/PLAN/ASSIGNMENTS.md` |
 | `claude.yml` | `@claude` mentions by an owner, member or collaborator | `claude` | On-demand assistant |
 | `deploy.yaml` | Manual (`workflow_dispatch`) only | `Build and push to Docker Hub` | Root application image. Automatic publication on `main` is an owner decision and is not enabled |
@@ -12,7 +12,7 @@
 
 | Job | Gates |
 |---|---|
-| `static` | `ruff check`, `ruff format --check`, `pyright`; frozen research record (`md5sum -c validation/document_hashes.txt`), mechanical checks, Clopper–Pearson bounds, `scripts/check_statistics.py`, G-TS split gate (`scripts/check_test_split_gate.py`) |
+| `static` | `ruff check`, `ruff format --check`, `pyright` (including `scripts/`); frozen research record (`md5sum -c validation/document_hashes.txt`), mechanical checks, Clopper–Pearson bounds, `scripts/check_statistics.py`, G-TS split gate (`scripts/check_test_split_gate.py`), plan references (`check_plan_refs.py`), status registry (`audit_status.py --check`), architecture ownership (`plan_coverage.py --check`) |
 | `verify` | Full CI-scope `pytest` (PostgreSQL 16 + pgvector + FalkorDB service containers, prepared model assets): PostgreSQL integration, restricted-role RLS, cross-tenant, migration, bitemporal, deletion and API-contract tests; `validation/bitemporal_checks.sql` |
 | `default-install` | `pytest` on the default install with no optional extras |
 
