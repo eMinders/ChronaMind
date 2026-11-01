@@ -82,7 +82,7 @@ than a store of its own**.
 | 5 | [`USER_MODEL.md`](USER_MODEL.md) | The evolving user model: structure, lifecycle, trust ladder, personalization semantics, `own_U` instrument, F4 hypotheses. |
 | 6 | [`ROADMAP_V2.md`](ROADMAP_V2.md) | Waves W0–W8 + W0b, gates G0–G8, task IDs, corrected dependency order, corrected de-scope ladder. |
 | 7 | [`RESEARCH_PROGRAM_V2.md`](RESEARCH_PROGRAM_V2.md) | Four contribution families, `S1`–`S19`, methodological corrections, falsification table, evaluation inventory. |
-| 8 | [`DECISIONS_V2.md`](DECISIONS_V2.md) | `V2-D01`–`V2-D57`, with explicit supersessions of v1 decisions and of r1's own defects; §5 records the r7 blocker resolutions. |
+| 8 | [`DECISIONS_V2.md`](DECISIONS_V2.md) | `V2-D01`–`V2-D58`, with explicit supersessions of v1 decisions and of r1's own defects; §5 records the r7 blocker resolutions. |
 | 9 | [`SYNC_LOG.md`](SYNC_LOG.md) | The r1→r2→r3 audit: what was checked, what broke, what changed, and what remains inconsistent. |
 | 10 | [`TRANSITION_AUDIT.md`](TRANSITION_AUDIT.md) | v1→V2 backlog transition: the old→new issue mapping, dispositions, and the document-drift findings. |
 | 11 | [`TRACEABILITY_REPORT.md`](TRACEABILITY_REPORT.md) | Proof that all 88 roadmap tasks are mapped, dependency order is verified, and the backlog is ready for W0/W0b. |

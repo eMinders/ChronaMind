@@ -8,18 +8,25 @@
 
 ## 1. Scripted Bi-Temporal Timeline (`E1`–`E3`, `R1`–`R8`)
 
-Every scenario (`own_T_{split}_{idx:03d}`) scripts a 4-session history for an isolated user with reference time `ρ`:
+Every scenario (`own_T_{split}_{idx:03d}`) scripts a 4-session history for an isolated user with reference time `ρ`.
+
+> **Column names.** This document uses the engine's current names: **`event_range`** is when the statement
+> held in the world (renamed in place from `valid_range` by migration 9, `E-012`, `V2-D49` D9), and
+> **`recorded_range`** is when the system held it as belief. The generator emits the equivalent bounds as
+> `valid_from` / `valid_to` and `recorded_from` / `recorded_to` in `own_T_dev.json` and `own_T_test.json`;
+> those frozen files are unchanged by the rename, which is a database column name only.
+
 1. **Session 1 (`t1`):**
-   - `E1`: Initial single-valued state `v1_old` with explicit start date `t1` (`valid_range = [t1, ∞)`, `recorded_range = [t1, t2)`).
-   - Unchanged control fact `v_stable` (`valid_range = [t1, ∞)`, `recorded_range = [t1, ∞)`).
-   - Secondary attribute with uncertain start time (`valid_from_basis = "inferred"`) and an immediate same-day correction (`R2` with `v_old = v_new`, closing the mistaken row in recorded time without inserting a truncated re-issue row).
+   - `E1`: Initial single-valued state `v1_old` with explicit start date `t1` (`event_range = [t1, ∞)`, `recorded_range = [t1, t2)`).
+   - Unchanged control fact `v_stable` (`event_range = [t1, ∞)`, `recorded_range = [t1, ∞)`).
+   - Secondary attribute with uncertain start time (`event_basis = "inferred"`, from `valid_from_basis`) and an immediate same-day correction (`R2` with `v_old = v_new`, closing the mistaken row in recorded time without inserting a truncated re-issue row).
    - Two multi-valued memberships (`mv_keep` and `mv_end`, `single_valued = False`).
 2. **Session 2 (`t2`):**
    - `E2`: User reports switching to `v2_new` (`R1`/`R2` close `v1` at `t2`, insert truncated re-issue `v1'` over `[t1, t2)` and `v2` over `[t2, ∞)`).
 3. **Session 3 (`t3`):**
-   - `E3`: Delayed / retroactive timing revision clarifying that the transition to `v2_new` actually took effect earlier on `t_retro` (`t1 < t_retro < t2`), closing `v1'` and `v2` at `t3` and inserting `v1''` (`valid_range = [t1, t_retro)`, `recorded_range = [t3, ∞)`) and `v2'` (`valid_range = [t_retro, ∞)`, `recorded_range = [t3, ∞)`).
+   - `E3`: Delayed / retroactive timing revision clarifying that the transition to `v2_new` actually took effect earlier on `t_retro` (`t1 < t_retro < t2`), closing `v1'` and `v2` at `t3` and inserting `v1''` (`event_range = [t1, t_retro)`, `recorded_range = [t3, ∞)`) and `v2'` (`event_range = [t_retro, ∞)`, `recorded_range = [t3, ∞)`).
 4. **Session 4 (`t4`):**
-   - `R7`: User ends multi-valued membership `mv_end` (`valid_range = [t1, t4)`), while keeping `mv_keep` (`valid_range = [t1, ∞)`).
+   - `R7`: User ends multi-valued membership `mv_end` (`event_range = [t1, t4)`), while keeping `mv_keep` (`event_range = [t1, ∞)`).
 
 ---
 
@@ -32,9 +39,9 @@ Every scenario generates `6` conversational questions across all `5` modes (`cur
 
 ---
 
-## 3. Deterministic `audit_as_of(user_id, valid_time, belief_time)` Grid
+## 3. Deterministic `audit_as_of(user_id, event_time, belief_time)` Grid
 
-Each scenario includes `4` API-level `(valid_time, belief_time)` probes (`audit_01`–`audit_04`). In particular, `audit_02` and `audit_03` query the **exact same `valid_time` (`t_query_between ∈ [t_retro, t2)`)** at two different `belief_time` instants (`t2 + 2d` vs. `t3 + 2d`), verifying that `audit_as_of` returns `v1'` before the retroactive correction `E3` and `v2'` after `E3`.
+Each scenario includes `4` API-level `(event_time, belief_time)` probes (`audit_01`–`audit_04`). In particular, `audit_02` and `audit_03` query the **exact same event time (`t_query_between ∈ [t_retro, t2)`)** at two different `belief_time` instants (`t2 + 2d` vs. `t3 + 2d`), verifying that `audit_as_of` returns `v1'` before the retroactive correction `E3` and `v2'` after `E3`. The probe records keep the field name `valid_time` in the frozen JSON; only the prose here uses the engine's current term.
 
 ---
 

@@ -89,9 +89,17 @@ numbers exactly and is not expected to.
 | 2000 | lexical | 11.11 / 11.95 | 13.33 / 14.59 |
 | 2000 | fused (RRF) | 28.16 / 29.84 | 29.10 / 33.61 |
 
-Integrity of the committed files (SHA-256, first 16 hex): `retrieval_500.json` `a3ffc6977fdb3657`,
-`retrieval_2000.json` `d838ebe5a98143f1`. **The regression reference for V2 is the committed file.** Re-measure on the same host before comparing; do
+Integrity of the committed files (SHA-256 of the **committed blob**, first 16 hex): `retrieval_500.json` `67fc87466481379f`,
+`retrieval_2000.json` `982bbe3d85e7e734`. **The regression reference for V2 is the committed file.** Re-measure on the same host before comparing; do
 not compare a number from this host against one from another.
+
+> **Line endings (corrected r11).** These two digests were originally recorded as `a3ffc6977fdb3657` and
+> `d838ebe5a98143f1`, which are the **CRLF** renderings of the same blobs: they were taken from a Windows working
+> tree with `core.autocrlf=true`. The bytes in git are LF and hash to the values above, so the earlier figures
+> verified nothing outside that one checkout. Hashing the committed blob, as section 4 already does for
+> `validation/document_hashes.txt`, is the convention here because it is the platform-independent one. **The file
+> contents are unchanged and every measured number in this section stands**; only the two recorded digests were
+> wrong, and `git` confirms both blobs are identical to `490904d`.
 
 **G3 figure and a discrepancy for the Project Owner.** `ROADMAP_V2.md` G3 says "Retrieval P95 … within 2× of the
 27 ms baseline". In `retrieval_2000.json`, **27 ms (26.99) is the dense P50**, not a P95; the P95s are **29.41 ms

@@ -1,6 +1,8 @@
 name: Claude Code Review
 
-# Advisory automated review (not a substitute for the peer review in PLAN/ASSIGNMENTS.md).
+# Advisory automated review on every non-draft PR (a second pair of eyes, not the review gate itself).
+# The review gate is the AI review on the Project Owner's behalf (V2-D57, PLAN/CONTRIBUTING.md §1.1): no human peer
+# review is a prerequisite for merging. This workflow is belt-and-braces, and a red run here blocks nothing.
 # Same-repository, non-draft PRs only: fork PRs never receive the OAuth secret, so they would fail.
 
 on:
