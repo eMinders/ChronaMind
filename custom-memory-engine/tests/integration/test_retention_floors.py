@@ -21,7 +21,7 @@ from tests.integration.test_migration_m1 import (
 )
 
 pytestmark = pytest.mark.integration
-M8 = 5
+M8 = 6
 # USER_MODEL.md section 2.1. E-019 (#101) adds `model.axes.FACETS`; once it merges this should import it. Until
 # then the literal is cross-checked against the document so the two cannot drift silently.
 FACETS = ("preference", "goal", "constraint", "context", "decision_pattern", "meta_preference")
@@ -208,7 +208,7 @@ async def test_the_facet_index_supports_facet_filtered_queries_per_user(database
 # ----------------------------------------------------------------------------------------- rollback
 
 
-async def test_rollback_restores_version_4_exactly_and_reapply_works(database) -> None:  # noqa: F811
+async def test_rollback_restores_version_5_exactly_and_reapply_works(database) -> None:  # noqa: F811
     config, schema = database
     runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
     async with connect(database) as conn:

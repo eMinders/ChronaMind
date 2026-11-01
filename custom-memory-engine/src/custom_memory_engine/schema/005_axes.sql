@@ -1,4 +1,4 @@
--- Migration 4: independent axes on memory_version (M1 + M7) - E-010, V2-D01, V2-D38, V2-D43, V2-D48, V2-D49.
+-- Migration 5: independent axes on memory_version (M1 + M7) - E-010, V2-D01, V2-D38, V2-D43, V2-D48, V2-D49.
 --
 -- v1 classified a row with one enum (`layer`) plus `status`. V2 has three independent axes:
 --   kind      in {episode, claim, procedure, abstraction}   fixed at creation, immutable
@@ -182,3 +182,18 @@ BEGIN
   RETURN NEW;
 END
 $$;
+
+-- V2-D54 (S-02): every engine function is pinned to `<this schema>, pg_catalog, pg_temp`. CREATE OR REPLACE resets a
+-- function's settings, so guard_update is pinned again here along with the two new functions.
+DO $pin$
+DECLARE
+  engine_schema text := pg_catalog.current_schema();
+  fn text;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY['sync_memory_version_axes()', 'mark_derived_version_inferred()', 'guard_update()'] LOOP
+    EXECUTE pg_catalog.format(
+      'ALTER FUNCTION %I.%s SET search_path = %I, pg_catalog, pg_temp', engine_schema, fn, engine_schema
+    );
+  END LOOP;
+END
+$pin$;
