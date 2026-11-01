@@ -44,3 +44,28 @@ uv sync --frozen --python 3.12.12 && uv run --no-sync pytest -q
 ## 3. Results
 
 Recorded below after the last code change merged, against the exact commit verified.
+
+**Verified commit:** `88cd6fc0e59d6ffe8d9f20e0231d947a1db2605c` (the last code change; the commit adding this section
+changes only this file). Fresh clones from `origin`; new PostgreSQL 16.15 (pgvector 0.8.7, pinned digest) and
+FalkorDB 6.0.3 containers; model assets prepared from scratch (`"status": "verified"`).
+
+| Check | Result |
+|---|---|
+| Full CI-scope `pytest` (database, FalkorDB, assets) | **2,165 passed**, 0 failed, 0 skipped |
+| Plain install `pytest` (no database, no extras) | **1,892 passed**, 257 skipped (environment-gated), 0 failed |
+| `ruff check`, `ruff format --check` (engine, incl. `scripts/`) | clean; 234 files formatted |
+| `pyright` (engine) | 0 errors, 0 warnings |
+| Root application: `ruff check .`, `ruff format --check .`, `pyright` | clean; 286 files; 0 errors |
+| `validation/bitemporal_checks.sql` | 43 assertions, `ALL ASSERTIONS PASSED` |
+| Frozen research records (`md5sum -c validation/document_hashes.txt`) | 5/5 OK |
+| Mechanical checks | `ALL HARD CHECKS PASSED` |
+| Clopper-Pearson bounds | identical to `cp_bounds.output.txt` |
+| `check_statistics.py` / `check_test_split_gate.py` | `ALL STATISTICS ASSERTIONS PASSED` / `G-TS integrity PASSED` |
+| `check_plan_refs.py` / `audit_status.py --check` / `plan_coverage.py --check` | 0 findings / 60 tasks registered / 0 unowned |
+| `scripts/audit_status.py` (tests run) | 34 code-verified, 6 doc-only, 0 claimed-unverified, 20 not-started; no discrepancies |
+| actionlint (pinned digest) | clean |
+| Recorded Suite D dev reports (`reports/deletion/suite_d_dev_{P,A8}.json`) | regenerated with the frozen model on the shipped schema: byte-identical |
+| GitHub, both workflows on every r10 `main` commit (`2fdcc13`, `81bc47c`, `72174a9`, `88cd6fc`) | success |
+| Schema | migrations 1-4 only; no W1 migration, table or column |
+
+The final `main` commit, including this section, is reported with its CI status in the r10 handover.
