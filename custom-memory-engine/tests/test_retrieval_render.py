@@ -33,7 +33,7 @@ def version(
         predicate_key="diet",
         single_valued=True,
         content=content,
-        valid_range=TimeRange(lower=valid_from, upper=valid_until, lower_inclusive=True, upper_inclusive=False),
+        event_range=TimeRange(lower=valid_from, upper=valid_until, lower_inclusive=True, upper_inclusive=False),
         recorded_range=TimeRange(
             lower=datetime(2026, 2, 1, tzinfo=UTC), upper=None, lower_inclusive=True, upper_inclusive=False
         ),

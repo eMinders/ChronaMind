@@ -83,7 +83,9 @@ async def test_provisioning_rejects_unsafe_identifiers_before_touching_the_conne
 
 
 def test_user_tables_are_every_table_except_the_shared_catalog() -> None:
-    assert set(USER_TABLES) == set(SCHEMA_SQL_TABLES) - {"predicate_schema"}
+    # `clock_watermark` (migration 9) is engine-internal: the runtime role has no privilege on it and only a definer
+    # trigger writes it, so it is neither a tenant table nor the shared catalog.
+    assert set(USER_TABLES) == set(SCHEMA_SQL_TABLES) - {"predicate_schema", "clock_watermark"}
     assert len(USER_TABLES) == 12  # 11 v1 tables + scope_grant (migration 2)
 
 

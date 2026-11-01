@@ -43,11 +43,11 @@ def test_candidate_version_input_validates_bounds_and_provenance() -> None:
     assert cand.valid_until == T2
     cand.require_provenance()
 
-    # Empty / inverted valid_range rejected
-    with pytest.raises(TransactionError, match="valid_range_must_be_nonempty"):
+    # Empty / inverted event_range rejected
+    with pytest.raises(TransactionError, match="event_range_must_be_nonempty"):
         _valid_candidate(valid_from=T2, valid_until=T1)
 
-    with pytest.raises(TransactionError, match="valid_range_must_be_nonempty"):
+    with pytest.raises(TransactionError, match="event_range_must_be_nonempty"):
         _valid_candidate(valid_from=T1, valid_until=T1)
 
     # Naive datetime rejected

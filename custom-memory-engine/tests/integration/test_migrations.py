@@ -40,6 +40,7 @@ DOMAIN_TABLES = frozenset(
         "deletion_request",
         "job",
         "scope_grant",
+        "clock_watermark",
     }
 )
 HISTORY_TABLE = "_cme_schema_migrations"
@@ -588,7 +589,7 @@ async def test_status_rejects_disabled_internal_foreign_key_enforcement(database
         cursor = await conn.execute(triggers, ("D",))
         state = await cursor.fetchone()
         assert state is not None and state[0] > 0 and state[1] is True
-        # DISABLE TRIGGER ALL also disables the dual-write trigger (migration 8), so the source columns are supplied.
+        # DISABLE TRIGGER ALL also disables the dual-write trigger (migration 7), so the source columns are supplied.
         orphan_insert = """INSERT INTO memory_evidence(version_id,turn_id,user_id,evidence_span,evidence_role,
                                                        source_type,source_ref,span,content_hash)
                            VALUES ('missing-version','missing-turn','retained-user','fixture','support',

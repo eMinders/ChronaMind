@@ -22,7 +22,7 @@ from custom_memory_engine.model.axes import (
 )
 from custom_memory_engine.schema import migrate
 from custom_memory_engine.security import provision_runtime_role
-from tests.integration.rollbacks import rollback_sql
+from tests.integration.rollbacks import adapt, rollback_sql
 from tests.integration.test_migration_m1 import (
     START,
     connect,
@@ -86,10 +86,13 @@ async def _insert_version(
     conn: AsyncConnection, version_id: str, kind: str, lifecycle: str, status: str, believed: bool
 ) -> None:
     await conn.execute(
-        "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, "
-        "content, valid_range, recorded_range, layer, kind, lifecycle, retention) "
-        "VALUES (%s, %s, 'u1', %s, 'user', 'diet', false, 'x', tstzrange(%s, NULL), "
-        "CASE WHEN %s THEN tstzrange(clock_now(), NULL) END, %s, %s, %s, 'durable')",
+        await adapt(
+            conn,
+            "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, "
+            "content, event_range, recorded_range, layer, kind, lifecycle, retention) "
+            "VALUES (%s, %s, 'u1', %s, 'user', 'diet', false, 'x', tstzrange(%s, NULL), "
+            "CASE WHEN %s THEN tstzrange(clock_now(), NULL) END, %s, %s, %s, 'durable')",
+        ),
         (version_id, version_id, status, START, believed, LAYER_OF[kind], kind, lifecycle),
     )
     if status == "active":
@@ -280,7 +283,7 @@ async def test_an_inferred_row_without_a_derivation_fails_at_commit(database) ->
             async with conn.transaction():
                 await conn.execute(
                     "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
-                    "single_valued, content, valid_range, recorded_range, layer, kind, lifecycle, retention) "
+                    "single_valued, content, event_range, recorded_range, layer, kind, lifecycle, retention) "
                     "VALUES ('h', 'h', 'u1', 'active', 'user', 'diet', false, 'x', tstzrange(%s, NULL), "
                     "tstzrange(clock_now(), NULL), 'semantic', 'claim', 'inferred', 'durable')",
                     (START,),
@@ -302,7 +305,7 @@ async def test_an_asserted_or_observed_row_needs_an_evidence_record_at_commit(da
                 async with conn.transaction():
                     await conn.execute(
                         "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
-                        "single_valued, content, valid_range, recorded_range, layer, kind, lifecycle, retention) "
+                        "single_valued, content, event_range, recorded_range, layer, kind, lifecycle, retention) "
                         "VALUES ('row', 'row', 'u1', 'active', 'user', 'diet', false, 'x', tstzrange(%s, NULL), "
                         "tstzrange(clock_now(), NULL), %s, %s, %s, 'durable')",
                         (START, LAYER_OF[kind], kind, lifecycle),

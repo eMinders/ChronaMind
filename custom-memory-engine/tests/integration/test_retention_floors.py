@@ -9,7 +9,7 @@ from psycopg.errors import CheckViolation
 
 from custom_memory_engine.model.axes import FACETS, KINDS, RETENTIONS, SHORT_RETENTION_KINDS
 from custom_memory_engine.schema import migrate
-from tests.integration.rollbacks import rollback_sql
+from tests.integration.rollbacks import adapt, rollback_sql
 from tests.integration.test_migration_m1 import (
     START,
     assert_axes_consistent,
@@ -33,10 +33,13 @@ async def insert_row(
     await seed_turn(conn, f"t-{version_id}", "I am vegetarian", START)
     async with conn.transaction():
         await conn.execute(
-            "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, "
-            "content, valid_range, recorded_range, layer, kind, retention, um_facet) "
-            "VALUES (%s, %s, 'u1', 'active', 'user', 'diet', false, 'x', tstzrange(%s, NULL), "
-            "tstzrange(clock_now(), NULL), %s, %s, %s, %s)",
+            await adapt(
+                conn,
+                "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
+                "single_valued, content, event_range, recorded_range, layer, kind, retention, um_facet) "
+                "VALUES (%s, %s, 'u1', 'active', 'user', 'diet', false, 'x', tstzrange(%s, NULL), "
+                "tstzrange(clock_now(), NULL), %s, %s, %s, %s)",
+            ),
             (version_id, version_id, START, LAYER_OF[kind], kind, retention, facet),
         )
         await conn.execute(

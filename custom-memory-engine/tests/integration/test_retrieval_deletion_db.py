@@ -99,7 +99,7 @@ async def insert_version(
         """
         INSERT INTO memory_version (
             id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content,
-            valid_range, recorded_range
+            event_range, recorded_range
         ) VALUES (%s, %s, %s, 'active', %s, %s, %s, %s, tstzrange(%s, %s, '[)'), tstzrange(clock_now(), NULL, '[)'))
         """,
         (version_id, memory_key, user, subject, predicate, single_valued, content, valid_from, valid_until),

@@ -5,7 +5,7 @@ Two channels rank the same candidate set: an exact per-user cosine scan over
 Rank Fusion (``k = 60``) merges them. Superseded versions never enter the
 candidate set because every channel reuses ``compile_predicate``.
 
-Ranking is deterministic: RRF score descending, then ``upper(valid_range)``
+Ranking is deterministic: RRF score descending, then ``upper(event_range)``
 descending with unbounded last, then version id ascending.
 """
 

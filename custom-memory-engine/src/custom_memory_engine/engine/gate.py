@@ -228,7 +228,7 @@ async def existing_relation(
             sql.SQL(
                 "SELECT id, content FROM {v} WHERE user_id = %s AND subject_key = %s AND predicate_key = %s "
                 "AND single_valued = true AND status = 'active' AND upper_inf(recorded_range) "
-                "ORDER BY lower(valid_range) DESC, id LIMIT 5"
+                "ORDER BY lower(event_range) DESC, id LIMIT 5"
             ).format(v=sql.Identifier(schema_name, "memory_version")),
             (user_id, subject_key, predicate_key),
         )

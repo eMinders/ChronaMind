@@ -48,7 +48,7 @@ AUDIT_DETAIL_KEYS = frozenset(
         "re_derived_versions",
         "purged_jobs",
         # how many outside-the-boundary sources (D-ENG-04) a deletion listed; a count, never a locator or hash
-        "external_exclusions",
+        "external_exclusions",  # a count of external sources outside the deletion boundary (E-013)
         # soundness assessments (E-015): counts, registered-method identifiers, thresholds as decimal tokens
         "policy",
         "source_count",

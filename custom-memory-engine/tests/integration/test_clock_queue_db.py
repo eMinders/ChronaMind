@@ -126,7 +126,7 @@ async def write_memory(conn: AsyncConnection, job: Job, tick: ClockTick) -> None
     version_id = "version-" + job.id
     await conn.execute(
         """INSERT INTO memory_version (
-               id,memory_key,user_id,status,subject_key,predicate_key,single_valued,content,valid_range,recorded_range
+               id,memory_key,user_id,status,subject_key,predicate_key,single_valued,content,event_range,recorded_range
            ) VALUES (%s,%s,%s,'active','self','fact',false,'synthetic committed fact',
                      tstzrange(%s,NULL,'[)'),tstzrange(clock_now(),NULL,'[)'))""",
         (version_id, job.id, job.user_id, BASE),
@@ -260,7 +260,7 @@ async def test_existing_memory_recorded_lower_and_closed_upper_constrain_new_clo
             await conn.execute(
                 """INSERT INTO memory_version (
                        id,memory_key,user_id,status,subject_key,predicate_key,single_valued,content,
-                       valid_range,recorded_range
+                       event_range,recorded_range
                    ) VALUES ('old','memory','u1','active','self','fact',false,'synthetic',
                              tstzrange(%s,NULL,'[)'),tstzrange(%s,%s,'[)'))""",
                 (BASE, BASE, LATER),
@@ -610,7 +610,7 @@ async def test_real_exclusion_conflict_is_not_blindly_retried(database) -> None:
         async with conn.transaction():
             await conn.execute(
                 """INSERT INTO memory_version (
-                       id,memory_key,user_id,status,subject_key,predicate_key,single_valued,content,valid_range,recorded_range
+                       id,memory_key,user_id,status,subject_key,predicate_key,single_valued,content,event_range,recorded_range
                    ) VALUES ('existing','state','u1','active','self','state',true,'old',
                              tstzrange(%s,NULL,'[)'),tstzrange(%s,NULL,'[)'))""",
                 (BASE, BASE),
@@ -622,7 +622,7 @@ async def test_real_exclusion_conflict_is_not_blindly_retried(database) -> None:
             calls.append(job.id)
             await conn.execute(
                 """INSERT INTO memory_version (
-                       id,memory_key,user_id,status,subject_key,predicate_key,single_valued,content,valid_range,recorded_range
+                       id,memory_key,user_id,status,subject_key,predicate_key,single_valued,content,event_range,recorded_range
                    ) VALUES ('conflicting','state','u1','active','self','state',true,'new',
                              tstzrange(%s,NULL,'[)'),tstzrange(clock_now(),NULL,'[)'))""",
                 (BASE,),

@@ -150,14 +150,14 @@ def compile_predicate(
         values.update(window_start=query.window_start, window_end=query.window_end)
         clauses.append(
             sql.SQL("{} && tstzrange(%(window_start)s::timestamptz, %(window_end)s::timestamptz, '[)')").format(
-                column("valid_range")
+                column("event_range")
             )
         )
     else:
         target = query.reference_time if query.mode == "current_state" else query.target_time
         assert target is not None
         values["target_time"] = target
-        clauses.append(sql.SQL("{} @> %(target_time)s::timestamptz").format(column("valid_range")))
+        clauses.append(sql.SQL("{} @> %(target_time)s::timestamptz").format(column("event_range")))
     return CompiledPredicate(sql.SQL(" AND ").join(clauses), MappingProxyType(values))
 
 
@@ -188,7 +188,7 @@ class TemporalVersion(Record):
     predicate_key: str
     single_valued: bool
     content: str
-    valid_range: TimeRange
+    event_range: TimeRange
     recorded_range: TimeRange
     layer: Literal["episodic", "semantic", "opinion", "persona"]
     valid_from_basis: Literal["explicit", "inferred"]
@@ -256,7 +256,7 @@ def version_projection(alias: str = "m") -> sql.Composed:
         for column in columns
     ]
     pairs.append(
-        sql.SQL("{name}, {range}").format(name=sql.Literal("valid_range"), range=_range_json("valid_range", alias))
+        sql.SQL("{name}, {range}").format(name=sql.Literal("event_range"), range=_range_json("event_range", alias))
     )
     pairs.append(
         sql.SQL("{name}, {range}").format(

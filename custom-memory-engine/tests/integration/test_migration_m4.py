@@ -17,7 +17,7 @@ from custom_memory_engine.engine.transactions import (
 )
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.schema import migrate
-from tests.integration.rollbacks import rollback_sql
+from tests.integration.rollbacks import adapt, rollback_sql
 from tests.integration.test_migration_m1 import (
     START,
     connect,
@@ -52,9 +52,12 @@ async def seed_turns(conn: AsyncConnection) -> None:
 
 async def insert_version(conn: AsyncConnection, version_id: str, key: str = "diet") -> None:
     await conn.execute(
-        "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, "
-        "content, valid_range, recorded_range, layer) VALUES (%s, %s, 'u1', 'active', 'user', 'diet', false, 'x', "
-        "tstzrange(%s, NULL), tstzrange(clock_now(), NULL), 'semantic')",
+        await adapt(
+            conn,
+            "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, "
+            "content, event_range, recorded_range, layer) VALUES (%s, %s, 'u1', 'active', 'user', 'diet', false, 'x', "
+            "tstzrange(%s, NULL), tstzrange(clock_now(), NULL), 'semantic')",
+        ),
         (version_id, key, START),
     )
 
