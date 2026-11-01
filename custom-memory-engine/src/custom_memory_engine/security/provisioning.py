@@ -37,8 +37,25 @@ USER_TABLES = (
 # engine schema — including TRUNCATE, REFERENCES or TRIGGER, which bypass or sidestep
 # row-level security — is an extra grant and fails verification.
 TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
-USER_TABLE_GRANTS = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
-CATALOG_GRANTS = {"predicate_schema": frozenset({"SELECT"})}
+_APPEND = frozenset({"SELECT", "INSERT"})
+_MUTABLE = frozenset({"SELECT", "INSERT", "UPDATE"})
+_FULL = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"})
+# Exact per-table grant set (V2-D54, finding S-03); mirrors the @grants section of rls.sql.
+TABLE_GRANTS: dict[str, frozenset[str]] = {
+    "app_user": _APPEND,
+    "session": _APPEND,
+    "turn": _APPEND,
+    "memory_evidence": _APPEND,
+    "audit_event": _APPEND,
+    "deletion_request": _APPEND,
+    "memory_embedding": _MUTABLE,
+    "memory_conflict": _MUTABLE,
+    "scope_grant": _MUTABLE,
+    "memory_version": _FULL,
+    "memory_derivation": _FULL,
+    "job": _FULL,
+    "predicate_schema": frozenset({"SELECT"}),
+}
 
 
 class RlsProvisioningError(InvalidParameterValue):
@@ -124,9 +141,7 @@ async def verify_runtime_role(connection: AsyncConnection, role_name: str) -> No
 
 def expected_grants(relation: str) -> frozenset[str]:
     """Return the exact privilege set the runtime role must hold on ``relation``."""
-    if relation in USER_TABLES:
-        return USER_TABLE_GRANTS
-    return CATALOG_GRANTS.get(relation, frozenset())
+    return TABLE_GRANTS.get(relation, frozenset())
 
 
 async def privilege_violations(connection: AsyncConnection, schema_name: str, role_name: str) -> list[str]:
@@ -213,6 +228,7 @@ async def provision_runtime_role(
 
 
 __all__ = [
+    "TABLE_GRANTS",
     "USER_TABLES",
     "RlsProvisioningError",
     "expected_grants",

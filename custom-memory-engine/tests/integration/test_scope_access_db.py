@@ -10,8 +10,6 @@ import itertools
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import LiteralString, cast
 from uuid import uuid4
 
 import pytest
@@ -22,10 +20,10 @@ from psycopg.errors import CheckViolation, InsufficientPrivilege, RaiseException
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.scope.access import Selector, read_predicate, resolve, row_visible
 from custom_memory_engine.security import provision_runtime_role, tenant_scope
+from tests.integration.schema import apply_migrations
 
 pytestmark = pytest.mark.integration
 
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema"
 T0 = datetime(2026, 3, 10, tzinfo=UTC)
 ROWS = [
     (path, visibility)
@@ -43,8 +41,7 @@ async def env() -> AsyncIterator[tuple[AsyncConnection, str, str]]:
     async with await AsyncConnection.connect(url, autocommit=True, connect_timeout=5) as conn:
         await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        for name in ("001_full_schema.sql", "002_scope_grants.sql"):
-            await conn.execute(cast(LiteralString, (SCHEMA_DIR / name).read_text(encoding="utf-8")), prepare=False)
+        await apply_migrations(conn)
         await provision_runtime_role(conn, schema, role)
         for user in ("alice", "bob", "carol"):
             await conn.execute("SELECT set_config('app.user_id', %s, false)", (user,))
@@ -130,8 +127,11 @@ async def test_grantee_cannot_revoke_or_extend_a_grant(env) -> None:
     async with tenant_scope(conn, "bob", role=role):
         cursor = await conn.execute("UPDATE scope_grant SET revoked_at = %s", (T0,))
         assert cursor.rowcount == 0
-        cursor = await conn.execute("DELETE FROM scope_grant")
-        assert cursor.rowcount == 0
+    with pytest.raises(InsufficientPrivilege):  # grants are revoked, never deleted (V2-D54): not even the owner
+        async with tenant_scope(conn, "alice", role=role):
+            await conn.execute("DELETE FROM scope_grant")
+    cursor = await conn.execute("SELECT count(*) FROM scope_grant WHERE id = 'g1' AND revoked_at IS NULL")
+    assert (await cursor.fetchone() or (0,))[0] == 1
 
 
 async def test_sql_predicate_agrees_with_reference_semantics_on_every_row(env) -> None:

@@ -1,7 +1,8 @@
 name: CI
 
-# Root application (app/, evals/) lint, format and type check. Runs on every PR and on main:
-# root `ruff check .` also covers custom-memory-engine/, so a path filter here would be unsafe.
+# Root application (app/, evals/) lint, format and type check, plus validation of every workflow file
+# (actionlint). Runs on every PR and on main: root `ruff check .` also covers custom-memory-engine/, so a path
+# filter here would be unsafe.
 
 on:
   pull_request:
@@ -34,3 +35,14 @@ jobs:
         run: uv run --no-sync ruff format --check .
       - name: pyright
         run: uv run --no-sync pyright
+
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - name: actionlint (every workflow and composite action reference)
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo
+          rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+          -color

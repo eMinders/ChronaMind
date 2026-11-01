@@ -1,4 +1,4 @@
--- Migration 5: user-model facet tag and retention floors (M8) - E-020, V2-D26, V2-D29, V2-D10.
+-- Migration 6: user-model facet tag and retention floors (M8) - E-020, V2-D26, V2-D29, V2-D10.
 --
 --   um_facet   nullable tag marking an artifact as part of the evolving user model. The user model is a VIEW over
 --              artifacts (V2-D26), so it needs no table and no extra deletion channel. Exactly the six canonical
@@ -7,7 +7,7 @@
 --              until explicitly retired (V2-D29). Without the floor, expiring working memory would silently delete
 --              knowledge - the v1 archival bug in a new place (V2-D10).
 --
--- Requires M1 (004): the floor reads `kind` and `retention`. v1 has no `working`/`session` values and every backfilled
+-- Requires M1 (005): the floor reads `kind` and `retention`. v1 has no `working`/`session` values and every backfilled
 -- row is `durable`, so validating the CHECK against existing data cannot fail; um_facet starts NULL for every row.
 -- Additive: no existing object is altered, only a column, two CHECKs and an index are added.
 

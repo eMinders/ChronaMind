@@ -4,7 +4,10 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 
 | File | Role |
 |---|---|
-| `001_full_schema.sql` | Tables, invariants 1–4/7/9 constraints, `clock_now()`, `guard_update()`, RLS scaffolding |
+| `001_full_schema.sql` | Migration 1: tables, invariants 1–4/7/9/10 constraints, `clock_now()`, `guard_update()`, RLS policies |
+| `002_scope_grants.sql` | Migration 2: `scope_grant` (read-membership ACL, `V2-D36`) |
+| `003_association_cap.sql` | Migration 3: `enforce_association_cap()` (`V2-D13`) |
+| `004_tenant_integrity.sql` | Migration 4 (`V2-D54`): every intra-tenant foreign key composite on `(id, user_id)`; every engine function pinned to `search_path = <schema>, pg_catalog, pg_temp`; grants are never deleted |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
@@ -33,7 +36,8 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Versions **1-6** (`001_full_schema.sql` to `006_lifecycle_guard.sql`) are currently registered.
+and application time. Migrations **1–7** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
 `status` reads without creating schema objects and reports `unapplied`, `applied`,
@@ -55,13 +59,13 @@ the runner records actual extension versions, rather than silently upgrading the
 Clean reset removes data in the known managed tables and recreates migration 1.
 It can repair known catalog drift after explicit confirmation. Invalid/missing
 history, unknown versions and source-checksum drift are refused. The runner drops
-known tables together with **`RESTRICT`**, then the three known functions and the
+known tables together with **`RESTRICT`**, then the known functions (`migrate.FUNCTIONS`) and the
 schema, also with `RESTRICT`. External dependencies or unknown remaining objects
 make reset fail and roll back; no cross-schema `CASCADE` is used. A failed reapply
 also restores the original rows, table identities and history. Normal operation
 must stop before an operator intentionally resets its namespace.
 
-## Migration 4: independent axes (`004_axes.sql`, `E-010`, M1 + M7)
+## Migration 5: independent axes (`005_axes.sql`, `E-010`, M1 + M7)
 
 Adds `kind`, `lifecycle` and `retention` to `memory_version` (appended as columns 21-23, `NOT NULL`, exact `CHECK`
 enums), backfills every existing row, and keeps them consistent with the v1 `layer`/`status` columns during the
@@ -82,8 +86,8 @@ dual-write window. The mapping is the approved one (`V2-D38`; `model/axes.py::V1
   of the immutable `layer`, so the change is refused twice.
 * **Not here.** Lifecycle transition legality (`E-016`), retention floors (`E-020`), scope (`E-011`), dropping `layer`.
   The window ends when the last v1 reader of `layer`/`status` is removed; that is an owner decision.
-* **Rollback.** `rollback/004_axes.sql` (run it in one transaction; the runner never executes it) restores the
-  pre-M1 schema: the catalog fingerprint afterwards equals the one recorded for version 3. After a re-apply every
+* **Rollback.** `rollback/005_axes.sql` (run it in one transaction; the runner never executes it) restores the
+  pre-M1 schema: the catalog fingerprint afterwards equals the one recorded for version 4. After a re-apply every
   catalog property is identical except that the three re-added columns have attribute numbers 23-25 instead of
   20-22, because PostgreSQL never reuses a dropped attribute number.
 * **Applying to existing data.** The backfill rewrites every row and re-fires the provenance check, which the
@@ -92,18 +96,18 @@ dual-write window. The mapping is the approved one (`V2-D38`; `model/axes.py::V1
 
 Tested by `tests/integration/test_migration_m1.py`.
 
-## Migration 5: facet tag and retention floors (`005_facet_floors.sql`, `E-020`, M8)
+## Migration 6: facet tag and retention floors (`006_facet_floors.sql`, `E-020`, M8)
 
 Adds the nullable `um_facet` tag (exactly `preference | goal | constraint | context | decision_pattern |
 meta_preference`; `inferred_preference` is rejected because inference is a lifecycle, `USER_MODEL.md` section 2.1) and
 the **retention floor**: `kind IN ('claim','abstraction')` implies `retention = 'durable'`, so only episodes and
 procedures may be `working` or `session` (`V2-D29`). Both are table `CHECK` constraints, so they hold on `INSERT` and
 `UPDATE` for every writer. The index `(user_id, um_facet) WHERE um_facet IS NOT NULL` serves facet-filtered queries per
-user; `E-011` recreates it on its scope column. Requires migration 4. Every existing row keeps `um_facet` `NULL` and
-already satisfies the floor (v1 has no `working`/`session` value). Rollback: `rollback/005_facet_floors.sql` (drops
+user; `E-011` recreates it on its scope column. Requires migration 5. Every existing row keeps `um_facet` `NULL` and
+already satisfies the floor (v1 has no `working`/`session` value). Rollback: `rollback/006_facet_floors.sql` (drops
 the tags). Purge and expiry behaviour is `E-026`'s. Tested by `tests/integration/test_retention_floors.py`.
 
-## Migration 6: the lifecycle guard (`006_lifecycle_guard.sql`, `E-016`)
+## Migration 7: the lifecycle guard (`007_lifecycle_guard.sql`, `E-016`)
 
 The §2.3 transition table is closed in the database, for every writer (direct SQL under a restricted role included):
 
@@ -124,7 +128,7 @@ The §2.3 transition table is closed in the database, for every writer (direct S
 * **Decision (a)** (does `I10` apply to explicit withdrawal?) is unmade. As the issue instructs, `(S)` or `(C)` is
   required for system-initiated retirement only, which is migration 1's archival trigger on `status = 'archived'`.
 
-Rollback: `rollback/006_lifecycle_guard.sql`. Tested by `tests/integration/test_lifecycle_transitions.py`.
+Rollback: `rollback/007_lifecycle_guard.sql`. Tested by `tests/integration/test_lifecycle_transitions.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
@@ -151,7 +155,7 @@ verification command. The migration CLI never executes it on runtime data.
 
 | Invariant | Enforcement site in this DDL | Notes |
 |---|---|---|
-| **Invariant 1** | Constraint trigger `trg_memory_version_provenance` on `memory_version`, function `enforce_provenance()`, `DEFERRABLE INITIALLY DEFERRED` | Extended by migration 6 (`E-016`) with the lifecycle record obligations. Commit of `active`/`archived` requires ≥1 `memory_evidence` row or ≥1 outgoing `memory_derivation` row. `bitemporal_on_full.sql` disables it because that harness inserts believed rows without evidence, and re-enables it as its final statement, so a replay never leaves a persistent database with invariant 1 off. |
+| **Invariant 1** | Constraint trigger `trg_memory_version_provenance` on `memory_version`, function `enforce_provenance()`, `DEFERRABLE INITIALLY DEFERRED` | Extended by migration 7 (`E-016`) with the lifecycle record obligations. Commit of `active`/`archived` requires ≥1 `memory_evidence` row or ≥1 outgoing `memory_derivation` row. `bitemporal_on_full.sql` disables it because that harness inserts believed rows without evidence, and re-enables it as its final statement, so a replay never leaves a persistent database with invariant 1 off. |
 | **Invariant 2** | `CHECK` constraints `valid_wellformed`, `recorded_iff_believed`, `recorded_wellformed` on `memory_version` | Same predicates as the reduced schema. |
 | **Invariant 3** | `clock_now()` reads `app.clock` then `transaction_timestamp()`; `BEFORE UPDATE` trigger `trg_memory_version_guard_update` / `guard_update()` | One instant per transaction, so `recorded_range` bounds written by several statements share `c` (R1). Post-insert updates allowed only for `status`, `archival_branch` (only together with `status = 'archived'`), staging-to-active `recorded_range = [clock_now(), ∞)`, and closing `upper(recorded_range)` to `clock_now()`. Replay monotonicity remains a harness/`RL-044` concern. |
 | **Invariant 4** | `EXCLUDE USING gist` constraint `no_bitemporal_overlap` (`btree_gist`) | Partial: `single_valued AND status IN ('active','archived')`. Per-user advisory locks stay in `RL-042`. |

@@ -9,7 +9,6 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import LiteralString, cast
 from uuid import uuid4
 
@@ -30,10 +29,10 @@ from custom_memory_engine.engine.transactions import (
     CandidateVersionInput,
     commit_initial_version,
 )
+from tests.integration.schema import apply_migrations
 
 pytestmark = pytest.mark.integration
 
-SCHEMA_SQL = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema/001_full_schema.sql"
 START = datetime(2026, 3, 10, tzinfo=UTC)
 APRIL = datetime(2026, 4, 1, tzinfo=UTC)
 JUNE = datetime(2026, 6, 1, tzinfo=UTC)
@@ -51,7 +50,7 @@ async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
     ) as conn:
         await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await conn.execute(cast(LiteralString, SCHEMA_SQL.read_text(encoding="utf-8")), prepare=False)
+        await apply_migrations(conn)
         await conn.execute(
             "INSERT INTO predicate_schema VALUES "
             "('diet', 'single', 'semantic'), ('hobby', 'multi', 'persona'), ('city', 'single', 'semantic')"

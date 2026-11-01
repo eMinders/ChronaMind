@@ -100,9 +100,7 @@ def evidence_supported(spans: Sequence[str], turns: Sequence[tuple[str, str]]) -
     return all(any(span and span in content for content in user_turns) for span in spans)
 
 
-def classify_assertion(
-    mode: AssertionMode, *, calibrated_confidence: Mapping[str, float] | None = None, confidence: float | None = None
-) -> GateDecision | None:
+def classify_assertion(mode: AssertionMode) -> GateDecision | None:
     """Map assertion mode to a decision; ``None`` means "continue to conflict check"."""
     if mode == "asserted":
         return None
@@ -150,7 +148,11 @@ def evaluate(
             return GateDecision("reject", "instruction_injection", tuple(checked), "rejected")
 
     if "confidence" in enabled and calibration is not None and candidate.confidence is not None:
-        threshold = calibration.get(candidate.predicate_key) or calibration.get("*")
+        # A per-predicate threshold wins even when it is 0.0 (accept any confidence): ``or`` would let the
+        # global "*" threshold override it because 0.0 is falsy.
+        threshold = calibration.get(candidate.predicate_key)
+        if threshold is None:
+            threshold = calibration.get("*")
         if threshold is not None and candidate.confidence < threshold:
             checked.append("confidence")
             return GateDecision("hold", "below_calibrated_confidence", tuple(checked), "conflict_pending")
