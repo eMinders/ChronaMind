@@ -7,6 +7,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 | `001_full_schema.sql` | Migration 1: tables, invariants 1–4/7/9/10 constraints, `clock_now()`, `guard_update()`, RLS policies |
 | `002_scope_grants.sql` | Migration 2: `scope_grant` (read-membership ACL, `V2-D36`) |
 | `003_association_cap.sql` | Migration 3: `enforce_association_cap()` (`V2-D13`) |
+| `005_axes.sql` | Migration 5 (`E-010`, M1 + M7): `kind`, `lifecycle`, `retention`, their backfill and the dual-write window |
 | `004_tenant_integrity.sql` | Migration 4 (`V2-D54`): every intra-tenant foreign key composite on `(id, user_id)`; every engine function pinned to `search_path = <schema>, pg_catalog, pg_temp`; grants are never deleted |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
@@ -36,7 +37,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–4** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–5** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -64,6 +65,37 @@ schema, also with `RESTRICT`. External dependencies or unknown remaining objects
 make reset fail and roll back; no cross-schema `CASCADE` is used. A failed reapply
 also restores the original rows, table identities and history. Normal operation
 must stop before an operator intentionally resets its namespace.
+
+## Migration 5: independent axes (`005_axes.sql`, `E-010`, M1 + M7)
+
+Adds `kind`, `lifecycle` and `retention` to `memory_version` (appended as columns 21-23, `NOT NULL`, exact `CHECK`
+enums), backfills every existing row, and keeps them consistent with the v1 `layer`/`status` columns during the
+dual-write window. The mapping is the approved one (`V2-D38`; `model/axes.py::V1_BACKFILL_SQL`):
+`episodic/semantic/opinion/persona -> episode/claim/claim/abstraction`; an `active` row is `observed` (episode),
+`inferred` (persona, or a claim with a derivation row) or `asserted`; `conflict_pending -> contested`;
+`archived`, `rejected` and `candidate -> retired`; retention is `durable` for every v1 row. `archived` is a
+**lifecycle** (`retired`), never a retention value (M7). `layer` stays stored (`V2-D49` D6).
+
+* **One mapping, one place.** `sync_memory_version_axes` (a `BEFORE INSERT OR UPDATE` trigger) holds the mapping.
+  The backfill is a no-op `UPDATE` that fires it, so the backfill and every later write use the same code, and no v1
+  write path can bypass it (none had to change). Code that supplies the axes itself is validated against
+  `layer`/`status`, not overwritten: a contradiction raises `axes_kind_inconsistent_with_layer` or
+  `axes_lifecycle_inconsistent_with_status`.
+* **Derivation.** v1 inserts a version before its derivation rows, so a derived claim is first `asserted` and
+  `mark_derived_version_inferred` (an `AFTER INSERT` trigger on `memory_derivation`) makes it `inferred`.
+* **`kind` is immutable.** `guard_update` is replaced with `kind` in its immutable tuple; `kind` is also a function
+  of the immutable `layer`, so the change is refused twice.
+* **Not here.** Lifecycle transition legality (`E-016`), retention floors (`E-020`), scope (`E-011`), dropping `layer`.
+  The window ends when the last v1 reader of `layer`/`status` is removed; that is an owner decision.
+* **Rollback.** `rollback/005_axes.sql` (run it in one transaction; the runner never executes it) restores the
+  pre-M1 schema: the catalog fingerprint afterwards equals the one recorded for version 4. After a re-apply every
+  catalog property is identical except that the three re-added columns have attribute numbers 23-25 instead of
+  20-22, because PostgreSQL never reuses a dropped attribute number.
+* **Applying to existing data.** The backfill rewrites every row and re-fires the provenance check, which the
+  migration flushes (`SET CONSTRAINTS ... IMMEDIATE`) before it alters the table. Run it with the queue drained
+  (`MIGRATION_RISK.md` M1); at research scale it is one short transaction.
+
+Tested by `tests/integration/test_migration_m1.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
@@ -125,8 +157,8 @@ verification command. The migration CLI never executes it on runtime data.
 `tests/integration/test_full_schema.py` applies `001_full_schema.sql` into a throwaway schema, checks the twelve tables, the named constraints, `FORCE ROW LEVEL SECURITY`, the deferred provenance trigger, `guard_update()`, and both `JOB` unique constraints, then replays `bitemporal_on_full.sql` and requires exactly 43 `PASS` results. Run it against the disposable database from `compose.yaml`:
 
 ```bash
-CME_TEST_DATABASE_URL=postgresql://cme_test:cme_disposable_local_only@127.0.0.1:5433/cme_compatibility \
-  uv run pytest -q tests/integration/test_full_schema.py
+export CME_TEST_DATABASE_URL=postgresql://cme_test:cme_disposable_local_only@127.0.0.1:5433/cme_compatibility  # pragma: allowlist secret
+uv run pytest -q tests/integration/test_full_schema.py
 ```
 
 The test skips when `CME_TEST_DATABASE_URL` is absent. CI runs it against the pinned `pgvector/pgvector:0.8.7-pg16-bookworm` image (`D-25`).
