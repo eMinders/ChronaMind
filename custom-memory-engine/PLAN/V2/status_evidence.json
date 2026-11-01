@@ -41,12 +41,15 @@
       ]
     },
     "RL-005": {
-      "kind": "config",
+      "kind": "code",
       "files": [
-        "../.github/workflows/custom-memory-engine.yaml"
+        "../.github/workflows/custom-memory-engine.yaml",
+        "../.github/actions/setup-cme/action.yml"
       ],
-      "tests": [],
-      "note": "verified only by a remote CI run; no local test"
+      "tests": [
+        "tests/test_ci_workflow.py"
+      ],
+      "note": "gates, pinned images/actions and read-only token pinned by a local test (r10)"
     },
     "RL-006": {
       "kind": "code",
@@ -423,10 +426,17 @@
       "note": "T1-T5 harness; T5 measured on seven channels; fixed deletion of (C)-archived memories (r10, V2-D55)"
     },
     "RL-091": {
-      "kind": "none",
+      "kind": "code",
       "files": [
-        "tests/integration/invariants/test_invariants_1_to_9.py"
-      ]
+        "PLAN/V2/INVARIANT_LEDGER.md",
+        "tests/test_invariants_declared_and_enforced.py"
+      ],
+      "tests": [
+        "tests/test_invariants_declared_and_enforced.py",
+        "tests/integration/test_full_schema.py",
+        "tests/integration/test_tenant_integrity_db.py"
+      ],
+      "note": "every v1 invariant has a resolved enforcement site and a CI-run test on the fully migrated schema; consolidated rather than duplicated (r10, V2-D56)"
     },
     "RL-092": {
       "kind": "code",
