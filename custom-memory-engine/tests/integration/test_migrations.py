@@ -21,8 +21,7 @@ from pydantic import SecretStr, ValidationError
 
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.schema import migrate
-
-ROLLBACK_M1 = Path(migrate.__file__).parent / "rollback" / "004_axes.sql"
+from tests.integration.rollbacks import rollback_sql
 
 CME_ROOT = Path(__file__).resolve().parents[2]
 CANARY = "private-migration-test-canary"
@@ -724,9 +723,11 @@ async def test_a_version_one_schema_is_pending_and_apply_advances_it_in_order(
     await runner.apply()
     async with connect(database) as conn:
         await seed_user(conn)
-        # Undo migration 4 (M1) first with its published rollback, so the objects below are the newest ones left;
+        # Undo migrations 4 and 5 first with their published rollbacks, so the objects below are the newest ones left;
         # re-applying it at the end then backfills the axes of the seeded rows (the upgrade path).
-        await conn.execute(cast(LiteralString, ROLLBACK_M1.read_text(encoding="utf-8")), prepare=False)
+        await conn.execute(
+            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=3)), prepare=False
+        )
         # Reconstruct the exact pre-migration-2 state: drop its objects and its history row,
         # and re-record the version-1 catalog fingerprint as the head of history.
         await conn.execute("DROP FUNCTION enforce_association_cap()")

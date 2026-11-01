@@ -33,7 +33,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Versions **1-4** (`001_full_schema.sql` to `004_axes.sql`) are currently registered.
+and application time. Versions **1-5** (`001_full_schema.sql` to `005_facet_floors.sql`) are currently registered.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
 `status` reads without creating schema objects and reports `unapplied`, `applied`,
@@ -91,6 +91,17 @@ dual-write window. The mapping is the approved one (`V2-D38`; `model/axes.py::V1
   (`MIGRATION_RISK.md` M1); at research scale it is one short transaction.
 
 Tested by `tests/integration/test_migration_m1.py`.
+
+## Migration 5: facet tag and retention floors (`005_facet_floors.sql`, `E-020`, M8)
+
+Adds the nullable `um_facet` tag (exactly `preference | goal | constraint | context | decision_pattern |
+meta_preference`; `inferred_preference` is rejected because inference is a lifecycle, `USER_MODEL.md` section 2.1) and
+the **retention floor**: `kind IN ('claim','abstraction')` implies `retention = 'durable'`, so only episodes and
+procedures may be `working` or `session` (`V2-D29`). Both are table `CHECK` constraints, so they hold on `INSERT` and
+`UPDATE` for every writer. The index `(user_id, um_facet) WHERE um_facet IS NOT NULL` serves facet-filtered queries per
+user; `E-011` recreates it on its scope column. Requires migration 4. Every existing row keeps `um_facet` `NULL` and
+already satisfies the floor (v1 has no `working`/`session` value). Rollback: `rollback/005_facet_floors.sql` (drops
+the tags). Purge and expiry behaviour is `E-026`'s. Tested by `tests/integration/test_retention_floors.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
