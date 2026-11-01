@@ -875,3 +875,16 @@ byte-identically). (d) The Suite D harness built migration 1 only; it now builds
 the deferral), `tests/integration/test_leak_scanner_db.py::test_a_cache_probe_supplements_and_never_replaces_the_storage_scan`,
 `tests/integration/test_replay_gate_db.py`; `INVARIANT_LEDGER.md`: every v1 row is `ENFORCED`
 (`test_v1_gaps_closed_in_r10_are_enforced_with_tests`). **Status:** decided and verified.
+
+### V2-D56 — W1 is specified and gated by executable requirements; status claims match evidence
+
+**Decision.** (1) Every W1 task is bound by the r10 requirements in `ROADMAP_V2.md` section 4 (migration numbering
+from `005`, composite tenant keys, pinned function `search_path`, exact privilege matrix, audit-key allowlist,
+deferrable archival triggers, and the Invariant 7-10 oracles), each enforced by a test that fails when a W1 change
+omits it; task-specific obligations are added to `E-012`, `E-039` and `E-037`. (2) `RL-091` (full-schema invariant
+suite) is satisfied by `INVARIANT_LEDGER.md` and `tests/test_invariants_declared_and_enforced.py`, which resolve a
+site and a CI-run test for every v1 invariant on the fully migrated schema; a second, duplicate suite would add
+maintenance without evidence. (3) `RL-005` (engine CI) is verified locally by `tests/test_ci_workflow.py` (every
+gate present, actions and images pinned, read-only token, workflows linted). (4) `RL-071`'s stale `Open` claim is
+corrected. **Verification.** `scripts/audit_status.py`: 0 `claimed-unverified`, no discrepancies.
+**Status:** decided and verified.

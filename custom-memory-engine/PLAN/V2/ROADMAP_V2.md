@@ -126,6 +126,19 @@ mechanical guarantee that the plan stays consistent as it is edited.
 | `E-020` | M8: `um_facet` tag + index; retention floor `CHECK` | Needed before `C-024`, not before | S |
 | `E-039` | **Public API entry point** (r9, found by `MA-017`): one callable per `API_V2.md` operation; tier and admin role from the authenticated credential; `api.contract.authorize` on every call; every condition code enforced; static error contract (§1.1). Each operation is wired as its owning task lands; it never adds an operation outside `API_V2.md` | Without it no task owns the dispatch layer, authorization or the error contract; `E-018`'s conformance suite drives the engine through it | M |
 
+**r10 requirements binding on every W1 task** (`V2-D54`, `V2-D55`; pre-W1 audit `audits/PRE_W1_INDEPENDENT_AUDIT.md`):
+1. W1 migrations are files **005+**; `migrate.MIGRATIONS` is append-only and checksum-bound.
+2. Every foreign key between two tables carrying `user_id` is composite on `(id, user_id)`, and every SQL function
+   pins `search_path = <schema>, pg_catalog, pg_temp`: catalog rules in `test_tenant_integrity_db.py` enforce both.
+3. New tables and privileges are added to `provisioning.TABLE_GRANTS` and `rls.sql` (exact matrix).
+4. New audit detail keys are added to `audit_guard.AUDIT_DETAIL_KEYS`; no content, key, subject or predicate is
+   ever audited or logged.
+5. New lifecycle or archival constraint triggers are `DEFERRABLE` and listed in `engine.deletion.ARCHIVAL_GUARD_TRIGGERS`.
+6. Oracles that must stay green: `archival/test_t1_to_t5.py` (Invariant 10), `test_replay_gate_db.py` (Invariant 9),
+   `test_audit_content_db.py` (Invariant 8), `test_tenant_integrity_db.py` and `test_scope_isolation.py` (I7).
+7. Task-specific: `E-012` adds a database-side watermark so recorded time never moves backwards (T-28); `E-039`
+   generates every primary key server-side (T-27) and refuses unknown grant principals with `forbidden` (T-30).
+
 **G1 (type-completeness).** `E-018` passes for every legal tuple; v1 suite (1,374 passing of 1,395 collected at full CI scope,
 adapted for renamed columns) green; the six requested memory types each creatable,
 queryable, deletable via config only; `MA-011`'s isolation test green.
@@ -170,6 +183,10 @@ domains and record why tool-grounded memory needs a different substrate.
 | `E-036` | **Cost instrumentation**: per-stage latency, candidate counts, tokens into `Usage` | Reuse `harness/models.py::Usage` | M |
 | `E-037` | **Deletion-through-cognition, implemented now** *(moved from `R-014`/W6)*: unbounded closure with cycle detection, deepest-first dependent resolution, `stale` via closure hash, retirement when support < threshold, **11 channels** | Must exist before W5 writes any abstraction, or W5 is built on an undeletable substrate | L |
 | `E-038` | **Staleness derivation** (§9.2): `stale` computed from closure hash, never stored as a flag; `verified ∧ stale` legal and rendered in `hypotheses`. Includes a closure-hash cache with an invalidation path, since recomputing it per query is the obvious performance trap. | Closes the disagreement hole; `V2-D24` | M |
+
+**r10 (`THREAT_MODEL.md` T-29, S-08), binding on `E-037`:** deletion receipts store `target_ref` as a keyed digest
+(HMAC-SHA256, deployment key), not plaintext; deleting a memory can also delete its **exclusive** evidence sources in
+the same transaction (proposal section 7.7, *Re-learning*), with the turn/source grant widened only for that path.
 
 **G3 (channel + deletion integrity).** `E-035` passes under fuzzing and a red-team
 attempt; `E-037`'s chain-longer-than-any-bound test is green; the extended suite `D`
