@@ -22,8 +22,6 @@ from pydantic import SecretStr, ValidationError
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.schema import migrate
 
-ROLLBACK_M1 = Path(migrate.__file__).parent / "rollback" / "004_axes.sql"
-
 CME_ROOT = Path(__file__).resolve().parents[2]
 CANARY = "private-migration-test-canary"
 EXPLICIT_URL = f"postgresql://cme_migrator:{CANARY}@127.0.0.1:5433/cme_lab"
@@ -717,24 +715,16 @@ async def test_clean_reset_passes_all_forty_three_assertions_against_the_real_fu
 
 @pytest.mark.integration
 async def test_a_version_one_schema_is_pending_and_apply_advances_it_in_order(
-    database: migrate.MigrationConfig,
+    database: migrate.MigrationConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Upgrade path: a schema installed before migration 2 existed advances without data loss."""
+    """Upgrade path: a schema installed when only migration 1 shipped advances through every later one."""
     runner = migrate.MigrationRunner(database)
-    await runner.apply()
+    with monkeypatch.context() as shipped_then:
+        shipped_then.setattr(migrate, "MIGRATIONS", migrate.MIGRATIONS[:1])
+        installed = await runner.apply()
+        assert (installed.status.state, installed.status.version) == ("applied", 1)
     async with connect(database) as conn:
         await seed_user(conn)
-        # Undo migration 4 (M1) first with its published rollback, so the objects below are the newest ones left;
-        # re-applying it at the end then backfills the axes of the seeded rows (the upgrade path).
-        await conn.execute(cast(LiteralString, ROLLBACK_M1.read_text(encoding="utf-8")), prepare=False)
-        # Reconstruct the exact pre-migration-2 state: drop its objects and its history row,
-        # and re-record the version-1 catalog fingerprint as the head of history.
-        await conn.execute("DROP FUNCTION enforce_association_cap()")
-        await conn.execute("DROP TABLE scope_grant")
-        await conn.execute("DROP FUNCTION guard_scope_grant_update()")
-        await conn.execute("DELETE FROM _cme_schema_migrations WHERE version > 1")
-        catalog = await runner._catalog(conn)
-        await conn.execute("UPDATE _cme_schema_migrations SET catalog_sha256 = %s WHERE version = 1", (catalog,))
     pending = await runner.status()
     assert (pending.state, pending.version) == ("pending", 1)
     result = await runner.apply()

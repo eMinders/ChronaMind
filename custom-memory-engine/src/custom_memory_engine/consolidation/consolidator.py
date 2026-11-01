@@ -370,7 +370,6 @@ async def consolidate(
         "memory_consolidated",
         user_id=user_id,
         version_id=plan.version_id,
-        memory_key=plan.memory_key,
         source_count=len(plan.source_version_ids),
         depth=plan.source_depth,
         layer=plan.layer,

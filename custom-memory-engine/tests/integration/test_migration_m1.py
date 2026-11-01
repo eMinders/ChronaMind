@@ -33,7 +33,7 @@ from custom_memory_engine.schema import migrate
 
 pytestmark = pytest.mark.integration
 
-ROLLBACK_M1 = Path(migrate.__file__).parent / "rollback" / "004_axes.sql"
+ROLLBACK_M1 = Path(migrate.__file__).parent / "rollback" / "005_axes.sql"
 START = datetime(2026, 3, 10, tzinfo=UTC)
 APRIL = datetime(2026, 4, 1, tzinfo=UTC)
 JUNE = datetime(2026, 6, 1, tzinfo=UTC)
@@ -184,7 +184,7 @@ COMBINATIONS = [
 async def test_backfill_is_total_and_maps_every_v1_layer_and_status_combination(
     database: tuple[DatabaseConfig, str],
 ) -> None:
-    """Acceptance 1 and 2: a database populated at v3 gets no NULL axis, and every combination maps per V2-D38."""
+    """Acceptance 1 and 2: a database populated at v4 gets no NULL axis, and every combination maps per V2-D38."""
     async with connect(database) as conn:
         await conn.execute(
             cast(LiteralString, ROLLBACK_M1.read_text(encoding="utf-8")), prepare=False
@@ -501,21 +501,21 @@ async def test_apply_rollback_reapply_restores_the_catalog_exactly_each_time(
         await seed_turn(conn, "t1", "I am vegetarian", START)
         await insert_active(conn, "keep", layer="opinion")
     _, version, columns = await state()
-    assert version == migrate.VERSION == 4 and len(columns) == 3
+    assert version == migrate.VERSION == 5 and len(columns) == 3
     async with connect(database) as conn:
         first_apply = await normalised_catalog(conn, schema)
 
     async with connect(database) as conn:
         await conn.execute(cast(LiteralString, ROLLBACK_M1.read_text(encoding="utf-8")), prepare=False)
-        v3_catalog = await rows(conn, "SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = 3")
-        assert await runner._catalog(conn) == v3_catalog[0][0]  # byte-identical to the pre-M1 schema
+        v4_catalog = await rows(conn, "SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = 4")
+        assert await runner._catalog(conn) == v4_catalog[0][0]  # byte-identical to the pre-M1 schema
         assert await rows(conn, "SELECT id, layer, status FROM memory_version") == [("keep", "opinion", "active")]
     status = await runner.status()
-    assert (status.state, status.version) == ("pending", 3)
+    assert (status.state, status.version) == ("pending", 4)
 
     assert (await runner.apply()).action == "applied"
     _, version, columns = await state()
-    assert (version, len(columns)) == (4, 3)
+    assert (version, len(columns)) == (5, 3)
     async with connect(database) as conn:
         assert await normalised_catalog(conn, schema) == first_apply
         assert (await assert_axes_consistent(conn))["keep"] == ("claim", "asserted", "durable")  # re-backfilled

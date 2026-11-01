@@ -1,6 +1,6 @@
--- Rollback of migration 4 (M1 + M7, E-010). Run in ONE transaction by whoever operates the schema; the forward
+-- Rollback of migration 5 (M1 + M7, E-010). Run in ONE transaction by whoever operates the schema; the forward
 -- runner never executes this file. Restores the pre-M1 schema exactly: the catalog fingerprint afterwards equals the
--- one recorded for version 3 (tests/integration/test_migration_m1.py proves it, and that re-applying works).
+-- one recorded for version 4 (tests/integration/test_migration_m1.py proves it, and that re-applying works).
 --
 -- Safe while `layer` is stored (V2-D49 D6). `layer` is never rewritten by M1, so nothing else needs restoring; once a
 -- later change drops `layer`, this rollback can no longer restore `semantic` versus `opinion`.
@@ -61,9 +61,23 @@ BEGIN
 END
 $$;
 
+-- CREATE OR REPLACE reset the function's settings; restore the V2-D54 pin of migration 4.
+DO $pin$
+DECLARE
+  engine_schema text := pg_catalog.current_schema();
+  fn text;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY['guard_update()'] LOOP
+    EXECUTE pg_catalog.format(
+      'ALTER FUNCTION %I.%s SET search_path = %I, pg_catalog, pg_temp', engine_schema, fn, engine_schema
+    );
+  END LOOP;
+END
+$pin$;
+
 ALTER TABLE memory_version
   DROP CONSTRAINT memory_version_kind_check,
   DROP CONSTRAINT memory_version_lifecycle_check,
   DROP CONSTRAINT memory_version_retention_check;
 ALTER TABLE memory_version DROP COLUMN kind, DROP COLUMN lifecycle, DROP COLUMN retention;
-DELETE FROM _cme_schema_migrations WHERE version = 4;
+DELETE FROM _cme_schema_migrations WHERE version = 5;

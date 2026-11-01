@@ -48,7 +48,8 @@ Per the Source Evidence Ledger §C:
 - **LongMemEval**: 30 abstention, 56 single-session-assistant, 470 answerable (cleaned release at commit `98d7416`).
 - **LoCoMo**: 10 conversations, 1,986 questions; four questions have empty evidence.
 
-Any deviation at adapter time is a bug and triggers `[RL-BUG]` reporting per [`../../PLAN/templates/issue_bug.md`](../../PLAN/templates/issue_bug.md).
+Any deviation at adapter time is a bug: open a GitHub issue titled `[RL-BUG] <adapter>: <deviation>` with the
+expected and observed counts, the source manifest entry and the command that reproduced it.
 
 ## Licence posture
 

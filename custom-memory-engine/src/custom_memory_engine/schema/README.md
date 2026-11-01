@@ -4,7 +4,10 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 
 | File | Role |
 |---|---|
-| `001_full_schema.sql` | Tables, invariants 1–4/7/9 constraints, `clock_now()`, `guard_update()`, RLS scaffolding |
+| `001_full_schema.sql` | Migration 1: tables, invariants 1–4/7/9/10 constraints, `clock_now()`, `guard_update()`, RLS policies |
+| `002_scope_grants.sql` | Migration 2: `scope_grant` (read-membership ACL, `V2-D36`) |
+| `003_association_cap.sql` | Migration 3: `enforce_association_cap()` (`V2-D13`) |
+| `004_tenant_integrity.sql` | Migration 4 (`V2-D54`): every intra-tenant foreign key composite on `(id, user_id)`; every engine function pinned to `search_path = <schema>, pg_catalog, pg_temp`; grants are never deleted |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
@@ -33,7 +36,8 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Versions **1-4** (`001_full_schema.sql` to `004_axes.sql`) are currently registered.
+and application time. Migrations **1–5** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
 `status` reads without creating schema objects and reports `unapplied`, `applied`,
@@ -55,7 +59,7 @@ the runner records actual extension versions, rather than silently upgrading the
 Clean reset removes data in the known managed tables and recreates migration 1.
 It can repair known catalog drift after explicit confirmation. Invalid/missing
 history, unknown versions and source-checksum drift are refused. The runner drops
-known tables together with **`RESTRICT`**, then the three known functions and the
+known tables together with **`RESTRICT`**, then the known functions (`migrate.FUNCTIONS`) and the
 schema, also with `RESTRICT`. External dependencies or unknown remaining objects
 make reset fail and roll back; no cross-schema `CASCADE` is used. A failed reapply
 also restores the original rows, table identities and history. Normal operation
