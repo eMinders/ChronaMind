@@ -39,10 +39,14 @@ from custom_memory_engine.deletion.closure import (
 )
 from custom_memory_engine.deletion.rederive import ReDerivationError, SummaryBuilder, rederive_summary
 from custom_memory_engine.engine.transactions import AblationMode
+from custom_memory_engine.security.audit_guard import content_free_details
 
 logger = structlog.get_logger(__name__)
 
 type DeletionScope = Literal["memory", "topic", "all"]
+
+# Invariant 10 constraint triggers (migration 1); deferrable, so deletion can check its final state.
+ARCHIVAL_GUARD_TRIGGERS = ("trg_memory_version_archival_invariant", "trg_memory_derivation_archival_coverage")
 
 
 class DeletionError(InvalidParameterValue):
@@ -116,6 +120,7 @@ async def delete_memory(
     requests = sql.Identifier(schema_name, "deletion_request")
     jobs = sql.Identifier(schema_name, "job")
     conflicts = sql.Identifier(schema_name, "memory_conflict")
+    archival_guards = sql.SQL(", ").join(sql.Identifier(schema_name, name) for name in ARCHIVAL_GUARD_TRIGGERS)
 
     async with connection.transaction():
         async with connection.cursor(row_factory=tuple_row) as cursor:
@@ -202,14 +207,16 @@ async def delete_memory(
                         uuid4().hex,
                         tick.instant,
                         Jsonb(
-                            {
-                                "scope": scope,
-                                "deletion_epoch": epoch,
-                                "deleted_versions": 0,
-                                "dependents": 0,
-                                "re_derived_versions": 0,
-                                "purged_jobs": 0,
-                            }
+                            content_free_details(
+                                {
+                                    "scope": scope,
+                                    "deletion_epoch": epoch,
+                                    "deleted_versions": 0,
+                                    "dependents": 0,
+                                    "re_derived_versions": 0,
+                                    "purged_jobs": 0,
+                                }
+                            )
                         ),
                     ),
                 )
@@ -298,6 +305,12 @@ async def delete_memory(
                 )
                 turn_ids = {row[0] for row in await cursor.fetchall() if row[0]}
 
+            # Invariant 10's archival triggers must judge the deletion's final state, not each statement:
+            # removing the edge from a (C)-archived source to its covering replacement is illegal in
+            # isolation but correct when that source is deleted in this same transaction (T5, RL-090).
+            # They are deferred here and re-checked IMMEDIATE below, before this function returns.
+            await cursor.execute(sql.SQL("SET CONSTRAINTS {} DEFERRED").format(archival_guards))
+
             # Remove edges before their source rows, whose foreign key is intentionally restrictive.
             edge_cleanup = list(dict.fromkeys([*purge, *surviving]))
             if edge_cleanup:
@@ -379,6 +392,9 @@ async def delete_memory(
                 )
                 purged_jobs = max(cursor.rowcount, 0)
 
+            # Retroactive check of every deferred archival-trigger event against the final state.
+            await cursor.execute(sql.SQL("SET CONSTRAINTS {} IMMEDIATE").format(archival_guards))
+
             await cursor.execute(
                 sql.SQL(
                     "INSERT INTO {a} (id, user_id, memory_ref, event_type, event_at, details) "
@@ -390,14 +406,16 @@ async def delete_memory(
                     uuid4().hex,
                     tick.instant,
                     Jsonb(
-                        {
-                            "scope": scope,
-                            "deletion_epoch": epoch,
-                            "deleted_versions": len(purge),
-                            "dependents": len(dependents),
-                            "re_derived_versions": len(summary_rebuilds),
-                            "purged_jobs": purged_jobs,
-                        }
+                        content_free_details(
+                            {
+                                "scope": scope,
+                                "deletion_epoch": epoch,
+                                "deleted_versions": len(purge),
+                                "dependents": len(dependents),
+                                "re_derived_versions": len(summary_rebuilds),
+                                "purged_jobs": purged_jobs,
+                            }
+                        )
                     ),
                 ),
             )

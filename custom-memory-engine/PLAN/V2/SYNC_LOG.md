@@ -392,3 +392,17 @@ statistics and G-TS integrity pass; `check_plan_refs.py`, `audit_status.py --che
 0 findings; actionlint clean; `cme-v1.0.0^{}` = `490904d`. GitHub: every first-parent `main` commit of r9
 (`1f34d45`, `5a9520b`, `68408fb`, `cf938b2`, `9596516`, `a2b5f8f`, `5792116`) green in both workflows; no open
 PR; open issues are W1-W8 only. This note is a documentation-only commit on top of `5792116`.
+
+## 16. r10: independent pre-W1 audit (2026-11-01)
+
+**Authority:** Project Owner r10 instruction (full pre-W1 decision authority; W1 excluded). AI-assisted.
+Details: `audits/PRE_W1_INDEPENDENT_AUDIT.md` and the five companion reports (README rows 19-24).
+
+| Item | Result |
+|---|---|
+| Decisions | `V2-D54` (tenant integrity), `V2-D55` (v1 gaps closed, defects fixed), `V2-D56` (W1 requirements, status) |
+| PRs | #105 (migration 4), #109 (`RL-072`/`RL-090`/`RL-092`), #110 (cleanup), and the W1-readiness/report PR |
+| Critical/high fixed | cross-tenant references and deletion denial (S-01); trigger shadowing (S-02); undeletable (C)-archived memory (C-01) |
+| Invariants | every v1 ledger row `ENFORCED`; `STATUS_AUDIT.md` 0 `claimed-unverified`, no discrepancies |
+| Deleted | 9 files (stale proposal draft, contradictory blueprint, ad assets, unwired templates, unreferenced how-to) |
+| W1 | **Not started.** Seven unauthorized W1 PRs (#101-#104, #106-#108) left unmerged and unmodified |

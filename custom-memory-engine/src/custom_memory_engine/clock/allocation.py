@@ -11,6 +11,8 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 from pydantic import AwareDatetime, BaseModel, ConfigDict, field_validator, model_validator
 
+from custom_memory_engine.security.audit_guard import content_free_details
+
 
 class ClockError(InvalidParameterValue):
     """Static validation code and SQLSTATE 22023, without private input values."""
@@ -182,7 +184,7 @@ async def allocate_clock(
                     user_id,
                     uuid4().hex,
                     instant,
-                    Jsonb({"clock_mode": tick.mode, "transaction_id": transaction_id}),
+                    Jsonb(content_free_details({"clock_mode": tick.mode, "transaction_id": transaction_id})),
                 ),
             )
     return tick
