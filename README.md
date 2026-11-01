@@ -1,99 +1,22 @@
-# FastAPI LangGraph Agent Template
+# ChronaMind
 
-A production-ready template for building AI agent backends with FastAPI and LangGraph. Handles the hard parts — stateful conversations, long-term memory, tool calling, observability, rate limiting, auth — so you can focus on your agent logic.
+This repository holds two independent parts:
 
-**Built for AI engineers** who want a solid foundation, not a tutorial project.
+| Part | Where | What |
+|---|---|---|
+| **ChronaMind memory engine** (research and engine) | [`custom-memory-engine/`](custom-memory-engine/README.md) | The bi-temporal, write-governed, lineage-deletable memory engine, its benchmarks, evaluation harness and plans. The V2 plan is [`custom-memory-engine/PLAN/V2/`](custom-memory-engine/PLAN/V2/README.md). |
+| **Product application** (this directory) | `app/`, `evals/`, `alembic/` | A FastAPI + LangGraph agent service, documented below. |
 
----
-
-## Powered by Atlas Cloud — Drop-in LLM Backend for LangGraph Agents
-
-<div align="center">
-  <a href="https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=fastapi-langgraph-agent-production-ready-template">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/atlas-cloud-logo-dark.png"/>
-      <img src="docs/atlas-cloud-logo.png" alt="Atlas Cloud" width="200"/>
-    </picture>
-  </a>
-</div>
-
-[**Atlas Cloud**](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=fastapi-langgraph-agent-production-ready-template) provides an **OpenAI-compatible LLM API** that integrates seamlessly into this FastAPI + LangGraph template — no code changes to your agent graph needed. Just swap `OPENAI_BASE_URL` and `OPENAI_API_KEY` to access **DeepSeek, Qwen, GLM, Kimi, MiniMax, Gemini, Claude, GPT** and more through a single unified endpoint.
-
-The `LLMRegistry` in this template uses `langchain_openai.ChatOpenAI` — Atlas Cloud is wire-compatible, so you get instant access to 130+ curated models without touching any LangGraph logic.
-
-### Quick Setup
-
-**Step 1 — Get your free API key:** [atlascloud.ai/console/coding-plan](https://www.atlascloud.ai/console/coding-plan)
-
-**Step 2 — Update `.env.development`:**
-
-```env
-OPENAI_API_KEY=<your-atlascloud-key>
-OPENAI_BASE_URL=https://api.atlascloud.ai/v1
-DEFAULT_LLM_MODEL=deepseek-ai/deepseek-v4-pro
-```
-
-**Step 3 — Or use directly in code:**
-
-```python
-from langchain_openai import ChatOpenAI
-
-llm = ChatOpenAI(
-    model="deepseek-ai/deepseek-v4-pro",
-    openai_api_base="https://api.atlascloud.ai/v1",
-    openai_api_key="<your-atlascloud-key>",
-    max_tokens=512,  # reasoning model requires max_tokens >= 512
-)
-```
-
-This works as a drop-in replacement anywhere `ChatOpenAI` is used in your LangGraph agent — including the `LLMRegistry`, the circular fallback service, and mem0 long-term memory.
-
-<details>
-<summary>📋 Model catalog — a current selection (136 available in total)</summary>
-
-| Model ID | Provider |
-|---|---|
-| `openai/gpt-5.6-luna` | OpenAI |
-| `openai/gpt-5.6-sol` | OpenAI |
-| `openai/gpt-5.6-terra` | OpenAI |
-| `openai/gpt-5.5` | OpenAI |
-| `openai/gpt-5.4` | OpenAI |
-| `openai/gpt-5.4-mini` | OpenAI |
-| `openai/gpt-5.4-nano` | OpenAI |
-| `openai/gpt-5.3-codex` | OpenAI |
-| `openai/gpt-5.2` | OpenAI |
-| `anthropic/claude-opus-5` | Anthropic |
-| `anthropic/claude-sonnet-5` | Anthropic |
-| `anthropic/claude-opus-4.8` | Anthropic |
-| `anthropic/claude-sonnet-4.6` | Anthropic |
-| `anthropic/claude-haiku-4.5-20251001` | Anthropic |
-| `google/gemini-3.5-flash` | Google |
-| `google/gemini-3.1-pro-preview` | Google |
-| `google/gemini-3.1-flash-lite` | Google |
-| `google/gemini-2.5-pro` | Google |
-| `deepseek-ai/deepseek-v4-pro` | DeepSeek |
-| `deepseek-ai/deepseek-v4-flash` | DeepSeek |
-| `qwen/qwen3.8-max` | Alibaba Qwen |
-| `qwen/qwen3.7-plus` | Alibaba Qwen |
-| `qwen/qwen3.5-plus` | Alibaba Qwen |
-| `moonshotai/kimi-k3` | Moonshot AI |
-| `moonshotai/kimi-k2.7-code` | Moonshot AI |
-| `zai-org/glm-5.2` | Zhipu AI |
-| `zai-org/glm-5.1` | Zhipu AI |
-| `zai-org/glm-5` | Zhipu AI |
-| `minimaxai/minimax-m3` | MiniMax |
-| `minimaxai/minimax-m2.7` | MiniMax |
-| `xai/grok-4.6` | xAI |
-| `xai/grok-4.5` | xAI |
-| `bytedance/doubao-seed-2.1-pro-260628` | ByteDance |
-| `xiaomi/mimo-v2.5-pro` | Xiaomi |
-| `tencent/hy3` | Tencent |
-
-[View live model list →](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=fastapi-langgraph-agent-production-ready-template)
-
-</details>
+The two share no code, dependencies, database or runtime (`custom-memory-engine/PLAN/INDEPENDENCE_BOUNDARY.md`);
+each has its own CI workflow (`.github/workflows/README.md`).
 
 ---
+
+# Product application (FastAPI + LangGraph agent service)
+
+Built from a FastAPI + LangGraph agent template: stateful conversations, long-term memory, tool calling,
+observability, rate limiting and auth. The LLM endpoint is any OpenAI-compatible API, configured through
+`OPENAI_BASE_URL`, `OPENAI_API_KEY` and `DEFAULT_LLM_MODEL` (see `.env.example`).
 
 ## What's included
 
