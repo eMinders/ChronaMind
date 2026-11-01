@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import LiteralString, cast
+from typing import LiteralString
 from uuid import UUID, uuid4
 
 import pytest
@@ -20,11 +20,11 @@ from psycopg.errors import InsufficientPrivilege
 from custom_memory_engine.clock import ClockError, ClockTick, allocate_clock
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.queue import Job, JobIdentityConflict, NewJob, QueueError, enqueue, process_one
+from tests.integration.schema import apply_migrations
 
 pytestmark = pytest.mark.integration
 
 CME_ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_SQL = CME_ROOT / "src/custom_memory_engine/schema/001_full_schema.sql"
 BASE = datetime(2026, 3, 10, tzinfo=UTC)
 LATER = datetime(2026, 8, 20, tzinfo=UTC)
 TICK = timedelta(microseconds=1)
@@ -42,7 +42,7 @@ async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
         await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
     try:
         async with connect((config, schema)) as conn:
-            await conn.execute(cast(LiteralString, SCHEMA_SQL.read_text(encoding="utf-8")), prepare=False)
+            await apply_migrations(conn)
             await conn.execute(
                 "INSERT INTO predicate_schema VALUES ('fact','multi','semantic'),('state','single','semantic')"
             )

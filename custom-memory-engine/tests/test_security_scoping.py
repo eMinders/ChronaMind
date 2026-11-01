@@ -1,5 +1,7 @@
 """Unit tests for the tenant-scoping guard and provisioning inputs (RL-071); no database needed."""
 
+import re
+
 import pytest
 from psycopg.errors import InsufficientPrivilege
 
@@ -13,7 +15,7 @@ from custom_memory_engine.security import (
     validate_user_id,
     verify_forced_rls,
 )
-from custom_memory_engine.security.provisioning import RLS_SQL, _sections
+from custom_memory_engine.security.provisioning import RLS_SQL, TABLE_GRANTS, _sections
 
 SCHEMA_SQL_TABLES: tuple[str, ...] = migrate.TABLES
 
@@ -94,3 +96,20 @@ def test_rls_sql_grants_cover_every_user_table_and_only_reads_the_catalog() -> N
     assert "NOBYPASSRLS" in _sections()["create-role"]
     assert "NOSUPERUSER" in _sections()["create-role"]
     assert "NOLOGIN" in _sections()["create-role"]
+
+
+def test_rls_sql_grants_equal_the_least_privilege_matrix_exactly() -> None:
+    """``rls.sql`` and ``TABLE_GRANTS`` are two statements of one contract (V2-D54): they must agree."""
+    parsed: dict[str, set[str]] = {}
+    for statement in _sections()["grants"].split(";"):
+        body = " ".join(line for line in statement.splitlines() if not line.lstrip().startswith("--")).strip()
+        match = re.fullmatch(r"GRANT (.+?) ON (?!SCHEMA)(.+?) TO \{\{role\}\}", body)
+        if match is None:
+            continue
+        privileges = {p.strip() for p in match.group(1).split(",")}
+        for table in match.group(2).split(","):
+            parsed.setdefault(table.strip().removeprefix("{{schema}}."), set()).update(privileges)
+    assert parsed == {table: set(grants) for table, grants in TABLE_GRANTS.items()}
+    assert set(TABLE_GRANTS) == set(USER_TABLES) | {"predicate_schema"}
+    for append_only in ("audit_event", "deletion_request", "turn", "session", "app_user", "memory_evidence"):
+        assert not {"UPDATE", "DELETE"} & TABLE_GRANTS[append_only], append_only
