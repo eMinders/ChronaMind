@@ -70,6 +70,51 @@ The reviewer's decisions are recorded as `V2-D##` entries with their rationale a
 confirm, amend or reverse them. Where GitHub's own branch protection would require an approval, that is a
 platform setting, not this policy, and no human approval is ever fabricated to satisfy it.
 
+### 1.2 Branch protection: the required configuration, not applied
+
+**Status (r11, 2026-11-01): not applied.** The repository has **no branch protection and no rulesets** on `main`:
+`GET /repos/{owner}/{repo}/branches/main/protection` returns `404 Not Found` and `GET /repos/{owner}/{repo}/rulesets`
+returns `[]`. The session account (`elewashy`) holds `write` and `triage`, **not `admin`**, so a `PUT` to the protection
+endpoint also returns `404`; it cannot be configured from here and is not claimed to be. This is a platform setting the
+Project Owner or a repository admin applies once; it is not a code change and needs no PR.
+
+**Apply exactly this** (Settings → Branches → `main`, or the API call below with an admin token). The five check names
+are the stable job identities the workflows already publish, so nothing in CI needs to change.
+
+| Setting | Value | Why |
+|---|---|---|
+| Required status checks | `static`, `verify`, `default-install` (from `custom-memory-engine.yaml`) and `checks`, `workflows` (from `ci.yaml`) | These are the gates the Definition of Done already names. A PR is not "CI green" on `verify` alone |
+| Require branches to be up to date | **on** (`strict: true`) | The r11 review found merge-order regressions (a ledger silently reverted across four branches, #123) that per-PR green CI cannot catch. Strict mode forces a rebase onto current `main` before the checks run |
+| Required approving reviews | **none** (`required_pull_request_reviews: null`) | `V2-D57`: AI review is the gate. Requiring a GitHub approval would either block every merge or pressure someone into an approval that did not happen. The policy is review *recorded*, not an approval *clicked* |
+| Dismiss stale approvals | n/a | No approvals are required, so nothing to dismiss |
+| Require conversation resolution | **on** (recommended) | A review finding is a comment; this is what makes "leave the issue open with its gap recorded" binding |
+| Require linear history | **off** | W1 merged 13 PRs with merge commits (`99fe8f8` is one). Turning it on would rewrite how the repo already works for no correctness gain |
+| Allow force pushes / deletions | **off** | Never needed; the v1 tag and every merge commit are the audit trail |
+| Enforce for administrators | **off** | The Owner must be able to land a hotfix in an emergency; the required checks still run |
+
+```bash
+# Verification first: expect 404 / [] until an admin applies it.
+gh api repos/Abdulrahman-Ayman-Farid/ChronaMind/branches/main/protection
+test -z "$(gh api repos/Abdulrahman-Ayman-Farid/ChronaMind/rulesets --jq '.[].id')" && echo "no rulesets"
+
+# Apply (admin token required; `gh` with only write access returns 404).
+gh api --method PUT repos/Abdulrahman-Ayman-Farid/ChronaMind/branches/main/protection \
+  -F 'required_status_checks[strict]=true' \
+  -f 'required_status_checks[contexts][]=static' \
+  -f 'required_status_checks[contexts][]=verify' \
+  -f 'required_status_checks[contexts][]=default-install' \
+  -f 'required_status_checks[contexts][]=checks' \
+  -f 'required_status_checks[contexts][]=workflows' \
+  -F 'enforce_admins=false' \
+  -F 'required_pull_request_reviews=null' \
+  -F 'restrictions=null'
+```
+
+**What this does not do.** It does not add a human review requirement, does not weaken any existing gate (there are none
+to weaken), and does not make this project's quality depend on a setting that is currently absent. The review standard
+is §1.1 and it is enforced by the reviewer, the tests and CI; branch protection is a guard against accidental
+force-pushes and stale-base merges, and its absence is recorded here rather than papered over.
+
 ---
 
 ## 2. Engineering & Research Integrity Rules

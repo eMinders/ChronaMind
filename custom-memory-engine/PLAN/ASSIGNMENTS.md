@@ -1,6 +1,11 @@
 # Team Roles & Task Assignments (`research-lab/`)
 
-**Authority:** Defines the 5-member role matrix, primary ownership, and mandatory peer-review pairings across Phases `P0`–`P13`.  
+**Authority:** Defines the 5-member role matrix and primary ownership across Phases `P0`–`P13`.
+
+> **Direction notice (2026-11-01, `V2-D57`).** The **peer-review pairings** in this document are a `P0`–`P13`
+> artefact and are **superseded**: AI review acting on the Project Owner's behalf is the review gate for every change,
+> and human peer review is not a prerequisite for merging (`PLAN/CONTRIBUTING.md` §1.1, `V2-D57`). The role matrix
+> below (who owns what) still binds. Nothing below is rewritten; it is retained as the v1 record.
 **Anonymity Rule:** In compliance with `validation/mechanical_checks.py` §5, documents inside `research-lab/` use role identifiers (`Member 1`–`Member 5`) rather than personal names. Map role IDs to GitHub handles when assigning issues on GitHub.
 
 ---

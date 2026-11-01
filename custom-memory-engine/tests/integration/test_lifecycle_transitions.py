@@ -4,6 +4,7 @@ The oracle is ``model.axes`` (``TRANSITIONS`` and the kind-conditioned ``LEGAL_L
 exactly what the model accepts, for all four kinds and all 5 x 5 ``(from, to)`` pairs.
 """
 
+from datetime import UTC, datetime
 from typing import LiteralString, cast
 from uuid import uuid4
 
@@ -11,6 +12,11 @@ import pytest
 from psycopg import AsyncConnection, sql
 from psycopg.errors import CheckViolation, InvalidParameterValue, RaiseException
 
+from custom_memory_engine.engine.predicates import (
+    audit_as_of,
+    current_state,
+    fetch_versions,
+)
 from custom_memory_engine.model.axes import (
     KINDS,
     LEGAL_LIFECYCLE,
@@ -383,3 +389,54 @@ async def test_rollback_restores_version_6_exactly_and_reapply_works(database) -
             await insert_version(conn, "h", "claim", "inferred")
         with pytest.raises(RaiseException, match="lifecycle_inferred_to_asserted_unrepresentable"):
             await conn.execute("UPDATE memory_version SET lifecycle = 'asserted' WHERE id = 'h'")
+
+
+# --------------------------------------------------- decision (a): does I10 apply to an explicit withdrawal?
+
+
+async def test_i10_holds_for_explicit_withdrawal_because_the_withdrawal_is_itself_the_recorded_close(database) -> None:  # noqa: F811
+    """Issue #67 decision (a): `asserted -> retired` is required to satisfy `(S)∨(C)`, and does so by construction.
+
+    I10 forbids retirement that *silently* removes an answerable fact. An explicit withdrawal closes the belief
+    interval, which is exactly branch `(S)`, so the precondition cannot fail for a real withdrawal: the only way to
+    attempt the transition without `(S)` is to leave recorded time open, and that is a silent removal — which the
+    guard refuses. `I10` therefore applies to explicit withdrawal *and* costs nothing: the guarantee and the
+    transition are the same act. The fact stays answerable to `audit_as_of` afterwards (I10's requirement), and is
+    gone from the ordinary channels (the point of withdrawing it).
+    """
+    _, schema = database
+    async with connect(database) as conn:
+        await seed_source(conn)
+        async with conn.transaction():
+            await insert_version(conn, "withdrawn", "claim", "asserted")
+        # (1) A retirement that leaves recorded time open is a SILENT removal: (S) does not hold, (C) does not either.
+        with pytest.raises(InvalidParameterValue, match="archival_precondition_unmet"):
+            await conn.execute(
+                "UPDATE memory_version SET status = 'archived', archival_branch = 'S' WHERE id = 'withdrawn'"
+            )
+        assert await rows(conn, "SELECT status, lifecycle FROM memory_version WHERE id = 'withdrawn'") == [
+            ("active", "asserted")
+        ]
+        # (2) The explicit withdrawal closes recorded time, which IS branch (S): the transition is permitted...
+        await conn.execute("SELECT set_config('app.clock', %s, false)", ("2026-09-01T00:00:00+00:00",))
+        await conn.execute(
+            "UPDATE memory_version SET recorded_range = tstzrange(lower(recorded_range), clock_now()) "
+            "WHERE id = 'withdrawn'"
+        )
+        await conn.execute(
+            "UPDATE memory_version SET status = 'archived', archival_branch = 'S' WHERE id = 'withdrawn'"
+        )
+        assert await rows(conn, "SELECT status, lifecycle FROM memory_version WHERE id = 'withdrawn'") == [
+            ("archived", "retired")
+        ]
+        # (3) ...and I10 holds: the withdrawn fact is still answerable at a belief time before the withdrawal.
+        # The rows were first believed at the fixture clock (July); the withdrawal closed that interval in September.
+        before = await fetch_versions(
+            conn,
+            audit_as_of("u1", START, datetime(2026, 8, 1, tzinfo=UTC)),
+            schema_name=schema,
+        )
+        assert {version.id for version in before.versions} == {"withdrawn", "src"}
+        # ...while the ordinary channels no longer return it, which is what withdrawing it was for.
+        now = await fetch_versions(conn, current_state("u1", datetime(2026, 9, 2, tzinfo=UTC)), schema_name=schema)
+        assert "withdrawn" not in {version.id for version in now.versions}

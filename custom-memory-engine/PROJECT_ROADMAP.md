@@ -137,7 +137,7 @@ A task (`RL-xxx`) is **Done** only when:
 1. All deliverables listed in [`PLAN/TASK_GRAPH.md`](PLAN/TASK_GRAPH.md) exist at their declared paths inside `research-lab/`.
 2. Automated tests (`pytest`, SQL checks, `mechanical_checks.py`) pass in CI without touching root `app/` code ([`PLAN/INDEPENDENCE_BOUNDARY.md`](PLAN/INDEPENDENCE_BOUNDARY.md)).
 3. Any corresponding row in [`TRACEABILITY_MATRIX.md`](TRACEABILITY_MATRIX.md) or [`PLAN/DECISIONS_REGISTER.md`](PLAN/DECISIONS_REGISTER.md) is updated in the same PR.
-4. The PR passes peer review by the designated reviewer in [`PLAN/ASSIGNMENTS.md`](PLAN/ASSIGNMENTS.md).
+4. The PR passes the review gate: AI review on the Project Owner's behalf (`V2-D57`, [`PLAN/CONTRIBUTING.md`](PLAN/CONTRIBUTING.md) §1.1). A human peer review is **not** a prerequisite and is never recorded as if it happened; the `P0`–`P13` reviewer pairings in [`PLAN/ASSIGNMENTS.md`](PLAN/ASSIGNMENTS.md) are superseded.
 
 ---
 

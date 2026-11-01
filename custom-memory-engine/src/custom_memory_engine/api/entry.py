@@ -17,9 +17,10 @@ its string form is the code only. It never contains an identifier, a path, a sco
 the single answer for an absent target and an unreadable one (``THREAT_MODEL.md`` T-11, T-18), and an opaque
 provenance handle is answered exactly like an unknown id (``V2-D37``) without a lookup.
 
-``internal_error`` is **not** in ``API_V2.md`` section 1.1: it is the transport-level code for a failure that is
-none of the six contract codes (a bug or an unexpected driver error), reported without its message. It is named here
-so that such a failure is neither swallowed nor allowed to leak.
+``internal_error`` is the seventh code of ``API_V2.md`` section 1.1 (``V2-D58``): the last resort for a failure
+that is none of the six above (a bug or an unexpected driver error), reported without its message. It is returned
+only by :meth:`Engine.call`, never by an operation's own logic, which is why section 3 does not list it per
+operation. It is named here so that such a failure is neither swallowed nor allowed to leak.
 
 HTTP transport is out of scope.
 """

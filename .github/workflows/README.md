@@ -4,7 +4,7 @@
 |---|---|---|---|
 | `custom-memory-engine.yaml` | PRs and pushes to `main` touching `custom-memory-engine/**`, this workflow, or `.github/actions/setup-cme/**`; manual | `static`, `verify`, `default-install` (parallel) | Engine quality gates (below) |
 | `ci.yaml` | Every PR; pushes to `main`; manual | `checks`, `workflows` | `checks`: root application lint, format, type check (no path filter: root `ruff check .` also lints `custom-memory-engine/`). `workflows`: actionlint over every workflow, pinned by digest |
-| `claude-code-review.yml` | Same-repository, non-draft PRs | `claude-review` | Advisory automated review; **not** the peer review required by `custom-memory-engine/PLAN/ASSIGNMENTS.md` |
+| `claude-code-review.yml` | Same-repository, non-draft PRs | `claude-review` | Advisory automated review: a second pair of eyes, not the review gate. The gate is the AI review on the Project Owner's behalf (`V2-D57`, `PLAN/CONTRIBUTING.md` §1.1); no human peer review is a prerequisite |
 | `claude.yml` | `@claude` mentions by an owner, member or collaborator | `claude` | On-demand assistant |
 | `deploy.yaml` | Manual (`workflow_dispatch`) only | `Build and push to Docker Hub` | Root application image. Automatic publication on `main` is an owner decision and is not enabled |
 
@@ -17,6 +17,10 @@
 | `default-install` | `pytest` on the default install with no optional extras |
 
 All three must be green. A PR is not "CI green" because `verify` alone passed.
+
+`main` currently has **no branch protection and no rulesets** (checked via the API in r11; the account has `write`,
+not `admin`, so it cannot set them). The required-check configuration to apply when an admin is available is recorded
+in `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2 rather than claimed here as done.
 
 ## Conventions
 

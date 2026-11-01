@@ -33,7 +33,8 @@ Reconciled against `main` @ `aa2e125` and subsequent work in this session:
 - **Open GitHub issues are not all incomplete.** `#42` (`RL-050`) and `#44`
   (`RL-060`) are implemented and verified; `#43` (`RL-051`) is implemented with a
   deliberate scope change (mode classification lives in the caller/predicate, not a
-  `query_analyzer.py`). They await peer review, not code.
+  `query_analyzer.py`). *(2026-11-01: all three were reviewed and are closed; the
+  review gate is AI review under `V2-D57`.)*
 - **Gated on `RL-010`/`D-01` supervisor signoff:** the real provider-backed
   extractor. The cache, the engine, and all ablations are provider-free and were
   not blocked by it.
@@ -46,8 +47,9 @@ Reconciled against `main` @ `aa2e125` and subsequent work in this session:
   recorded review (`#42`, `#43`, `#44`), one is implemented on an open PR
   (`#45`), one is partial (`#46`), and one has not started (`#47`).
 - **Branch workflow:** changes land on a topic branch `rl/<id>-<slug>` and are
-  merged through a PR with peer review (`PLAN/CONTRIBUTING.md` §1). `main` has no
-  branch protection configured; the workflow is enforced by convention.
+  merged through a PR. `main` has no branch protection configured; the workflow is
+  enforced by convention. *(2026-11-01: the review gate is AI review under `V2-D57`;
+  required-check configuration is recorded, unapplied, in `PLAN/CONTRIBUTING.md` §1.2.)*
 
 ## Review update — 2026-10-25
 

@@ -911,3 +911,59 @@ GitHub approval, that requirement is a platform setting and no approval is ever 
 record of each review), `DECISIONS_V2.md` (the decisions it produces), and `INVARIANT_LEDGER.md`/issues (the gaps
 it finds). `PLAN/V2/audits/` keeps the historical reports as evidence; no new one is written per change.
 **Status:** decided and in force from r11.
+
+### V2-D58 — `internal_error` is the seventh code of the public error contract (corrects `V2-D39`/`E-039`)
+
+**Decision.** `API_V2.md` section 1.1 enumerates **seven** static codes: the six it already listed plus
+`internal_error`. `internal_error` is the entry point's last resort — an engine defect or an unexpected driver error
+that none of the other six describes. It is returned only by `Engine.call`, never by an operation's own logic, so
+section 3 does not list it per operation and it is **not** added to each `Operation.errors` set. It carries a code and
+no detail, message, argument or traceback. The table is now declared complete, and `tests/test_api_contract.py` holds
+it equal to the executable contract (`every operation's codes | {internal_error}`), so a code the implementation can
+return and the table omits fails CI.
+**Why.** `E-039` already returned `internal_error` for any unrecognised exception and `tests/test_api_entry.py` already
+asserted it, but section 1.1 did not list it and `entry.py` carried a comment saying so. A frozen contract that omits a
+code the entry point demonstrably returns is not a contract: a client generated from section 1.1 would have no branch
+for it, and a future reviewer reading only the table would treat the code as a violation of the surface rather than a
+part of it. The alternative — mapping unexpected failures onto `validation_error` or `precondition_failed` — was
+rejected because it tells the caller its input was wrong when the engine was, and would hide defects behind a
+plausible code. Leaving it undocumented was the third option and is what this corrects.
+**What it does not change.** No operation's `errors` set changes, so no tier, condition or `forbidden` rule moves; the
+API surface (`V2-D46`, `V2-D47`) is unchanged. Only the enumeration in section 1.1 and its executable pin differ.
+**Implementation.** `API_V2.md` section 1.1 (the row and the completeness claim), `api/entry.py` (the module
+docstring, which said the code was *not* in section 1.1), `tests/test_api_contract.py`
+(`documented_error_codes`, `test_error_contract_section_1_1_is_the_complete_code_set`, and the mutation control
+`test_the_error_contract_catches_a_code_the_document_omits`).
+**Verification.** The completeness test fails when a row is renamed (`assert {'not_internal'}=={'internal_error'}`,
+reproduced) and when an undocumented code is added; `tests/test_api_entry.py` (28 contract tests) and
+`tests/test_tier_permissions.py` remain green. **Status:** decided and verified.
+
+### V2-D59 — `I10` applies to explicit withdrawal, at no cost (resolves issue #67 question (a))
+
+**Decision.** `I10` governs **every** retirement, explicit withdrawal included, and the `(S)∨(C)` precondition is
+required for it without exception. There is no separate rule for user-initiated retirement: I10's own wording forbids
+retirement that *silently* removes an answerable fact, and an explicit withdrawal is not an exception to that — it is
+the case the precondition was written for. Implementing it costs nothing, because the two are the same act: closing
+the belief interval *is* branch `(S)`. The only way to attempt `asserted`/`observed -> retired` without `(S)` is to
+leave recorded time open, and that is precisely a silent removal, which the guard already refuses with
+`archival_precondition_unmet`. `I10`'s second half still holds after the withdrawal: the fact remains answerable to
+`audit_as_of` at a belief time before it, while the ordinary channels stop returning it — which is what withdrawing it
+was for.
+**Why.** Issue #67 left this open ("does `I10` apply to explicit withdrawal?") and the migration 7 header recorded it as
+unmade, implementing the conservative half only (system-initiated retirement). Leaving it undecided keeps `I10` at
+`PLANNED` for a case the schema already enforces, and invites a future writer to add an exemption for "the user asked
+for it" that would let a withdrawal delete answerability. The measurement settles it: branch `(S)` is the recorded-time
+close, so a real withdrawal always satisfies it, and the guard refuses only the silent form.
+**What it does not mean.** It is not a new constraint and no migration changes. A user who wants the content *gone*
+uses `delete`, not retirement: retirement keeps the fact answerable to audit (`ARCHITECTURE_V2.md` §2.3 rule 2), and
+deletion is the operation that removes it (`V2-D50`, `E-037`). Conflating the two would be the disclosure bug I10
+exists to prevent.
+**Implementation.** No code change: `schema/001_full_schema.sql::enforce_archival_invariant` already implements it, and
+`schema/007_lifecycle_guard.sql`'s header comment (which recorded the question as unmade) now cites this decision.
+`INVARIANT_LEDGER.md` moves `I10`'s retirement half from `PLANNED` to `PARTIAL`.
+**Verification.** `tests/integration/test_lifecycle_transitions.py::test_i10_holds_for_explicit_withdrawal_because_the_withdrawal_is_itself_the_recorded_close`
+(three parts: the silent form is refused, the recorded close permits the transition, the fact stays answerable to
+`audit_as_of` and leaves the ordinary channels). **Mutation-checked:** neutering the precondition
+(`IF NOT has_s AND NOT has_c` → `IF FALSE`) makes the test fail with
+`archival_branch_must_be_C_when_consolidated_only`, so it is a real control and not a restatement.
+**Status:** decided and verified.

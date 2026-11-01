@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from custom_memory_engine.api.contract import BY_NAME, OPERATIONS, ContractError, authorize, validate_contract
+from custom_memory_engine.api.entry import INTERNAL_ERROR
 
 PLAN = Path(__file__).resolve().parents[1] / "PLAN/V2"
 
@@ -56,6 +57,18 @@ def api_signatures() -> dict[str, tuple[str, ...]]:
         parts = [part.strip() for part in re.split(r",(?![^{]*\})", args) if part.strip()]
         signatures[name] = tuple(re.split(r"[:?|\s]", part, maxsplit=1)[0] for part in parts)
     return signatures
+
+
+def documented_error_codes() -> set[str]:
+    """Parse API_V2.md §1.1: every static code named in the error-contract table."""
+    text = (PLAN / "API_V2.md").read_text(encoding="utf-8")
+    section = text[text.index("### 1.1 Error contract") : text.index("## 2. ")]
+    codes: set[str] = set()
+    for line in section.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == 3 and re.fullmatch(r"`[a-z_]+`", cells[0]):
+            codes.add(cells[0].strip("`"))
+    return codes
 
 
 def registry() -> dict[str, tuple[str, frozenset[str]]]:
@@ -137,3 +150,25 @@ def test_unknown_operation_and_unknown_tier_fail_closed_identically() -> None:
         with pytest.raises(ContractError) as error:
             authorize(name, tier)
         assert error.value.code == "forbidden"
+
+
+def test_error_contract_section_1_1_is_the_complete_code_set() -> None:
+    """``V2-D58``: §1.1 enumerates every code the entry point can return, and no code it cannot.
+
+    ``internal_error`` is the seventh code and is deliberately not listed per operation in §3: it means the engine
+    is wrong, not that the request was, so no operation declares it. Every other code must be declared somewhere.
+    """
+    executable = frozenset().union(*(op.errors for op in OPERATIONS))
+    assert INTERNAL_ERROR not in executable
+    assert documented_error_codes() == executable | {INTERNAL_ERROR}
+
+
+def test_the_error_contract_catches_a_code_the_document_omits() -> None:
+    """The check above is a control: dropping a row, or adding an undocumented code, makes it fail."""
+    documented = documented_error_codes()
+    assert documented - {"resource_limit"} != executable_codes() | {INTERNAL_ERROR}
+    assert documented | {"something_new"} != executable_codes() | {INTERNAL_ERROR}
+
+
+def executable_codes() -> frozenset[str]:
+    return frozenset().union(*(op.errors for op in OPERATIONS))

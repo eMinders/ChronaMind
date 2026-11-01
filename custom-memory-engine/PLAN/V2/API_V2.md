@@ -43,6 +43,9 @@ Errors carry a **static code**. A message never contains an identifier, a path, 
 | `rejected` | The admission policy declined the write, with a reason code from the gate or the soundness policy. The decision is recorded. | n/a (a result, not an exception, for `assert`/`infer`) |
 | `resource_limit` | A declared bound was exceeded (selector count, budget, page size). Never a silent truncation, and never discloses tenant data (`T-16`). | `54000` |
 | `retryable_conflict` | Serialisation failure or deadlock. | `40001` / `40P01` |
+| `internal_error` | **Last resort only** (`V2-D58`): the entry point failed in a way none of the codes above describes — an engine defect or an unexpected driver error. It is returned by `Engine.call` and never by an operation's own logic, so it is not listed per operation in section 3. It carries a code and **no** detail, message, argument or traceback: a bug must not become a disclosure channel. Receiving it means the engine is wrong, not that the request was. | n/a |
+
+The table is the **complete** enumeration: `tests/test_api_contract.py` holds it equal to the executable contract (every operation's codes plus `internal_error`), so a code the implementation can return and this table omits fails CI.
 
 ## 2. Shared types
 
