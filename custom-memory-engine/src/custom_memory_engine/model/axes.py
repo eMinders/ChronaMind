@@ -64,6 +64,10 @@ LEGAL_LIFECYCLE: dict[Kind, frozenset[Lifecycle]] = {
     "abstraction": frozenset({"inferred", "contested", "retired"}),
 }
 
+# The six canonical facets (USER_MODEL.md section 2.1). This is the one place the vocabulary is
+# defined; profiles select a subset and the E-020 migration constrains the column to it.
+FACETS: tuple[str, ...] = ("preference", "goal", "constraint", "context", "decision_pattern", "meta_preference")
+
 # §1 retention floors: only episodes and procedures may be working/session.
 SHORT_RETENTION_KINDS: frozenset[Kind] = frozenset({"episode", "procedure"})
 
@@ -186,6 +190,7 @@ ROW(
 
 
 __all__ = [
+    "FACETS",
     "KINDS",
     "LEGAL_LIFECYCLE",
     "LIFECYCLES",
