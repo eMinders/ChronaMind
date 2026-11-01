@@ -1,14 +1,14 @@
 # Tenant isolation (`RL-071`, Invariant 7)
 
 Row-level security policies already exist in `schema/001_full_schema.sql`: `ENABLE` and `FORCE ROW
-LEVEL SECURITY` on all eleven user-scoped tables, each with an `*_isolation` policy on
+LEVEL SECURITY` on all twelve user-scoped tables (eleven v1 tables and `scope_grant`), each with an `*_isolation` policy on
 `current_setting('app.user_id')`. That is only half of Invariant 7. The disposable test database
 connects as a superuser, which bypasses RLS, so a green suite proved nothing about isolation. This
 package supplies the other half: a restricted runtime role and a service-boundary guard.
 
 | File | Responsibility |
 |---|---|
-| `rls.sql` | The restricted role (`NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT`), least-privilege grants on the eleven user tables (read-only on the shared `predicate_schema`), and the verification queries |
+| `rls.sql` | The restricted role (`NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT`), exact per-table least-privilege grants (`provisioning.TABLE_GRANTS`, `V2-D54`: audit events, deletion receipts, turns, sessions, users and evidence are insert-only for the runtime; read-only on the shared `predicate_schema`), and the verification queries |
 | `provisioning.py` | Substitutes validated identifiers into `rls.sql`, runs it, then **asserts** forced RLS on every user table and that the role holds no bypass or escalation attribute |
 | `scoping.py` | `tenant_scope`: the guard a service layer wraps around engine calls |
 
@@ -42,11 +42,17 @@ It is consistent with, not a replacement for, the per-call tenant checks in `eng
 ## Evidence
 
 `tests/integration/test_rls_isolation.py` connects through the provisioned role and shows: forced RLS on
-all eleven tables; same-user reads succeed; cross-user `SELECT` returns nothing, `UPDATE`/`DELETE` touch
-zero rows and `INSERT` is rejected; temporal reads and dense, lexical and fused retrieval never return
+all twelve tables; same-user reads succeed; cross-user `SELECT` returns nothing, `UPDATE`/`DELETE` touch
+zero rows (or are refused outright on append-only tables) and `INSERT` is rejected; temporal reads and dense, lexical and fused retrieval never return
 another tenant's rows; and the Suite `I` development split yields **0 cross-user exposures across 60
 probes** (20 scope-mismatch probes rejected), with a positive control showing the same canaries exist for
 a connection that bypasses RLS.
+
+`tests/integration/test_tenant_integrity_db.py` (migration 4) shows that another tenant's row cannot be
+referenced (indistinguishable from a missing row), cannot pin a user's deletion, that a temporary table cannot
+shadow an engine table inside a trigger, and that audit and deletion receipts cannot be rewritten; each has a
+control on the pre-migration-4 schema where the attack succeeds. Two catalog rules bind every future
+migration: tenant foreign keys carry `user_id`, and every engine function pins its `search_path`.
 
 ## Limits
 
