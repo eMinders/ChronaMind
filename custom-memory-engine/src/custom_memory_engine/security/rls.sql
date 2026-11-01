@@ -13,12 +13,22 @@
 CREATE ROLE {{role}} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT
 
 -- @grants
+-- Least privilege, derived from every statement the engine issues (V2-D54, finding S-03).
+-- Append-only records (audit, deletion receipts, turns, sessions, users) get no UPDATE or DELETE,
+-- so not even a compromised runtime can rewrite audit history or erase a deletion receipt.
+-- UPDATE where held is needed by SELECT ... FOR UPDATE or ON CONFLICT DO UPDATE as well as updates.
+-- Cascaded deletes run as the table owner, so a child table needs no DELETE for ON DELETE CASCADE.
+-- Mirrored exactly by provisioning.TABLE_GRANTS, and verification fails on any difference.
 GRANT USAGE ON SCHEMA {{schema}} TO {{role}};
+GRANT SELECT, INSERT ON
+  {{schema}}.app_user, {{schema}}.session, {{schema}}.turn, {{schema}}.memory_evidence,
+  {{schema}}.audit_event, {{schema}}.deletion_request
+  TO {{role}};
+GRANT SELECT, INSERT, UPDATE ON
+  {{schema}}.memory_embedding, {{schema}}.memory_conflict, {{schema}}.scope_grant
+  TO {{role}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON
-  {{schema}}.app_user, {{schema}}.session, {{schema}}.turn, {{schema}}.memory_version,
-  {{schema}}.memory_evidence, {{schema}}.memory_derivation, {{schema}}.memory_embedding,
-  {{schema}}.memory_conflict, {{schema}}.audit_event, {{schema}}.deletion_request, {{schema}}.job,
-  {{schema}}.scope_grant
+  {{schema}}.memory_version, {{schema}}.memory_derivation, {{schema}}.job
   TO {{role}};
 -- predicate_schema is shared catalog, not user data: read-only.
 GRANT SELECT ON {{schema}}.predicate_schema TO {{role}};

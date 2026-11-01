@@ -13,7 +13,6 @@ It needs no M2 migration; ``E-011`` re-runs the cases against the real schema.
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import LiteralString, cast
 from uuid import uuid4
 
@@ -24,11 +23,11 @@ from psycopg import AsyncConnection, sql
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.scope.access import acl_readable, read_predicate, resolve_read_set, rls_read_using
 from custom_memory_engine.security import provision_runtime_role, tenant_scope
+from tests.integration.schema import apply_migrations
 from tests.scope_isolation_cases import CASES, EXPECTED_FAILURES, MATCHERS, ROWS, USERS, Case
 
 pytestmark = pytest.mark.integration
 
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema"
 T0 = datetime(2026, 3, 10, tzinfo=UTC)
 
 
@@ -105,8 +104,7 @@ async def rls_env() -> AsyncIterator[tuple[AsyncConnection, str]]:
     async with await AsyncConnection.connect(_url(), autocommit=True, connect_timeout=5) as conn:
         await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        for name in ("001_full_schema.sql", "002_scope_grants.sql"):
-            await conn.execute(cast(LiteralString, (SCHEMA_DIR / name).read_text(encoding="utf-8")), prepare=False)
+        await apply_migrations(conn)
         await provision_runtime_role(conn, schema, role)
         for user in USERS:
             await conn.execute("SELECT set_config('app.user_id', %s, false)", (user,))

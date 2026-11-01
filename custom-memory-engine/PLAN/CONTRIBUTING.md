@@ -34,7 +34,10 @@
    ```
 6. **Open a Pull Request:**
    - Title format: `[RL-xxx] <Short imperative summary>`
-   - Link the GitHub issue (`Closes #<issue_number>`) and complete `.github/pull_request_template.md` (or `PLAN/templates/pull_request_template.md`).
+   - Reference the GitHub issue with `Refs #<issue_number>` and close it **manually** once its acceptance criteria
+     are verified. Do not put closing keywords (`closes`, `fixes`, `resolves`) in PR bodies or commit messages:
+     GitHub closes the issue on merge, even when the PR only partly satisfies it.
+   - State the evidence for every acceptance criterion in the PR body (tests run, outputs, commands).
    - Request review from the designated peer reviewer in [`ASSIGNMENTS.md`](ASSIGNMENTS.md).
 
 ---
