@@ -226,3 +226,20 @@ async def test_detectability_of_a_synthetic_injection() -> None:
     detection = await verify_detection(context=context, probes=probes, injected_channel="channel_6_final_answer")
 
     assert detection.detected is True
+
+
+async def test_a_cache_probe_supplements_and_never_replaces_the_storage_scan(database) -> None:
+    """Regression (r10): a caller's channel-1 probe used to replace the SQL storage scan, so a canary left in
+    storage was reported as a complete, clean channel 1 whenever a cache probe was supplied."""
+    _, schema = database
+    async with connect(database) as conn:
+        await _insert_canary_version(conn, "v-left-behind", "u1")
+        await conn.commit()
+        context = ScanContext("u1", "k1", CANARY, 1)
+        probes: dict[LeakChannel, ChannelProbe] = {
+            "channel_1_storage_index_queue_cache_scan": external_cache_probe(lambda user_id: []),
+        }
+        report = await scan_deleted_key(context, probes, connection=conn, schema_name=schema)
+    channel_1 = next(f for f in report.findings if f.channel == "channel_1_storage_index_queue_cache_scan")
+    assert channel_1.residual_count and channel_1.residual_count > 0, "storage still holds the canary"
+    assert channel_1.complete, "the cache surface completes channel 1"

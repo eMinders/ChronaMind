@@ -118,6 +118,7 @@ def database_channel_probes(
     evidence = sql.Identifier(schema_name, "memory_evidence")
     derivations = sql.Identifier(schema_name, "memory_derivation")
     jobs = sql.Identifier(schema_name, "job")
+    audit = sql.Identifier(schema_name, "audit_event")
 
     async def storage_probe(context: ScanContext) -> ProbeMeasurement:
         canary_pattern = f"%{context.canary}%"
@@ -133,9 +134,11 @@ def database_channel_probes(
                       (SELECT count(*) FROM {x} AS x JOIN {v} AS v ON v.id=x.version_id
                         WHERE v.user_id=%s AND (v.memory_key=%s OR v.content ILIKE %s)) +
                       (SELECT count(*) FROM {j} WHERE user_id=%s AND
-                        (payload::text ILIKE %s OR payload::text ILIKE %s))
+                        (payload::text ILIKE %s OR payload::text ILIKE %s)) +
+                      (SELECT count(*) FROM {a} WHERE user_id=%s AND
+                        (details::text ILIKE %s OR memory_ref ILIKE %s))
                     """
-                ).format(v=versions, e=embeddings, x=evidence, j=jobs),
+                ).format(v=versions, e=embeddings, x=evidence, j=jobs, a=audit),
                 (
                     context.user_id,
                     context.memory_key,
@@ -149,6 +152,9 @@ def database_channel_probes(
                     context.user_id,
                     canary_pattern,
                     f"%{context.memory_key}%",
+                    context.user_id,
+                    canary_pattern,
+                    canary_pattern,
                 ),
             )
             row = await cursor.fetchone()
@@ -200,6 +206,19 @@ def database_channel_probes(
     }
 
 
+def _supplemented(storage: ChannelProbe, surface: ChannelProbe) -> ChannelProbe:
+    """Channel 1 = SQL storage + the caller's extra surface; complete when that surface is complete."""
+
+    async def probe(context: ScanContext) -> ProbeMeasurement:
+        stored, extra = await storage(context), await surface(context)
+        stored_count = stored.residual_count if isinstance(stored, ProbeMeasurement) else stored
+        if isinstance(extra, ProbeMeasurement):
+            return ProbeMeasurement(stored_count + extra.residual_count, complete=extra.complete)
+        return ProbeMeasurement(stored_count + extra, complete=True)
+
+    return probe
+
+
 async def scan_deleted_key(
     context: ScanContext,
     probes: Mapping[LeakChannel, ChannelProbe] | None = None,
@@ -227,7 +246,16 @@ async def scan_deleted_key(
     ):
         raise ScannerError("positive_deletion_epoch_required", "channel_1_storage_index_queue_cache_scan")
     configured = database_channel_probes(connection, schema_name=schema_name) if connection is not None else {}
-    configured.update(probes or {})
+    caller = dict(probes or {})
+    surface = caller.pop("channel_1_storage_index_queue_cache_scan", None)
+    configured.update(caller)
+    storage = configured.get("channel_1_storage_index_queue_cache_scan")
+    if surface is not None:
+        # A caller's channel-1 probe (e.g. an external cache) supplements the SQL storage scan; it must
+        # never replace it, or channel 1 would report "complete, zero" without scanning storage at all.
+        configured["channel_1_storage_index_queue_cache_scan"] = (
+            surface if storage is None else _supplemented(storage, surface)
+        )
     unknown = set(configured) - set(CHANNELS)
     if unknown:
         raise ScannerError("unknown_deletion_channel", sorted(unknown)[0])
