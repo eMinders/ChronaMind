@@ -58,6 +58,19 @@ class DeletionError(InvalidParameterValue):
 
 
 @dataclass(frozen=True)
+class ExternalExclusion:
+    """An external source the deleted versions cited, which the engine cannot erase (D-ENG-04).
+
+    Identified by its SHA-256 ``content_hash`` (content-free), so the caller can find the artifact it holds. It is
+    returned to the caller on the original call only, never audited. Like WAL and backups, it lies outside the
+    deletion boundary; the receipt lists it so nothing pretends it was erased.
+    """
+
+    source_type: str
+    content_hash: str
+
+
+@dataclass(frozen=True)
 class DeletionReceipt:
     """Content-free deletion outcome suitable for receipts and structured logs."""
 
@@ -68,6 +81,9 @@ class DeletionReceipt:
     dependents: int
     rederived_dependents: int
     purged_jobs: int
+    external_exclusions: tuple[ExternalExclusion, ...] = ()
+    # always set; an idempotent replay reports this count only, because the audit log never holds hashes (RL-072)
+    external_exclusion_count: int = 0
 
 
 async def _verify(connection: AsyncConnection, user_id: str) -> None:
@@ -155,6 +171,8 @@ async def delete_memory(
                         dependents=int(details.get("dependents", 0)),
                         rederived_dependents=int(details.get("re_derived_versions", 0)),
                         purged_jobs=int(details.get("purged_jobs", 0)),
+                        # the audit log keeps the count only, so a replay reports how many but not which
+                        external_exclusion_count=int(details.get("external_exclusions", 0)),
                     )
 
             await cursor.execute(
@@ -295,6 +313,7 @@ async def delete_memory(
 
             # Include turns linked to replaced summaries as well as physically purged rows.
             turn_ids: set[str] = set()
+            external_exclusions: tuple[ExternalExclusion, ...] = ()
             evicted_ids = list(dict.fromkeys([*purge, *summary_rebuilds]))
             if evicted_ids:
                 await cursor.execute(
@@ -304,6 +323,26 @@ async def delete_memory(
                     (evicted_ids, user_id),
                 )
                 turn_ids = {row[0] for row in await cursor.fetchall() if row[0]}
+                # Sources outside the engine cannot be erased by it: read them before the cascade removes the rows.
+                # A schema that predates migration 8 has no ``source_type`` column and therefore no external sources.
+                await cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid = %s::pg_catalog.regclass "
+                    "AND attname = 'source_type' AND NOT attisdropped)",
+                    (f"{schema_name}.memory_evidence",),
+                )
+                has_sources = bool((await cursor.fetchone() or (False,))[0])
+                if has_sources:
+                    await cursor.execute(
+                        sql.SQL(
+                            "SELECT DISTINCT source_type, content_hash FROM {e} "
+                            "WHERE version_id = ANY(%s) AND user_id = %s AND source_type <> 'turn' "
+                            "ORDER BY source_type, content_hash"
+                        ).format(e=evidence),
+                        (evicted_ids, user_id),
+                    )
+                    external_exclusions = tuple(
+                        ExternalExclusion(str(row[0]), str(row[1])) for row in await cursor.fetchall()
+                    )
 
             # Invariant 10's archival triggers must judge the deletion's final state, not each statement:
             # removing the edge from a (C)-archived source to its covering replacement is illegal in
@@ -414,6 +453,9 @@ async def delete_memory(
                                 "dependents": len(dependents),
                                 "re_derived_versions": len(summary_rebuilds),
                                 "purged_jobs": purged_jobs,
+                                # a count only: hashes never enter the audit log (RL-072); present only when non-zero
+                                # so a v1 receipt is unchanged
+                                **({"external_exclusions": len(external_exclusions)} if external_exclusions else {}),
                             }
                         )
                     ),
@@ -428,6 +470,7 @@ async def delete_memory(
         deleted_versions=len(purge),
         re_derived_versions=len(summary_rebuilds),
         purged_jobs=purged_jobs,
+        external_exclusions=len(external_exclusions),
     )
     return DeletionReceipt(
         request_id=request_id,
@@ -437,6 +480,8 @@ async def delete_memory(
         dependents=len(dependents),
         rederived_dependents=len(summary_rebuilds),
         purged_jobs=purged_jobs,
+        external_exclusions=external_exclusions,
+        external_exclusion_count=len(external_exclusions),
     )
 
 
@@ -453,4 +498,11 @@ async def deletion_epoch(connection: AsyncConnection, user_id: str, *, schema_na
     return row[0] if row else 0
 
 
-__all__: Sequence[str] = ("DeletionError", "DeletionReceipt", "MAX_LINEAGE_DEPTH", "delete_memory", "deletion_epoch")
+__all__: Sequence[str] = (
+    "DeletionError",
+    "DeletionReceipt",
+    "ExternalExclusion",
+    "MAX_LINEAGE_DEPTH",
+    "delete_memory",
+    "deletion_epoch",
+)

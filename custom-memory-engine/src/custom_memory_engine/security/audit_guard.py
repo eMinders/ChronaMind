@@ -47,6 +47,8 @@ AUDIT_DETAIL_KEYS = frozenset(
         "dependents",
         "re_derived_versions",
         "purged_jobs",
+        # how many outside-the-boundary sources (D-ENG-04) a deletion listed; a count, never a locator or hash
+        "external_exclusions",
         # queue and clock
         "job_id",
         "kind",

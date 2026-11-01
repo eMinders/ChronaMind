@@ -89,16 +89,39 @@ def _validate_schema_name(schema_name: str) -> str:
 
 
 class EvidenceInput(_TransactionModel):
-    """Dialogue turn evidence link for a memory version (Proposal §7.2, Invariant 8)."""
+    """Evidence link for a memory version (Proposal §7.2, Invariant 8; generalised by migration 7 / E-013).
 
-    turn_id: str
+    A dialogue turn (the default, and byte-identical to v1) is named by ``turn_id``. An ``external`` source - tool
+    output, a file span, a paper, anything outside the engine - is named by ``source_ref`` with the SHA-256
+    ``content_hash`` of the captured text (``grounding.sources.canonical_hash``) and ``evidence_span`` as its locator.
+    An external source needs no engine row and lies outside the deletion boundary (D-ENG-04).
+    """
+
+    turn_id: str | None = None
     evidence_span: str
     evidence_role: str = "primary"
+    source_type: Literal["turn", "external"] = "turn"
+    source_ref: str | None = None
+    content_hash: str | None = None
 
-    @field_validator("turn_id", "evidence_span", "evidence_role")
+    @field_validator("evidence_span", "evidence_role")
     @classmethod
     def check_nonblank(cls, value: str) -> str:
         return _validate_nonblank(value, code="evidence_nonblank_field_required")
+
+    @model_validator(mode="after")
+    def check_source_shape(self) -> "EvidenceInput":
+        if self.source_type == "turn":
+            if self.turn_id is None or self.source_ref is not None or self.content_hash is not None:
+                raise ValueError("turn_evidence_requires_only_a_turn_id")
+            _validate_nonblank(self.turn_id, code="evidence_nonblank_field_required")
+            return self
+        if self.turn_id is not None or self.source_ref is None or self.content_hash is None:
+            raise ValueError("external_evidence_requires_source_ref_and_content_hash")
+        _validate_nonblank(self.source_ref, code="evidence_nonblank_field_required")
+        if fullmatch(r"[a-f0-9]{64}", self.content_hash) is None:
+            raise ValueError("external_evidence_content_hash_must_be_sha256_hex")
+        return self
 
 
 class DerivationInput(_TransactionModel):
@@ -438,6 +461,24 @@ async def _insert_provenance(
     ident_ev = sql.Identifier(schema_name, "memory_evidence")
     ident_md = sql.Identifier(schema_name, "memory_derivation")
     for ev in evidence:
+        if ev.source_type == "external":
+            await cursor.execute(
+                sql.SQL(
+                    "INSERT INTO {ev} (version_id, user_id, evidence_span, evidence_role, "
+                    "source_type, source_ref, span, content_hash) VALUES (%s, %s, %s, %s, 'external', %s, %s, %s)"
+                ).format(ev=ident_ev),
+                (
+                    version_id,
+                    user_id,
+                    ev.evidence_span,
+                    ev.evidence_role,
+                    ev.source_ref,
+                    ev.evidence_span,
+                    ev.content_hash,
+                ),
+            )
+            continue
+        # A turn: the dual-write trigger derives the source columns, so this statement is exactly v1's.
         await cursor.execute(
             sql.SQL(
                 "INSERT INTO {ev} (version_id, turn_id, user_id, evidence_span, evidence_role) "
@@ -467,8 +508,9 @@ async def _copy_provenance(
     ident_md = sql.Identifier(schema_name, "memory_derivation")
     await cursor.execute(
         sql.SQL(
-            "INSERT INTO {ev} (version_id, turn_id, user_id, evidence_span, evidence_role) "
-            "SELECT %s, turn_id, user_id, evidence_span, evidence_role "
+            "INSERT INTO {ev} (version_id, turn_id, user_id, evidence_span, evidence_role, "
+            "source_type, source_ref, span, content_hash) "
+            "SELECT %s, turn_id, user_id, evidence_span, evidence_role, source_type, source_ref, span, content_hash "
             "FROM {ev} WHERE version_id = %s AND user_id = %s"
         ).format(ev=ident_ev),
         (to_version_id, from_version_id, user_id),
@@ -941,12 +983,21 @@ async def supersede_single(
                 ident_md = sql.Identifier(schema_name, "memory_derivation")
                 await cursor.execute(
                     sql.SQL(
-                        "SELECT turn_id, evidence_span, evidence_role FROM {ev} WHERE version_id = %s AND user_id = %s"
+                        "SELECT turn_id, evidence_span, evidence_role, source_type, source_ref, content_hash "
+                        "FROM {ev} WHERE version_id = %s AND user_id = %s"
                     ).format(ev=ident_ev),
                     (old_id, candidate.user_id),
                 )
                 saved_ev = [
                     EvidenceInput(turn_id=r[0], evidence_span=r[1], evidence_role=r[2])
+                    if r[3] == "turn"
+                    else EvidenceInput(
+                        source_type="external",
+                        source_ref=r[4],
+                        content_hash=r[5],
+                        evidence_span=r[1],
+                        evidence_role=r[2],
+                    )
                     for r in await cursor.fetchall()
                 ]
                 await cursor.execute(
