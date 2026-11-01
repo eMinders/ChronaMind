@@ -32,7 +32,7 @@ from tests.integration.test_migration_m1 import (
 )
 
 pytestmark = pytest.mark.integration
-M6 = 6
+M6 = 7
 LAYER_OF: dict[str, str] = {
     "episode": "episodic",
     "claim": "semantic",
@@ -353,7 +353,7 @@ async def test_retiring_through_a_status_change_still_needs_the_v1_archival_prec
 # --------------------------------------------------------------------------- rollback
 
 
-async def test_rollback_restores_version_5_exactly_and_reapply_works(database) -> None:  # noqa: F811
+async def test_rollback_restores_version_6_exactly_and_reapply_works(database) -> None:  # noqa: F811
     config, schema = database
     runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
     async with connect(database) as conn:

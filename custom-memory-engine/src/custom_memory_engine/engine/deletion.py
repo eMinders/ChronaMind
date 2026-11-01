@@ -39,10 +39,14 @@ from custom_memory_engine.deletion.closure import (
 )
 from custom_memory_engine.deletion.rederive import ReDerivationError, SummaryBuilder, rederive_summary
 from custom_memory_engine.engine.transactions import AblationMode
+from custom_memory_engine.security.audit_guard import content_free_details
 
 logger = structlog.get_logger(__name__)
 
 type DeletionScope = Literal["memory", "topic", "all"]
+
+# Invariant 10 constraint triggers (migration 1); deferrable, so deletion can check its final state.
+ARCHIVAL_GUARD_TRIGGERS = ("trg_memory_version_archival_invariant", "trg_memory_derivation_archival_coverage")
 
 
 class DeletionError(InvalidParameterValue):
@@ -57,8 +61,9 @@ class DeletionError(InvalidParameterValue):
 class ExternalExclusion:
     """An external source the deleted versions cited, which the engine cannot erase (D-ENG-04).
 
-    Identified by its SHA-256 ``content_hash`` (content-free), so the caller can find the artifact it holds. Like WAL
-    and backups, it lies outside the deletion boundary; the receipt lists it so nothing pretends it was erased.
+    Identified by its SHA-256 ``content_hash`` (content-free), so the caller can find the artifact it holds. It is
+    returned to the caller on the original call only, never audited. Like WAL and backups, it lies outside the
+    deletion boundary; the receipt lists it so nothing pretends it was erased.
     """
 
     source_type: str
@@ -77,6 +82,8 @@ class DeletionReceipt:
     rederived_dependents: int
     purged_jobs: int
     external_exclusions: tuple[ExternalExclusion, ...] = ()
+    # always set; an idempotent replay reports this count only, because the audit log never holds hashes (RL-072)
+    external_exclusion_count: int = 0
 
 
 async def _verify(connection: AsyncConnection, user_id: str) -> None:
@@ -129,6 +136,7 @@ async def delete_memory(
     requests = sql.Identifier(schema_name, "deletion_request")
     jobs = sql.Identifier(schema_name, "job")
     conflicts = sql.Identifier(schema_name, "memory_conflict")
+    archival_guards = sql.SQL(", ").join(sql.Identifier(schema_name, name) for name in ARCHIVAL_GUARD_TRIGGERS)
 
     async with connection.transaction():
         async with connection.cursor(row_factory=tuple_row) as cursor:
@@ -163,10 +171,8 @@ async def delete_memory(
                         dependents=int(details.get("dependents", 0)),
                         rederived_dependents=int(details.get("re_derived_versions", 0)),
                         purged_jobs=int(details.get("purged_jobs", 0)),
-                        external_exclusions=tuple(
-                            ExternalExclusion(str(item["source_type"]), str(item["content_hash"]))
-                            for item in details.get("external_exclusions", [])
-                        ),
+                        # the audit log keeps the count only, so a replay reports how many but not which
+                        external_exclusion_count=int(details.get("external_exclusions", 0)),
                     )
 
             await cursor.execute(
@@ -219,14 +225,16 @@ async def delete_memory(
                         uuid4().hex,
                         tick.instant,
                         Jsonb(
-                            {
-                                "scope": scope,
-                                "deletion_epoch": epoch,
-                                "deleted_versions": 0,
-                                "dependents": 0,
-                                "re_derived_versions": 0,
-                                "purged_jobs": 0,
-                            }
+                            content_free_details(
+                                {
+                                    "scope": scope,
+                                    "deletion_epoch": epoch,
+                                    "deleted_versions": 0,
+                                    "dependents": 0,
+                                    "re_derived_versions": 0,
+                                    "purged_jobs": 0,
+                                }
+                            )
                         ),
                     ),
                 )
@@ -316,17 +324,31 @@ async def delete_memory(
                 )
                 turn_ids = {row[0] for row in await cursor.fetchall() if row[0]}
                 # Sources outside the engine cannot be erased by it: read them before the cascade removes the rows.
+                # A schema that predates migration 8 has no ``source_type`` column and therefore no external sources.
                 await cursor.execute(
-                    sql.SQL(
-                        "SELECT DISTINCT source_type, content_hash FROM {e} "
-                        "WHERE version_id = ANY(%s) AND user_id = %s AND source_type <> 'turn' "
-                        "ORDER BY source_type, content_hash"
-                    ).format(e=evidence),
-                    (evicted_ids, user_id),
+                    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid = %s::pg_catalog.regclass "
+                    "AND attname = 'source_type' AND NOT attisdropped)",
+                    (f"{schema_name}.memory_evidence",),
                 )
-                external_exclusions = tuple(
-                    ExternalExclusion(str(row[0]), str(row[1])) for row in await cursor.fetchall()
-                )
+                has_sources = bool((await cursor.fetchone() or (False,))[0])
+                if has_sources:
+                    await cursor.execute(
+                        sql.SQL(
+                            "SELECT DISTINCT source_type, content_hash FROM {e} "
+                            "WHERE version_id = ANY(%s) AND user_id = %s AND source_type <> 'turn' "
+                            "ORDER BY source_type, content_hash"
+                        ).format(e=evidence),
+                        (evicted_ids, user_id),
+                    )
+                    external_exclusions = tuple(
+                        ExternalExclusion(str(row[0]), str(row[1])) for row in await cursor.fetchall()
+                    )
+
+            # Invariant 10's archival triggers must judge the deletion's final state, not each statement:
+            # removing the edge from a (C)-archived source to its covering replacement is illegal in
+            # isolation but correct when that source is deleted in this same transaction (T5, RL-090).
+            # They are deferred here and re-checked IMMEDIATE below, before this function returns.
+            await cursor.execute(sql.SQL("SET CONSTRAINTS {} DEFERRED").format(archival_guards))
 
             # Remove edges before their source rows, whose foreign key is intentionally restrictive.
             edge_cleanup = list(dict.fromkeys([*purge, *surviving]))
@@ -409,6 +431,9 @@ async def delete_memory(
                 )
                 purged_jobs = max(cursor.rowcount, 0)
 
+            # Retroactive check of every deferred archival-trigger event against the final state.
+            await cursor.execute(sql.SQL("SET CONSTRAINTS {} IMMEDIATE").format(archival_guards))
+
             await cursor.execute(
                 sql.SQL(
                     "INSERT INTO {a} (id, user_id, memory_ref, event_type, event_at, details) "
@@ -420,25 +445,19 @@ async def delete_memory(
                     uuid4().hex,
                     tick.instant,
                     Jsonb(
-                        {
-                            "scope": scope,
-                            "deletion_epoch": epoch,
-                            "deleted_versions": len(purge),
-                            "dependents": len(dependents),
-                            "re_derived_versions": len(summary_rebuilds),
-                            "purged_jobs": purged_jobs,
-                            # present only when something lies outside the boundary, so v1 receipts are unchanged
-                            **(
-                                {
-                                    "external_exclusions": [
-                                        {"source_type": item.source_type, "content_hash": item.content_hash}
-                                        for item in external_exclusions
-                                    ]
-                                }
-                                if external_exclusions
-                                else {}
-                            ),
-                        }
+                        content_free_details(
+                            {
+                                "scope": scope,
+                                "deletion_epoch": epoch,
+                                "deleted_versions": len(purge),
+                                "dependents": len(dependents),
+                                "re_derived_versions": len(summary_rebuilds),
+                                "purged_jobs": purged_jobs,
+                                # a count only: hashes never enter the audit log (RL-072); present only when non-zero
+                                # so a v1 receipt is unchanged
+                                **({"external_exclusions": len(external_exclusions)} if external_exclusions else {}),
+                            }
+                        )
                     ),
                 ),
             )
@@ -462,6 +481,7 @@ async def delete_memory(
         rederived_dependents=len(summary_rebuilds),
         purged_jobs=purged_jobs,
         external_exclusions=external_exclusions,
+        external_exclusion_count=len(external_exclusions),
     )
 
 

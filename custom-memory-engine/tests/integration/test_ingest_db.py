@@ -23,11 +23,10 @@ from custom_memory_engine.engine.ingest import (
     resolve_held,
 )
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, ResolutionOutcome
-from tests.integration.current_schema import CurrentSchema
+from tests.integration.schema import apply_migrations
 
 pytestmark = pytest.mark.integration
 
-SCHEMA_SQL = CurrentSchema()
 START = datetime(2026, 3, 10, tzinfo=UTC)
 LATER = datetime(2026, 6, 1, tzinfo=UTC)
 
@@ -43,7 +42,7 @@ async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
     ) as conn:
         await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await conn.execute(cast(LiteralString, SCHEMA_SQL.read_text(encoding="utf-8")), prepare=False)
+        await apply_migrations(conn)
         await conn.execute(
             "INSERT INTO predicate_schema VALUES "
             "('diet', 'single', 'semantic'), ('plans_to', 'single', 'semantic'), "

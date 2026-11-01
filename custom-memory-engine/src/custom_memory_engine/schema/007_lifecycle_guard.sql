@@ -1,4 +1,4 @@
--- Migration 6: the lifecycle transition table is closed and enforced by the database - E-016, ARCHITECTURE_V2 2.3,
+-- Migration 7: the lifecycle transition table is closed and enforced by the database - E-016, ARCHITECTURE_V2 2.3,
 -- V2-D48 (C-P1), V2-D49, I1'.
 --
 -- A row's `lifecycle` is its epistemic status. If any writer could move an `inferred` guess to `asserted`, or resurrect
@@ -104,7 +104,7 @@ BEGIN
 END
 $$;
 
--- Fires after sync_memory_version_axes (migration 4) and guard_update (migration 1) by trigger-name order, so it sees
+-- Fires after sync_memory_version_axes (migration 5) and guard_update (migration 1) by trigger-name order, so it sees
 -- the final column values.
 CREATE TRIGGER trg_memory_version_lifecycle_guard
   BEFORE INSERT OR UPDATE ON memory_version
@@ -150,3 +150,18 @@ BEGIN
   RETURN NEW;
 END
 $$;
+
+-- V2-D54 (S-02): engine functions are pinned to `<this schema>, pg_catalog, pg_temp`. CREATE OR REPLACE resets a
+-- function's settings, so enforce_provenance is pinned again along with the new function.
+DO $pin$
+DECLARE
+  engine_schema text := pg_catalog.current_schema();
+  fn text;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY['enforce_lifecycle_transition()', 'enforce_provenance()'] LOOP
+    EXECUTE pg_catalog.format(
+      'ALTER FUNCTION %I.%s SET search_path = %I, pg_catalog, pg_temp', engine_schema, fn, engine_schema
+    );
+  END LOOP;
+END
+$pin$;

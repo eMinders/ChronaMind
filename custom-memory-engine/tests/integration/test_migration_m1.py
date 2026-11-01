@@ -183,10 +183,10 @@ COMBINATIONS = [
 async def test_backfill_is_total_and_maps_every_v1_layer_and_status_combination(
     database: tuple[DatabaseConfig, str],
 ) -> None:
-    """Acceptance 1 and 2: a database populated at v3 gets no NULL axis, and every combination maps per V2-D38."""
+    """Acceptance 1 and 2: a database populated at v4 gets no NULL axis, and every combination maps per V2-D38."""
     async with connect(database) as conn:
         await conn.execute(
-            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=3)), prepare=False
+            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=4)), prepare=False
         )  # back to the exact pre-M1 schema
         await seed_turn(conn, "t1", "I am vegetarian", START)
         await conn.execute("SELECT set_config('app.clock', %s, false)", (START.isoformat(),))
@@ -506,13 +506,13 @@ async def test_apply_rollback_reapply_restores_the_catalog_exactly_each_time(
 
     async with connect(database) as conn:
         await conn.execute(
-            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=3)), prepare=False
+            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=4)), prepare=False
         )
-        v3_catalog = await rows(conn, "SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = 3")
-        assert await runner._catalog(conn) == v3_catalog[0][0]  # byte-identical to the pre-M1 schema
+        v4_catalog = await rows(conn, "SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = 4")
+        assert await runner._catalog(conn) == v4_catalog[0][0]  # byte-identical to the pre-M1 schema
         assert await rows(conn, "SELECT id, layer, status FROM memory_version") == [("keep", "opinion", "active")]
     status = await runner.status()
-    assert (status.state, status.version) == ("pending", 3)
+    assert (status.state, status.version) == ("pending", 4)
 
     assert (await runner.apply()).action == "applied"
     _, version, columns = await state()
@@ -525,7 +525,7 @@ async def test_apply_rollback_reapply_restores_the_catalog_exactly_each_time(
 async def test_guard_update_is_restored_exactly_by_the_rollback(database: tuple[DatabaseConfig, str]) -> None:
     async with connect(database) as conn:
         await conn.execute(
-            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=3)), prepare=False
+            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=4)), prepare=False
         )
         body = await rows(conn, "SELECT pg_get_functiondef('guard_update'::regproc)")
         assert "kind" not in str(body[0][0]) and "NEW.layer" in str(body[0][0])

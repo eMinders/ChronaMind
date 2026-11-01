@@ -823,3 +823,68 @@ ever wanted, needs its own grant role and decision; nothing in W1 requires it.
 **Verification.** `tests/test_scope_isolation.py`: `test_a_grant_never_authorizes_a_write_into_the_owners_namespace`
 (fails on the `V2-D45` wording, which authorized it), `test_every_authorized_write_is_readable_back_by_its_writer`.
 **Status:** decided and verified (primitive; `E-011`/`E-039` enforce it at runtime).
+
+## 7. Pre-W1 independent audit (r10)
+
+### V2-D54 — Tenant integrity is enforced by the database: composite tenant keys, pinned function search paths, exact runtime privileges
+
+**Decision.** Migration 4 (`004_tenant_integrity.sql`) makes every foreign key between two tables that carry
+`user_id` composite on `(id, user_id)`, pins every engine function to `search_path = <schema>, pg_catalog,
+pg_temp`, and drops the owner `DELETE` policy on `scope_grant`. The runtime role holds an exact per-table
+privilege matrix (`provisioning.TABLE_GRANTS`, mirrored by `rls.sql`): audit events, deletion receipts, turns,
+sessions, users and evidence are insert-only. The public entry point (`E-039`) generates every primary key
+server-side and never accepts a caller-chosen one (T-27).
+**Rationale.** The r10 pre-W1 independent audit (findings S-01 to S-03) measured, under the restricted role and
+through `commit_initial_version`: a tenant could cite another tenant's turn and derive from another tenant's
+version (PostgreSQL referential checks bypass RLS), learn whether any id exists, and **block that tenant's own
+`delete_memory(scope='all')`** with a foreign-key violation it could neither see nor clear (S-01, Critical). A
+temporary table shadowed `memory_evidence` inside `enforce_provenance` and committed an active version with no
+evidence (S-02, High). The runtime could rewrite audit history and erase deletion receipts (S-03).
+**Implementation.** `schema/004_tenant_integrity.sql`; `migrate.MIGRATIONS`; `security/rls.sql`,
+`security/provisioning.py`; `tests/integration/schema.py` (every integration suite now builds the schema from
+`migrate.MIGRATIONS`; nine suites previously ran on migration 1 only); `THREAT_MODEL.md` T-24-T-30;
+`MIGRATION_RISK.md` D14.
+**Verification.** `tests/integration/test_tenant_integrity_db.py`: each attack is refused, with a control on the
+pre-migration-4 schema in which the same attack succeeds; two catalog rules (tenant keys carry `user_id`;
+functions pin `search_path`) fail on the pre-fix catalog and bind every later migration;
+`tests/test_security_scoping.py::test_rls_sql_grants_equal_the_least_privilege_matrix_exactly`;
+`tests/integration/test_migrations.py` upgrades a migration-1 install through migration 4 without data loss.
+**Status:** decided and verified.
+
+### V2-D55 — The last v1 invariant gaps are closed before W1 (RL-072, RL-090, RL-092), with the defects they exposed fixed
+
+**Decision.** `RL-072`, `RL-090` and `RL-092` are completed in the pre-W1 window instead of being deferred: W1's
+M1-M4 migrations rewrite exactly the lifecycle, archival, clock and audit surfaces these tasks guard, so their
+oracles must exist first. (1) Every engine audit writer passes `security.audit_guard.content_free_details`, an
+allowlist (keys, identifier-shaped values); `redact_log_event` is the log processor; Channel 1 of the deletion
+scanner also scans `audit_event`. (2) `tests/integration/archival/test_t1_to_t5.py` is the `T1`-`T5` contract,
+`T5` measured on all seven channels against the engine's real outputs with a pre-deletion control.
+(3) `tests/integration/test_replay_gate_db.py` replays a whole out-of-order session twice through the real queue
+and engine, and pins every `RL-092` clause to the test that proves it.
+**Defects found and fixed while building them.** (a) `version_committed` audited `memory_key`, which the P engine
+builds as `subject:predicate` and which survives deletion; the consolidator logged it too. (b) **A memory archived
+via branch `(C)` could not be deleted**: `delete_memory` failed with `archival_breaks_covered_source_invariant`
+because the archival constraint triggers judged each statement, not the deletion's final state; deletion now
+defers them and re-checks them `IMMEDIATE` before returning, and deleting only the replacement is still refused.
+(c) `scan_deleted_key` let a caller's channel-1 probe *replace* the SQL storage scan, so supplying a cache probe
+reported channel 1 "complete, zero" without scanning storage; it now supplements it (the Suite D harness already
+composed both, so recorded `H4` results are unaffected: `reports/deletion/suite_d_dev_{P,A8}.json` re-run
+byte-identically). (d) The Suite D harness built migration 1 only; it now builds the shipped schema.
+**Verification.** `tests/test_audit_guard.py` (static rules fail on the removed `memory_key` field),
+`tests/integration/test_audit_content_db.py`, `tests/integration/archival/test_t1_to_t5.py` (`T5` fails without
+the deferral), `tests/integration/test_leak_scanner_db.py::test_a_cache_probe_supplements_and_never_replaces_the_storage_scan`,
+`tests/integration/test_replay_gate_db.py`; `INVARIANT_LEDGER.md`: every v1 row is `ENFORCED`
+(`test_v1_gaps_closed_in_r10_are_enforced_with_tests`). **Status:** decided and verified.
+
+### V2-D56 — W1 is specified and gated by executable requirements; status claims match evidence
+
+**Decision.** (1) Every W1 task is bound by the r10 requirements in `ROADMAP_V2.md` section 4 (migration numbering
+from `005`, composite tenant keys, pinned function `search_path`, exact privilege matrix, audit-key allowlist,
+deferrable archival triggers, and the Invariant 7-10 oracles), each enforced by a test that fails when a W1 change
+omits it; task-specific obligations are added to `E-012`, `E-039` and `E-037`. (2) `RL-091` (full-schema invariant
+suite) is satisfied by `INVARIANT_LEDGER.md` and `tests/test_invariants_declared_and_enforced.py`, which resolve a
+site and a CI-run test for every v1 invariant on the fully migrated schema; a second, duplicate suite would add
+maintenance without evidence. (3) `RL-005` (engine CI) is verified locally by `tests/test_ci_workflow.py` (every
+gate present, actions and images pinned, read-only token, workflows linted). (4) `RL-071`'s stale `Open` claim is
+corrected. **Verification.** `scripts/audit_status.py`: 0 `claimed-unverified`, no discrepancies.
+**Status:** decided and verified.

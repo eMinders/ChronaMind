@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import LiteralString, cast
 from uuid import uuid4
 
 import pytest
@@ -23,12 +22,11 @@ from custom_memory_engine.engine.predicates import (
     historical_as_of,
     historical_window,
 )
-from tests.integration.current_schema import CurrentSchema
+from tests.integration.schema import apply_migrations
 
 pytestmark = pytest.mark.integration
 
 CME_ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_SQL = CurrentSchema()
 MICROSECOND = timedelta(microseconds=1)
 
 
@@ -59,7 +57,7 @@ async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
         await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
     try:
         async with connect((config, schema)) as conn:
-            await conn.execute(cast(LiteralString, SCHEMA_SQL.read_text(encoding="utf-8")), prepare=False)
+            await apply_migrations(conn)
             await seed_history(conn)
         yield config, schema
     finally:

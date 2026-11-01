@@ -1,4 +1,4 @@
--- Migration 7: generalised evidence source (M4) - E-013, V2-D06, V2-D41, D-ENG-04.
+-- Migration 8: generalised evidence source (M4) - E-013, V2-D06, V2-D41, D-ENG-04.
 --
 -- In v1 evidence can only be a chat turn: memory_evidence.turn_id was NOT NULL REFERENCES turn. A general engine needs
 -- other evidence (tool output, diffs, file spans, papers, external artifacts), so evidence becomes a SOURCE reference
@@ -40,19 +40,18 @@ BEGIN
     IF NEW.turn_id IS NULL THEN
       RAISE EXCEPTION 'evidence_source_required' USING ERRCODE = 'P0001';
     END IF;
-    SELECT content INTO turn_content FROM turn WHERE id = NEW.turn_id;
-    IF NOT FOUND THEN
-      -- Same SQLSTATE the turn foreign key raises; raised here because NOT NULL is checked before foreign keys.
-      RAISE EXCEPTION 'evidence_turn_not_found' USING ERRCODE = '23503';
-    END IF;
+    -- Only this tenant's own turn counts (V2-D54): an unknown turn and another tenant's turn look the same, and the
+    -- composite foreign key rejects both with its usual error. NOT NULL is checked before foreign keys, so such a row
+    -- gets an all-zero placeholder hash here and is then refused by the foreign key.
+    SELECT content INTO turn_content FROM turn WHERE id = NEW.turn_id AND user_id = NEW.user_id;
     NEW.source_type := 'turn';
     NEW.source_ref := NEW.turn_id;
     NEW.span := NEW.evidence_span;
-    NEW.content_hash := encode(
+    NEW.content_hash := CASE WHEN turn_content IS NULL THEN repeat('0', 64) ELSE encode(
       sha256(convert_to(
         replace(replace(normalize(turn_content, NFC), E'\r\n', E'\n'), E'\r', E'\n'), 'UTF8'
       )), 'hex'
-    );
+    ) END;
     RETURN NEW;
   END IF;
 
@@ -104,3 +103,15 @@ ALTER TABLE memory_evidence
     (source_type = 'turn' AND turn_id IS NOT NULL AND source_ref = turn_id AND span = evidence_span)
     OR (source_type = 'external' AND turn_id IS NULL)
   );
+
+-- V2-D54 (S-02): every engine function is pinned to `<this schema>, pg_catalog, pg_temp`.
+DO $pin$
+DECLARE
+  engine_schema text := pg_catalog.current_schema();
+BEGIN
+  EXECUTE pg_catalog.format(
+    'ALTER FUNCTION %I.sync_memory_evidence_source() SET search_path = %I, pg_catalog, pg_temp',
+    engine_schema, engine_schema
+  );
+END
+$pin$;

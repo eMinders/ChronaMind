@@ -22,6 +22,7 @@ from custom_memory_engine.queue.contracts import (
     QueueError,
     WorkerResult,
 )
+from custom_memory_engine.security.audit_guard import content_free_details
 
 type JobHandler = Callable[[AsyncConnection, Job, ClockTick], Awaitable[None]]
 MAX_ATTEMPTS = 3
@@ -196,12 +197,14 @@ async def _discard_stale_job(
                 uuid4().hex,
                 replay_time,
                 Jsonb(
-                    {
-                        "job_id": job.id,
-                        "kind": job.kind,
-                        "epoch_start": stale.epoch_start,
-                        "current_epoch": stale.current_epoch,
-                    }
+                    content_free_details(
+                        {
+                            "job_id": job.id,
+                            "kind": job.kind,
+                            "epoch_start": stale.epoch_start,
+                            "current_epoch": stale.current_epoch,
+                        }
+                    )
                 ),
             ),
         )

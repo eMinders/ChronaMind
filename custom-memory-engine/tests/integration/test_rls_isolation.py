@@ -9,7 +9,6 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import LiteralString, cast
 from uuid import uuid4
 
@@ -25,7 +24,6 @@ from custom_memory_engine.engine.ingest import TurnInput, apply_candidate, persi
 from custom_memory_engine.engine.predicates import current_state, fetch_versions
 from custom_memory_engine.engine.retrieval import rank_versions
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, commit_initial_version
-from custom_memory_engine.schema import migrate
 from custom_memory_engine.security import (
     USER_TABLES,
     RlsProvisioningError,
@@ -38,11 +36,10 @@ from custom_memory_engine.security import (
 )
 from evaluation.stats.clopper_pearson import cp_upper
 from research.benchmarks.own_I.generator import generate_suite_i
+from tests.integration.schema import apply_migrations
 
 pytestmark = pytest.mark.integration
 
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema"
-MIGRATION_FILES = tuple(name for _, name in migrate.MIGRATIONS)
 MAR10 = datetime(2026, 3, 10, tzinfo=UTC)
 NOW = datetime(2026, 10, 1, tzinfo=UTC)
 MODEL = "BAAI/bge-small-en-v1.5"
@@ -67,8 +64,7 @@ async def database() -> AsyncIterator[tuple[DatabaseConfig, str, str]]:
     ) as conn:
         await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        for filename in MIGRATION_FILES:
-            await conn.execute(cast(LiteralString, (SCHEMA_DIR / filename).read_text(encoding="utf-8")), prepare=False)
+        await apply_migrations(conn)
         await provision_runtime_role(conn, schema, role)
     try:
         yield config, schema, role
@@ -237,12 +233,19 @@ async def test_cross_user_update_and_delete_touch_zero_rows_and_insert_is_reject
         await seed_user(conn, schema, "u2", "u2 secret")
         async with tenant_scope(conn, "u1", role=role):
             async with conn.cursor() as cursor:
-                await cursor.execute("UPDATE turn SET content = 'overwritten' WHERE user_id = 'u2'")
+                await cursor.execute("UPDATE memory_version SET status = 'rejected' WHERE user_id = 'u2'")
                 assert cursor.rowcount == 0
-                await cursor.execute("DELETE FROM turn WHERE user_id = 'u2'")
+                await cursor.execute("DELETE FROM memory_version WHERE user_id = 'u2'")
                 assert cursor.rowcount == 0
-                await cursor.execute("DELETE FROM session WHERE user_id = 'u2'")
-                assert cursor.rowcount == 0
+        # Turns and sessions are append-only for the runtime (V2-D54): any rewrite is refused outright.
+        for statement in (
+            "UPDATE turn SET content = 'overwritten' WHERE user_id = 'u2'",
+            "DELETE FROM turn WHERE user_id = 'u2'",
+            "DELETE FROM session WHERE user_id = 'u2'",
+        ):
+            with pytest.raises(InsufficientPrivilege):
+                async with tenant_scope(conn, "u1", role=role):
+                    await conn.execute(cast(LiteralString, statement))
         with pytest.raises(InsufficientPrivilege):
             async with tenant_scope(conn, "u1", role=role):
                 await conn.execute(

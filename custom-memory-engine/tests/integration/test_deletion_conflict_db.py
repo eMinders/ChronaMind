@@ -20,11 +20,10 @@ from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.engine.deletion import delete_memory
 from custom_memory_engine.engine.ingest import TurnInput, apply_candidate, persist_turn
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput
-from tests.integration.current_schema import CurrentSchema
+from tests.integration.schema import apply_migrations
 
 pytestmark = pytest.mark.integration
 
-SCHEMA_SQL = CurrentSchema()
 T0 = datetime(2025, 5, 1, tzinfo=UTC)
 
 
@@ -37,7 +36,7 @@ async def conn() -> AsyncIterator[tuple[AsyncConnection, str]]:
     async with await AsyncConnection.connect(url, autocommit=True, connect_timeout=5) as connection:
         await connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await connection.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await connection.execute(cast(LiteralString, SCHEMA_SQL.read_text(encoding="utf-8")), prepare=False)
+        await apply_migrations(connection)
         await connection.execute(
             "INSERT INTO predicate_schema VALUES ('badge', 'single', 'semantic'), ('desk', 'single', 'semantic')"
         )

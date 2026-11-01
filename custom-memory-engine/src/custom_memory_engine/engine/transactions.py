@@ -15,6 +15,7 @@ from psycopg.types.range import TimestamptzRange
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from custom_memory_engine.clock.allocation import ClockError, ClockTick, allocate_clock
+from custom_memory_engine.security.audit_guard import content_free_details
 
 logger = structlog.get_logger(__name__)
 
@@ -540,7 +541,7 @@ async def _record_audit_event(
             "INSERT INTO {audit} (id, user_id, memory_ref, event_type, event_at, details) "
             "VALUES (%s, %s, %s, %s, %s, %s)"
         ).format(audit=ident_audit),
-        (f"audit-{uuid4().hex}", user_id, memory_ref, event_type, event_at, Jsonb(details)),
+        (f"audit-{uuid4().hex}", user_id, memory_ref, event_type, event_at, Jsonb(content_free_details(details))),
     )
 
 
@@ -717,11 +718,7 @@ async def commit_initial_version(
                 memory_ref=candidate.version_id,
                 event_type="version_committed",
                 event_at=tick.instant,
-                details={
-                    "version_id": candidate.version_id,
-                    "memory_key": candidate.memory_key,
-                    "ablation": ablation,
-                },
+                details={"version_id": candidate.version_id, "ablation": ablation},
             )
 
     return (

@@ -25,10 +25,11 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, "001_full_schema.sql"),
     (2, "002_scope_grants.sql"),
     (3, "003_association_cap.sql"),
-    (4, "004_axes.sql"),
-    (5, "005_facet_floors.sql"),
-    (6, "006_lifecycle_guard.sql"),
-    (7, "007_source.sql"),
+    (4, "004_tenant_integrity.sql"),
+    (5, "005_axes.sql"),
+    (6, "006_facet_floors.sql"),
+    (7, "007_lifecycle_guard.sql"),
+    (8, "008_source.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -135,6 +136,17 @@ def _read_one(filename: str) -> tuple[str, str]:
 def _read_sources() -> tuple[tuple[int, str, str, str], ...]:
     """Return ``(version, filename, source, checksum)`` for every declared migration."""
     return tuple((version, filename, *_read_one(filename)) for version, filename in MIGRATIONS)
+
+
+def migration_scripts(*, through: int | None = None) -> tuple[tuple[int, str], ...]:
+    """Ordered ``(version, source)`` of every shipped migration up to ``through`` (default: all).
+
+    The single source for anything that builds a disposable schema without the runner (integration
+    tests, the Suite D harness), so the schema they measure is the schema that ships.
+    """
+    return tuple(
+        (version, source) for version, _, source, _ in _read_sources() if through is None or version <= through
+    )
 
 
 def _read_source() -> tuple[str, str]:
@@ -365,7 +377,7 @@ class MigrationRunner:
             if status.state != "applied":
                 raise MigrationError("migration_verification_failed")
         logger.info(
-            "schema_migration_completed", action="applied", schema_name=self.config.schema_name, version=VERSION
+            "schema_migration_completed", action="applied", schema_name=self.config.schema_name, version=status.version
         )
         return MigrationResult(action="applied", status=status)
 
@@ -397,7 +409,9 @@ class MigrationRunner:
             status = await self._status(connection, sources)
             if status.state != "applied":
                 raise MigrationError("migration_verification_failed")
-        logger.info("schema_migration_completed", action="reset", schema_name=self.config.schema_name, version=VERSION)
+        logger.info(
+            "schema_migration_completed", action="reset", schema_name=self.config.schema_name, version=status.version
+        )
         return MigrationResult(action="reset", status=status)
 
 

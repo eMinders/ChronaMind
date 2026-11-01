@@ -26,7 +26,7 @@ from tests.integration.test_migration_m1 import (
 )
 
 pytestmark = pytest.mark.integration
-M4 = 7
+M4 = 8
 EXTERNAL_TEXT = "def f():\r\n    return 1\n"
 EXTERNAL_HASH = canonical_hash(EXTERNAL_TEXT)
 
@@ -257,17 +257,22 @@ async def test_an_external_episode_is_stored_retrieved_with_provenance_and_delet
         assert receipt.external_exclusions == (ExternalExclusion("external", EXTERNAL_HASH),)
         assert await rows(conn, "SELECT count(*) FROM memory_version") == [(0,)]
         assert await rows(conn, "SELECT count(*) FROM memory_evidence") == [(0,)]
-        # the audit record is content-free: hashes only, never the locator or the text
+        assert receipt.external_exclusion_count == 1
+        # the audit record keeps a count only: no hash, no locator, no text (RL-072)
         (details,) = (
             await rows(conn, "SELECT details::text FROM audit_event WHERE event_type = 'deletion_completed'")
         )[0]
-        assert EXTERNAL_HASH in str(details) and "ci://run/42" not in str(details) and "lines 1-2" not in str(details)
+        assert '"external_exclusions": 1' in str(details)
+        assert (
+            EXTERNAL_HASH not in str(details) and "ci://run/42" not in str(details) and "lines 1-2" not in str(details)
+        )
 
         async with conn.transaction():
             replay = await delete_memory(
                 conn, "u1", scope="memory", target_ref="ext", deletion_epoch=receipt.deletion_epoch, schema_name=schema
             )
-        assert replay.external_exclusions == receipt.external_exclusions  # idempotent retry returns the same receipt
+        # an idempotent retry reports how many sources were excluded; which ones was the original receipt's to carry
+        assert (replay.external_exclusion_count, replay.external_exclusions) == (1, ())
 
 
 async def test_deleting_turn_evidence_lists_no_exclusion_and_still_purges_jobs(database) -> None:  # noqa: F811
@@ -284,7 +289,17 @@ async def test_deleting_turn_evidence_lists_no_exclusion_and_still_purges_jobs(d
             )
         async with conn.transaction():
             receipt = await delete_memory(conn, "u1", scope="memory", target_ref="mem", schema_name=schema)
-        assert (receipt.deleted_versions, receipt.purged_jobs, receipt.external_exclusions) == (1, 1, ())
+        assert (
+            receipt.deleted_versions,
+            receipt.purged_jobs,
+            receipt.external_exclusions,
+            receipt.external_exclusion_count,
+        ) == (
+            1,
+            1,
+            (),
+            0,
+        )
 
 
 async def test_mixed_turn_and_external_evidence_is_copied_whole_when_provenance_is_reissued(database) -> None:  # noqa: F811
@@ -327,7 +342,7 @@ async def test_rollback_refuses_while_non_turn_sources_exist_and_loses_nothing(d
         assert await rows(conn, "SELECT max(version) FROM _cme_schema_migrations") == [(migrate.VERSION,)]
 
 
-async def test_rollback_with_only_turn_sources_restores_version_6_exactly_and_reapply_works(database) -> None:  # noqa: F811
+async def test_rollback_with_only_turn_sources_restores_version_7_exactly_and_reapply_works(database) -> None:  # noqa: F811
     config, schema = database
     runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
     async with connect(database) as conn:

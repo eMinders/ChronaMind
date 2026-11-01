@@ -45,7 +45,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, LiteralString, Protocol, cast
 from uuid import uuid4
 
 import structlog
@@ -77,7 +77,7 @@ from custom_memory_engine.engine.predicates import current_state
 from custom_memory_engine.engine.render import render_context
 from custom_memory_engine.engine.retrieval import rank_versions
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput
-from custom_memory_engine.schema import migrate
+from custom_memory_engine.schema.migrate import migration_scripts
 from evaluation.baselines.embedding import OnnxBgeEmbedder
 from evaluation.harness.leak_scanner import log_sink_probe
 from evaluation.stats.clopper_pearson import cp_upper
@@ -91,7 +91,6 @@ from research.benchmarks.own_D.generator import (
 )
 
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-SCHEMA_SQL = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema/001_full_schema.sql"
 TOKEN_BUDGET = 2000
 VECTOR_TOP_K = 10
 CP_TAIL = 0.025  # one-sided 97.5%, STATISTICS.md §4 and V2-D18/D19
@@ -603,10 +602,8 @@ async def run_suite(
     try:
         async with await AsyncConnection.connect(database_url, autocommit=True, connect_timeout=10) as conn:
             await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-            await conn.execute(
-                "\n".join(SCHEMA_SQL.with_name(name).read_text(encoding="utf-8") for _, name in migrate.MIGRATIONS),  # type: ignore[arg-type]
-                prepare=False,
-            )
+            for _, source in migration_scripts():  # the shipped schema, every migration
+                await conn.execute(cast(LiteralString, source), prepare=False)
             for scenario in scenarios:
                 lines: list[str] = []
                 handler = _LogCapture(lines)

@@ -1,5 +1,5 @@
--- Rollback of migration 7 (M4, E-013). Run in ONE transaction by whoever operates the schema; the forward runner never
--- executes it. Restores the version-6 schema exactly (the catalog fingerprint equals the one recorded for version 6).
+-- Rollback of migration 8 (M4, E-013). Run in ONE transaction by whoever operates the schema; the forward runner never
+-- executes it. Restores the version-7 schema exactly (the catalog fingerprint equals the one recorded for version 6).
 -- It REFUSES, with a static error, while any non-turn source exists: dropping the columns would lose that evidence.
 -- After a re-apply the four new columns sit at later attribute numbers (PostgreSQL never reuses a dropped one); every
 -- other catalog property is identical. Roll back later migrations first.
@@ -27,4 +27,4 @@ ALTER TABLE memory_evidence
   DROP COLUMN span,
   DROP COLUMN source_ref,
   DROP COLUMN source_type;
-DELETE FROM _cme_schema_migrations WHERE version = 7;
+DELETE FROM _cme_schema_migrations WHERE version = 8;
