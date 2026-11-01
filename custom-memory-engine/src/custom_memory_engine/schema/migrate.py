@@ -130,6 +130,17 @@ def _read_sources() -> tuple[tuple[int, str, str, str], ...]:
     return tuple((version, filename, *_read_one(filename)) for version, filename in MIGRATIONS)
 
 
+def migration_scripts(*, through: int | None = None) -> tuple[tuple[int, str], ...]:
+    """Ordered ``(version, source)`` of every shipped migration up to ``through`` (default: all).
+
+    The single source for anything that builds a disposable schema without the runner (integration
+    tests, the Suite D harness), so the schema they measure is the schema that ships.
+    """
+    return tuple(
+        (version, source) for version, _, source, _ in _read_sources() if through is None or version <= through
+    )
+
+
 def _read_source() -> tuple[str, str]:
     """Source and checksum of migration 1 (kept for callers that inspect the base schema)."""
     return _read_one(MIGRATIONS[0][1])

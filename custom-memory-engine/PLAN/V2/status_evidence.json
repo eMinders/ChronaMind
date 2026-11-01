@@ -376,10 +376,15 @@
       "note": "restricted NOSUPERUSER NOBYPASSRLS runtime role, grants and tenant-scoping guard (3d0f7bb, 84e504f; #47 closed)"
     },
     "RL-072": {
-      "kind": "none",
+      "kind": "code",
       "files": [
         "src/custom_memory_engine/security/audit_guard.py"
-      ]
+      ],
+      "tests": [
+        "tests/test_audit_guard.py",
+        "tests/integration/test_audit_content_db.py"
+      ],
+      "note": "allowlist guard on every audit writer, log redaction processor, Channel 1 scans audit rows; removed the memory_key audit and log leaks (r10, V2-D55)"
     },
     "RL-080": {
       "kind": "none",
@@ -406,11 +411,16 @@
       ]
     },
     "RL-090": {
-      "kind": "none",
+      "kind": "code",
       "files": [
+        "tests/integration/archival/test_t1_to_t5.py",
+        "tests/integration/archival/README.md",
+        "src/custom_memory_engine/engine/deletion.py"
+      ],
+      "tests": [
         "tests/integration/archival/test_t1_to_t5.py"
       ],
-      "note": "T1-T4 exist inline in tests/integration/test_transactions_db.py; T5 and the extracted harness do not"
+      "note": "T1-T5 harness; T5 measured on seven channels; fixed deletion of (C)-archived memories (r10, V2-D55)"
     },
     "RL-091": {
       "kind": "none",
@@ -419,11 +429,16 @@
       ]
     },
     "RL-092": {
-      "kind": "none",
+      "kind": "code",
       "files": [
-        "tests/integration/test_clock_and_queue.py"
+        "tests/integration/test_replay_gate_db.py"
       ],
-      "note": "partial coverage in test_clock_queue_db.py and test_queue_regressions_db.py"
+      "tests": [
+        "tests/integration/test_replay_gate_db.py",
+        "tests/integration/test_clock_queue_db.py",
+        "tests/integration/test_queue_regressions_db.py"
+      ],
+      "note": "end-to-end replay gate plus a pinned clause map to the existing clock/queue tests (r10, V2-D55)"
     },
     "RL-093": {
       "kind": "none",

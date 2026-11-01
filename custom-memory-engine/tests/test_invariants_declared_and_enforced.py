@@ -157,11 +157,16 @@ def test_every_declared_invariant_is_enforced_or_explicitly_marked(rows: list[Ro
     assert validate(rows, declared_invariants(), defined_tasks()) == []
 
 
-def test_known_v1_gaps_are_reported_not_silently_passed(rows: list[Row]) -> None:
-    status = {r.invariant: r.status for r in rows}
-    assert status["Invariant 8 / content-free audit"] == "UNENFORCED"
-    assert status["Invariant 9 / end-to-end replay"] == "UNENFORCED"
-    assert status["Invariant 10 / T1-T5 harness"] == "UNENFORCED"
+def test_v1_gaps_closed_in_r10_are_enforced_with_tests(rows: list[Row]) -> None:
+    """RL-072, RL-092 and RL-090 closed the last v1 gaps (r10, V2-D55): no v1 row may fall back silently."""
+    by_name = {r.invariant: r for r in rows}
+    for name in (
+        "Invariant 8 / content-free audit",
+        "Invariant 9 / end-to-end replay",
+        "Invariant 10 / T1-T5 harness",
+    ):
+        assert by_name[name].status == "ENFORCED" and by_name[name].tests, name
+    assert all(r.status == "ENFORCED" for r in rows if r.base.startswith("Invariant ")), "every v1 row is enforced"
 
 
 def test_gaps_closed_in_r7_are_enforced_with_tests(rows: list[Row]) -> None:
@@ -199,7 +204,7 @@ def test_citing_a_test_that_does_not_exist_is_detected(rows: list[Row]) -> None:
 
 def test_an_unenforced_row_must_say_what_is_missing_and_who_owns_it(rows: list[Row]) -> None:
     target = next(r for r in rows if r.invariant == "Invariant 8 / content-free audit")
-    mutated = [replace(target, gap="", owners=()) if r is target else r for r in rows]
+    mutated = [replace(target, status="UNENFORCED", gap="", owners=()) if r is target else r for r in rows]
     problems = validate(mutated, declared_invariants(), defined_tasks())
     assert "Invariant 8 / content-free audit:gap_required" in problems
     assert "Invariant 8 / content-free audit:owner_required" in problems
