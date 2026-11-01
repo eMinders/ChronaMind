@@ -888,3 +888,26 @@ maintenance without evidence. (3) `RL-005` (engine CI) is verified locally by `t
 gate present, actions and images pinned, read-only token, workflows linted). (4) `RL-071`'s stale `Open` claim is
 corrected. **Verification.** `scripts/audit_status.py`: 0 `claimed-unverified`, no discrepancies.
 **Status:** decided and verified.
+
+### V2-D57 — AI review is the project's review gate
+
+**Decision.** The AI reviewer, acting on the Project Owner's behalf, is the mandatory review gate for every change
+to the engine: code, schema, migration, plan document and architecture decision. Human peer review is **not** a
+prerequisite for merging and is never recorded as though it happened. The review standard is `PLAN/CONTRIBUTING.md`
+§1.1: read the code rather than the description, reproduce the claims that matter, treat a stated guarantee as
+unproven until a mutation shows its test fails without it, review the *sequence* of merges where several branches
+touch one file, adapt but never weaken a failing test, and leave a partially satisfied issue open with its gap
+recorded.
+**Why.** The r11 W1 review is the evidence. Six tasks were implemented and merged, and the review found: an audit
+key that collided with the r10 allowlist (#112), an invariant ledger silently reverted by merge order (fixed in
+#123), a property test that ran 315 ledgers where its issue required 1,000 (#125), a missing `T-30` enforcement
+that let a namespace owner test whether a user id exists (#122), stale migration numbering across four branches,
+and rollbacks that restored a function without its `search_path` pin. None of these were visible in any single PR's
+green CI. A review that only reads the description would have missed all of them.
+**What this does not mean.** It is not a claim of human sign-off, and it does not relax any research gate: G-TS,
+the frozen records and the confirmatory-run restrictions remain exactly as they were. Where a platform requires a
+GitHub approval, that requirement is a platform setting and no approval is ever fabricated for it.
+**Implementation.** `PLAN/CONTRIBUTING.md` §1.1 (the standard), this decision (the authority), the PR body (the
+record of each review), `DECISIONS_V2.md` (the decisions it produces), and `INVARIANT_LEDGER.md`/issues (the gaps
+it finds). `PLAN/V2/audits/` keeps the historical reports as evidence; no new one is written per change.
+**Status:** decided and in force from r11.
