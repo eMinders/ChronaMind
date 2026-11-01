@@ -287,9 +287,9 @@ async def test_axes_that_contradict_the_v1_columns_are_rejected(database: tuple[
         with pytest.raises(RaiseException, match="only status"):
             await conn.execute("UPDATE memory_version SET kind = NULL WHERE id = 'proc'")  # cannot flip to a claim
         # A consistent explicit write is accepted unchanged.
-        await insert_active(conn, "ok", layer="opinion", extra="lifecycle='inferred'")
+        await insert_active(conn, "ok", layer="opinion", extra="lifecycle='observed'")
         assert await rows(conn, "SELECT kind, lifecycle, retention FROM memory_version WHERE id = 'ok'") == [
-            ("claim", "inferred", "durable")
+            ("claim", "observed", "durable")
         ]
         with pytest.raises(RaiseException, match="axes_lifecycle_inconsistent_with_status"):
             await conn.execute("UPDATE memory_version SET lifecycle = 'contested' WHERE id = 'ok'")

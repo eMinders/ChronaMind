@@ -10,6 +10,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 | `004_tenant_integrity.sql` | Migration 4 (`V2-D54`): every intra-tenant foreign key composite on `(id, user_id)`; every engine function pinned to `search_path = <schema>, pg_catalog, pg_temp`; grants are never deleted |
 | `005_axes.sql` | Migration 5 (`E-010`, M1 + M7): `kind`, `lifecycle`, `retention`, their backfill and the dual-write window |
 | `006_facet_floors.sql` | Migration 6 (`E-020`, M8): the `um_facet` tag and the retention floor for claims and abstractions |
+| `007_lifecycle_guard.sql` | Migration 7 (`E-016`): the closed lifecycle transition table, kind-conditioned legality, and the `I1′` derivation record |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
@@ -38,7 +39,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–6** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–7** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
