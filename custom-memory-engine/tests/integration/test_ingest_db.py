@@ -4,7 +4,6 @@ import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import LiteralString, cast
 from uuid import uuid4
 
@@ -24,10 +23,11 @@ from custom_memory_engine.engine.ingest import (
     resolve_held,
 )
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, ResolutionOutcome
+from tests.integration.current_schema import CurrentSchema
 
 pytestmark = pytest.mark.integration
 
-SCHEMA_SQL = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema/001_full_schema.sql"
+SCHEMA_SQL = CurrentSchema()
 START = datetime(2026, 3, 10, tzinfo=UTC)
 LATER = datetime(2026, 6, 1, tzinfo=UTC)
 

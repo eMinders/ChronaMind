@@ -23,11 +23,12 @@ from custom_memory_engine.engine.predicates import (
     historical_as_of,
     historical_window,
 )
+from tests.integration.current_schema import CurrentSchema
 
 pytestmark = pytest.mark.integration
 
 CME_ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_SQL = CME_ROOT / "src/custom_memory_engine/schema/001_full_schema.sql"
+SCHEMA_SQL = CurrentSchema()
 MICROSECOND = timedelta(microseconds=1)
 
 

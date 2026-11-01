@@ -33,7 +33,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Versions **1-6** (`001_full_schema.sql` to `006_lifecycle_guard.sql`) are currently registered.
+and application time. Versions **1-7** (`001_full_schema.sql` to `007_source.sql`) are currently registered.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
 `status` reads without creating schema objects and reports `unapplied`, `applied`,
@@ -125,6 +125,31 @@ The §2.3 transition table is closed in the database, for every writer (direct S
   required for system-initiated retirement only, which is migration 1's archival trigger on `status = 'archived'`.
 
 Rollback: `rollback/006_lifecycle_guard.sql`. Tested by `tests/integration/test_lifecycle_transitions.py`.
+
+## Migration 7: generalised evidence source (`007_source.sql`, `E-013`, M4)
+
+`memory_evidence` gains `source_type`, `source_ref`, `span`, `content_hash`, so evidence is a *source reference*, not
+only a chat turn. The vocabulary is closed at the two types `V2-D41` declares, `turn` and `external` (an `artifact` is
+never evidence); `content_hash` is SHA-256 over the NFC-normalised, LF-newline UTF-8 text
+(`grounding.sources.canonical_hash`; the SQL backfill and the Python function are tested to agree).
+
+* **Turn evidence is byte-identical.** The old columns are never written by the migration; the backfill fills only
+  the new ones (`('turn', turn_id, evidence_span, sha256(turn content))`) and a `CHECK` keeps them equal for every turn.
+  `turn_id` and its foreign key stay (nullable, `NULL` for external sources), so a dangling turn is still refused.
+  The primary key moves to `(version_id, source_type, source_ref, span)`, which is the old key for turns.
+* **Dual-write.** v1 writers still insert `(version_id, turn_id, user_id, evidence_span, evidence_role)`;
+  `sync_memory_evidence_source` derives the source columns, so the engine's turn inserts are exactly v1's.
+* **External sources** need a hash and a locator and no engine row. They are **outside the deletion boundary**
+  (`D-ENG-04`): deleting an episode removes its row and derivations, and `DeletionReceipt.external_exclusions` lists the
+  external sources it cited by `(source_type, content_hash)`, exactly as WAL and backups are excluded. The audit event
+  stores the hashes only. `engine/sources.py::fetch_sources` reads a version's sources back with provenance.
+* **Invariant 1 / `I2`** are unchanged in form: the deferred provenance trigger counts any evidence row.
+* **Rollback** (`rollback/007_source.sql`) refuses with `m4_rollback_refused_non_turn_sources_exist` while any
+  non-turn source exists; with turn sources only it restores version 6 exactly and the evidence data is untouched.
+* **Open for the owner** (issue question (b)): the type vocabulary is closed in the schema, so adding a type is a
+  migration, not a profile setting.
+
+Tested by `tests/integration/test_migration_m4.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner

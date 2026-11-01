@@ -77,6 +77,7 @@ from custom_memory_engine.engine.predicates import current_state
 from custom_memory_engine.engine.render import render_context
 from custom_memory_engine.engine.retrieval import rank_versions
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput
+from custom_memory_engine.schema import migrate
 from evaluation.baselines.embedding import OnnxBgeEmbedder
 from evaluation.harness.leak_scanner import log_sink_probe
 from evaluation.stats.clopper_pearson import cp_upper
@@ -602,7 +603,10 @@ async def run_suite(
     try:
         async with await AsyncConnection.connect(database_url, autocommit=True, connect_timeout=10) as conn:
             await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-            await conn.execute(SCHEMA_SQL.read_text(encoding="utf-8"), prepare=False)  # type: ignore[arg-type]
+            await conn.execute(
+                "\n".join(SCHEMA_SQL.with_name(name).read_text(encoding="utf-8") for _, name in migrate.MIGRATIONS),  # type: ignore[arg-type]
+                prepare=False,
+            )
             for scenario in scenarios:
                 lines: list[str] = []
                 handler = _LogCapture(lines)

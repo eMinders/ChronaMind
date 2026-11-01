@@ -25,6 +25,7 @@ from custom_memory_engine.engine.ingest import TurnInput, apply_candidate, persi
 from custom_memory_engine.engine.predicates import current_state, fetch_versions
 from custom_memory_engine.engine.retrieval import rank_versions
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, commit_initial_version
+from custom_memory_engine.schema import migrate
 from custom_memory_engine.security import (
     USER_TABLES,
     RlsProvisioningError,
@@ -41,7 +42,7 @@ from research.benchmarks.own_I.generator import generate_suite_i
 pytestmark = pytest.mark.integration
 
 SCHEMA_DIR = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema"
-MIGRATION_FILES = ("001_full_schema.sql", "002_scope_grants.sql")
+MIGRATION_FILES = tuple(name for _, name in migrate.MIGRATIONS)
 MAR10 = datetime(2026, 3, 10, tzinfo=UTC)
 NOW = datetime(2026, 10, 1, tzinfo=UTC)
 MODEL = "BAAI/bge-small-en-v1.5"

@@ -28,6 +28,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (4, "004_axes.sql"),
     (5, "005_facet_floors.sql"),
     (6, "006_lifecycle_guard.sql"),
+    (7, "007_source.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -58,6 +59,7 @@ FUNCTIONS = (
     "sync_memory_version_axes",
     "mark_derived_version_inferred",
     "enforce_lifecycle_transition",
+    "sync_memory_evidence_source",
 )
 logger = structlog.get_logger(__name__)
 

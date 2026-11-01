@@ -54,6 +54,18 @@ class DeletionError(InvalidParameterValue):
 
 
 @dataclass(frozen=True)
+class ExternalExclusion:
+    """An external source the deleted versions cited, which the engine cannot erase (D-ENG-04).
+
+    Identified by its SHA-256 ``content_hash`` (content-free), so the caller can find the artifact it holds. Like WAL
+    and backups, it lies outside the deletion boundary; the receipt lists it so nothing pretends it was erased.
+    """
+
+    source_type: str
+    content_hash: str
+
+
+@dataclass(frozen=True)
 class DeletionReceipt:
     """Content-free deletion outcome suitable for receipts and structured logs."""
 
@@ -64,6 +76,7 @@ class DeletionReceipt:
     dependents: int
     rederived_dependents: int
     purged_jobs: int
+    external_exclusions: tuple[ExternalExclusion, ...] = ()
 
 
 async def _verify(connection: AsyncConnection, user_id: str) -> None:
@@ -150,6 +163,10 @@ async def delete_memory(
                         dependents=int(details.get("dependents", 0)),
                         rederived_dependents=int(details.get("re_derived_versions", 0)),
                         purged_jobs=int(details.get("purged_jobs", 0)),
+                        external_exclusions=tuple(
+                            ExternalExclusion(str(item["source_type"]), str(item["content_hash"]))
+                            for item in details.get("external_exclusions", [])
+                        ),
                     )
 
             await cursor.execute(
@@ -288,6 +305,7 @@ async def delete_memory(
 
             # Include turns linked to replaced summaries as well as physically purged rows.
             turn_ids: set[str] = set()
+            external_exclusions: tuple[ExternalExclusion, ...] = ()
             evicted_ids = list(dict.fromkeys([*purge, *summary_rebuilds]))
             if evicted_ids:
                 await cursor.execute(
@@ -297,6 +315,18 @@ async def delete_memory(
                     (evicted_ids, user_id),
                 )
                 turn_ids = {row[0] for row in await cursor.fetchall() if row[0]}
+                # Sources outside the engine cannot be erased by it: read them before the cascade removes the rows.
+                await cursor.execute(
+                    sql.SQL(
+                        "SELECT DISTINCT source_type, content_hash FROM {e} "
+                        "WHERE version_id = ANY(%s) AND user_id = %s AND source_type <> 'turn' "
+                        "ORDER BY source_type, content_hash"
+                    ).format(e=evidence),
+                    (evicted_ids, user_id),
+                )
+                external_exclusions = tuple(
+                    ExternalExclusion(str(row[0]), str(row[1])) for row in await cursor.fetchall()
+                )
 
             # Remove edges before their source rows, whose foreign key is intentionally restrictive.
             edge_cleanup = list(dict.fromkeys([*purge, *surviving]))
@@ -397,6 +427,17 @@ async def delete_memory(
                             "dependents": len(dependents),
                             "re_derived_versions": len(summary_rebuilds),
                             "purged_jobs": purged_jobs,
+                            # present only when something lies outside the boundary, so v1 receipts are unchanged
+                            **(
+                                {
+                                    "external_exclusions": [
+                                        {"source_type": item.source_type, "content_hash": item.content_hash}
+                                        for item in external_exclusions
+                                    ]
+                                }
+                                if external_exclusions
+                                else {}
+                            ),
                         }
                     ),
                 ),
@@ -410,6 +451,7 @@ async def delete_memory(
         deleted_versions=len(purge),
         re_derived_versions=len(summary_rebuilds),
         purged_jobs=purged_jobs,
+        external_exclusions=len(external_exclusions),
     )
     return DeletionReceipt(
         request_id=request_id,
@@ -419,6 +461,7 @@ async def delete_memory(
         dependents=len(dependents),
         rederived_dependents=len(summary_rebuilds),
         purged_jobs=purged_jobs,
+        external_exclusions=external_exclusions,
     )
 
 
@@ -435,4 +478,11 @@ async def deletion_epoch(connection: AsyncConnection, user_id: str, *, schema_na
     return row[0] if row else 0
 
 
-__all__: Sequence[str] = ("DeletionError", "DeletionReceipt", "MAX_LINEAGE_DEPTH", "delete_memory", "deletion_epoch")
+__all__: Sequence[str] = (
+    "DeletionError",
+    "DeletionReceipt",
+    "ExternalExclusion",
+    "MAX_LINEAGE_DEPTH",
+    "delete_memory",
+    "deletion_epoch",
+)

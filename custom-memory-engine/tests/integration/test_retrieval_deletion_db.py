@@ -5,7 +5,6 @@ import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import LiteralString, cast
 from uuid import uuid4
 
@@ -26,10 +25,11 @@ from custom_memory_engine.engine.render import render_context
 from custom_memory_engine.engine.retrieval import RetrievalError, rank_versions, retrieve_current
 from custom_memory_engine.queue.contracts import Job, JobIdentityConflict, NewJob
 from custom_memory_engine.queue.worker import enqueue, process_one
+from tests.integration.current_schema import CurrentSchema
 
 pytestmark = pytest.mark.integration
 
-SCHEMA_SQL = Path(__file__).resolve().parents[2] / "src/custom_memory_engine/schema/001_full_schema.sql"
+SCHEMA_SQL = CurrentSchema()
 MODEL = "BAAI/bge-small-en-v1.5"
 START = datetime(2026, 3, 1, tzinfo=UTC)
 MID = datetime(2026, 6, 1, tzinfo=UTC)

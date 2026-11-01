@@ -35,11 +35,12 @@ from custom_memory_engine.engine.transactions import (
     stage_candidate,
     supersede_single,
 )
+from tests.integration.current_schema import CurrentSchema
 
 pytestmark = pytest.mark.integration
 
 CME_ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_SQL = CME_ROOT / "src/custom_memory_engine/schema/001_full_schema.sql"
+SCHEMA_SQL = CurrentSchema()
 
 
 def instant(month: int, day: int, hour: int = 0) -> datetime:

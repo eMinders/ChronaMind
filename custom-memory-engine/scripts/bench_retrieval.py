@@ -24,6 +24,7 @@ from psycopg import AsyncConnection, sql
 from custom_memory_engine.config import TestDatabaseConfig
 from custom_memory_engine.engine.predicates import current_state
 from custom_memory_engine.engine.retrieval import rank_versions
+from custom_memory_engine.schema import migrate
 
 SCHEMA_SQL = Path(__file__).resolve().parents[1] / "src/custom_memory_engine/schema/001_full_schema.sql"
 MODEL = "BAAI/bge-small-en-v1.5"
@@ -117,7 +118,13 @@ async def main() -> int:
     try:
         await connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await connection.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await connection.execute(cast(LiteralString, SCHEMA_SQL.read_text(encoding="utf-8")), prepare=False)
+        await connection.execute(
+            cast(
+                LiteralString,
+                "\n".join(SCHEMA_SQL.with_name(name).read_text(encoding="utf-8") for _, name in migrate.MIGRATIONS),
+            ),
+            prepare=False,
+        )
         reference = await seed(connection, args.rows, args.users)
         query_embedding = embedding(random.Random(7))
         await connection.execute("SELECT set_config('app.user_id', 'bench-0', false)")

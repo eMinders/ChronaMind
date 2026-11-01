@@ -20,11 +20,12 @@ from psycopg.errors import InsufficientPrivilege
 from custom_memory_engine.clock import ClockError, ClockTick, allocate_clock
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.queue import Job, JobIdentityConflict, NewJob, QueueError, enqueue, process_one
+from tests.integration.current_schema import CurrentSchema
 
 pytestmark = pytest.mark.integration
 
 CME_ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_SQL = CME_ROOT / "src/custom_memory_engine/schema/001_full_schema.sql"
+SCHEMA_SQL = CurrentSchema()
 BASE = datetime(2026, 3, 10, tzinfo=UTC)
 LATER = datetime(2026, 8, 20, tzinfo=UTC)
 TICK = timedelta(microseconds=1)
