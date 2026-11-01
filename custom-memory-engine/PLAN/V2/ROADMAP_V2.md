@@ -126,6 +126,15 @@ mechanical guarantee that the plan stays consistent as it is edited.
 | `E-020` | M8: `um_facet` tag + index; retention floor `CHECK` | Needed before `C-024`, not before | S |
 | `E-039` | **Public API entry point** (r9, found by `MA-017`): one callable per `API_V2.md` operation; tier and admin role from the authenticated credential; `api.contract.authorize` on every call; every condition code enforced; static error contract (§1.1). Each operation is wired as its owning task lands; it never adds an operation outside `API_V2.md` | Without it no task owns the dispatch layer, authorization or the error contract; `E-018`'s conformance suite drives the engine through it | M |
 
+**W1 progress (r11).** Six of the twelve tasks are complete on `main` and were verified against their own acceptance
+criteria, not against CI alone: `E-010` (migration 5), `E-012` (migration 9, closing `T-28`), `E-013` (migration 8),
+`E-015`, `E-017`, `E-019`, `E-020` (migration 6), and `E-039` in all but its `E-018`-facing criterion. Their migrations
+are 5-9; 4 was already shipped. `E-016` (migration 7) is **partial**: the closed transition table, kind-conditioned
+legality and the `I1'` derivation guard are enforced for every writer, but the record tables the table's own §2.3 rows
+require are `E-014`'s (`METHOD`, `VERIFICATION`, adjudication and reason codes), so `I1'` stays `PARTIAL`.
+`E-014` (M6), `E-011` (M2+M9) and `E-018` (G1 conformance) are the remaining W1 work, and `E-039`'s last criterion
+belongs with `E-018` because that suite is what drives the entry point.
+
 **r10 requirements binding on every W1 task** (`V2-D54`, `V2-D55`; pre-W1 audit `audits/PRE_W1_INDEPENDENT_AUDIT.md`):
 1. W1 migrations are files **005+**; `migrate.MIGRATIONS` is append-only and checksum-bound.
 2. Every foreign key between two tables carrying `user_id` is composite on `(id, user_id)`, and every SQL function
