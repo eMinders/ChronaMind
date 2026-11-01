@@ -45,10 +45,12 @@ BEGIN
     WHEN 'episodic' THEN 'episode' WHEN 'semantic' THEN 'claim'
     WHEN 'opinion' THEN 'claim' WHEN 'persona' THEN 'abstraction' END;
 
-  -- kind: derived when absent (v1 writers, backfill); validated against `layer` when a caller supplies it.
+  -- kind: derived when absent (v1 writers, backfill); validated against `layer` when a caller supplies it. v1 has
+  -- no procedure layer, so `procedure` is the one kind a caller may supply that `layer` cannot imply (how its
+  -- `layer` column is filled is owned by E-030; v1 code never writes it).
   IF NEW.kind IS NULL THEN
     NEW.kind := derived_kind;
-  ELSIF NEW.kind <> derived_kind THEN
+  ELSIF NEW.kind <> derived_kind AND NEW.kind <> 'procedure' THEN
     RAISE EXCEPTION 'axes_kind_inconsistent_with_layer' USING ERRCODE = 'P0001';
   END IF;
 

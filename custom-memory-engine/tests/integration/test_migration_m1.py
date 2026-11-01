@@ -280,6 +280,13 @@ async def test_axes_that_contradict_the_v1_columns_are_rejected(database: tuple[
             await insert_active(conn, "bad-retention", extra="retention='archived'")  # archived is not a retention
         with pytest.raises(CheckViolation):
             await insert_active(conn, "bad-enum", extra="retention='forever'")
+        # `procedure` has no v1 layer, so it is the one kind a caller may supply that `layer` cannot imply.
+        await insert_active(conn, "proc", extra="kind='procedure'")
+        assert await rows(conn, "SELECT kind, lifecycle FROM memory_version WHERE id = 'proc'") == [
+            ("procedure", "asserted")
+        ]
+        with pytest.raises(RaiseException, match="only status"):
+            await conn.execute("UPDATE memory_version SET kind = NULL WHERE id = 'proc'")  # cannot flip to a claim
         # A consistent explicit write is accepted unchanged.
         await insert_active(conn, "ok", layer="opinion", extra="lifecycle='inferred'")
         assert await rows(conn, "SELECT kind, lifecycle, retention FROM memory_version WHERE id = 'ok'") == [
