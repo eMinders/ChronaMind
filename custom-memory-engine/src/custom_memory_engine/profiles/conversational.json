@@ -1,0 +1,48 @@
+{
+  "abstraction_expiry": {
+    "days_by_facet": {},
+    "status": "placeholder:V2-D14"
+  },
+  "association": {
+    "degree_cap": 32,
+    "extensions": []
+  },
+  "description": "v1-equivalent conversational profile: one user, chat turns as the only source, durable memory, facts rendered from the user's own scope.",
+  "extractors": [
+    {
+      "name": "engine",
+      "source_types": [
+        "turn"
+      ],
+      "version": "engine-v1"
+    }
+  ],
+  "facets": [],
+  "kinds": [
+    "episode",
+    "claim",
+    "abstraction"
+  ],
+  "name": "conversational",
+  "operators": [
+    "consolidation"
+  ],
+  "render": {
+    "channel_budget_share": {
+      "facts": 1.0
+    },
+    "show_provenance": true,
+    "show_validity_intervals": true
+  },
+  "retention": {
+    "defaults": {
+      "abstraction": "durable",
+      "claim": "durable",
+      "episode": "durable"
+    },
+    "promote_to_durable": false,
+    "status": "v1_semantics"
+  },
+  "schema_version": 1,
+  "scope_root": "/u/{user}/"
+}
