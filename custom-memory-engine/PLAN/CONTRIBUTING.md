@@ -62,6 +62,20 @@ What the AI reviewer must actually do, per pull request (a green CI run alone is
    skipped or loosened to make CI pass. If it fails, understand why.
 5. **Say what is not done.** A partially satisfied issue stays open with its gap written into the ledger, the
    migration header or the issue — never quietly closed.
+   **And read the ledger you are editing.** The r12 stabilization closed `E-011` (#62) and `E-016` (#67) on the
+   strength of *passing test names*, then had to reopen both:
+   - `E-011`: every scope test passes on a **scratch table** — the suite's own docstring says "It needs no M2
+     migration; `E-011` re-runs the cases against the real schema". The catalog showed 0 of 13 tables with a
+     scope-policy predicate, and `memory_version` still carrying `user_id = current_setting('app.user_id')`. The
+     ledger's `I7` row said exactly that in its gap column; the closure contradicted the row it was updating.
+   - `E-016`: 12 of 12 tests passed, but criterion 4 ("each allowed transition without its record raises") is
+     unmet — `contested -> asserted` and `contested -> retired` both succeed with no record, because migration 7's
+     own header names the missing half ("no table until `E-014` ... nothing here pretends to check them").
+
+   **A green suite is evidence about the tests, not about the criteria.** Read each criterion, find the artefact
+   that satisfies it, and confirm that artefact exists on the *migrated* schema — not on a fixture, not on a
+   scratch table, not in a test's name. Where a criterion cannot be satisfied yet, leave the issue open even when
+   every line of the implementation is correct, and say which criterion is outstanding.
 6. **Record decisions where they belong**: `DECISIONS_V2.md` for architecture, the issue for scope, the ledger
    for guarantees. Do not write a separate audit report to show that a review happened; put the evidence in
    the PR body, the tests and CI.
