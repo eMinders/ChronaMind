@@ -40,6 +40,7 @@ from custom_memory_engine.engine.gate import AssertionMode, ConflictRelation, Ga
 from custom_memory_engine.grounding.sources import Evidence, SourceRecord, canonical_hash
 from custom_memory_engine.grounding.sources import ground as ground_evidence
 from custom_memory_engine.model.axes import Kind, Lifecycle
+from custom_memory_engine.security.audit_guard import content_free_details
 from custom_memory_engine.soundness.admission import (
     AdmissionError,
     Assessment,
@@ -356,10 +357,11 @@ async def record_soundness_assessment(
             "counter": candidate.ledger.counter,
             "undetermined": candidate.ledger.undetermined,
             "opportunity": assessment.opportunity,
-            "coverage": assessment.coverage,
-            "confidence_lower": assessment.confidence_lower,
-            "tau_confidence": tau_confidence,
-            "tau_coverage": tau_coverage,
+            # floats are not audit-safe values (RL-072); six decimals as an identifier-shaped token
+            "coverage": f"{assessment.coverage:.6f}",
+            "confidence_lower": f"{assessment.confidence_lower:.6f}",
+            "tau_confidence": f"{tau_confidence:.6f}",
+            "tau_coverage": f"{tau_coverage:.6f}",
             "creation_allowed": assessment.creation.allowed,
             "creation_reasons": list(assessment.creation.reasons),
             "admissible_by_bound": assessment.verification.admissible_by_bound,
@@ -370,7 +372,7 @@ async def record_soundness_assessment(
                 "INSERT INTO {a} (id, user_id, memory_ref, event_type, event_at, details) "
                 "VALUES (%s, %s, %s, 'soundness_assessed', pg_catalog.transaction_timestamp(), %s)"
             ).format(a=sql.Identifier(schema_name, "audit_event")),
-            (event_id, user_id, uuid4().hex, Jsonb(details)),
+            (event_id, user_id, uuid4().hex, Jsonb(content_free_details(details))),
         )
     return event_id
 

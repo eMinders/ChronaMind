@@ -79,7 +79,7 @@ async def test_a_soundness_decision_is_recorded_as_a_content_free_audit_event(
     assert event_type == "soundness_assessed"
     assert details["opportunity"] == 50 and details["undetermined"] == 45
     assert details["creation_allowed"] is True and details["admissible_by_bound"] is False
-    assert details["confidence_lower"] == pytest.approx(0.0333, abs=5e-5)
+    assert float(details["confidence_lower"]) == pytest.approx(0.0333, abs=5e-5)
     assert not {"content", "evidence_span", "embedding", "statement", "text"} & set(details)
     assert "m1" not in str(details) and "m1" not in memory_ref, "source ids are counted, never recorded"
 
