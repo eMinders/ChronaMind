@@ -38,7 +38,37 @@
      are verified. Do not put closing keywords (`closes`, `fixes`, `resolves`) in PR bodies or commit messages:
      GitHub closes the issue on merge, even when the PR only partly satisfies it.
    - State the evidence for every acceptance criterion in the PR body (tests run, outputs, commands).
-   - Request review from the designated peer reviewer in [`ASSIGNMENTS.md`](ASSIGNMENTS.md).
+   - Request review from the designated reviewer (see §1.1) — for the engine, that is the AI reviewer.
+
+### 1.1 Review policy
+
+**AI review is the review.** Every change to this engine — code, schema, migration, plan document or
+architecture decision — is reviewed by the AI reviewer acting on the Project Owner's behalf before it is
+accepted or merged. A human peer review is **not** a prerequisite for merging and is not recorded as one.
+
+What the AI reviewer must actually do, per pull request (a green CI run alone is not review):
+
+1. **Read the code, not the description.** Verify every acceptance criterion against the code and its tests;
+   reproduce any claim that matters rather than trusting the PR body.
+2. **Probe the assumption that matters.** For a schema or security change, try to break it: the restricted
+   runtime role, `search_path` shadowing, cross-tenant references, a trigger disabled, the rename carried
+   end to end. Where a guarantee is stated, confirm the test is a genuine control — break the implementation
+   and watch the test fail.
+3. **Check the sequence, not only the diff.** The r11 W1 review found that four W1 pull requests each carried a
+   full copy of `INVARIANT_LEDGER.md` from an older base, so merging them in order silently reverted rows that
+   had already advanced, and a later PR's `AUDIT_DETAIL_KEYS` copy dropped a key `main` needed. Any file that
+   more than one open branch touches deserves a diff of the *result*, not of each PR.
+4. **Reject fixes that weaken a guarantee.** A test may be adapted to a new schema; it may not be deleted,
+   skipped or loosened to make CI pass. If it fails, understand why.
+5. **Say what is not done.** A partially satisfied issue stays open with its gap written into the ledger, the
+   migration header or the issue — never quietly closed.
+6. **Record decisions where they belong**: `DECISIONS_V2.md` for architecture, the issue for scope, the ledger
+   for guarantees. Do not write a separate audit report to show that a review happened; put the evidence in
+   the PR body, the tests and CI.
+
+The reviewer's decisions are recorded as `V2-D##` entries with their rationale and verification, so a human can
+confirm, amend or reverse them. Where GitHub's own branch protection would require an approval, that is a
+platform setting, not this policy, and no human approval is ever fabricated to satisfy it.
 
 ---
 
