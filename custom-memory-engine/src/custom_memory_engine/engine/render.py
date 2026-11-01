@@ -4,7 +4,7 @@ Rendering rules, applied mechanically so a caller cannot bypass them:
 
 1. Only ``status = 'active'`` versions are renderable — superseded and archived
    rows are dropped even if a caller passes them in.
-2. In ``current`` mode, versions whose ``valid_range`` has already ended are not
+2. In ``current`` mode, versions whose ``event_range`` has already ended are not
    rendered; they belong to ``historical_as_of``.
 3. Items are added in rank order until the token budget is reached; the first
    item that does not fit stops selection, so output order equals rank order.
@@ -63,8 +63,8 @@ def role_for(version: TemporalVersion, mode: str, reference_time: datetime | Non
     """Label a version by its temporal relationship to the query."""
     if mode == "current" or reference_time is None:
         return "current"
-    upper = _instant(version.valid_range.upper)
-    lower = _instant(version.valid_range.lower)
+    upper = _instant(version.event_range.upper)
+    lower = _instant(version.event_range.lower)
     if upper is not None and upper <= reference_time:
         return "previous"
     if lower is not None and lower > reference_time:
@@ -73,8 +73,8 @@ def role_for(version: TemporalVersion, mode: str, reference_time: datetime | Non
 
 
 def _line(version: TemporalVersion, role: str) -> str:
-    lower = version.valid_range.lower
-    upper = version.valid_range.upper
+    lower = version.event_range.lower
+    upper = version.event_range.upper
     start = lower.isoformat() if isinstance(lower, datetime) else "-infinity"
     end = upper.isoformat() if isinstance(upper, datetime) else "open"
     return f"[{role} | valid {start}..{end}] {version.content}"
@@ -83,7 +83,7 @@ def _line(version: TemporalVersion, role: str) -> str:
 def _is_historical(version: TemporalVersion, reference_time: datetime | None) -> bool:
     if reference_time is None:
         return False
-    upper = _instant(version.valid_range.upper)
+    upper = _instant(version.event_range.upper)
     return upper is not None and upper <= reference_time
 
 

@@ -6,7 +6,7 @@
 -- later change drops `layer`, this rollback can no longer restore `semantic` versus `opinion`.
 -- PostgreSQL never reuses a dropped attribute number, so after a re-apply the three columns sit at positions 23-25
 -- instead of 20-22; every other catalog property is identical.
--- Rolling back M1 requires that no later migration (006+) is applied: roll those back first.
+-- Rolling back M1 requires that every later migration (006+) is rolled back first.
 
 DROP TRIGGER IF EXISTS trg_memory_derivation_mark_inferred ON memory_derivation;
 DROP TRIGGER IF EXISTS trg_memory_version_axes_dual_write ON memory_version;

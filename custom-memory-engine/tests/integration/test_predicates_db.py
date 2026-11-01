@@ -99,7 +99,7 @@ async def insert_version(
         """
         INSERT INTO memory_version (
             id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content,
-            valid_range, recorded_range
+            event_range, recorded_range
         ) VALUES (
             %s, 'diet', %s, %s, %s, 'diet', true, %s,
             tstzrange(%s, %s, '[)'),
@@ -189,7 +189,7 @@ async def test_worked_example_returns_corrected_history_and_original_audit_belie
         version = result.versions[0]
         assert version.content == "fish"
         assert version.user_id == "u1"
-        assert version.valid_range.lower == JUL15 and version.valid_range.upper is None
+        assert version.event_range.lower == JUL15 and version.event_range.upper is None
         assert version.recorded_range is not None
         assert version.recorded_range.lower == AUG20 and version.recorded_range.upper is None
 
@@ -251,7 +251,7 @@ async def test_explicit_timestamp_infinity_round_trips_distinct_from_unbounded_e
             await conn.execute(
                 """INSERT INTO memory_version (
                        id, memory_key, user_id, status, subject_key, predicate_key, single_valued,
-                       content, valid_range, recorded_range
+                       content, event_range, recorded_range
                    ) VALUES (
                        'literal-infinity', 'diet', 'u1', 'active', 'infinity', 'diet', true,
                        'infinite upper bounds', tstzrange(%s, 'infinity'::timestamptz, '[)'),
@@ -271,14 +271,14 @@ async def test_explicit_timestamp_infinity_round_trips_distinct_from_unbounded_e
         assert set(by_id) == {"v2p", "unbounded-both", "literal-infinity"}
         unbounded = by_id["unbounded-both"]
         literal = by_id["literal-infinity"]
-        assert unbounded.valid_range.upper is None
+        assert unbounded.event_range.upper is None
         assert unbounded.recorded_range is not None and unbounded.recorded_range.upper is None
-        assert literal.valid_range.upper == "infinity"
+        assert literal.event_range.upper == "infinity"
         assert literal.recorded_range is not None and literal.recorded_range.upper == "infinity"
-        assert literal.valid_range.lower == MAR10 and literal.recorded_range.lower == AUG20
-        assert literal.valid_range.lower_inclusive and not literal.valid_range.upper_inclusive
+        assert literal.event_range.lower == MAR10 and literal.recorded_range.lower == AUG20
+        assert literal.event_range.lower_inclusive and not literal.event_range.upper_inclusive
         cursor = await conn.execute(
-            """SELECT id, upper_inf(valid_range), upper_inf(recorded_range)
+            """SELECT id, upper_inf(event_range), upper_inf(recorded_range)
                FROM memory_version WHERE id IN ('unbounded-both','literal-infinity') ORDER BY id"""
         )
         assert await cursor.fetchall() == [("literal-infinity", False, False), ("unbounded-both", True, True)]

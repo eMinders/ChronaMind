@@ -29,7 +29,7 @@ from custom_memory_engine.engine.transactions import (
 )
 from custom_memory_engine.model.axes import V1_LAYERS, V1_STATUSES, map_v1_version, validate_axes
 from custom_memory_engine.schema import migrate
-from tests.integration.rollbacks import rollback_sql
+from tests.integration.rollbacks import adapt, rollback_sql
 
 pytestmark = pytest.mark.integration
 
@@ -138,7 +138,7 @@ def candidate(
 
 SEED_ROW = """
 INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content,
-                            valid_range, recorded_range, layer, archival_branch)
+                            event_range, recorded_range, layer, archival_branch)
 VALUES (%s, %s, 'u1', %s, 'user', 'diet', false, %s, tstzrange(%s, NULL, '[)'),
         CASE WHEN %s IN ('active', 'archived')
              THEN tstzrange(clock_now(), CASE WHEN %s = 'archived' THEN clock_now() + interval '1 day' END, '[)') END,
@@ -157,7 +157,7 @@ async def _seed_v1_row(
     conn: AsyncConnection, version_id: str, layer: str, status: str, derived_from: str | None
 ) -> None:
     await conn.execute(
-        cast(LiteralString, SEED_ROW),
+        await adapt(conn, SEED_ROW),
         (version_id, version_id, status, version_id, START, status, status, layer, status),
     )
     if status in ("active", "archived"):
@@ -233,17 +233,14 @@ async def test_backfill_is_total_and_maps_every_v1_layer_and_status_combination(
 async def insert_active(conn: AsyncConnection, version_id: str, *, layer: str = "semantic", extra: str = "") -> None:
     await seed_turn(conn, f"t-{version_id}", "I am vegetarian", START)
     async with conn.transaction():
-        await conn.execute(
-            cast(
-                LiteralString,
-                "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
-                "single_valued, content, valid_range, recorded_range, layer"
-                + (", " + extra.split("=")[0] if extra else "")
-                + ") VALUES (%s, %s, 'u1', 'active', 'user', 'diet', false, 'x', tstzrange(%s, NULL), "
-                "tstzrange(clock_now(), NULL), %s" + (", " + extra.split("=")[1] if extra else "") + ")",
-            ),
-            (version_id, version_id, START, layer),
+        statement = (
+            "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
+            "single_valued, content, event_range, recorded_range, layer"
+            + (", " + extra.split("=")[0] if extra else "")
+            + ") VALUES (%s, %s, 'u1', 'active', 'user', 'diet', false, 'x', tstzrange(%s, NULL), "
+            "tstzrange(clock_now(), NULL), %s" + (", " + extra.split("=")[1] if extra else "") + ")"
         )
+        await conn.execute(await adapt(conn, statement), (version_id, version_id, START, layer))
         await conn.execute(
             "INSERT INTO memory_evidence VALUES (%s, %s, 'u1', 'I am vegetarian', 'support')",
             (version_id, f"t-{version_id}"),
@@ -429,7 +426,7 @@ async def test_dual_write_rederivation_keeps_the_rebuilt_summary_consistent(
             ):
                 await conn.execute(
                     "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
-                    "single_valued, content, valid_range, recorded_range) VALUES (%s, %s, 'u1', 'active', "
+                    "single_valued, content, event_range, recorded_range) VALUES (%s, %s, 'u1', 'active', "
                     "'derived_sources', %s, false, %s, tstzrange(%s, NULL), tstzrange(clock_now(), NULL))",
                     (version_id, key, predicate, version_id, START),
                 )

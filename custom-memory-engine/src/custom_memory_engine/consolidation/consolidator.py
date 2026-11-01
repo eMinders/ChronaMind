@@ -154,7 +154,7 @@ async def load_sources(
         await cursor.execute(
             sql.SQL(
                 "SELECT id, memory_key, user_id, subject_key, predicate_key, status, layer, "
-                "single_valued, upper_inf(recorded_range), lower(valid_range), upper(valid_range) "
+                "single_valued, upper_inf(recorded_range), lower(event_range), upper(event_range) "
                 "FROM {v} WHERE user_id = %s AND id = ANY(%s)"
             ).format(v=versions),
             (user_id, list(ordered)),

@@ -184,7 +184,7 @@ class CandidateVersionInput(_TransactionModel):
     @model_validator(mode="after")
     def check_bounds_and_self_derivation(self) -> "CandidateVersionInput":
         if self.valid_until is not None and self.valid_until <= self.valid_from:
-            raise TransactionError("valid_range_must_be_nonempty")
+            raise TransactionError("event_range_must_be_nonempty")
         for deriv in self.derivations:
             if deriv.source_version_id == self.version_id:
                 raise TransactionError("self_derivation_forbidden")
@@ -392,7 +392,7 @@ async def ensure_archival_trigger(
 
 _MEMORY_VERSION_COLUMNS = (
     "id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
-    "valid_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
+    "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
     "importance, reinforcement_count, extractor_version, archival_branch"
 )
 
@@ -409,7 +409,7 @@ async def _insert_version(
     predicate_key: str,
     single_valued: bool,
     content: str,
-    valid_range: TimestamptzRange,
+    event_range: TimestamptzRange,
     recorded_range: TimestamptzRange | None,
     layer: str,
     valid_from_basis: str,
@@ -435,7 +435,7 @@ async def _insert_version(
             predicate_key,
             single_valued,
             content,
-            valid_range,
+            event_range,
             recorded_range,
             layer,
             valid_from_basis,
@@ -580,7 +580,7 @@ async def _ensure_no_uncovered_c_archived_sources(
                   AND r_other.status = 'active'
                   AND r_other.recorded_range IS NOT NULL
                   AND upper_inf(r_other.recorded_range)
-                  AND r_other.valid_range @> src.valid_range
+                  AND r_other.event_range @> src.event_range
               )
             LIMIT 1
             """
@@ -618,7 +618,7 @@ async def stage_candidate(
                 predicate_key=candidate.predicate_key,
                 single_valued=candidate.single_valued,
                 content=candidate.content,
-                valid_range=v_range,
+                event_range=v_range,
                 recorded_range=None,
                 layer=candidate.layer,
                 valid_from_basis=candidate.valid_from_basis,
@@ -693,7 +693,7 @@ async def commit_initial_version(
                 predicate_key=candidate.predicate_key,
                 single_valued=effective_single_valued,
                 content=candidate.content,
-                valid_range=v_range,
+                event_range=v_range,
                 recorded_range=r_range,
                 layer=candidate.layer,
                 valid_from_basis=candidate.valid_from_basis,
@@ -757,11 +757,11 @@ async def supersede_single(
     """Execute single-valued close-then-insert supersession (R1–R3, E1–E2) or ablation write (A1, A2, A2b).
 
     Rules enforced (Technical Specification §3.4, Proposal §§7.2, 8.2, 10.2):
-    - `R1`: Close-then-insert only; `valid_range` is never mutated in place on `memory_version`.
+    - `R1`: Close-then-insert only; `event_range` is never mutated in place on `memory_version`.
     - `R2`:
-      1. If `v_old < v_new`, close `r_old` at `c`, re-issue `r_old'` with `valid_range = [v_old, v_new)`
+      1. If `v_old < v_new`, close `r_old` at `c`, re-issue `r_old'` with `event_range = [v_old, v_new)`
          and `recorded_range = [c, NULL)` copying all provenance from `r_old`, and insert `r_new` with
-         `valid_range = [v_new, v_new_end)` and `recorded_range = [c, NULL)`.
+         `event_range = [v_new, v_new_end)` and `recorded_range = [c, NULL)`.
       2. If `v_old == v_new`, close `r_old` at `c`, omit `r_old'` (which would have an empty valid range),
          and insert `r_new` at `[c, NULL)`.
       3. If `v_new < v_old`, hold `r_new` as `conflict_pending` (`recorded_range = NULL`), record a
@@ -811,15 +811,15 @@ async def supersede_single(
         async with connection.cursor(row_factory=tuple_row) as cursor:
             await cursor.execute(
                 sql.SQL(
-                    "SELECT id, memory_key, content, lower(valid_range), upper(valid_range), "
-                    "upper_inf(valid_range), lower(recorded_range), layer, valid_from_basis, "
+                    "SELECT id, memory_key, content, lower(event_range), upper(event_range), "
+                    "upper_inf(event_range), lower(recorded_range), layer, valid_from_basis, "
                     "assertion_mode, confidence, importance, reinforcement_count, extractor_version "
                     "FROM {mv} "
                     "WHERE user_id = %s AND subject_key = %s AND predicate_key = %s "
                     "AND single_valued = true AND status = 'active' "
                     "AND recorded_range IS NOT NULL AND upper_inf(recorded_range) "
-                    "AND valid_range && %s "
-                    "ORDER BY lower(valid_range) ASC, id ASC "
+                    "AND event_range && %s "
+                    "ORDER BY lower(event_range) ASC, id ASC "
                     "FOR UPDATE"
                 ).format(mv=ident_mv),
                 (
@@ -843,7 +843,7 @@ async def supersede_single(
                     predicate_key=candidate.predicate_key,
                     single_valued=True,
                     content=candidate.content,
-                    valid_range=v_new_range,
+                    event_range=v_new_range,
                     recorded_range=r_open_range,
                     layer=candidate.layer,
                     valid_from_basis=candidate.valid_from_basis,
@@ -911,7 +911,7 @@ async def supersede_single(
                     predicate_key=candidate.predicate_key,
                     single_valued=True,
                     content=candidate.content,
-                    valid_range=v_new_range,
+                    event_range=v_new_range,
                     recorded_range=None,
                     layer=candidate.layer,
                     valid_from_basis=candidate.valid_from_basis,
@@ -1029,7 +1029,7 @@ async def supersede_single(
                         predicate_key=candidate.predicate_key,
                         single_valued=True,
                         content=old_content,
-                        valid_range=_tstzrange(v_old, reissued_upper),
+                        event_range=_tstzrange(v_old, reissued_upper),
                         recorded_range=r_open_range,
                         layer=old_layer,
                         valid_from_basis=old_basis,
@@ -1068,7 +1068,7 @@ async def supersede_single(
                         predicate_key=candidate.predicate_key,
                         single_valued=True,
                         content=old_content,
-                        valid_range=_tstzrange(v_old, reissued_upper),
+                        event_range=_tstzrange(v_old, reissued_upper),
                         recorded_range=r_open_range,
                         layer=old_layer,
                         valid_from_basis=old_basis,
@@ -1098,7 +1098,7 @@ async def supersede_single(
                 predicate_key=candidate.predicate_key,
                 single_valued=True,
                 content=candidate.content,
-                valid_range=v_new_range,
+                event_range=v_new_range,
                 recorded_range=r_open_range,
                 layer=candidate.layer,
                 valid_from_basis=candidate.valid_from_basis,
@@ -1187,7 +1187,7 @@ async def revise_transition_boundary(
             await cursor.execute(
                 sql.SQL(
                     "SELECT id, memory_key, status, subject_key, predicate_key, single_valued, content, "
-                    "lower(valid_range), upper(valid_range), upper_inf(valid_range), "
+                    "lower(event_range), upper(event_range), upper_inf(event_range), "
                     "lower(recorded_range), upper_inf(recorded_range), "
                     "layer, valid_from_basis, assertion_mode, confidence, importance, "
                     "reinforcement_count, extractor_version "
@@ -1212,7 +1212,7 @@ async def revise_transition_boundary(
             l_end = None if l_row[9] or l_row[8] is None else _utc_instant(l_row[8])
 
             if p_end is None or p_end != l_start:
-                raise TransactionError("boundary_revision_requires_adjacent_valid_ranges")
+                raise TransactionError("boundary_revision_requires_adjacent_event_ranges")
             if v_rev <= p_start or (l_end is not None and v_rev >= l_end):
                 raise TransactionError("revised_boundary_out_of_bounds")
 
@@ -1254,7 +1254,7 @@ async def revise_transition_boundary(
                 predicate_key=p_row[4],
                 single_valued=p_row[5],
                 content=p_row[6],
-                valid_range=_tstzrange(p_start, v_rev),
+                event_range=_tstzrange(p_start, v_rev),
                 recorded_range=r_open_range,
                 layer=p_row[12],
                 valid_from_basis=p_row[13],
@@ -1284,7 +1284,7 @@ async def revise_transition_boundary(
                 predicate_key=l_row[4],
                 single_valued=l_row[5],
                 content=l_row[6],
-                valid_range=_tstzrange(v_rev, l_end),
+                event_range=_tstzrange(v_rev, l_end),
                 recorded_range=r_open_range,
                 layer=l_row[12],
                 valid_from_basis=l_row[13],
@@ -1380,8 +1380,8 @@ async def resolve_conflict_pending(
         async with connection.cursor(row_factory=tuple_row) as cursor:
             await cursor.execute(
                 sql.SQL(
-                    "SELECT status, subject_key, predicate_key, single_valued, valid_range, "
-                    "lower(valid_range), upper(valid_range), upper_inf(valid_range), recorded_range "
+                    "SELECT status, subject_key, predicate_key, single_valued, event_range, "
+                    "lower(event_range), upper(event_range), upper_inf(event_range), recorded_range "
                     "FROM {mv} WHERE id = %s AND user_id = %s FOR UPDATE"
                 ).format(mv=ident_mv),
                 (candidate_version_id, user_id),
@@ -1394,7 +1394,7 @@ async def resolve_conflict_pending(
                 subject_key,
                 predicate_key,
                 single_valued,
-                cand_valid_range,
+                cand_event_range,
                 v_cand_raw,
                 _v_cand_end_raw,
                 _v_cand_upper_inf,
@@ -1464,18 +1464,18 @@ async def resolve_conflict_pending(
             if single_valued:
                 await cursor.execute(
                     sql.SQL(
-                        "SELECT id, memory_key, content, lower(valid_range), upper(valid_range), "
-                        "upper_inf(valid_range), lower(recorded_range), layer, valid_from_basis, "
+                        "SELECT id, memory_key, content, lower(event_range), upper(event_range), "
+                        "upper_inf(event_range), lower(recorded_range), layer, valid_from_basis, "
                         "assertion_mode, confidence, importance, reinforcement_count, extractor_version "
                         "FROM {mv} "
                         "WHERE user_id = %s AND subject_key = %s AND predicate_key = %s "
                         "AND single_valued = true AND status = 'active' "
                         "AND recorded_range IS NOT NULL AND upper_inf(recorded_range) "
-                        "AND valid_range && %s "
-                        "ORDER BY lower(valid_range) ASC, id ASC "
+                        "AND event_range && %s "
+                        "ORDER BY lower(event_range) ASC, id ASC "
                         "FOR UPDATE"
                     ).format(mv=ident_mv),
-                    (user_id, subject_key, predicate_key, cand_valid_range),
+                    (user_id, subject_key, predicate_key, cand_event_range),
                 )
                 overlapping = await cursor.fetchall()
                 v_cand = _utc_instant(v_cand_raw)
@@ -1529,7 +1529,7 @@ async def resolve_conflict_pending(
                             predicate_key=predicate_key,
                             single_valued=True,
                             content=old_content,
-                            valid_range=_tstzrange(v_old, reissued_upper),
+                            event_range=_tstzrange(v_old, reissued_upper),
                             recorded_range=r_open_range,
                             layer=old_layer,
                             valid_from_basis=old_basis,
@@ -1612,7 +1612,7 @@ async def end_multivalued(
     """End one member of a multi-valued predicate (`single_valued = False`) via close-then-insert (R7).
 
     Closes `version_id` at `recorded_range = [c_1, c_2)` and inserts `truncated_version_id` with
-    `valid_range = [v_old, valid_end)` and `recorded_range = [c_2, NULL)`, copying all provenance.
+    `event_range = [v_old, valid_end)` and `recorded_range = [c_2, NULL)`, copying all provenance.
     Under `A2` / `A2b`, replaces `version_id` with the truncated row without keeping closed
     recorded-time history. Under `A1` (`P-flat`), raises `TransactionError` because `A1` disables
     version truncation.
@@ -1642,7 +1642,7 @@ async def end_multivalued(
             await cursor.execute(
                 sql.SQL(
                     "SELECT memory_key, status, subject_key, predicate_key, single_valued, content, "
-                    "lower(valid_range), upper(valid_range), upper_inf(valid_range), "
+                    "lower(event_range), upper(event_range), upper_inf(event_range), "
                     "lower(recorded_range), upper_inf(recorded_range), "
                     "layer, valid_from_basis, assertion_mode, confidence, importance, "
                     "reinforcement_count, extractor_version "
@@ -1706,7 +1706,7 @@ async def end_multivalued(
                     predicate_key=predicate_key,
                     single_valued=False,
                     content=content,
-                    valid_range=_tstzrange(v_old, v_end),
+                    event_range=_tstzrange(v_old, v_end),
                     recorded_range=r_open_range,
                     layer=layer,
                     valid_from_basis=basis,
@@ -1755,7 +1755,7 @@ async def end_multivalued(
                     predicate_key=predicate_key,
                     single_valued=False,
                     content=content,
-                    valid_range=_tstzrange(v_old, v_end),
+                    event_range=_tstzrange(v_old, v_end),
                     recorded_range=r_open_range,
                     layer=layer,
                     valid_from_basis=basis,
@@ -1826,7 +1826,7 @@ async def archive_version(
        - `(S)` Superseded belief: `NOT upper_inf(r.recorded_range)`.
        - `(C)` Consolidated into a covering active belief: distinct same-user `r'`
          (`r'.id <> r.id`) linked in `memory_derivation(derived_version_id = r'.id, source_version_id = r.id)`
-         with `r'.status = 'active'`, `upper_inf(r'.recorded_range)`, and `r'.valid_range @> r.valid_range`.
+         with `r'.status = 'active'`, `upper_inf(r'.recorded_range)`, and `r'.event_range @> r.event_range`.
     4. Prefers `'S'` when both `(S)` and `(C)` hold; sets `archival_branch = 'C'` when only `(C)` holds;
        rejects (`T1` / `T2`) with `ArchivalPreconditionError("archival_precondition_unmet")` when neither holds.
     5. Also verifies that archiving `r` does not leave any already-archived `(C)`-branch source row uncovered.
@@ -1848,7 +1848,7 @@ async def archive_version(
         async with connection.cursor(row_factory=tuple_row) as cursor:
             await cursor.execute(
                 sql.SQL(
-                    "SELECT status, valid_range, recorded_range, upper_inf(recorded_range) "
+                    "SELECT status, event_range, recorded_range, upper_inf(recorded_range) "
                     "FROM {mv} WHERE id = %s AND user_id = %s FOR UPDATE"
                 ).format(mv=ident_mv),
                 (version_id, user_id),
@@ -1856,7 +1856,7 @@ async def archive_version(
             src_row = await cursor.fetchone()
             if src_row is None:
                 raise TransactionError("archive_version_not_found")
-            status, src_valid_range, src_recorded_range, src_rec_upper_inf = src_row
+            status, src_event_range, src_recorded_range, src_rec_upper_inf = src_row
             if status != "active" or src_recorded_range is None:
                 raise ArchivalPreconditionError("archive_requires_active_version")
 
@@ -1872,7 +1872,7 @@ async def archive_version(
             await cursor.execute(
                 sql.SQL(
                     "SELECT r_prime.id, r_prime.status, r_prime.recorded_range IS NOT NULL, "
-                    "upper_inf(r_prime.recorded_range), (r_prime.valid_range @> %s) "
+                    "upper_inf(r_prime.recorded_range), (r_prime.event_range @> %s) "
                     "FROM {md} d "
                     "JOIN {mv} r_prime ON r_prime.id = d.derived_version_id "
                     "WHERE d.source_version_id = %s AND d.user_id = %s "
@@ -1880,7 +1880,7 @@ async def archive_version(
                     "ORDER BY r_prime.id ASC "
                     "FOR UPDATE OF d, r_prime"
                 ).format(mv=ident_mv, md=ident_md),
-                (src_valid_range, version_id, user_id, version_id, user_id),
+                (src_event_range, version_id, user_id, version_id, user_id),
             )
             replacement_rows = await cursor.fetchall()
 

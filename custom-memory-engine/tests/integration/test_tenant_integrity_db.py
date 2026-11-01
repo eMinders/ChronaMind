@@ -41,6 +41,13 @@ async def _environment(through: int | None) -> AsyncIterator[Env]:
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
         await conn.execute("SET timezone = 'UTC'")
         await apply_migrations(conn, through=through)
+        # The control schemas predate migration 9, but the engine now writes `event_range`; rename so the control can
+        # still drive the engine (the controls are about foreign keys and trigger search paths, not clocks).
+        await conn.execute(
+            "DO $r$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() "
+            "AND table_name = 'memory_version' AND column_name = 'valid_range') THEN "
+            "ALTER TABLE memory_version RENAME COLUMN valid_range TO event_range; END IF; END $r$"
+        )
         await provision_runtime_role(conn, schema, role)
         await conn.execute("INSERT INTO predicate_schema VALUES ('fact', 'multi', 'semantic')")
         for user in ("u1", "u2"):
@@ -149,7 +156,7 @@ async def _shadowed_evidence_insert(env: Env) -> None:
         await conn.execute(
             sql.SQL(
                 "INSERT INTO {} (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, "
-                "content, valid_range, recorded_range) VALUES ('v-fake', 'k', 'u1', 'active', 'user', 'fact', "
+                "content, event_range, recorded_range) VALUES ('v-fake', 'k', 'u1', 'active', 'user', 'fact', "
                 "false, 'no evidence', tstzrange(%s, NULL), tstzrange({}.clock_now(), NULL))"
             ).format(sql.Identifier(schema, "memory_version"), sql.Identifier(schema)),
             (MAR10,),

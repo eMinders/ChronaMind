@@ -149,7 +149,7 @@ async def run_consolidation(
 # --------------------------------------------------------------------- AC1
 
 
-async def test_consolidation_links_sources_and_covers_their_valid_ranges(database) -> None:
+async def test_consolidation_links_sources_and_covers_their_event_ranges(database) -> None:
     """AC1: MEMORY_DERIVATION links exist and ``V(r') @> V(r)`` for every source."""
     _, schema = database
     async with connect(database) as conn:
@@ -176,8 +176,8 @@ async def test_consolidation_links_sources_and_covers_their_valid_ranges(databas
         for source_id in ("e1", "e2"):
             assert await scalar(
                 conn,
-                "SELECT valid_range @> "
-                "(SELECT valid_range FROM memory_version WHERE id = %s) "
+                "SELECT event_range @> "
+                "(SELECT event_range FROM memory_version WHERE id = %s) "
                 "FROM memory_version WHERE id = 'c1'",
                 (source_id,),
             )

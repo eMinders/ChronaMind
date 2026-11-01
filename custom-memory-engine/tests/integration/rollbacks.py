@@ -1,6 +1,9 @@
 """Published rollback scripts, composed newest-first, for tests that rebuild an older schema state."""
 
 from pathlib import Path
+from typing import LiteralString, cast
+
+from psycopg import AsyncConnection
 
 from custom_memory_engine.schema import migrate
 
@@ -18,3 +21,18 @@ def rollback_sql(*, from_version: int, to_version: int) -> str:
         (ROLLBACK_DIR / filenames[version]).read_text(encoding="utf-8")
         for version in range(from_version, to_version, -1)
     )
+
+
+async def adapt(conn: AsyncConnection, statement: str) -> LiteralString:
+    """``statement`` with ``event_range`` spelled as the schema currently has it.
+
+    Tests that roll the schema back below migration 9 (``valid_range`` -> ``event_range``) and then seed rows need the
+    historical spelling; everything else uses the current one.
+    """
+    cursor = await conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() "
+        "AND table_name = 'memory_version' AND column_name IN ('event_range', 'valid_range')"
+    )
+    row = await cursor.fetchone()
+    column = row[0] if row else "event_range"
+    return cast(LiteralString, statement.replace("event_range", column))

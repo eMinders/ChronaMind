@@ -40,7 +40,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–8** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–9** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -100,6 +100,85 @@ dual-write window. The mapping is the approved one (`V2-D38`; `model/axes.py::V1
 
 Tested by `tests/integration/test_migration_m1.py`.
 
+## Migration 6: facet tag and retention floors (`006_facet_floors.sql`, `E-020`, M8)
+
+Adds the nullable `um_facet` tag (exactly `preference | goal | constraint | context | decision_pattern |
+meta_preference`; `inferred_preference` is rejected because inference is a lifecycle, `USER_MODEL.md` section 2.1) and
+the **retention floor**: `kind IN ('claim','abstraction')` implies `retention = 'durable'`, so only episodes and
+procedures may be `working` or `session` (`V2-D29`). Both are table `CHECK` constraints, so they hold on `INSERT` and
+`UPDATE` for every writer. The index `(user_id, um_facet) WHERE um_facet IS NOT NULL` serves facet-filtered queries per
+user; `E-011` recreates it on its scope column. Requires migration 5. Every existing row keeps `um_facet` `NULL` and
+already satisfies the floor (v1 has no `working`/`session` value). Rollback: `rollback/006_facet_floors.sql` (drops
+the tags). Purge and expiry behaviour is `E-026`'s. Tested by `tests/integration/test_retention_floors.py`.
+
+## Migration 7: the lifecycle guard (`007_lifecycle_guard.sql`, `E-016`)
+
+The §2.3 transition table is closed in the database, for every writer (direct SQL under a restricted role included):
+
+* **Legality by kind** (`V2-D48` C-P1): `CHECK memory_version_lifecycle_legal_for_kind` mirrors `model.axes.LEGAL_LIFECYCLE`
+  (an abstraction is never `asserted`, an episode never adjudicated, a procedure never `observed`).
+* **Transitions** (`enforce_lifecycle_transition`, `BEFORE INSERT OR UPDATE`): only `contested -> asserted | retired`,
+  `asserted | observed | inferred -> retired` and `inferred -> contested` succeed. `retired` is terminal
+  (`lifecycle_retired_is_terminal`) and `inferred -> asserted` has its own code
+  (`lifecycle_inferred_to_asserted_unrepresentable`); everything else is `lifecycle_transition_not_permitted`.
+  Re-asserting retired content creates a new row.
+* **Records at commit** (extends `enforce_provenance`, so it shares `trg_memory_version_provenance`): an active
+  `observed`/`asserted` row needs an evidence row; an active `inferred` row needs a derivation row (`I1′`, derivation half).
+* **Not yet checkable** (named, not faked): the `I1′` method reference and the adjudication, verification and
+  retirement-reason records have no table until `E-014`, which extends `enforce_provenance` when it adds them.
+* **Dual-write allowances** (end with the window): staged `candidate`/`rejected` rows are born `retired` and a
+  `candidate` may be promoted; a derived claim becomes `inferred` when its derivation row arrives; accepting a held
+  derived/persona candidate activates it as `inferred`; v1 `persona` rows are exempt from the derivation record.
+* **Decision (a)** (does `I10` apply to explicit withdrawal?) is unmade. As the issue instructs, `(S)` or `(C)` is
+  required for system-initiated retirement only, which is migration 1's archival trigger on `status = 'archived'`.
+
+Rollback: `rollback/007_lifecycle_guard.sql`. Tested by `tests/integration/test_lifecycle_transitions.py`.
+
+## Migration 8: generalised evidence source (`008_source.sql`, `E-013`, M4)
+
+`memory_evidence` gains `source_type`, `source_ref`, `span`, `content_hash`, so evidence is a *source reference*, not
+only a chat turn. The vocabulary is closed at the two types `V2-D41` declares, `turn` and `external` (an `artifact` is
+never evidence); `content_hash` is SHA-256 over the NFC-normalised, LF-newline UTF-8 text
+(`grounding.sources.canonical_hash`; the SQL backfill and the Python function are tested to agree).
+
+* **Turn evidence is byte-identical.** The old columns are never written by the migration; the backfill fills only
+  the new ones (`('turn', turn_id, evidence_span, sha256(turn content))`) and a `CHECK` keeps them equal for every turn.
+  `turn_id` and its foreign key stay (nullable, `NULL` for external sources), so a dangling turn is still refused.
+  The primary key moves to `(version_id, source_type, source_ref, span)`, which is the old key for turns.
+* **Dual-write.** v1 writers still insert `(version_id, turn_id, user_id, evidence_span, evidence_role)`;
+  `sync_memory_evidence_source` derives the source columns, so the engine's turn inserts are exactly v1's.
+* **External sources** need a hash and a locator and no engine row. They are **outside the deletion boundary**
+  (`D-ENG-04`): deleting an episode removes its row and derivations, and `DeletionReceipt.external_exclusions` lists the
+  external sources it cited by `(source_type, content_hash)`, exactly as WAL and backups are excluded. The audit event stores a count only (hashes are never audited, `RL-072`). `engine/sources.py::fetch_sources` reads a version's sources back with provenance.
+* **Invariant 1 / `I2`** are unchanged in form: the deferred provenance trigger counts any evidence row.
+* **Rollback** (`rollback/008_source.sql`) refuses with `m4_rollback_refused_non_turn_sources_exist` while any
+  non-turn source exists; with turn sources only it restores version 7 exactly and the evidence data is untouched.
+* **Open for the owner** (issue question (b)): the type vocabulary is closed in the schema, so adding a type is a
+  migration, not a profile setting.
+
+Tested by `tests/integration/test_migration_m4.py`.
+
+## Migration 9: the three clocks (`009_clocks.sql`, `E-012`, M3)
+
+`valid_range` becomes `event_range` **in place** (`V2-D49` D9: the exclusion constraint `no_bitemporal_overlap`, the `CHECK`
+`valid_wellformed` and `memory_version_temporal_idx` follow the column, so the constraint is never dropped and Invariant 4 has
+no unguarded window; this amends steps 1-3 of issue #63). The key stays `user_id` (D10). Three functions name the column
+(`guard_update`, `enforce_archival_invariant`, `guard_derivation_coverage`); they are rewritten from their own catalog
+definitions, which keeps their pinned `search_path`. `bitemporal_on_full.sql` is adapted (and steps the new watermark aside
+for its deliberate time travel, as it already does for provenance); its 43 assertions run on the whole migration chain.
+
+* **`observed_at`** (engine clock at ingest, fixed at creation) is backfilled per D8:
+  `COALESCE(lower(recorded_range), earliest evidencing turn, lower(event_range))`.
+* **`event_basis`** is inherited from `valid_from_basis`, which stays dual-written (supplying `event_basis` makes it
+  authoritative). Both are fixed at creation.
+* **T-28 watermark.** `clock_watermark(user_id, high)` is advanced by a `SECURITY DEFINER` trigger on every belief start or close,
+  and a write that would put recorded time before it fails with `recorded_time_moved_backwards`, whatever `app.clock` says.
+  The runtime role has no privilege on the table (the exact-grant matrix is unchanged); only the owner-run trigger writes it.
+  The namespace is the user until `E-011` moves it to the scope. Equal instants are allowed (supersession closes and opens at one).
+* **Rollback** (`rollback/009_clocks.sql`) restores version 8 exactly; the two columns come back at later attribute numbers.
+
+Tested by `tests/integration/test_migration_m3.py`.
+
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
 revalidates copied configuration. CLI output uses JSON, with diagnostics on stderr;
@@ -125,7 +204,7 @@ verification command. The migration CLI never executes it on runtime data.
 
 | Invariant | Enforcement site in this DDL | Notes |
 |---|---|---|
-| **Invariant 1** | Constraint trigger `trg_memory_version_provenance` on `memory_version`, function `enforce_provenance()`, `DEFERRABLE INITIALLY DEFERRED` | Commit of `active`/`archived` requires ≥1 `memory_evidence` row or ≥1 outgoing `memory_derivation` row. `bitemporal_on_full.sql` disables it because that harness inserts believed rows without evidence, and re-enables it as its final statement, so a replay never leaves a persistent database with invariant 1 off. |
+| **Invariant 1** | Constraint trigger `trg_memory_version_provenance` on `memory_version`, function `enforce_provenance()`, `DEFERRABLE INITIALLY DEFERRED` | Extended by migration 7 (`E-016`) with the lifecycle record obligations. Commit of `active`/`archived` requires ≥1 `memory_evidence` row or ≥1 outgoing `memory_derivation` row. `bitemporal_on_full.sql` disables it because that harness inserts believed rows without evidence, and re-enables it as its final statement, so a replay never leaves a persistent database with invariant 1 off. |
 | **Invariant 2** | `CHECK` constraints `valid_wellformed`, `recorded_iff_believed`, `recorded_wellformed` on `memory_version` | Same predicates as the reduced schema. |
 | **Invariant 3** | `clock_now()` reads `app.clock` then `transaction_timestamp()`; `BEFORE UPDATE` trigger `trg_memory_version_guard_update` / `guard_update()` | One instant per transaction, so `recorded_range` bounds written by several statements share `c` (R1). Post-insert updates allowed only for `status`, `archival_branch` (only together with `status = 'archived'`), staging-to-active `recorded_range = [clock_now(), ∞)`, and closing `upper(recorded_range)` to `clock_now()`. Replay monotonicity remains a harness/`RL-044` concern. |
 | **Invariant 4** | `EXCLUDE USING gist` constraint `no_bitemporal_overlap` (`btree_gist`) | Partial: `single_valued AND status IN ('active','archived')`. Per-user advisory locks stay in `RL-042`. |
