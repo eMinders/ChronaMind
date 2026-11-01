@@ -8,7 +8,6 @@ import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import LiteralString, cast
 from uuid import uuid4
 
@@ -30,10 +29,10 @@ from custom_memory_engine.engine.transactions import (
 )
 from custom_memory_engine.model.axes import V1_LAYERS, V1_STATUSES, map_v1_version, validate_axes
 from custom_memory_engine.schema import migrate
+from tests.integration.rollbacks import rollback_sql
 
 pytestmark = pytest.mark.integration
 
-ROLLBACK_M1 = Path(migrate.__file__).parent / "rollback" / "005_axes.sql"
 START = datetime(2026, 3, 10, tzinfo=UTC)
 APRIL = datetime(2026, 4, 1, tzinfo=UTC)
 JUNE = datetime(2026, 6, 1, tzinfo=UTC)
@@ -187,7 +186,7 @@ async def test_backfill_is_total_and_maps_every_v1_layer_and_status_combination(
     """Acceptance 1 and 2: a database populated at v4 gets no NULL axis, and every combination maps per V2-D38."""
     async with connect(database) as conn:
         await conn.execute(
-            cast(LiteralString, ROLLBACK_M1.read_text(encoding="utf-8")), prepare=False
+            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=4)), prepare=False
         )  # back to the exact pre-M1 schema
         await seed_turn(conn, "t1", "I am vegetarian", START)
         await conn.execute("SELECT set_config('app.clock', %s, false)", (START.isoformat(),))
@@ -506,10 +505,10 @@ async def test_apply_rollback_reapply_restores_the_catalog_exactly_each_time(
         first_apply = await normalised_catalog(conn, schema)
 
     async with connect(database) as conn:
-        await conn.execute(cast(LiteralString, ROLLBACK_M1.read_text(encoding="utf-8")), prepare=False)
-        v4_catalog = await rows(
-            conn, "SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = %s", (migrate.VERSION - 1,)
+        await conn.execute(
+            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=4)), prepare=False
         )
+        v4_catalog = await rows(conn, "SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = 4")
         assert await runner._catalog(conn) == v4_catalog[0][0]  # byte-identical to the pre-M1 schema
         assert await rows(conn, "SELECT id, layer, status FROM memory_version") == [("keep", "opinion", "active")]
     status = await runner.status()
@@ -517,7 +516,7 @@ async def test_apply_rollback_reapply_restores_the_catalog_exactly_each_time(
 
     assert (await runner.apply()).action == "applied"
     _, version, columns = await state()
-    assert (version, len(columns)) == (5, 3)
+    assert (version, len(columns)) == (migrate.VERSION, 3)
     async with connect(database) as conn:
         assert await normalised_catalog(conn, schema) == first_apply
         assert (await assert_axes_consistent(conn))["keep"] == ("claim", "asserted", "durable")  # re-backfilled
@@ -525,6 +524,8 @@ async def test_apply_rollback_reapply_restores_the_catalog_exactly_each_time(
 
 async def test_guard_update_is_restored_exactly_by_the_rollback(database: tuple[DatabaseConfig, str]) -> None:
     async with connect(database) as conn:
-        await conn.execute(cast(LiteralString, ROLLBACK_M1.read_text(encoding="utf-8")), prepare=False)
+        await conn.execute(
+            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=4)), prepare=False
+        )
         body = await rows(conn, "SELECT pg_get_functiondef('guard_update'::regproc)")
         assert "kind" not in str(body[0][0]) and "NEW.layer" in str(body[0][0])

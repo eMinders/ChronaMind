@@ -27,6 +27,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (3, "003_association_cap.sql"),
     (4, "004_tenant_integrity.sql"),
     (5, "005_axes.sql"),
+    (6, "006_facet_floors.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
