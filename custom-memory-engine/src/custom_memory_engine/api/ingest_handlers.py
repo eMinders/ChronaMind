@@ -28,6 +28,8 @@ from custom_memory_engine.api.runtime import Receipt, Rejected, Runtime, new_id,
 from custom_memory_engine.engine.ingest import apply_candidate
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, commit_initial_version
 from custom_memory_engine.grounding.sources import canonical_hash
+from custom_memory_engine.model.axes import Kind, Retention
+from custom_memory_engine.profile import Profile
 
 _SOURCE_TYPES = ("turn", "external")  # V2-D41: the declared source types
 _CONTENT_LIMIT = 20_000
@@ -125,14 +127,37 @@ async def _original_answer(
 class IngestHandlers:
     """The W1 write handlers, bound to one :class:`Runtime`."""
 
-    def __init__(self, runtime: Runtime) -> None:
+    def __init__(self, runtime: Runtime, profile: Profile | None = None) -> None:
         self.runtime = runtime
+        self.profile = profile
+
+    # -- profile configuration (E-019): data, never a branch on the profile's name ------------------------------
+
+    def _require_kind(self, kind: Kind) -> None:
+        if self.profile is not None and kind not in self.profile.kinds:
+            raise EntryError("validation_error", "kind_not_enabled_by_profile")
+
+    def _retention(self, kind: Kind) -> Retention:
+        """The profile's retention default for ``kind`` (durable without one); the database enforces the floors."""
+        return "durable" if self.profile is None else self.profile.retention.defaults.get(kind, "durable")
+
+    async def _apply_retention(self, connection: AsyncConnection, user: str, version_id: str, kind: Kind) -> None:
+        retention = self._retention(kind)
+        if retention != "durable":
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    sql.SQL("UPDATE {t} SET retention = %s WHERE id = %s AND user_id = %s").format(
+                        t=self.runtime.table("memory_version")
+                    ),
+                    (retention, version_id, user),
+                )
 
     async def ingest_episode(self, call: Call) -> Receipt:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
         content = _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT)
         source = _source(call.arguments.get("source"))
         event_time = _when(call.arguments.get("event_time"), "event_time")
+        self._require_kind("episode")
         span = _text(source.get("span") or source["ref"], "source_span")
         try:
             async with self.runtime.session(user) as connection:
@@ -172,6 +197,7 @@ class IngestHandlers:
                 )
                 await commit_initial_version(connection, candidate, schema_name=self.runtime.schema_name)
                 await _stamp_creator(self.runtime, connection, call, version_id)
+                await self._apply_retention(connection, user, version_id, "episode")
                 await remember(self.runtime, connection, user, "ingest_episode", key, version_id)
                 answer = await _original_answer(self.runtime, connection, user, version_id, "observed")
                 assert isinstance(answer, Receipt)
@@ -186,6 +212,7 @@ class IngestHandlers:
             raise EntryError(
                 "validation_error", "kind_not_supported"
             )  # procedures: W3; abstractions come from `infer`
+        self._require_kind("claim")
         if not isinstance(evidence, Sequence) or isinstance(evidence, str | bytes) or not evidence:
             raise EntryError("validation_error", "evidence_required")
         sources = [_source(item) for item in evidence]
@@ -233,6 +260,7 @@ class IngestHandlers:
                 schema_name=self.runtime.schema_name,
             )
             await _stamp_creator(self.runtime, connection, call, version_id)
+            await self._apply_retention(connection, user, version_id, "claim")
             await remember(self.runtime, connection, user, "assert", key, version_id)
             # the answer is read back from what was recorded, exactly as a replay reads it
             return await _original_answer(self.runtime, connection, user, version_id, "asserted")
@@ -253,9 +281,9 @@ class IngestHandlers:
         )  # fmt: skip
 
 
-def register_ingest_handlers(engine: Engine, runtime: Runtime) -> IngestHandlers:
-    """Wire ``ingest_episode``, ``assert`` and ``ingest_artifact`` onto ``engine``."""
-    handlers = IngestHandlers(runtime)
+def register_ingest_handlers(engine: Engine, runtime: Runtime, profile: Profile | None = None) -> IngestHandlers:
+    """Wire ``ingest_episode``, ``assert`` and ``ingest_artifact`` onto ``engine`` (configured by ``profile``)."""
+    handlers = IngestHandlers(runtime, profile)
     table: Mapping[str, Handler] = {
         "ingest_episode": handlers.ingest_episode,
         "assert": handlers.assert_,
