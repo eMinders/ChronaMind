@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 import structlog
-from psycopg.errors import DeadlockDetected, InsufficientPrivilege, SerializationFailure
+from psycopg.errors import DeadlockDetected, InsufficientPrivilege, ProgramLimitExceeded, SerializationFailure
 
 from custom_memory_engine.api.contract import (
     BY_NAME,
@@ -127,16 +127,21 @@ class TargetInfo:
     visibility: str
     lifecycle: Lifecycle | None = None
     lineage_owner: str | None = None  # the principal whose method/assertion produced it
+    lineage_tier: Tier | None = None  # and the tier it acted as: the same principal acts as B and as C
 
 
 class TargetResolver(Protocol):
-    async def resolve(self, ids: Sequence[str]) -> Mapping[str, TargetInfo]:
-        """Return info for the ids that exist. Absent ids are simply missing from the mapping."""
+    async def resolve(self, ctx: CallerContext, ids: Sequence[str]) -> Mapping[str, TargetInfo]:
+        """Return info for the ids ``ctx`` can read. Absent and unreadable ids are both simply missing.
+
+        The caller is passed so the lookup runs under that caller's row-level security: whether an id is absent or
+        merely unreadable is then not even known to the engine, let alone distinguishable (T-11, T-18).
+        """
         ...
 
 
 class MethodRegistry(Protocol):
-    async def is_registered(self, method: Mapping[str, object]) -> bool: ...
+    async def is_registered(self, ctx: CallerContext, method: Mapping[str, object]) -> bool: ...
 
 
 class PrincipalRegistry(Protocol):
@@ -227,12 +232,12 @@ async def _namespace_owner_only(
 
 
 async def _registered_method(
-    engine: Engine, _ctx: CallerContext, op: Operation, args: dict[str, object], _state: dict[str, object]
+    engine: Engine, ctx: CallerContext, op: Operation, args: dict[str, object], _state: dict[str, object]
 ) -> None:
     method = args.get("method")
     if not isinstance(method, Mapping):
         raise _fail(op, "validation_error", "method_required")
-    if not await engine.methods.is_registered(method):
+    if not await engine.methods.is_registered(ctx, method):
         raise _fail(op, "rejected", "method_not_registered")
 
 
@@ -275,7 +280,8 @@ async def _own_lineage_only(
     found = await engine.resolve_targets(ctx, ids, state)
     for target in ids:
         info = found.get(target)
-        if info is None or info.lineage_owner != ctx.principal:
+        # the same principal acts as Tier B and as Tier C, and each may touch only what it produced in that role
+        if info is None or info.lineage_owner != ctx.principal or info.lineage_tier != ctx.tier:
             raise _fail(op, "forbidden")
 
 
@@ -362,14 +368,14 @@ class Engine:
         return tuple(op.name for op in OPERATIONS if op.name not in self._handlers)
 
     async def resolve_targets(
-        self, _ctx: CallerContext, ids: Sequence[str], state: dict[str, object]
+        self, ctx: CallerContext, ids: Sequence[str], state: dict[str, object]
     ) -> Mapping[str, TargetInfo]:
         """Resolve target ids once per call and cache them in the call's state."""
         cache = state.setdefault("targets", {})
         assert isinstance(cache, dict)
         missing = [i for i in dict.fromkeys(ids) if i not in cache]
         if missing:
-            cache.update(await self.resolver.resolve(missing))
+            cache.update(await self.resolver.resolve(ctx, missing))
         return {i: cache[i] for i in ids if i in cache}
 
     async def principal_exists(self, principal: str) -> bool:
@@ -435,6 +441,8 @@ class Engine:
             return EntryError("forbidden")
         if isinstance(error, SerializationFailure | DeadlockDetected) and "retryable_conflict" in spec.errors:
             return EntryError("retryable_conflict")
+        if isinstance(error, ProgramLimitExceeded) and "resource_limit" in spec.errors:
+            return EntryError("resource_limit")  # e.g. the association degree cap (V2-D13)
         code = getattr(error, "code", None)
         if isinstance(error, ScopeError) and code == "forbidden":
             return EntryError("forbidden")

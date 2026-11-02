@@ -40,7 +40,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–11** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–12** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -262,6 +262,24 @@ refused. 15 tables are scoped: the ten of the plan, the three new association/le
 
 Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if two users now share a job key). Tested by
 `tests/integration/test_migration_m2.py`.
+
+## Migration 12: what the public API needs (`012_api_runtime.sql`, `E-039`)
+
+* `memory_version.created_by` / `created_tier`: who created an artifact through the API and as which tier. Ownership for the
+  `own_lineage_only` operations is the pair (principal, tier), because one principal acts both as Tier B (a cognition
+  service) and as Tier C (the user). Both are NULL for v1 rows, which the API reads as "the user, as Tier C"; a `CHECK`
+  makes them whole-or-nothing and a trigger fixes them once set.
+* `api_idempotency (user_id, operation, idempotency_key, result_id)`: `API_V2` section 1, "a replay returns the original
+  result and never a second effect" (`I9`). Per user, append-only, forced per-user RLS; the runtime role may read and append
+  but never rewrite. It stores the engine-generated result id, never a request.
+
+`api/runtime.py` and `api/handlers.py` wire eight operations through `Engine.call`: `register_method`, `create_entity`,
+`link`, `unlink`, `adjudicate`, `retract_own`, `grant_access` and `revoke_access`. Every lookup and write runs as the
+caller under the restricted role, so an id the caller may not read is absent to the engine itself. `create_scope` stays
+unwired: while every scope is personal (`V2-D49` D11) a sub-scope cannot hold a row.
+
+Rollback: `rollback/012_api_runtime.sql` restores version 11 exactly. Tested by `tests/integration/test_migration_m12.py`
+and `tests/integration/test_api_wiring_structure.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
