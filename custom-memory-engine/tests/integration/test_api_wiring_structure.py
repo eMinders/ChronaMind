@@ -4,6 +4,7 @@ Everything runs as a ``NOSUPERUSER NOBYPASSRLS`` role against the real migrated 
 (that is "the world"); every operation under test goes through the entry point with a credential-built caller.
 """
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ from uuid import uuid4
 import pytest
 from psycopg import AsyncConnection, sql
 
+from custom_memory_engine.api import handlers as handlers_module
 from custom_memory_engine.api.contract import Tier
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
 from custom_memory_engine.api.handlers import register_structure_handlers
@@ -191,6 +193,45 @@ async def test_create_entity_replays_by_key_and_is_invisible_to_everyone_else(da
             engine, caller("alice"), "create_entity", {**args, "label": "  ", "idempotency_key": "e3"}
         )
         assert (blank.code, blank.detail) == ("validation_error", "label_required")
+
+
+@pytest.mark.parametrize("operation", ["create_entity", "grant_access"])
+async def test_concurrent_calls_with_one_key_have_one_effect_and_one_answer(
+    database,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """Two callers racing on the same key: both get the original result, and there is exactly one row (I9)."""
+    args: dict[str, object] = {"scope": "/u/alice/", "idempotency_key": "race"}
+    if operation == "create_entity":
+        args |= {"entity_type": "person", "label": "Ada"}
+    else:
+        args |= {"principal": "bob"}
+    release = asyncio.Event()
+    real_remember = handlers_module.remember
+
+    async def slow_remember(*a: object, **kw: object) -> None:
+        await release.wait()  # hold the first writer inside its transaction until the second has started
+        await real_remember(*a, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(handlers_module, "remember", slow_remember)
+    async with world(database) as (conn, engine, schema), connect(database) as other_conn:
+        role = engine.resolver.runtime.role  # type: ignore[attr-defined]
+        other = Engine(
+            resolver=DbTargets(Runtime(other_conn, role, schema)),
+            methods=DbMethods(Runtime(other_conn, role, schema)),
+            principals=ForeignKeyPrincipals(),
+        )
+        register_structure_handlers(other, Runtime(other_conn, role, schema))
+        first = asyncio.create_task(engine.call(caller("alice"), operation, args))
+        second = asyncio.create_task(other.call(caller("alice"), operation, args))
+        await asyncio.sleep(0.3)
+        release.set()
+        results = await asyncio.gather(first, second, return_exceptions=True)
+        assert not any(isinstance(r, BaseException) for r in results), results
+        assert results[0] == results[1]
+        table = "entity WHERE user_id = 'alice'" if operation == "create_entity" else "scope_grant"
+        assert await rows(conn, f"SELECT count(*) FROM {table}") == [(1,)]  # type: ignore[arg-type]
 
 
 # ----------------------------------------------------------------------------------------------- ASSOCIATION

@@ -65,8 +65,16 @@ async def now(connection: AsyncConnection) -> datetime:
 
 
 async def replayed(runtime: Runtime, connection: AsyncConnection, user: str, operation: str, key: str) -> str | None:
-    """The result id recorded for ``(user, operation, key)``, or ``None`` if this is the first time."""
+    """The result id recorded for ``(user, operation, key)``, or ``None`` if this is the first time.
+
+    Takes a transaction lock on ``(user, operation, key)`` first, so a concurrent call with the same key waits for the
+    first one to commit and then replays its result, instead of racing it to a unique violation.
+    """
     async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(%s), pg_catalog.hashtext(%s))",
+            (user, operation + ":" + key),
+        )
         await cursor.execute(
             sql.SQL("SELECT result_id FROM {t} WHERE user_id = %s AND operation = %s AND idempotency_key = %s").format(
                 t=runtime.table("api_idempotency")
