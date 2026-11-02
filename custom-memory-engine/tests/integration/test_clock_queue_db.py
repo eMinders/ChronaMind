@@ -715,12 +715,18 @@ async def test_clock_and_queue_work_under_actual_non_superuser_rls(database) -> 
             assert await scalar(conn, "SELECT array_agg(user_id) FROM memory_version") == ["u1"]
             assert await scalar(conn, "SELECT count(*) FROM audit_event WHERE user_id='u2'") == 0
             await identity(conn, "u2")
-            with pytest.raises(JobIdentityConflict) as collision:
-                await enqueue(
-                    conn, new_job("foreign-key-collision", "u2", idempotency_key="key-private-u1"), schema_name=schema
-                )
-            assert "private-u1" not in str(collision.value)
-            assert await scalar(conn, "SELECT array_agg(id ORDER BY id) FROM job") == ["private-u2"]
+            # SUPERSEDED v1 behaviour (V2-D49 D12, migration 11): the idempotency key is unique PER USER, so another
+            # tenant's key is no longer a collision. It used to raise JobIdentityConflict, which was a cross-tenant
+            # existence oracle for the key (THREAT_MODEL T-13). u2 now simply owns a job with the same key, and still
+            # sees nothing of u1's.
+            colliding = await enqueue(
+                conn, new_job("same-key-other-tenant", "u2", idempotency_key="key-private-u1"), schema_name=schema
+            )
+            assert colliding.created is True and colliding.job.user_id == "u2"
+            assert await scalar(conn, "SELECT array_agg(id ORDER BY id) FROM job") == [
+                "private-u2",
+                "same-key-other-tenant",
+            ]
         finally:
             await conn.execute("RESET ROLE")
             await conn.execute(

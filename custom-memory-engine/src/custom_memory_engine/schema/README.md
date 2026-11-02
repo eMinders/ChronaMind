@@ -40,7 +40,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–10** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–11** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -233,6 +233,33 @@ deliberately leaves non-forced, is never forced by the runner either. Tested by
 > extends. A shipped migration is checksum-bound and cannot be edited, so the correction is recorded here.
 
 Rollback: `rollback/010_structural_tables.sql` restores version 9 exactly. Tested by `tests/integration/test_migration_m6.py`.
+
+## Migration 11: scope hierarchy and path-based RLS (`011_scope.sql`, `E-011`, M2 + M9)
+
+Every scoped row gains `scope_path` and `visibility` (`private | project | shared`); existing rows are backfilled to
+`/u/<user_id>/` and `private`. **`user_id` stays stored** (`V2-D49` D11) and a `CHECK` ties the path to it while every scope is personal, so
+a v1 writer that names only `user_id` still works (a `BEFORE INSERT` trigger fills the personal root) and an inconsistent dual-write is
+refused. 15 tables are scoped: the ten of the plan, the three new association/ledger/verification tables, and `entity` and `negative_constraint`
+(which already had a path and gain `visibility`). `app_user` is the principal table and `scope_grant` keeps its own policy.
+
+* **Read policy** `<table>_scope_read` (`SELECT` only, `V2-D45`): own namespace, plus `project`/`shared` rows inside a scope an **active**
+  `scope_grant` gives the caller; never `private` rows through a grant; `starts_with`, never `LIKE` (`/u/4/` does not match `/u/42/`, `_` is
+  no wildcard). Writes stay governed by the existing own-user `<table>_isolation` policy, so holding a grant is read-only (`V2-D53`). The test
+  `test_the_read_policy_is_the_library_expression_on_every_scoped_table` ties the SQL to `scope.access.rls_read_using`.
+* **D12** the job idempotency key is unique **per user** (the global key was a cross-tenant existence oracle, `T-13`); the v1 test that asserted the
+  collision is recorded in the test as superseded behaviour. **D13** `app_user.id` must be a valid scope segment (`/`, control characters, `.`/`..`,
+  padding or length > 256 are refused), and the migration refuses to run over an existing id that is not.
+* **M9** the prefix index is built on `scope_path` with `text_pattern_ops` (the plan's generated `path_with_prefix` would be an exact copy);
+  the planner uses it for `starts_with`.
+* **Backfill under FORCE RLS.** The owner is subject to `FORCE ROW LEVEL SECURITY`, so a role that does not bypass RLS would update zero rows; the
+  backfill lifts `FORCE` for its statement and restores it, and disables user triggers so provenance/clock/lifecycle guards are not re-run.
+  (Migrations 5, 8 and 9 backfill under FORCE without doing this; see the E-011 pull request.)
+* **Only personal-root rows can exist** on the real tables until a later decision admits sub-scopes (`D11`); the scratch-table suite still covers
+  sub-scope paths. `scope.audit.record_scope_read` writes the content-free `scope_read` audit row (counts only) for a read that leaves the caller's
+  namespace.
+
+Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if two users now share a job key). Tested by
+`tests/integration/test_migration_m2.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner

@@ -32,6 +32,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (8, "008_source.sql"),
     (9, "009_clocks.sql"),
     (10, "010_structural_tables.sql"),
+    (11, "011_scope.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -80,6 +81,7 @@ FUNCTIONS = (
     "create_zero_ledger",
     "guard_negative_constraint",
     "enforce_transition_records",
+    "fill_scope_path",
 )
 logger = structlog.get_logger(__name__)
 

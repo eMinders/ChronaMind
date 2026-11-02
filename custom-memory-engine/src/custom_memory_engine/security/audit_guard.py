@@ -67,6 +67,9 @@ AUDIT_DETAIL_KEYS = frozenset(
         "creation_reasons",
         "admissible_by_bound",
         "verification_reasons",
+        # cross-scope reads (E-011): counts only, never a path or a principal
+        "selector_count",
+        "cross_scope_count",
         # queue and clock
         "job_id",
         "kind",
