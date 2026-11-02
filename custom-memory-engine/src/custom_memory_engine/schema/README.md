@@ -40,7 +40,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–12** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–13** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -280,6 +280,22 @@ unwired: while every scope is personal (`V2-D49` D11) a sub-scope cannot hold a 
 
 Rollback: `rollback/012_api_runtime.sql` restores version 11 exactly. Tested by `tests/integration/test_migration_m12.py`
 and `tests/integration/test_api_wiring_structure.py`.
+
+## Migration 13: the generic predicates (`013_generic_predicates.sql`, `E-039`)
+
+Seeds `episode` and `statement` (both multi-valued) in `predicate_schema`. The V2 write operations take free content and no
+predicate, but `memory_version.predicate_key` is a foreign key to this catalog, so they need entries to write under.
+Multi-valued means two of them never supersede or conflict; a caller that wants supersession names a registered predicate
+(the optional predicate, M5, is deferred past W1, `V2-D43`). An existing row under either key that defines it differently
+refuses the migration (fail closed; `tests/integration/test_migration_m13.py`). Rollback: `rollback/013_generic_predicates.sql` (refuses while
+any artifact uses them).
+
+`api/ingest_handlers.py` wires `ingest_episode`, `assert` and `ingest_artifact`. An episode is recorded `observed` from a declared
+source with no gate. A claim goes through the v1 validation gate (`engine.ingest.apply_candidate`) and is answered `asserted`,
+`contested` or a `Rejected` result with the gate's static reason code. The answer is read back from what was recorded (the
+first gate decision and the stored belief time), so a replayed key gets exactly the original answer. Only `turn` evidence can be grounded: an `external`
+reference carries a hash, not the captured text, so asserting from external evidence alone is a `validation_error`.
+Tested by `tests/integration/test_api_wiring_ingest.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
