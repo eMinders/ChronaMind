@@ -22,7 +22,7 @@ CREATE ROLE {{role}} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION N
 GRANT USAGE ON SCHEMA {{schema}} TO {{role}};
 GRANT SELECT, INSERT ON
   {{schema}}.app_user, {{schema}}.session, {{schema}}.turn, {{schema}}.memory_evidence,
-  {{schema}}.audit_event, {{schema}}.deletion_request
+  {{schema}}.audit_event, {{schema}}.deletion_request, {{schema}}.api_idempotency
   TO {{role}};
 GRANT SELECT, INSERT, UPDATE ON
   {{schema}}.memory_embedding, {{schema}}.memory_conflict, {{schema}}.scope_grant,

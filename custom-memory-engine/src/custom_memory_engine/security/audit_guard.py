@@ -67,6 +67,8 @@ AUDIT_DETAIL_KEYS = frozenset(
         "creation_reasons",
         "admissible_by_bound",
         "verification_reasons",
+        # lifecycle retirements through the API (E-039): a static reason code, never free text
+        "reason_code",
         # cross-scope reads (E-011): counts only, never a path or a principal
         "selector_count",
         "cross_scope_count",

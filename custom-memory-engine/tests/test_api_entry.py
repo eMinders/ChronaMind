@@ -1,6 +1,7 @@
 """The public API entry point (E-039): authorise first, enforce every condition, speak only the static contract."""
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from itertools import product
 
 import pytest
@@ -38,9 +39,16 @@ class Resolver:
         self.known = dict(known)
         self.calls: list[Sequence[str]] = []
 
-    async def resolve(self, ids: Sequence[str]) -> Mapping[str, TargetInfo]:
+    async def resolve(self, ctx: CallerContext, ids: Sequence[str]) -> Mapping[str, TargetInfo]:
         self.calls.append(tuple(ids))
-        return {i: self.known[i] for i in ids if i in self.known}
+        found = {i: self.known[i] for i in ids if i in self.known}
+        # a row whose tier is unspecified was produced by the caller in the role it is calling as
+        return {
+            i: replace(info, lineage_tier=ctx.tier)
+            if info.lineage_tier is None and info.lineage_owner == ctx.principal
+            else info
+            for i, info in found.items()
+        }
 
 
 class Principals:
@@ -60,7 +68,8 @@ class Methods:
         self.registered = registered
         self.calls = 0
 
-    async def is_registered(self, method: Mapping[str, object]) -> bool:
+    async def is_registered(self, ctx: CallerContext, method: Mapping[str, object]) -> bool:
+        del ctx, method
         self.calls += 1
         return self.registered
 
@@ -206,6 +215,16 @@ async def test_no_operation_outside_the_contract_is_callable(name: object) -> No
     with pytest.raises(EntryError) as raised:
         await sut.call(ctx(), name, {})  # type: ignore[arg-type]
     assert raised.value.code == "forbidden"
+
+
+async def test_the_same_principal_may_not_touch_in_one_tier_what_it_produced_in_the_other() -> None:
+    """Own lineage is (principal, tier): a Tier B call cannot retract what the same user asserted as Tier C."""
+    known = {**KNOWN, "c-made": TargetInfo("/u/alice/", "private", "asserted", "alice", "C")}
+    sut = engine(known=known)
+    with pytest.raises(EntryError) as raised:
+        await sut.call(ctx("B"), "retract_own", {"artifact_id": "c-made", "reason": "x"})
+    assert raised.value.code == "forbidden"
+    assert await sut.call(ctx("C"), "retract_own", {"artifact_id": "c-made", "reason": "x"}) == {"ok": "retract_own"}
 
 
 async def test_the_tier_b_rules_hold_at_runtime() -> None:
