@@ -258,6 +258,65 @@ class MigrationRunner:
             sql.SQL("SET LOCAL search_path TO {}, public").format(sql.Identifier(self.config.schema_name))
         )
 
+    async def _forced_relations(self, connection: AsyncConnection) -> list[str]:
+        cursor = await connection.execute(
+            """SELECT c.relname FROM pg_catalog.pg_class c
+               JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+               WHERE n.nspname=%s AND c.relkind IN ('r','p') AND c.relforcerowsecurity ORDER BY c.relname""",
+            (self.config.schema_name,),
+        )
+        return [str(row[0]) for row in await cursor.fetchall()]
+
+    async def _release_force(self, connection: AsyncConnection) -> list[sql.Identifier]:
+        """Lift ``FORCE ROW LEVEL SECURITY`` on this schema's own relations; return them for restoration.
+
+        ``FORCE`` binds the table owner, and a migration is applied by that owner, so a backfill's unqualified
+        ``UPDATE``/``INSERT ... SELECT`` matches zero rows and a following ``SET NOT NULL`` then fails. Migrations 5, 8
+        and 9 backfill that way, so a populated schema could not be upgraded by any role that does not bypass RLS. The
+        migration sources are checksum-bound and cannot carry the fix, so the runner lifts ``FORCE`` around each
+        migration body and restores it before recording the catalog. Only this schema's relations are touched.
+        """
+        forced = await self._forced_relations(connection)
+        relations = [sql.Identifier(self.config.schema_name, name) for name in forced]
+        for relation in relations:
+            await connection.execute(sql.SQL("ALTER TABLE {} NO FORCE ROW LEVEL SECURITY").format(relation))
+        return relations
+
+    async def _restore_force(self, connection: AsyncConnection, relations: list[sql.Identifier]) -> None:
+        """Restore ``FORCE``, judging pending deferred events first.
+
+        A migration body ends with trigger events still queued, and ``ALTER TABLE`` is refused while its relation has
+        pending events. They are dispatched ``IMMEDIATE`` here and each deferrable trigger is put back to the mode its
+        own DDL declares, so a body's deferral state does not leak into the rest of the transaction or the session.
+        """
+        cursor = await connection.execute(
+            """SELECT t.tgname, t.tginitdeferred FROM pg_catalog.pg_trigger t
+               JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
+               JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+               WHERE n.nspname=%s AND NOT t.tgisinternal AND t.tgdeferrable ORDER BY t.tgname""",
+            (self.config.schema_name,),
+        )
+        deferrable = [(str(name), bool(initially_deferred)) for name, initially_deferred in await cursor.fetchall()]
+        await connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        for name, initially_deferred in deferrable:
+            if initially_deferred:
+                await connection.execute(
+                    sql.SQL("SET CONSTRAINTS {}.{} DEFERRED").format(
+                        sql.Identifier(self.config.schema_name), sql.Identifier(name)
+                    )
+                )
+        for relation in relations:
+            await connection.execute(sql.SQL("ALTER TABLE {} FORCE ROW LEVEL SECURITY").format(relation))
+
+    async def _run_source(self, connection: AsyncConnection, source: str, *, lift_force: bool = True) -> None:
+        """Execute one migration body, lifting ``FORCE`` first when it can contain a backfill."""
+        relations = await self._release_force(connection) if lift_force else []
+        cursor = await connection.execute(cast(LiteralString, source), prepare=False, binary=False)
+        while cursor.nextset():
+            pass
+        if relations:
+            await self._restore_force(connection, relations)
+
     async def _catalog(self, connection: AsyncConnection) -> str:
         rows = []
         for query in _CATALOG_QUERIES:
@@ -334,9 +393,7 @@ class MigrationRunner:
         for version, filename, source, checksum in sources:
             if version <= start:
                 continue
-            cursor = await connection.execute(cast(LiteralString, source), prepare=False, binary=False)
-            while cursor.nextset():
-                pass
+            await self._run_source(connection, source)
             await self._record(connection, version, filename, checksum)
 
     async def _install(self, connection: AsyncConnection, sources: tuple[tuple[int, str, str, str], ...]) -> None:
@@ -361,9 +418,7 @@ class MigrationRunner:
             )
         )
         await self._scope(connection)
-        cursor = await connection.execute(cast(LiteralString, source), prepare=False, binary=False)
-        while cursor.nextset():
-            pass
+        await self._run_source(connection, source)
         await connection.execute(
             sql.SQL("""CREATE TABLE {} (
                 version integer PRIMARY KEY, filename text NOT NULL,

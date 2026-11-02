@@ -967,3 +967,34 @@ exists to prevent.
 (`IF NOT has_s AND NOT has_c` → `IF FALSE`) makes the test fail with
 `archival_branch_must_be_C_when_consolidated_only`, so it is a real control and not a restatement.
 **Status:** decided and verified.
+
+### V2-D60 — The migration runner lifts `FORCE ROW LEVEL SECURITY` around a migration body (resolves the E-014 review finding)
+
+**Decision.** `MigrationRunner` lifts `FORCE ROW LEVEL SECURITY` on the relations of the schema it manages, executes one
+migration source, and restores `FORCE` on exactly the relations it lifted, before recording that migration's catalog
+digest. It also dispatches any trigger events the body left deferred (`SET CONSTRAINTS ALL IMMEDIATE`) and puts each
+deferrable trigger back to the mode its own DDL declares, because `ALTER TABLE` is refused while a relation has pending
+events.
+
+**Why.** `FORCE` binds the table *owner*, and a migration is applied by that owner. A backfill written as an
+unqualified `UPDATE … WHERE new_column IS NULL` or `INSERT … SELECT` therefore matches **zero rows** when it runs as
+any role that does not bypass RLS, and the `SET NOT NULL` that follows refuses the whole migration. Measured on
+migrations 5 and 8 (SQLSTATE `23502`), and 9 sets `observed_at`/`event_basis` `NOT NULL` the same way: a schema that
+held data could not be upgraded by its owner at all. It could not be fixed in the migrations, because their sources are
+checksum-bound and `status` reports any edit as drift. The fresh-install path never showed it, because those tables are
+empty on a first apply, and the test suite connects as a superuser, which bypasses RLS.
+
+**What it does not mean.** It is not an RLS bypass at rest: the lift exists only inside the migration transaction, the
+restore is unconditional and covers only relations that already had `FORCE`, and a failing body rolls the lift back with
+everything else. `clock_watermark`, which migration 9 deliberately leaves non-forced, is never forced. Nothing about the
+runtime role changes; `E-011`'s read policy is unaffected. Migration 10 lifts `FORCE` for its own two backfills, so it
+stays correct when applied outside the runner; the runner's restore is then a no-op for it.
+
+**Implementation.** `schema/migrate.py::MigrationRunner._release_force`, `_restore_force` and `_run_source`; both
+`_install` and `_apply_from` execute through `_run_source`. Table names come from the catalog (`relforcerowsecurity`),
+never from a list, so a migration that creates new tables is covered by the next body automatically.
+**Verification.** `tests/integration/test_migration_owner.py`: migrations 5, 8, 9 and 10 each upgrade a populated schema
+owned by a `NOSUPERUSER NOBYPASSRLS` role, and `FORCE` is asserted restored on every relation afterwards with
+`clock_watermark` excepted. **Mutation-checked:** running the same suite against the pre-change runner fails `[5]`, `[8]`
+and `[9]` with `migration_database_failure`; `[10]` passes either way, because #130 lifts `FORCE` itself.
+**Status:** decided and verified.
