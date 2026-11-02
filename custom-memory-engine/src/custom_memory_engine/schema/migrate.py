@@ -31,6 +31,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (7, "007_lifecycle_guard.sql"),
     (8, "008_source.sql"),
     (9, "009_clocks.sql"),
+    (10, "010_structural_tables.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -50,6 +51,12 @@ TABLES = (
     "job",
     "scope_grant",
     "clock_watermark",
+    "method",
+    "association",
+    "entity",
+    "abstraction_stats",
+    "verification",
+    "negative_constraint",
 )
 FUNCTIONS = (
     "clock_now",
@@ -65,6 +72,13 @@ FUNCTIONS = (
     "sync_memory_evidence_source",
     "sync_memory_version_clocks",
     "enforce_recorded_watermark",
+    "guard_method_append_only",
+    "assign_memory_version_method",
+    "guard_abstraction_stats",
+    "guard_verification_append_only",
+    "create_zero_ledger",
+    "guard_negative_constraint",
+    "enforce_transition_records",
 )
 logger = structlog.get_logger(__name__)
 

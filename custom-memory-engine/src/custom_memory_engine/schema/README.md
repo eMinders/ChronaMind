@@ -40,7 +40,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–9** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–10** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -178,6 +178,45 @@ for its deliberate time travel, as it already does for provenance); its 43 asser
 * **Rollback** (`rollback/009_clocks.sql`) restores version 8 exactly; the two columns come back at later attribute numbers.
 
 Tested by `tests/integration/test_migration_m3.py`.
+
+## Migration 10: structural tables and the lifecycle records (`010_structural_tables.sql`, `E-014`, `E-016`, M6)
+
+Six tables (`V2-D04`, `V2-D25`, `V2-D33`, `V2-D46`), each with forced row-level security. `E-011` (the scope hierarchy) is not built,
+so the tenant tables carry the same per-user policy as the v1 tables and `E-011` migrates them; every foreign key between tenant
+tables is composite on `(id, user_id)` and every function is pinned to the engine schema (`V2-D54`).
+
+| Table | What the database guarantees |
+|---|---|
+| `association` | Ten closed types, same-tenant endpoints, no self-loop, weight in `[0,1]`, the degree cap of 32 (`V2-D13`, migration 3's function), and an `origin` (`tier_b` edges have no channel effect, `V2-D48`). Deleting an endpoint deletes the row and **never** cascades to the other endpoint. |
+| `entity` | Opaque random ids (`ent_` + 32 hex), principal-scoped (`scope_path` inside the creator's `/u/<id>/`), invisible to every other user, indistinguishable from a missing id. |
+| `method` | Shared registry, **append-only**: `UPDATE`, `DELETE` and `TRUNCATE` are refused; `(name, version)` is unique. Seeded with the v1 operators. The runtime role may read and append, nothing else. |
+| `abstraction_stats` | The stored ledger: `o = s + k + u`, counts `>= 0`, `coverage` generated as `(s+k)/o`, **no `stale` column** (`V2-D24`); only an abstraction may have one; a `verified`/`refuted` status needs a `verification` record. |
+| `verification` | Append-only held-out record with the support and held-out windows and context keys (`windows_disjoint` is derived) for `I11`. |
+| `negative_constraint` | Sticky dissent: only a complete lift record (who, when, which new evidence) may be added, once. |
+
+**`E-016` record half.** `memory_version.method_id` is the method reference of `I1′` (set once, never changed). The provenance guard
+(`enforce_provenance`, the deferred trigger of migration 1) now also requires a registered method for an active `inferred` row and
+the ledger for an abstraction (`I15`). v1 derived claims get the v1 method of their derivation, and v1 persona rows get the
+persona method and the zero ledger (`V2-D49` D7). A new deferred constraint trigger, `trg_memory_version_transition_records`
+(listed in `engine.deletion.ARCHIVAL_GUARD_TRIGGERS`, so deletion judges the final state), requires the record of each
+recorded transition of `ARCHITECTURE_V2` 2.3:
+
+| Transition | Record required at commit |
+|---|---|
+| `contested -> asserted` | an `accept` decision in `memory_conflict` (the adjudication record) |
+| `contested -> retired` | a `reject` decision in `memory_conflict` (the reason code) |
+| `asserted`/`observed -> retired` | a closed recorded range (withdrawal, supersession) or an archival branch |
+| `inferred -> retired` | one of those, or a refuting `verification`, or a dissent (`negative_constraint`), or a `reject` decision |
+| `inferred -> contested` | a Tier C `contradicts` association |
+
+The v1 staging promotion and the dual-write `-> inferred` corrections record nothing (migration 7). **Not enforced:** the gate-decision
+record at *creation* (v1 direct commits write none).
+
+> **Correction to the migration-7 header.** `007_lifecycle_guard.sql` says `E-014` extends a function called
+> `enforce_lifecycle_records`. No such function exists: the record checks live in `enforce_provenance`, which this migration
+> extends. A shipped migration is checksum-bound and cannot be edited, so the correction is recorded here.
+
+Rollback: `rollback/010_structural_tables.sql` restores version 9 exactly. Tested by `tests/integration/test_migration_m6.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner

@@ -46,7 +46,11 @@ logger = structlog.get_logger(__name__)
 type DeletionScope = Literal["memory", "topic", "all"]
 
 # Invariant 10 constraint triggers (migration 1); deferrable, so deletion can check its final state.
-ARCHIVAL_GUARD_TRIGGERS = ("trg_memory_version_archival_invariant", "trg_memory_derivation_archival_coverage")
+ARCHIVAL_GUARD_TRIGGERS = (
+    "trg_memory_version_archival_invariant",
+    "trg_memory_derivation_archival_coverage",
+    "trg_memory_version_transition_records",
+)
 
 
 class DeletionError(InvalidParameterValue):

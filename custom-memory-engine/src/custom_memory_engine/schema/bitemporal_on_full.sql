@@ -21,6 +21,8 @@ ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_provenance;
 -- recorded-time watermark of migration 9 (THREAT_MODEL T-28) forbids to a real session. This design-check script is
 -- the owner replaying history, so it steps the watermark aside for its own run, as it does for provenance.
 ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_recorded_watermark;
+-- Likewise the lifecycle transition records of migration 10: the script builds bare versions, not their decisions.
+ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_transition_records;
 
 -- Supersession for a single-valued predicate: close-then-insert, one transaction, one recorded instant.
 CREATE FUNCTION supersede_single(p_new_id text, p_reissue_id text, p_user text, p_subject text,
@@ -261,5 +263,6 @@ SELECT expect('other memory items of the user survive',
 -- with the provenance trigger switched off.
 ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_provenance;
 ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_recorded_watermark;
+ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_transition_records;
 
 \echo 'ALL ASSERTIONS PASSED'

@@ -30,6 +30,11 @@ USER_TABLES = (
     "deletion_request",
     "job",
     "scope_grant",  # migration 2 (V2-D36)
+    "association",  # migration 10 (E-014)
+    "entity",
+    "abstraction_stats",
+    "verification",
+    "negative_constraint",
 )
 
 
@@ -55,6 +60,15 @@ TABLE_GRANTS: dict[str, frozenset[str]] = {
     "memory_derivation": _FULL,
     "job": _FULL,
     "predicate_schema": frozenset({"SELECT"}),
+    # migration 10 (E-014). Associations are unlinked by the API; ledgers and constraints are updated, never deleted
+    # (rows go with their version by cascade, which runs as the owner); a verification is an append-only record.
+    "association": _FULL,
+    "entity": _MUTABLE,
+    "abstraction_stats": _MUTABLE,
+    "verification": _APPEND,
+    "negative_constraint": _MUTABLE,
+    # the method registry is shared and append-only: anyone may read it, `register_method` appends, nobody changes it
+    "method": _APPEND,
 }
 
 

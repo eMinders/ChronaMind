@@ -28,7 +28,7 @@ from custom_memory_engine.model.axes import (
 )
 from custom_memory_engine.schema import migrate
 from custom_memory_engine.security import provision_runtime_role
-from tests.integration.rollbacks import adapt, rollback_sql
+from tests.integration.rollbacks import adapt, has_column, rollback_sql
 from tests.integration.test_migration_m1 import (
     START,
     connect,
@@ -109,6 +109,11 @@ async def _insert_version(
             await conn.execute(
                 "INSERT INTO memory_derivation VALUES (%s, 'src', 'u1', 'consolidation')", (version_id,)
             )
+            if await has_column(conn, "memory_version", "method_id"):  # I1': inferred needs a registered method
+                await conn.execute(
+                    "UPDATE memory_version SET method_id = COALESCE(method_id, 'm-v1-consolidation') WHERE id = %s",
+                    (version_id,),
+                )
 
 
 # --------------------------------------------------------------------------- the exhaustive matrix
@@ -232,8 +237,12 @@ async def test_re_asserting_retired_content_creates_a_new_artifact(database) -> 
         await seed_source(conn)
         await insert_version(conn, "old", "claim", "asserted")
         await conn.execute("ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_axes_dual_write")
-        async with conn.transaction():
-            await conn.execute("UPDATE memory_version SET lifecycle = 'retired' WHERE id = 'old'")
+        await conn.execute("SELECT set_config('app.clock', '2026-09-01T00:00:00+00:00', false)")
+        async with conn.transaction():  # a withdrawal closes recorded time (its record, ARCHITECTURE_V2 2.3)
+            await conn.execute(
+                "UPDATE memory_version SET lifecycle = 'retired', recorded_range = tstzrange(lower(recorded_range), "
+                "clock_now()) WHERE id = 'old'"
+            )
         with pytest.raises(RaiseException, match="lifecycle_retired_is_terminal"):
             await conn.execute("UPDATE memory_version SET lifecycle = 'asserted' WHERE id = 'old'")
         await conn.execute("ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_axes_dual_write")

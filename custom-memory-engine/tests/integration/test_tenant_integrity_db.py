@@ -18,11 +18,11 @@ from psycopg import AsyncConnection, sql
 from psycopg.errors import ForeignKeyViolation, InsufficientPrivilege, RaiseException
 
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
-from custom_memory_engine.engine.deletion import delete_memory
+from custom_memory_engine.engine.deletion import ARCHIVAL_GUARD_TRIGGERS, delete_memory
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, commit_initial_version
 from custom_memory_engine.schema import migrate
-from custom_memory_engine.security import provision_runtime_role, tenant_scope
-from tests.integration.schema import apply_migrations
+from custom_memory_engine.schema.migrate import migration_scripts
+from custom_memory_engine.security import USER_TABLES, provision_runtime_role, tenant_scope
 
 pytestmark = pytest.mark.integration
 
@@ -40,14 +40,44 @@ async def _environment(through: int | None) -> AsyncIterator[Env]:
         await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
         await conn.execute("SET timezone = 'UTC'")
-        await apply_migrations(conn, through=through)
-        # The control schemas predate migration 9, but the engine now writes `event_range`; rename so the control can
-        # still drive the engine (the controls are about foreign keys and trigger search paths, not clocks).
+        for _version, source in migration_scripts(through=through):
+            await conn.execute(cast(LiteralString, source), prepare=False)
+        # The engine writes `event_range` (migration 9) and an older prefix still calls it `valid_range`.
         await conn.execute(
             "DO $r$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() "
             "AND table_name = 'memory_version' AND column_name = 'valid_range') THEN "
             "ALTER TABLE memory_version RENAME COLUMN valid_range TO event_range; END IF; END $r$"
         )
+        # The privilege matrix and the deletion path target the current schema, so a control built on an older prefix
+        # gets an RLS-forced stub for every table added since, and no-op stubs for the archival guards; the attacks
+        # under test never touch them.
+        cursor = await conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
+        present = {row[0] for row in await cursor.fetchall()}
+        for table in (*USER_TABLES, "method"):
+            if table not in present:
+                await conn.execute(sql.SQL("CREATE TABLE {} (user_id text)").format(sql.Identifier(table)))
+                await conn.execute(sql.SQL("ALTER TABLE {} ENABLE ROW LEVEL SECURITY").format(sql.Identifier(table)))
+                await conn.execute(sql.SQL("ALTER TABLE {} FORCE ROW LEVEL SECURITY").format(sql.Identifier(table)))
+        stub_created = False
+        for guard in ARCHIVAL_GUARD_TRIGGERS:
+            cursor = await conn.execute(
+                "SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                "WHERE t.tgname = %s AND c.relnamespace = current_schema()::regnamespace",
+                (guard,),
+            )
+            if await cursor.fetchone() is None:
+                if not stub_created:
+                    await conn.execute(
+                        "CREATE FUNCTION control_noop() RETURNS trigger LANGUAGE plpgsql "
+                        "AS $$ BEGIN RETURN NULL; END $$"
+                    )
+                    stub_created = True
+                await conn.execute(
+                    sql.SQL(
+                        "CREATE CONSTRAINT TRIGGER {} AFTER UPDATE ON memory_version DEFERRABLE INITIALLY DEFERRED "
+                        "FOR EACH ROW EXECUTE FUNCTION control_noop()"
+                    ).format(sql.Identifier(guard))
+                )
         await provision_runtime_role(conn, schema, role)
         await conn.execute("INSERT INTO predicate_schema VALUES ('fact', 'multi', 'semantic')")
         for user in ("u1", "u2"):

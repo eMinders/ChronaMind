@@ -36,3 +36,13 @@ async def adapt(conn: AsyncConnection, statement: str) -> LiteralString:
     row = await cursor.fetchone()
     column = row[0] if row else "event_range"
     return cast(LiteralString, statement.replace("event_range", column))
+
+
+async def has_column(conn: AsyncConnection, table: str, column: str) -> bool:
+    """Whether ``table.column`` exists in the current schema (tests that straddle a migration use it)."""
+    cursor = await conn.execute(
+        "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() "
+        "AND table_name = %s AND column_name = %s",
+        (table, column),
+    )
+    return await cursor.fetchone() is not None
