@@ -25,12 +25,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import product
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 import pytest
 from psycopg import AsyncConnection
 from psycopg.errors import CheckViolation, RaiseException
 
+from custom_memory_engine.api.contract import OPERATIONS
 from custom_memory_engine.api.entry import Engine
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.runtime import Receipt
@@ -214,18 +216,17 @@ async def test_every_legal_tuple_is_storable_and_queryable_and_deletable_and_rou
         assert stored == [(t.kind, t.retention, t.lifecycle, t.facet)], "storable"
         # -- queryable: readable through row-level security, and a believed tuple is in the temporal current state
         async with tenant_scope(conn, user, role=role):
-            visible = await rows(conn, "SELECT id FROM memory_version WHERE id = 'subject'")
+            visible = await rows(conn, "SELECT id, kind, lifecycle FROM memory_version WHERE id = 'subject'")
             believed = {
                 version.id
                 for version in (await fetch_versions(conn, current_state(user, NOW), schema_name=schema)).versions
             }
-        assert visible == [("subject",)], "queryable (row-level security)"
+        assert [row[0] for row in visible] == ["subject"], "queryable (row-level security)"
         assert ("subject" in believed) == (STATUS[t.lifecycle] == "active"), "queryable (temporal current_state)"
-        # -- routed: the channel is the one the independent reference model gives
-        item = Item(t.kind, t.lifecycle, verification_of(t.lifecycle), False, False)
-        assert channel_of(t.kind, t.lifecycle, verification_of(t.lifecycle), False, False) == reference_channel(
-            item
-        ), "routed"
+        # -- routed: the row as read back (not the test's own tuple) goes where the independent reference model says
+        kind, lifecycle = cast(Kind, visible[0][1]), cast(Lifecycle, visible[0][2])
+        expected_channel = reference_channel(Item(t.kind, t.lifecycle, verification_of(t.lifecycle), False, False))
+        assert channel_of(kind, lifecycle, verification_of(lifecycle), False, False) == expected_channel, "routed"
         # -- deletable: the row and its derived dependent are gone, nothing else is
         async with tenant_scope(conn, user, role=role):
             receipt = await delete_memory(conn, user, scope="memory", target_ref="subject", schema_name=schema)
@@ -446,4 +447,7 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         register_ingest_handlers(engine, engine.resolver.runtime)  # type: ignore[attr-defined]
         unwired = set(engine.unwired_operations())
         assert {"delete", "query", "get", "infer", "export"} <= unwired  # W3+ owners: E-037, E-033, C-021, A-015
-        print(f"\nG1: {29 - len(unwired)} of 29 operations wired; unwired (not yet testable): {sorted(unwired)}")
+        print(
+            f"\nG1: {len(OPERATIONS) - len(unwired)} of {len(OPERATIONS)} operations wired; "
+            f"unwired (not yet testable): {sorted(unwired)}"
+        )
