@@ -107,6 +107,14 @@ END
 $$;
 
 -- Backfill: existing inferred rows get the method of their first derivation, persona rows the persona method.
+-- The owner is subject to FORCE ROW LEVEL SECURITY, so a role that does not bypass RLS would match zero rows and
+-- leave every existing artifact without its method - which then fails as `inferred_requires_method_record` on the
+-- next write to that row. The backfill therefore lifts FORCE for its own statements and restores it. Evidence and
+-- derivation are lifted too: firing the deferred provenance check below re-reads both under the reader's policy, and
+-- with no `app.user_id` set it would otherwise see nothing and refuse every row.
+ALTER TABLE memory_version NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_evidence NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_derivation NO FORCE ROW LEVEL SECURITY;
 UPDATE memory_version v
    SET method_id = CASE
          WHEN v.layer = 'persona' THEN 'm-v1-persona'
@@ -120,8 +128,13 @@ UPDATE memory_version v
            'm-v1-re-derivation')
        END
  WHERE v.lifecycle = 'inferred' AND v.method_id IS NULL;
+-- Dispatch the deferred events this UPDATE queued before restoring FORCE: PostgreSQL refuses `ALTER TABLE` while a
+-- relation has pending trigger events, and the check is the point of the backfill.
 SET CONSTRAINTS trg_memory_version_provenance IMMEDIATE;
 SET CONSTRAINTS trg_memory_version_provenance DEFERRED;
+ALTER TABLE memory_derivation FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_evidence FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_version FORCE ROW LEVEL SECURITY;
 
 -- 3. ABSTRACTION_STATS ----------------------------------------------------------------------------------------------
 CREATE TABLE abstraction_stats (
@@ -213,8 +226,29 @@ BEGIN
   RAISE EXCEPTION 'verification_is_append_only' USING ERRCODE = 'P0001';
 END
 $$;
+
+-- Append-only is worth nothing if the record can be removed: a refuted verification that disappears would let an
+-- abstraction keep a `verified` status with nothing behind it, and I11 is exactly that record. So a direct DELETE is
+-- refused too. A row may still go when its version does (`ON DELETE CASCADE`), which is the one legal removal: by the
+-- time the cascade reaches this row its parent is already gone. TRUNCATE needs no trigger of its own - the runtime role
+-- has no privilege for it and the cascade cannot issue one.
+CREATE FUNCTION guard_verification_no_delete() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM memory_version WHERE id = OLD.version_id) THEN
+    RAISE EXCEPTION 'verification_is_append_only' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN OLD;
+END
+$$;
+
 CREATE TRIGGER trg_verification_append_only BEFORE UPDATE ON verification
   FOR EACH ROW EXECUTE FUNCTION guard_verification_append_only();
+CREATE TRIGGER trg_verification_no_delete BEFORE DELETE ON verification
+  FOR EACH ROW EXECUTE FUNCTION guard_verification_no_delete();
+CREATE TRIGGER trg_verification_no_truncate BEFORE TRUNCATE ON verification
+  FOR EACH STATEMENT EXECUTE FUNCTION guard_verification_append_only();
 
 CREATE TRIGGER trg_abstraction_stats_guard BEFORE INSERT OR UPDATE ON abstraction_stats
   FOR EACH ROW EXECUTE FUNCTION guard_abstraction_stats();
@@ -231,8 +265,15 @@ $$;
 CREATE TRIGGER trg_memory_version_zero_ledger AFTER INSERT ON memory_version
   FOR EACH ROW WHEN (NEW.kind = 'abstraction' AND NEW.layer = 'persona') EXECUTE FUNCTION create_zero_ledger();
 
+-- Every existing abstraction needs a ledger too (I15), not only the persona rows. Both sides of this statement are
+-- behind a forced policy: the SELECT on memory_version and the WITH CHECK on abstraction_stats. Under a non-bypass
+-- owner it would insert nothing and leave every existing abstraction un-updatable, so FORCE is lifted for it.
+ALTER TABLE memory_version NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE abstraction_stats NO FORCE ROW LEVEL SECURITY;
 INSERT INTO abstraction_stats (version_id, user_id)
 SELECT id, user_id FROM memory_version WHERE kind = 'abstraction' ON CONFLICT (version_id) DO NOTHING;
+ALTER TABLE abstraction_stats FORCE ROW LEVEL SECURITY;
+ALTER TABLE memory_version FORCE ROW LEVEL SECURITY;
 
 -- 5. ASSOCIATION ----------------------------------------------------------------------------------------------------
 CREATE TABLE association (
@@ -304,24 +345,48 @@ CREATE TABLE negative_constraint (
   CONSTRAINT negative_constraint_lift_after_dissent CHECK (lifted_at IS NULL OR lifted_at >= dissented_at),
   CONSTRAINT negative_constraint_dissented_version_same_tenant
     FOREIGN KEY (dissented_version_id, user_id) REFERENCES memory_version (id, user_id) ON DELETE SET NULL (dissented_version_id),
+  -- A lift is grounded in the evidence that lifted it: if that version is deleted the reference is cleared, and the
+  -- guard below then withdraws the whole lift record, so the constraint becomes active again instead of dangling.
   CONSTRAINT negative_constraint_lift_evidence_same_tenant
     FOREIGN KEY (lift_evidence_version_id, user_id) REFERENCES memory_version (id, user_id)
+    ON DELETE SET NULL (lift_evidence_version_id)
 );
 CREATE UNIQUE INDEX negative_constraint_active_unique
   ON negative_constraint (user_id, scope_path, predicate_key, method_family) WHERE lifted_at IS NULL;
 
--- Sticky: only the lift may be recorded, once; nothing else changes (I16).
+-- Sticky: only the lift may be recorded, once; nothing else changes (I16). Two exceptions exist because the row
+-- references memory_version: when the dissented version is deleted its reference is cleared (ON DELETE SET NULL), and
+-- when the lift evidence is deleted the lift is withdrawn, because a lift with no grounded evidence behind it is not a
+-- lift. Both are the database following a reference, not a caller editing a dissent.
 CREATE FUNCTION guard_negative_constraint() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF OLD.lifted_at IS NOT NULL THEN
-    RAISE EXCEPTION 'negative_constraint_already_lifted' USING ERRCODE = 'P0001';
-  END IF;
   IF (NEW.id, NEW.user_id, NEW.predicate_key, NEW.scope_path, NEW.method_family, NEW.dissented_at, NEW.reason)
      IS DISTINCT FROM
      (OLD.id, OLD.user_id, OLD.predicate_key, OLD.scope_path, OLD.method_family, OLD.dissented_at, OLD.reason) THEN
     RAISE EXCEPTION 'negative_constraint_only_the_lift_may_change' USING ERRCODE = 'P0001';
+  END IF;
+  -- The lift evidence version was deleted: the lift loses its ground, so the lift record goes and the constraint is
+  -- active again (its unique index is partial on `lifted_at IS NULL`, so it competes with any new dissent again).
+  IF OLD.lift_evidence_version_id IS NOT NULL AND NEW.lift_evidence_version_id IS NULL
+     AND NOT EXISTS (SELECT 1 FROM memory_version WHERE id = OLD.lift_evidence_version_id) THEN
+    IF NEW.dissented_version_id IS DISTINCT FROM OLD.dissented_version_id THEN
+      RAISE EXCEPTION 'negative_constraint_only_the_lift_may_change' USING ERRCODE = 'P0001';
+    END IF;
+    NEW.lifted_at := NULL;
+    NEW.lifted_by := NULL;
+    RETURN NEW;
+  END IF;
+  -- The dissented version itself was deleted: the dissent stays sticky on its predicate; only the reference goes.
+  IF OLD.dissented_version_id IS NOT NULL AND NEW.dissented_version_id IS NULL
+     AND (NEW.lifted_at, NEW.lifted_by, NEW.lift_evidence_version_id)
+         IS NOT DISTINCT FROM (OLD.lifted_at, OLD.lifted_by, OLD.lift_evidence_version_id)
+     AND NOT EXISTS (SELECT 1 FROM memory_version WHERE id = OLD.dissented_version_id) THEN
+    RETURN NEW;
+  END IF;
+  IF OLD.lifted_at IS NOT NULL THEN
+    RAISE EXCEPTION 'negative_constraint_already_lifted' USING ERRCODE = 'P0001';
   END IF;
   IF NEW.lifted_at IS NULL THEN
     RAISE EXCEPTION 'negative_constraint_update_must_lift' USING ERRCODE = 'P0001';
@@ -476,8 +541,8 @@ DECLARE
 BEGIN
   FOREACH fn IN ARRAY ARRAY[
     'guard_method_append_only()', 'assign_memory_version_method()', 'mark_derived_version_inferred()',
-    'guard_abstraction_stats()', 'guard_verification_append_only()', 'create_zero_ledger()',
-    'guard_negative_constraint()', 'enforce_provenance()', 'enforce_transition_records()'
+    'guard_abstraction_stats()', 'guard_verification_append_only()', 'guard_verification_no_delete()',
+    'create_zero_ledger()', 'guard_negative_constraint()', 'enforce_provenance()', 'enforce_transition_records()'
   ] LOOP
     EXECUTE pg_catalog.format(
       'ALTER FUNCTION %I.%s SET search_path = %I, pg_catalog, pg_temp', engine_schema, fn, engine_schema

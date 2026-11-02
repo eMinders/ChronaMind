@@ -76,6 +76,7 @@ FUNCTIONS = (
     "assign_memory_version_method",
     "guard_abstraction_stats",
     "guard_verification_append_only",
+    "guard_verification_no_delete",
     "create_zero_ledger",
     "guard_negative_constraint",
     "enforce_transition_records",

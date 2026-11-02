@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from psycopg import AsyncConnection, sql
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.errors import (
     CheckViolation,
     FeatureNotSupported,
@@ -273,7 +274,9 @@ async def test_stats_belong_to_an_abstraction_and_start_unverified(database) -> 
         with pytest.raises(RaiseException, match="abstraction_stats_require_an_abstraction"):
             await conn.execute("INSERT INTO abstraction_stats (version_id, user_id) VALUES ('src', 'u1')")
         await abstraction(conn, "abs1")
-        await conn.execute("DELETE FROM abstraction_stats WHERE version_id = 'abs1'") if False else None
+        assert await rows(
+            conn, "SELECT verification_status, support_count FROM abstraction_stats WHERE version_id = 'abs1'"
+        ) == [("unverified", 0)]  # a new ledger starts unverified and empty
 
 
 async def test_verification_is_a_record_and_the_status_cannot_claim_it_without_one(database) -> None:  # noqa: F811
@@ -299,6 +302,11 @@ async def test_verification_is_a_record_and_the_status_cannot_claim_it_without_o
             )
         with pytest.raises(RaiseException, match="verification_is_append_only"):
             await conn.execute("UPDATE verification SET outcome = 'refuted'")
+        # append-only includes removal: a refuted record that could be deleted would leave the status claiming it
+        with pytest.raises(RaiseException, match="verification_is_append_only"):
+            await conn.execute("DELETE FROM verification WHERE id = 'v-1'")
+        with pytest.raises(RaiseException, match="verification_is_append_only"):
+            await conn.execute("TRUNCATE verification")
         with pytest.raises(
             RaiseException, match="requires_a_verification_record"
         ):  # a 'refuted' needs a refuting record
@@ -544,6 +552,176 @@ async def test_the_record_triggers_are_deferrable_and_listed_for_deletion(databa
             "WHERE tgname = 'trg_memory_version_transition_records' AND NOT tgisinternal "
             "AND tgrelid = 'memory_version'::regclass",
         ) == [(True, True)]
+
+
+# ------------------------------ deletion with the new references
+
+
+async def test_deleting_a_version_a_dissent_names_keeps_the_dissent_and_succeeds(database) -> None:  # noqa: F811
+    """A user must be able to delete a memory they dissented from.
+
+    The dissented version's reference is cleared (ON DELETE SET NULL); the dissent stays sticky on the predicate.
+    Before the guard allowed it this raised `negative_constraint_update_must_lift`, so the memory was undeletable.
+    """
+    config, schema = database
+    async with connect(database) as conn:
+        await seed_source(conn)
+        await insert_version(conn, "dissented", "claim", "inferred")
+        await conn.execute(
+            "INSERT INTO negative_constraint (id, user_id, predicate_key, scope_path, method_family, dissented_at, "
+            "reason, dissented_version_id) VALUES ('nc', 'u1', 'diet', '/u/u1/', 'f', %s, 'user_dissent', "
+            "'dissented')",
+            (START,),
+        )
+        async with conn.transaction():
+            receipt = await delete_memory(conn, "u1", scope="memory", target_ref="dissented", schema_name=schema)
+        assert receipt.deleted_versions == 1
+        assert await rows(conn, "SELECT id, dissented_version_id, lifted_at FROM negative_constraint") == [
+            ("nc", None, None)
+        ], "the dissent stays sticky; only the reference to the deleted version goes"
+
+
+async def test_deleting_the_lift_evidence_withdraws_the_lift(database) -> None:  # noqa: F811
+    """A lift is grounded in its evidence: deleting that evidence withdraws the lift, and the constraint is active."""
+    config, schema = database
+    async with connect(database) as conn:
+        await seed_source(conn)
+        await insert_version(conn, "evidence", "claim", "asserted")
+        await conn.execute(
+            "INSERT INTO negative_constraint (id, user_id, predicate_key, scope_path, method_family, dissented_at, "
+            "reason) VALUES ('nc', 'u1', 'diet', '/u/u1/', 'f', %s, 'user_dissent')",
+            (START,),
+        )
+        await conn.execute(
+            "UPDATE negative_constraint SET lifted_at = %s, lifted_by = 'u1', lift_evidence_version_id = 'evidence' "
+            "WHERE id = 'nc'",
+            (START,),
+        )
+        async with conn.transaction():
+            receipt = await delete_memory(conn, "u1", scope="memory", target_ref="evidence", schema_name=schema)
+        assert receipt.deleted_versions == 1
+        assert await rows(conn, "SELECT lifted_at, lifted_by, lift_evidence_version_id FROM negative_constraint") == [
+            (None, None, None)
+        ], "a lift with no evidence behind it is not a lift"
+
+
+# ------------------------------ the backfill under a non-bypass owner
+
+
+async def test_the_backfill_reaches_rows_when_the_owner_cannot_bypass_rls(database) -> None:  # noqa: F811
+    """The suite runs as a superuser, which bypasses RLS and would hide an empty backfill.
+
+    A production upgrade is applied by an ordinary owner: FORCE ROW LEVEL SECURITY applies to it, so an unqualified
+    ``UPDATE``/``INSERT ... SELECT`` matches nothing and every existing artifact keeps a NULL method with no ledger.
+    This builds a version-9 schema owned by such a role, seeds it through the v1 write paths, and applies migration 10.
+    """
+    config, _ = database
+    owner = "cme_owner_" + uuid4().hex[:12]
+    password = uuid4().hex
+    schema = "cme_m6_owner_" + uuid4().hex[:12]
+    parameters = conninfo_to_dict(config.database_url.get_secret_value())
+    database_name = str(parameters["dbname"])
+    owner_dsn = make_conninfo(**{**parameters, "user": owner, "password": password})
+    try:
+        async with await AsyncConnection.connect(config.database_url.get_secret_value(), autocommit=True) as admin:
+            await admin.execute(
+                sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD {}").format(
+                    sql.Identifier(owner), sql.Literal(password)
+                )
+            )
+            await admin.execute(
+                sql.SQL("GRANT CREATE, CONNECT ON DATABASE {} TO {}").format(
+                    sql.Identifier(database_name), sql.Identifier(owner)
+                )
+            )
+            await admin.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(sql.Identifier(owner)))
+        async with await AsyncConnection.connect(owner_dsn, autocommit=True) as conn:
+            await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            await conn.execute(
+                sql.SQL("COMMENT ON SCHEMA {} IS {}").format(sql.Identifier(schema), sql.Literal(migrate.OWNER_MARKER))
+            )
+            await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+            for _, source in migrate.migration_scripts(through=M6 - 1):
+                cursor = await conn.execute(cast(LiteralString, source), prepare=False)
+                while cursor.nextset():
+                    pass
+        async with await AsyncConnection.connect(owner_dsn, autocommit=True) as conn:
+            await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+            async with conn.transaction():
+                await conn.execute("SELECT set_config('app.user_id', 'u1', true)")
+                await conn.execute("SELECT set_config('app.clock', '2026-07-20T00:00:00+00:00', true)")
+                await conn.execute(
+                    "INSERT INTO app_user (id, external_ref, created_at) VALUES ('u1', 'ext-u1', clock_now())"
+                )
+                await conn.execute("INSERT INTO predicate_schema VALUES ('diet', 'single', 'semantic')")
+                await conn.execute("INSERT INTO session VALUES ('s1', 'u1', clock_now())")
+                await conn.execute(
+                    "INSERT INTO turn VALUES ('t1', 's1', 'u1', 1, 'user', 'I am vegetarian', clock_now())"
+                )
+                await conn.execute(
+                    "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
+                    "single_valued, content, event_range, layer, recorded_range) VALUES ('source', 'mk-source', "
+                    "'u1', 'active', 'u1', 'diet', false, 'vegetarian', tstzrange(clock_now(), NULL), 'semantic', "
+                    "tstzrange(clock_now(), NULL))"
+                )
+                await conn.execute(
+                    "INSERT INTO memory_evidence VALUES ('source', 't1', 'u1', 'vegetarian', 'support')"
+                )
+                await conn.execute(
+                    "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
+                    "single_valued, content, event_range, layer, recorded_range) VALUES ('derived', 'mk-derived', "
+                    "'u1', 'active', 'u1', 'diet', false, 'vegan', tstzrange(clock_now(), NULL), 'semantic', "
+                    "tstzrange(clock_now(), NULL))"
+                )
+                await conn.execute("INSERT INTO memory_evidence VALUES ('derived', 't1', 'u1', 'vegan', 'support')")
+                await conn.execute("INSERT INTO memory_derivation VALUES ('derived', 'source', 'u1', 'consolidation')")
+                await conn.execute(
+                    "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
+                    "single_valued, content, event_range, layer, recorded_range) VALUES ('persona', 'mk-persona', "
+                    "'u1', 'active', 'u1', 'diet', false, 'vegan persona', tstzrange(clock_now(), NULL), 'persona', "
+                    "tstzrange(clock_now(), NULL))"
+                )
+                await conn.execute("INSERT INTO memory_evidence VALUES ('persona', 't1', 'u1', 'vegan', 'support')")
+        assert await rows_for(owner_dsn, schema, "SELECT count(*) FROM memory_version") == [(3,)]
+        # the upgrade exactly as the runner applies it: search_path set, nothing else
+        async with await AsyncConnection.connect(owner_dsn, autocommit=True) as conn:
+            await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+            upgrade = migrate.migration_scripts(through=M6)[-1][1]
+            cursor = await conn.execute(cast(LiteralString, upgrade), prepare=False)
+            while cursor.nextset():
+                pass
+        assert await rows_for(owner_dsn, schema, "SELECT id, method_id FROM memory_version ORDER BY id") == [
+            ("derived", "m-v1-consolidation"),
+            ("persona", "m-v1-persona"),
+            ("source", None),
+        ], "the backfill did not reach the rows: it ran behind FORCE ROW LEVEL SECURITY"
+        assert await rows_for(owner_dsn, schema, "SELECT version_id FROM abstraction_stats") == [("persona",)]
+        async with await AsyncConnection.connect(owner_dsn, autocommit=True) as conn:  # and the row stays writable
+            await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+            await conn.execute("SELECT set_config('app.user_id', 'u1', false)")
+            await conn.execute("SELECT set_config('app.clock', '2026-07-20T00:00:00+00:00', false)")
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE memory_version SET reinforcement_count = reinforcement_count + 1 WHERE id = 'derived'"
+                )
+    finally:
+        async with await AsyncConnection.connect(config.database_url.get_secret_value(), autocommit=True) as admin:
+            await admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+            await admin.execute(
+                sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(
+                    sql.Identifier(database_name), sql.Identifier(owner)
+                )
+            )
+            await admin.execute(sql.SQL("REVOKE ALL ON SCHEMA public FROM {}").format(sql.Identifier(owner)))
+            await admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(owner)))
+
+
+async def rows_for(dsn: str, schema: str, statement: str, user: str = "u1") -> list[tuple[object, ...]]:
+    async with await AsyncConnection.connect(dsn, autocommit=True) as conn:
+        await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+        # The owner is not exempt from FORCE ROW LEVEL SECURITY: without the identity it sees no rows at all.
+        await conn.execute("SELECT set_config('app.user_id', %s, false)", (user,))
+        return await rows(conn, statement)
 
 
 # ------------------------------ rollback

@@ -84,6 +84,7 @@ DROP TABLE abstraction_stats;
 ALTER TABLE memory_version DROP COLUMN method_id;
 DROP TABLE method;
 DROP FUNCTION IF EXISTS guard_negative_constraint();
+DROP FUNCTION IF EXISTS guard_verification_no_delete();
 DROP FUNCTION IF EXISTS guard_verification_append_only();
 DROP FUNCTION IF EXISTS guard_abstraction_stats();
 DROP FUNCTION IF EXISTS guard_method_append_only();

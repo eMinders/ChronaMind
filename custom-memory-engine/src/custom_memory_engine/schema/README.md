@@ -191,8 +191,8 @@ tables is composite on `(id, user_id)` and every function is pinned to the engin
 | `entity` | Opaque random ids (`ent_` + 32 hex), principal-scoped (`scope_path` inside the creator's `/u/<id>/`), invisible to every other user, indistinguishable from a missing id. |
 | `method` | Shared registry, **append-only**: `UPDATE`, `DELETE` and `TRUNCATE` are refused; `(name, version)` is unique. Seeded with the v1 operators. The runtime role may read and append, nothing else. |
 | `abstraction_stats` | The stored ledger: `o = s + k + u`, counts `>= 0`, `coverage` generated as `(s+k)/o`, **no `stale` column** (`V2-D24`); only an abstraction may have one; a `verified`/`refuted` status needs a `verification` record. |
-| `verification` | Append-only held-out record with the support and held-out windows and context keys (`windows_disjoint` is derived) for `I11`. |
-| `negative_constraint` | Sticky dissent: only a complete lift record (who, when, which new evidence) may be added, once. |
+| `verification` | Append-only held-out record with the support and held-out windows and context keys (`windows_disjoint` is derived) for `I11`. Append-only includes removal: `UPDATE`, `DELETE` and `TRUNCATE` are refused, so a `refuted` record cannot be deleted out from under the status that cites it. Only the `memory_version` cascade may remove a row. |
+| `negative_constraint` | Sticky dissent: only a complete lift record (who, when, which new evidence) may be added, once. Deleting the dissented version clears its reference and leaves the dissent standing; deleting the lift evidence withdraws the lift, because an ungrounded lift is not a lift. |
 
 **`E-016` record half.** `memory_version.method_id` is the method reference of `I1′` (set once, never changed). The provenance guard
 (`enforce_provenance`, the deferred trigger of migration 1) now also requires a registered method for an active `inferred` row and
@@ -211,6 +211,14 @@ recorded transition of `ARCHITECTURE_V2` 2.3:
 
 The v1 staging promotion and the dual-write `-> inferred` corrections record nothing (migration 7). **Not enforced:** the gate-decision
 record at *creation* (v1 direct commits write none).
+
+**The backfills run as the owner, and the owner is subject to `FORCE ROW LEVEL SECURITY`.** A migration applied by an
+ordinary role therefore matched zero rows in an unqualified `UPDATE`/`INSERT ... SELECT`, leaving every pre-existing
+inferred artifact with a NULL `method_id` and every abstraction with no ledger - which then failed as
+`inferred_requires_method_record` on the next write to that row. Both backfills now lift `FORCE` for their own
+statements, fire the deferred provenance check, and restore it; `test_the_backfill_reaches_rows_when_the_owner_cannot_bypass_rls`
+builds a version-9 schema owned by a `NOSUPERUSER NOBYPASSRLS` role and applies this migration as that role. A fresh
+install never exposed it, because these tables are empty on a first apply.
 
 > **Correction to the migration-7 header.** `007_lifecycle_guard.sql` says `E-014` extends a function called
 > `enforce_lifecycle_records`. No such function exists: the record checks live in `enforce_provenance`, which this migration
