@@ -337,12 +337,15 @@ async def test_clean_reset_clears_domain_data_preserves_foreign_schema_and_exten
                 and result.status.version == migrate.VERSION
             )
             assert set(await table_oids(conn, database.schema_name)) == DOMAIN_TABLES | {HISTORY_TABLE}
-            # `method` is the registry seeded by migration 10 (the v1 operators), not tenant data
-            for table in sorted(DOMAIN_TABLES - {"method"}):
+            # `method` (migration 10: the v1 operators) and `predicate_schema` (migration 13: the generic predicates)
+            # are catalogs the migrations seed, not tenant data
+            for table in sorted(DOMAIN_TABLES - {"method", "predicate_schema"}):
                 cursor = await conn.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table)))
                 assert await cursor.fetchone() == (0,), table
             cursor = await conn.execute("SELECT count(*) FROM method")
             assert await cursor.fetchone() == (5,)
+            cursor = await conn.execute("SELECT count(*) FROM predicate_schema")
+            assert await cursor.fetchone() == (2,)
             cursor = await conn.execute(sql.SQL("SELECT value FROM {}.sentinel").format(sql.Identifier(foreign)))
             assert await cursor.fetchall() == [("keep",)]
             cursor = await conn.execute(

@@ -33,6 +33,13 @@ class Receipt:
 
 
 @dataclass(frozen=True, slots=True)
+class Rejected:
+    """The admission policy declined a write: a result, not an exception (``API_V2.md`` 1.1). It is recorded."""
+
+    reason_code: str
+
+
+@dataclass(frozen=True, slots=True)
 class Runtime:
     """One connection, the restricted role to run as, and the engine schema."""
 
@@ -179,6 +186,7 @@ __all__ = [
     "Effect",
     "ForeignKeyPrincipals",
     "Receipt",
+    "Rejected",
     "Runtime",
     "new_id",
     "now",
