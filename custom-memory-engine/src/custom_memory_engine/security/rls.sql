@@ -25,13 +25,16 @@ GRANT SELECT, INSERT ON
   {{schema}}.audit_event, {{schema}}.deletion_request
   TO {{role}};
 GRANT SELECT, INSERT, UPDATE ON
-  {{schema}}.memory_embedding, {{schema}}.memory_conflict, {{schema}}.scope_grant
+  {{schema}}.memory_embedding, {{schema}}.memory_conflict, {{schema}}.scope_grant,
+  {{schema}}.entity, {{schema}}.abstraction_stats, {{schema}}.negative_constraint
   TO {{role}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON
-  {{schema}}.memory_version, {{schema}}.memory_derivation, {{schema}}.job
+  {{schema}}.memory_version, {{schema}}.memory_derivation, {{schema}}.job, {{schema}}.association
   TO {{role}};
 -- predicate_schema is shared catalog, not user data: read-only.
 GRANT SELECT ON {{schema}}.predicate_schema TO {{role}};
+-- verification is an append-only record, and method is the shared append-only registry (E-014).
+GRANT SELECT, INSERT ON {{schema}}.verification, {{schema}}.method TO {{role}};
 
 -- @verify-rls
 -- Returns one row per user-scoped table that lacks ENABLE or FORCE ROW LEVEL SECURITY.

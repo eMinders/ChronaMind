@@ -85,8 +85,8 @@ async def test_provisioning_rejects_unsafe_identifiers_before_touching_the_conne
 def test_user_tables_are_every_table_except_the_shared_catalog() -> None:
     # `clock_watermark` (migration 9) is engine-internal: the runtime role has no privilege on it and only a definer
     # trigger writes it, so it is neither a tenant table nor the shared catalog.
-    assert set(USER_TABLES) == set(SCHEMA_SQL_TABLES) - {"predicate_schema", "clock_watermark"}
-    assert len(USER_TABLES) == 12  # 11 v1 tables + scope_grant (migration 2)
+    assert set(USER_TABLES) == set(SCHEMA_SQL_TABLES) - {"predicate_schema", "clock_watermark", "method"}
+    assert len(USER_TABLES) == 17  # 11 v1 tables + scope_grant (migration 2) + 5 structural tables (migration 10)
 
 
 def test_rls_sql_grants_cover_every_user_table_and_only_reads_the_catalog() -> None:
@@ -112,6 +112,7 @@ def test_rls_sql_grants_equal_the_least_privilege_matrix_exactly() -> None:
         for table in match.group(2).split(","):
             parsed.setdefault(table.strip().removeprefix("{{schema}}."), set()).update(privileges)
     assert parsed == {table: set(grants) for table, grants in TABLE_GRANTS.items()}
-    assert set(TABLE_GRANTS) == set(USER_TABLES) | {"predicate_schema"}
+    # the shared catalogs: predicate_schema (read-only) and the append-only method registry (E-014)
+    assert set(TABLE_GRANTS) == set(USER_TABLES) | {"predicate_schema", "method"}
     for append_only in ("audit_event", "deletion_request", "turn", "session", "app_user", "memory_evidence"):
         assert not {"UPDATE", "DELETE"} & TABLE_GRANTS[append_only], append_only

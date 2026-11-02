@@ -152,7 +152,7 @@ async def test_provisioned_role_is_restricted_and_every_user_table_forces_rls(
             rows = await cursor.fetchall()
     # Recorded for the PR evidence: one line per table, all true/true.
     print("FORCE ROW LEVEL SECURITY verification:", *[f"{n}={e and f}" for n, e, f in rows])
-    assert len(rows) == 12
+    assert len(rows) == len(USER_TABLES)
     assert all(enabled and forced for _, enabled, forced in rows)
 
 

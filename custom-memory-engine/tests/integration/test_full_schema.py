@@ -215,7 +215,16 @@ async def test_full_schema_creates_twelve_tables_and_named_constraints(
         )
         names = {row[0] for row in await cursor.fetchall()}
         # the twelve canonical tables, plus what later migrations add (scope grants, the clock watermark)
-        assert names == set(CANONICAL_TABLES) | {"scope_grant", "clock_watermark"}
+        assert names == set(CANONICAL_TABLES) | {
+            "scope_grant",
+            "clock_watermark",
+            "method",
+            "association",
+            "entity",
+            "abstraction_stats",
+            "verification",
+            "negative_constraint",
+        }
         cursor = await conn.execute(
             """
             SELECT conname FROM pg_constraint
