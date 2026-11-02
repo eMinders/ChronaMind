@@ -94,6 +94,34 @@ async def _stamp_creator(runtime: Runtime, connection: AsyncConnection, call: Ca
         )
 
 
+async def _original_answer(
+    runtime: Runtime, connection: AsyncConnection, user: str, version_id: str, effect: str
+) -> Receipt | Rejected:
+    """Rebuild the answer a replayed key first got: the gate's first recorded decision and the original belief time.
+
+    A later adjudication of a held candidate does not change what the original call answered. An episode has no
+    decision and answers ``effect``.
+    """
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL(
+                "SELECT c.decision, c.reason_code, lower(v.recorded_range) FROM {v} AS v LEFT JOIN LATERAL ("
+                "SELECT decision, reason_code FROM {c} WHERE candidate_version_id = v.id AND user_id = v.user_id "
+                "ORDER BY decided_at, id LIMIT 1) AS c ON true WHERE v.id = %s AND v.user_id = %s"
+            ).format(v=runtime.table("memory_version"), c=runtime.table("memory_conflict")),
+            (version_id, user),
+        )
+        row = await cursor.fetchone()
+    if row is None:  # the artifact was deleted since: its id is still the answer, its state is gone
+        return Receipt(version_id, effect, await now(connection))
+    decision, reason_code, recorded = row
+    if decision == "reject":
+        return Rejected(str(reason_code))
+    if decision == "hold":
+        effect = "contested"
+    return Receipt(version_id, effect, recorded if isinstance(recorded, datetime) else await now(connection))
+
+
 class IngestHandlers:
     """The W1 write handlers, bound to one :class:`Runtime`."""
 
@@ -109,7 +137,9 @@ class IngestHandlers:
         try:
             async with self.runtime.session(user) as connection:
                 if (found := await replayed(self.runtime, connection, user, "ingest_episode", key)) is not None:
-                    return Receipt(found, "observed", await now(connection))
+                    answer = await _original_answer(self.runtime, connection, user, found, "observed")
+                    assert isinstance(answer, Receipt)  # an episode is never gated, so never rejected
+                    return answer
                 if source["type"] == "turn":
                     turn_id = str(source["ref"])
                     turns = await _turns(self.runtime, connection, user, [turn_id])
@@ -143,7 +173,9 @@ class IngestHandlers:
                 await commit_initial_version(connection, candidate, schema_name=self.runtime.schema_name)
                 await _stamp_creator(self.runtime, connection, call, version_id)
                 await remember(self.runtime, connection, user, "ingest_episode", key, version_id)
-                return Receipt(version_id, "observed", recorded)
+                answer = await _original_answer(self.runtime, connection, user, version_id, "observed")
+                assert isinstance(answer, Receipt)
+                return answer
         except ForeignKeyViolation:
             raise EntryError("forbidden") from None
 
@@ -168,7 +200,7 @@ class IngestHandlers:
             start, end = _when(event_range[0], "event_range"), _when(event_range[1], "event_range")
         async with self.runtime.session(user) as connection:
             if (found := await replayed(self.runtime, connection, user, "assert", key)) is not None:
-                return Receipt(found, "asserted", await now(connection))
+                return await _original_answer(self.runtime, connection, user, found, "asserted")
             turn_ids = [str(source["ref"]) for source in sources]
             turns = await _turns(self.runtime, connection, user, turn_ids)
             if any(turn_id not in turns for turn_id in turn_ids):
@@ -194,7 +226,7 @@ class IngestHandlers:
                     for turn_id, span in zip(turn_ids, spans, strict=True)
                 ),
             )
-            applied = await apply_candidate(
+            await apply_candidate(
                 connection,
                 candidate,
                 evidence_turns=[turns[turn_id] for turn_id in dict.fromkeys(turn_ids)],
@@ -202,10 +234,8 @@ class IngestHandlers:
             )
             await _stamp_creator(self.runtime, connection, call, version_id)
             await remember(self.runtime, connection, user, "assert", key, version_id)
-            decision = applied.decision.decision
-            if decision == "reject":
-                return Rejected(applied.decision.reason_code)
-            return Receipt(version_id, "asserted" if decision == "accept" else "contested", recorded)
+            # the answer is read back from what was recorded, exactly as a replay reads it
+            return await _original_answer(self.runtime, connection, user, version_id, "asserted")
 
     async def assert_(self, call: Call) -> Receipt | Rejected:
         return await self._assert(

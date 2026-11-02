@@ -286,12 +286,14 @@ and `tests/integration/test_api_wiring_structure.py`.
 Seeds `episode` and `statement` (both multi-valued) in `predicate_schema`. The V2 write operations take free content and no
 predicate, but `memory_version.predicate_key` is a foreign key to this catalog, so they need entries to write under.
 Multi-valued means two of them never supersede or conflict; a caller that wants supersession names a registered predicate
-(the optional predicate, M5, is deferred past W1, `V2-D43`). Rollback: `rollback/013_generic_predicates.sql` (refuses while
+(the optional predicate, M5, is deferred past W1, `V2-D43`). An existing row under either key that defines it differently
+refuses the migration (fail closed; `tests/integration/test_migration_m13.py`). Rollback: `rollback/013_generic_predicates.sql` (refuses while
 any artifact uses them).
 
 `api/ingest_handlers.py` wires `ingest_episode`, `assert` and `ingest_artifact`. An episode is recorded `observed` from a declared
 source with no gate. A claim goes through the v1 validation gate (`engine.ingest.apply_candidate`) and is answered `asserted`,
-`contested` or a `Rejected` result with the gate's static reason code. Only `turn` evidence can be grounded: an `external`
+`contested` or a `Rejected` result with the gate's static reason code. The answer is read back from what was recorded (the
+first gate decision and the stored belief time), so a replayed key gets exactly the original answer. Only `turn` evidence can be grounded: an `external`
 reference carries a hash, not the captured text, so asserting from external evidence alone is a `validation_error`.
 Tested by `tests/integration/test_api_wiring_ingest.py`.
 
