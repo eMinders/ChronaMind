@@ -401,7 +401,9 @@ async def test_compiled_predicates_and_executor_enforce_real_unprivileged_rls(da
                 sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(sql.Identifier(schema), sql.Identifier(role))
             )
             await conn.execute(
-                sql.SQL("GRANT SELECT ON {}.memory_version TO {}").format(sql.Identifier(schema), sql.Identifier(role))
+                sql.SQL("GRANT SELECT ON {}.memory_version, {}.scope_grant TO {}").format(
+                    sql.Identifier(schema), sql.Identifier(schema), sql.Identifier(role)
+                )
             )
             await conn.execute(
                 sql.SQL("GRANT EXECUTE ON FUNCTION {}.clock_now() TO {}").format(

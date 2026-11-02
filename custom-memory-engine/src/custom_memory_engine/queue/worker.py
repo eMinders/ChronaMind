@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from re import fullmatch
+from typing import Final
 from uuid import uuid4
 
 from psycopg import AsyncConnection, pq, sql
@@ -23,6 +24,12 @@ from custom_memory_engine.queue.contracts import (
     WorkerResult,
 )
 from custom_memory_engine.security.audit_guard import content_free_details
+
+# Explicit, never `*`: the table also carries storage metadata (scope, visibility) that is not part of a Job.
+JOB_COLUMNS: Final = (
+    "id, user_id, kind, turn_id, idempotency_key, status, attempts, next_run_at, payload, extractor_version, "
+    "candidate_fingerprint"
+)
 
 type JobHandler = Callable[[AsyncConnection, Job, ClockTick], Awaitable[None]]
 MAX_ATTEMPTS = 3
@@ -76,7 +83,7 @@ async def enqueue(connection: AsyncConnection, job: NewJob, *, schema_name: str 
                     "payload,extractor_version,candidate_fingerprint) VALUES ("
                     "%(id)s,%(user_id)s,%(kind)s,%(turn_id)s,%(idempotency_key)s,'queued',0,"
                     "COALESCE(%(not_before)s::timestamptz,pg_catalog.transaction_timestamp()),%(payload)s,"
-                    "%(extractor_version)s,%(candidate_fingerprint)s) ON CONFLICT DO NOTHING RETURNING *"
+                    "%(extractor_version)s,%(candidate_fingerprint)s) ON CONFLICT DO NOTHING RETURNING " + JOB_COLUMNS
                 ).format(table=table),
                 params,
             )
@@ -85,7 +92,9 @@ async def enqueue(connection: AsyncConnection, job: NewJob, *, schema_name: str 
                 return EnqueueResult(job=Job.model_validate(row), created=True)
             await cursor.execute(
                 sql.SQL(
-                    "SELECT *, payload IS NOT DISTINCT FROM %(payload)s::jsonb AS same_payload FROM {table} "
+                    "SELECT "
+                    + JOB_COLUMNS
+                    + ", payload IS NOT DISTINCT FROM %(payload)s::jsonb AS same_payload FROM {table} "
                     "WHERE user_id=%(user_id)s AND (id=%(id)s OR idempotency_key=%(idempotency_key)s OR "
                     "(turn_id=%(turn_id)s AND extractor_version=%(extractor_version)s "
                     "AND candidate_fingerprint=%(candidate_fingerprint)s)) ORDER BY id"
@@ -122,7 +131,7 @@ async def _selected_job(
         if pinned is None:
             await cursor.execute(
                 sql.SQL(
-                    "SELECT * FROM {} WHERE user_id=%s AND status='queued' "
+                    "SELECT " + JOB_COLUMNS + " FROM {} WHERE user_id=%s AND status='queued' "
                     "AND next_run_at<=pg_catalog.transaction_timestamp() "
                     "ORDER BY next_run_at,id FOR UPDATE SKIP LOCKED LIMIT 1"
                 ).format(table),
@@ -132,7 +141,7 @@ async def _selected_job(
             # A retry may wait for an intervening winner, but never selects a new job.
             await cursor.execute(
                 sql.SQL(
-                    "SELECT *, COALESCE(payload,'null'::jsonb) = %s::jsonb AS same_payload "
+                    "SELECT " + JOB_COLUMNS + ", COALESCE(payload,'null'::jsonb) = %s::jsonb AS same_payload "
                     "FROM {} WHERE user_id=%s AND id=%s AND idempotency_key=%s FOR UPDATE"
                 ).format(table),
                 (Jsonb(pinned.payload), user_id, pinned.id, pinned.idempotency_key),

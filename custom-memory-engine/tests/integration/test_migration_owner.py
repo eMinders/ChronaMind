@@ -3,7 +3,7 @@
 The migration sources are checksum-bound, so this is a property of the runner, not of one migration. The suite's usual
 connection is a superuser, which bypasses row-level security and hides the whole failure mode: ``FORCE ROW LEVEL
 SECURITY`` binds the *owner*, so a backfill's unqualified ``UPDATE``/``INSERT ... SELECT`` matches zero rows and the
-following ``SET NOT NULL`` refuses the migration. Migrations 5, 8, 9 and 10 all backfill that way.
+following ``SET NOT NULL`` refuses the migration. Migrations 5, 8, 9, 10 and 11 all backfill that way.
 """
 
 import os
@@ -113,14 +113,15 @@ async def rows(conn: AsyncConnection, statement: str) -> list[tuple[object, ...]
     return [tuple(row) for row in await cursor.fetchall()]
 
 
-@pytest.mark.parametrize("upgrade_to", [5, 8, 9, 10])
+@pytest.mark.parametrize("upgrade_to", [5, 8, 9, 10, 11])
 async def test_every_backfilling_migration_upgrades_a_populated_schema_for_a_non_bypass_owner(upgrade_to: int) -> None:
-    """Migrations 5, 8, 9 and 10 carry existing rows forward when the owner cannot bypass RLS.
+    """Migrations 5, 8, 9, 10 and 11 carry existing rows forward when the owner cannot bypass RLS.
 
     5 backfills the axes then runs `SET NOT NULL`; 8 backfills the generalised source then runs `SET NOT NULL`; 9
-    backfills `observed_at`/`event_basis` (also `NOT NULL`); 10 backfills the method reference and the ledgers. Each
-    matched zero rows before the runner lifted `FORCE`, so the migration refused and the schema stayed behind. Data is
-    seeded while the schema is at ``upgrade_to - 1``, so the backfill under test always has rows to reach.
+    backfills `observed_at`/`event_basis` (also `NOT NULL`); 10 backfills the method reference and the ledgers; 11
+    backfills the scope path and visibility (also `NOT NULL`). Each matched zero rows before the runner lifted `FORCE`,
+    so the migration refused and the schema stayed behind. Data is seeded while the schema is at ``upgrade_to - 1``, so
+    the backfill under test always has rows to reach.
     """
     async with schema_at(upgrade_to - 1) as (runner, owner_dsn, schema):
         result = await runner.apply()
@@ -143,6 +144,11 @@ async def test_every_backfilling_migration_upgrades_a_populated_schema_for_a_non
                 ) == [(0,)], "migration 9's clocks backfill reached no rows"
             if upgrade_to == 10:
                 assert await rows(conn, "SELECT method_id FROM memory_version") == [(None,)]
+            if upgrade_to == 11:
+                for table in ("session", "turn", "memory_version", "memory_evidence"):
+                    assert await rows(conn, f"SELECT scope_path, visibility FROM {table}") == [
+                        ("/u/u1/", "private")
+                    ], "migration 11's scope backfill reached no rows"
             # The lift covers the body only: every relation that had FORCE has it again. `clock_watermark` is
             # deliberately non-forced (migration 9), so it must not be forced by the runner either.
             unprotected = await rows(

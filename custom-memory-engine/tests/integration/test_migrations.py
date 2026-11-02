@@ -600,9 +600,9 @@ async def test_status_rejects_disabled_internal_foreign_key_enforcement(database
         assert state is not None and state[0] > 0 and state[1] is True
         # DISABLE TRIGGER ALL also disables the dual-write trigger (migration 7), so the source columns are supplied.
         orphan_insert = """INSERT INTO memory_evidence(version_id,turn_id,user_id,evidence_span,evidence_role,
-                                                       source_type,source_ref,span,content_hash)
+                                                       source_type,source_ref,span,content_hash,scope_path)
                            VALUES ('missing-version','missing-turn','retained-user','fixture','support',
-                                   'turn','missing-turn','fixture',repeat('0',64))"""
+                                   'turn','missing-turn','fixture',repeat('0',64),'/u/retained-user/')"""
         # The privileged disposable fixture demonstrates the lost FK guarantee,
         # rather than relying solely on the trigger metadata as the oracle.
         await conn.execute(orphan_insert)
