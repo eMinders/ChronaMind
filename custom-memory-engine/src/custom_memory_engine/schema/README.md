@@ -249,14 +249,16 @@ refused. 15 tables are scoped: the ten of the plan, the three new association/le
 * **D12** the job idempotency key is unique **per user** (the global key was a cross-tenant existence oracle, `T-13`); the v1 test that asserted the
   collision is recorded in the test as superseded behaviour. **D13** `app_user.id` must be a valid scope segment (`/`, control characters, `.`/`..`,
   padding or length > 256 are refused), and the migration refuses to run over an existing id that is not.
-* **M9** the prefix index is built on `scope_path` with `text_pattern_ops` (the plan's generated `path_with_prefix` would be an exact copy);
-  the planner uses it for `starts_with`.
-* **Backfill under FORCE RLS.** The owner is subject to `FORCE ROW LEVEL SECURITY`, so a role that does not bypass RLS would update zero rows; the
-  backfill lifts `FORCE` for its statement and restores it, and disables user triggers so provenance/clock/lifecycle guards are not re-run.
-  (Migrations 5, 8 and 9 backfill under FORCE without doing this; see the E-011 pull request.)
-* **Only personal-root rows can exist** on the real tables until a later decision admits sub-scopes (`D11`); the scratch-table suite still covers
-  sub-scope paths. `scope.audit.record_scope_read` writes the content-free `scope_read` audit row (counts only) for a read that leaves the caller's
-  namespace.
+* **M9** every scoped table carries a `<table>_scope_path_shape` `CHECK` (canonical trailing-separator path, lower-case sub-segments); on
+  `entity` and `negative_constraint`, which admit sub-scopes, it is the only shape guard. The prefix index is built on `scope_path` with
+  `text_pattern_ops` (the plan's generated `path_with_prefix` would be an exact copy); the planner uses it for `starts_with`.
+* **Backfill under FORCE RLS.** The runner lifts `FORCE` around the body and restores it (`V2-D60`), so the backfill reaches every row for an
+  owner that does not bypass RLS (`tests/integration/test_migration_owner.py`, case `[11]`); the backfill disables user triggers so
+  provenance/clock/lifecycle guards are not re-run.
+* **Only personal-root rows can exist** on thirteen of the tables until a later decision admits sub-scopes (`D11`); `entity` and
+  `negative_constraint` already admit them, so the whole `MA-011` universe, sub-scopes and sub-scope grants included, runs on the real
+  `entity` table. `scope.audit.record_scope_read` writes the content-free `scope_read` audit row (counts only) for a read that leaves the
+  caller's namespace.
 
 Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if two users now share a job key). Tested by
 `tests/integration/test_migration_m2.py`.

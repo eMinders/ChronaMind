@@ -16,7 +16,7 @@ from psycopg import AsyncConnection, sql
 from psycopg.errors import CheckViolation, InsufficientPrivilege, UniqueViolation
 
 from custom_memory_engine.schema import migrate
-from custom_memory_engine.scope.access import Selector, acl_readable, resolve_read_set
+from custom_memory_engine.scope.access import Selector, acl_readable, resolve_read_set, rls_read_using
 from custom_memory_engine.scope.audit import record_scope_read
 from custom_memory_engine.security import provision_runtime_role, tenant_scope
 from tests.integration.rollbacks import rollback_sql
@@ -51,6 +51,7 @@ SCOPED = (
 #: The universe MA-011 fixed, restricted to what can exist on the real tables while every scope is personal (D11):
 #: a row lies in its owner's own root, `/u/<user>/`. Sub-scope rows stay covered by the scratch-table suite.
 PERSONAL_ROWS = tuple((path, visibility) for path, visibility in ROWS if path.count("/") == 3)
+OWN_USER = "(user_id = NULLIF(current_setting('app.user_id'::text, true), ''::text))"
 
 
 async def seed_users(conn: AsyncConnection) -> None:
@@ -150,6 +151,52 @@ async def test_grants_expose_project_and_shared_rows_never_private_ones_and_revo
         assert await visible(conn, role, "4") == expected("4")
 
 
+async def visible_entities(conn: AsyncConnection, role: str, caller: str) -> frozenset[tuple[str, str]]:
+    async with tenant_scope(conn, caller, role=role):
+        async with conn.cursor() as cursor:
+            await cursor.execute("SELECT scope_path, visibility FROM entity")  # no application filter
+            return frozenset((str(a), str(b)) for a, b in await cursor.fetchall())
+
+
+async def test_the_full_universe_with_sub_scopes_holds_on_the_real_entity_table(database) -> None:  # noqa: F811
+    """`entity` admits sub-scope paths, so every MA-011 row, not only the personal roots, runs on a real table."""
+    async with restricted(database) as (conn, role):
+        for number, (path, visibility) in enumerate(ROWS):
+            owner = path.split("/")[2]
+            async with tenant_scope(conn, owner, role=role):
+                await conn.execute(
+                    "INSERT INTO entity (id, user_id, scope_path, canonical_name, entity_type, visibility) "
+                    "VALUES (%s, %s, %s, 'n', 't', %s)",
+                    (f"e{number}", owner, path, visibility),
+                )
+        for user in USERS:
+            assert await visible_entities(conn, role, user) == frozenset(
+                r for r in ROWS if acl_readable(user, (), *r)
+            ), user
+        grant_id = await grant(conn, role, "42", "4", "/u/42/")
+        await grant(conn, role, "40", "4", "/u/40/p/")
+        seen = await visible_entities(conn, role, "4")
+        assert seen == frozenset(r for r in ROWS if acl_readable("4", ("/u/42/", "/u/40/p/"), *r))
+        assert ("/u/40/p/a/", "shared") in seen and ("/u/42/", "private") not in seen
+        assert await visible_entities(conn, role, "4x") == frozenset(r for r in ROWS if acl_readable("4x", (), *r))
+        async with tenant_scope(conn, "42", role=role):
+            await conn.execute("UPDATE scope_grant SET revoked_at = %s WHERE id = %s", (T0, grant_id))
+        assert await visible_entities(conn, role, "4") == frozenset(
+            r for r in ROWS if acl_readable("4", ("/u/40/p/",), *r)
+        )
+
+
+@pytest.mark.parametrize("bad", ["/u/4/p", "/u/4//", "/u/4/../", "/u/4/P/", "/u/4/-p/"])
+async def test_a_sub_scope_path_that_is_not_canonical_is_refused(database, bad: str) -> None:  # noqa: F811
+    async with connect(database) as conn:
+        await conn.execute("INSERT INTO app_user VALUES ('4', 'x4', now())")
+        with pytest.raises(CheckViolation, match="entity_scope_path_shape"):
+            await conn.execute(
+                "INSERT INTO entity (user_id, scope_path, canonical_name, entity_type) VALUES ('4', %s, 'n', 't')",
+                (bad,),
+            )
+
+
 @pytest.mark.parametrize("identity", [None, "", "4/p", "a_b/p"])
 async def test_an_unusable_identity_reads_nothing_on_the_real_table(database, identity: str | None) -> None:  # noqa: F811
     async with restricted(database) as (conn, role):
@@ -191,8 +238,6 @@ async def test_holding_a_grant_never_authorises_a_write(database) -> None:  # no
 
 async def test_the_read_policy_is_the_library_expression_on_every_scoped_table(database) -> None:  # noqa: F811
     """Every scoped table carries `<table>_scope_read`, and its text is `scope.access.rls_read_using`'s."""
-    from custom_memory_engine.scope.access import rls_read_using
-
     async with connect(database) as conn:
         for table in SCOPED:
             (found,) = await rows(
@@ -202,11 +247,28 @@ async def test_the_read_policy_is_the_library_expression_on_every_scoped_table(d
                 (f"{table}_scope_read", table),
             )
             assert found[0] == "r", table  # SELECT only
-            reference = rls_read_using(table).as_string(conn)
-            assert "starts_with" in str(found[1]) and "scope_grant" in str(found[1]), table
-            assert str(found[1]).count("scope_path") == reference.count("scope_path"), (
-                table
-            )  # same shape, same columns
+            # The library expression, deparsed by the server the same way, must be the installed one exactly.
+            async with conn.transaction(force_rollback=True):
+                await conn.execute(
+                    sql.SQL("CREATE POLICY reference_read ON {} FOR SELECT USING ({})").format(
+                        sql.Identifier(table), rls_read_using(table)
+                    )
+                )
+                (reference,) = await rows(
+                    conn,
+                    "SELECT pg_get_expr(polqual, polrelid) FROM pg_policy "
+                    "WHERE polname = 'reference_read' AND polrelid = %s::regclass",
+                    (table,),
+                )
+            assert found[1] == reference[0], table
+            # Apart from the read policy, the only policy is the v1 own-user one, governing writes too.
+            assert await rows(
+                conn,
+                "SELECT polname, polcmd, polpermissive, pg_get_expr(polqual, polrelid), "
+                "pg_get_expr(polwithcheck, polrelid) FROM pg_policy "
+                "WHERE polrelid = %s::regclass AND polname <> %s",
+                (table, f"{table}_scope_read"),
+            ) == [(f"{table}_isolation", "*", True, OWN_USER, OWN_USER)], table
         for table in SCOPED:
             assert await rows(
                 conn,
@@ -356,7 +418,11 @@ async def test_rollback_restores_version_10_exactly_and_reapply_works(database) 
         )
         recorded = await rows(conn, "SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = %s", (M2 - 1,))
         assert await runner._catalog(conn) == recorded[0][0]  # byte-identical, policies and job key included
-        assert await rows(conn, "SELECT count(*) FROM pg_policy WHERE polname LIKE '%%_scope_read'") == [(0,)]
+        assert await rows(
+            conn,
+            "SELECT count(*) FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid "
+            "WHERE c.relnamespace = current_schema()::regnamespace AND p.polname LIKE '%%_scope_read'",
+        ) == [(0,)]
     status = await runner.status()
     assert (status.state, status.version) == ("pending", M2 - 1)
     assert (await runner.apply()).action == "applied"

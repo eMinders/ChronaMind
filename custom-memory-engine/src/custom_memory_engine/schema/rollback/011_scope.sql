@@ -37,7 +37,10 @@ BEGIN
     );
   END LOOP;
   FOREACH tbl IN ARRAY visibility_only LOOP
-    EXECUTE pg_catalog.format('ALTER TABLE %I DROP CONSTRAINT %I, DROP COLUMN visibility', tbl, tbl || '_visibility_check');
+    EXECUTE pg_catalog.format(
+      'ALTER TABLE %I DROP CONSTRAINT %I, DROP CONSTRAINT %I, DROP COLUMN visibility',
+      tbl, tbl || '_scope_path_shape', tbl || '_visibility_check'
+    );
   END LOOP;
 END
 $m2$;

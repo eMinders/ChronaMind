@@ -23,9 +23,12 @@
 -- index. It would be an exact copy of `scope_path`, so the index is built on `scope_path` itself; the matching,
 -- the index and the planner's use of it are identical.
 --
--- Backfill note: the owner is subject to FORCE ROW LEVEL SECURITY, so a role that does not bypass RLS would update zero
--- rows. The backfill therefore lifts FORCE for its own statement and restores it, and disables user triggers so the
--- provenance, clock and lifecycle guards are not re-run over rows whose meaning does not change.
+-- M9 path shape: every scoped path is canonical. On the thirteen personal-root tables the CHECK is implied by
+-- `_scope_matches_user`; on `entity` and `negative_constraint`, which admit sub-scopes, it is the only shape guard.
+--
+-- Backfill note: the owner is subject to FORCE ROW LEVEL SECURITY; the runner lifts it around this body and restores
+-- it (V2-D60), so the backfill reaches every row for an owner that does not bypass RLS. The backfill disables user
+-- triggers so the provenance, clock and lifecycle guards are not re-run over rows whose meaning does not change.
 
 -- 1. D13: refuse ids that could forge a path, now and later.
 ALTER TABLE app_user ADD CONSTRAINT app_user_id_is_scope_segment CHECK (
@@ -58,13 +61,11 @@ BEGIN
   FOREACH tbl IN ARRAY full_tables LOOP
     EXECUTE pg_catalog.format('ALTER TABLE %I ADD COLUMN scope_path text, ADD COLUMN visibility text', tbl);
     -- backfill: every existing row is personal and private
-    EXECUTE pg_catalog.format('ALTER TABLE %I NO FORCE ROW LEVEL SECURITY', tbl);
     EXECUTE pg_catalog.format('ALTER TABLE %I DISABLE TRIGGER USER', tbl);
     EXECUTE pg_catalog.format(
       'UPDATE %I SET scope_path = ''/u/'' || user_id || ''/'', visibility = ''private''', tbl
     );
     EXECUTE pg_catalog.format('ALTER TABLE %I ENABLE TRIGGER USER', tbl);
-    EXECUTE pg_catalog.format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', tbl);
     EXECUTE pg_catalog.format(
       'ALTER TABLE %I ALTER COLUMN scope_path SET NOT NULL, ALTER COLUMN visibility SET NOT NULL, '
       'ALTER COLUMN visibility SET DEFAULT ''private'', '
@@ -83,8 +84,9 @@ BEGIN
   FOREACH tbl IN ARRAY visibility_only LOOP
     EXECUTE pg_catalog.format('ALTER TABLE %I ADD COLUMN visibility text NOT NULL DEFAULT ''private''', tbl);
     EXECUTE pg_catalog.format(
-      'ALTER TABLE %I ADD CONSTRAINT %I CHECK (visibility IN (''private'', ''project'', ''shared''))',
-      tbl, tbl || '_visibility_check'
+      'ALTER TABLE %I ADD CONSTRAINT %I CHECK (scope_path ~ ''^/u/[^/[:cntrl:]]+/([a-z0-9][a-z0-9-]*/)*$''), '
+      'ADD CONSTRAINT %I CHECK (visibility IN (''private'', ''project'', ''shared''))',
+      tbl, tbl || '_scope_path_shape', tbl || '_visibility_check'
     );
     EXECUTE pg_catalog.format('CREATE INDEX %I ON %I (scope_path text_pattern_ops)', tbl || '_scope_path_idx', tbl);
   END LOOP;
