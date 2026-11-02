@@ -213,12 +213,20 @@ The v1 staging promotion and the dual-write `-> inferred` corrections record not
 record at *creation* (v1 direct commits write none).
 
 **The backfills run as the owner, and the owner is subject to `FORCE ROW LEVEL SECURITY`.** A migration applied by an
-ordinary role therefore matched zero rows in an unqualified `UPDATE`/`INSERT ... SELECT`, leaving every pre-existing
-inferred artifact with a NULL `method_id` and every abstraction with no ledger - which then failed as
-`inferred_requires_method_record` on the next write to that row. Both backfills now lift `FORCE` for their own
-statements, fire the deferred provenance check, and restore it; `test_the_backfill_reaches_rows_when_the_owner_cannot_bypass_rls`
-builds a version-9 schema owned by a `NOSUPERUSER NOBYPASSRLS` role and applies this migration as that role. A fresh
-install never exposed it, because these tables are empty on a first apply.
+ordinary role matched zero rows in an unqualified `UPDATE`/`INSERT ... SELECT`, leaving every pre-existing inferred
+artifact with a NULL `method_id` and every abstraction with no ledger - which then failed as
+`inferred_requires_method_record` on the next write to that row. This migration lifts `FORCE` for its own statements,
+fires the deferred provenance check and restores it, and `test_the_backfill_reaches_rows_when_the_owner_cannot_bypass_rls`
+builds a version-9 schema owned by a `NOSUPERUSER NOBYPASSRLS` role and applies it as that role. A fresh install never
+exposed it, because these tables are empty on a first apply.
+
+**The same shape in migrations 5, 8 and 9 is fixed by the runner, not by them** (`V2-D60`): those sources are
+checksum-bound, so `MigrationRunner` lifts `FORCE` on this schema's relations around every migration body and restores
+it, judging any pending deferred events first, before recording the catalog digest. A populated schema is therefore
+upgradeable by the ordinary owner that owns it, with no `BYPASSRLS` role. `clock_watermark`, which migration 9
+deliberately leaves non-forced, is never forced by the runner either. Tested by
+`tests/integration/test_migration_owner.py` (migrations 5, 8, 9 and 10, each upgrading a populated schema as a
+`NOSUPERUSER NOBYPASSRLS` role).
 
 > **Correction to the migration-7 header.** `007_lifecycle_guard.sql` says `E-014` extends a function called
 > `enforce_lifecycle_records`. No such function exists: the record checks live in `enforce_provenance`, which this migration
