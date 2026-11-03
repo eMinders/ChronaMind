@@ -151,7 +151,17 @@ async def test_the_exclusion_constraint_is_carried_over_unchanged_in_catalog_and
             "SELECT pg_get_constraintdef(oid), conname FROM pg_constraint "
             "WHERE conrelid = 'memory_version'::regclass AND conname IN ('no_bitemporal_overlap', 'valid_wellformed')",
         )
-        assert [(str(d).replace("valid_range", "event_range"), n) for d, n in before] == list(after)
+        # The wellformed CHECK carries the column rename unchanged: this is migration 9's own acceptance, and no later
+        # migration touches it.
+        before_wellformed = dict((n, d) for d, n in before)["valid_wellformed"]
+        after_wellformed = dict((n, d) for d, n in after)["valid_wellformed"]
+        assert str(before_wellformed).replace("valid_range", "event_range") == str(after_wellformed)
+        # The exclusion constraint keeps its shape. Its key column moved on: migration 9 renamed it to `event_range`
+        # and migration 15 re-keyed it to the scope (`I5`), so assert the shape, not the exact text.
+        after_exclusion = str(dict((n, d) for d, n in after)["no_bitemporal_overlap"])
+        assert after_exclusion.startswith("EXCLUDE USING gist (scope_path WITH =, subject_key WITH =")
+        assert "event_range WITH &&" in after_exclusion and "recorded_range WITH &&" in after_exclusion
+        assert "WHERE ((single_valued AND" in after_exclusion
         index_after = await rows(
             conn,
             "SELECT pg_get_indexdef(indexrelid) FROM pg_index "
@@ -312,9 +322,9 @@ async def test_the_watermark_is_per_user(database) -> None:  # noqa: F811
                 (START,),
             )
             await conn.execute("INSERT INTO memory_evidence VALUES ('u2-v', 't2', 'u2', 'x', 'support')")
-        assert {str(r[0]): r[1] for r in await rows(conn, "SELECT user_id, high FROM clock_watermark")} == {
-            "u1": AUGUST,
-            "u2": JUNE,
+        assert {str(r[0]): r[1] for r in await rows(conn, "SELECT scope_path, high FROM clock_watermark")} == {
+            "/u/u1/": AUGUST,
+            "/u/u2/": JUNE,
         }
 
 
@@ -326,7 +336,7 @@ async def test_the_backfill_seeds_the_watermark_from_existing_rows(database) -> 
         await believe(conn, "v1", single=False)
     assert (await runner.apply()).action == "applied"
     async with connect(database) as conn:
-        assert await rows(conn, "SELECT user_id, high FROM clock_watermark") == [("u1", JULY)]
+        assert await rows(conn, "SELECT scope_path, high FROM clock_watermark") == [("/u/u1/", JULY)]
         await set_clock(conn, JUNE)
         with pytest.raises(RaiseException, match="recorded_time_moved_backwards"):
             await believe(conn, "late-backdate", single=False, key="k2")
@@ -347,13 +357,13 @@ async def test_the_runtime_role_can_neither_read_nor_forge_the_watermark(databas
             with pytest.raises(InsufficientPrivilege):
                 await app.execute("SELECT * FROM clock_watermark")
             with pytest.raises(InsufficientPrivilege):
-                await app.execute("INSERT INTO clock_watermark VALUES ('u1', '2000-01-01')")
+                await app.execute("INSERT INTO clock_watermark VALUES ('/u/u1/', '2000-01-01')")
             with pytest.raises(InsufficientPrivilege):
                 await app.execute("ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_recorded_watermark")
             # yet its own writes advance the watermark (the trigger runs as the owner)
             await believe(app, "mine", single=False)
         async with connect(database) as admin:
-            assert await rows(admin, "SELECT user_id FROM clock_watermark") == [("u1",)]
+            assert await rows(admin, "SELECT scope_path FROM clock_watermark") == [("/u/u1/",)]
     finally:
         async with await AsyncConnection.connect(
             config.database_url.get_secret_value(), autocommit=True, connect_timeout=5

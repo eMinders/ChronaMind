@@ -1160,3 +1160,68 @@ listed in `ROADMAP_V2.md` §4.1, and the three gate-critical ones (`delete`, `qu
 
 **Status:** decided; binding on `E-039` (#97), on all 18 owner tasks in `ROADMAP_V2.md` §4.1, on `E-040`, and on the
 W2/W3/W4/W5/W7 trackers (#72, #73, #74, #75, #79).
+### V2-D64 — Sub-scopes are admissible; the enterprise root is a sub-scope, and `I5`/`I4` key on the scope (closes the E-011 residual items)
+
+**Decision.** Migration 15 (`015_subscopes.sql`) takes the decision migration 11 deferred to "the per-scope `I9`
+decision". Four parts:
+
+1. **A scoped row may lie anywhere inside its owner's namespace.** `<table>_scope_matches_user`
+   (`scope_path = '/u/' || user_id || '/'`) becomes `<table>_scope_within_user`
+   (`pg_catalog.starts_with(scope_path, '/u/' || user_id || '/')`) on the thirteen tables migration 11 pinned to the
+   personal root. The isolation property is preserved, not weakened: `D13` forbids the separator in `app_user.id`, so
+   `/u/4/` still does not contain `/u/42/`, and a row can never be placed inside another tenant's namespace. What
+   becomes possible is only what the plan already names: `/u/<id>/p/<repo>/` (the coding profile), `/u/<id>/o/<org>/`
+   (the enterprise profile), `/u/<id>/p/<topic>/` (research), `/u/<id>/s/<task>/`.
+2. **`I5` keys on the scope.** `no_bitemporal_overlap` moves from `user_id WITH =` to `scope_path WITH =`. `V2-D49`
+   D10 said the key "stays `user_id` (the owner namespace) in W1"; while every scope *was* the personal root the two
+   were equivalent, so that cost nothing. With sub-scopes they are not equivalent: two distinct scopes of one user
+   must each be able to hold the same single-valued predicate, and a `user_id` key would refuse the second. `I5`
+   declares exclusivity "within a scope", so the constraint now states the invariant instead of an approximation.
+3. **`I4` keys on the scope.** `clock_watermark` is keyed by `scope_path` instead of `user_id`, so a sub-scope's
+   belief timeline cannot be walked backwards by writing a sibling scope. The watermark is otherwise unchanged.
+4. **The enterprise root `/o/<org>/` is a sub-scope, not a namespace.** It is `/u/<owner>/o/<org>/`. A top-level
+   `/o/` namespace is *not* admitted, and `scope.paths.parse_scope` continues to reject it. The reason is that both
+   ACL and RLS key on a **user** namespace: `scope_grant.owner_user_id` references `app_user`, the read policy matches
+   `/u/<caller>/`, and `authorize_write` requires the caller's own namespace. An `/o/<org>/` row would therefore have
+   no owner able to grant it and no policy able to return it - representable on disk but unreadable and unwritable,
+   which is worse than refused. Organisational sharing uses the mechanism that already exists: the owner creates
+   `/u/<owner>/o/<org>/` and shares it with colleagues through `scope_grant`, exactly as any project scope. Admitting
+   a first-class org principal would need an org table, an org-membership ACL and a policy that resolves both
+   principal kinds; no task owns that, and W2's generality claim (`ARCHITECTURE_V2.md` §13, "no row of this table
+   requires a schema change") is satisfied without it.
+
+**Why.** Issue #62 named three residual items and left the fourth implicit: the missing `scope_read` audit path, the
+`um_facet`/`clock_watermark` index ownership notes that still pointed at `E-011`, the `I9`/`D10` exclusion-key review,
+and the enterprise root, which `parse_scope` rejected. All four turn on the same fact - the substrate could not
+represent a scope below the personal root - so resolving them separately would have meant three migrations that each
+partly duplicated the others. The `um_facet` index moves to `(scope_path text_pattern_ops, um_facet)` in the same
+migration, since facet-filtered reads are scope-filtered reads.
+
+**What it does not mean.** It does not admit a first-class organisational principal (above). It does not change
+`authorize_write`: a write still lands only in the caller's own namespace (`V2-D53`), so a sub-scope is not a way to
+write into someone else's tree. It does not reopen `D13` or the path grammar: the shape `CHECK` is unchanged and a
+segment is still `[a-z0-9][a-z0-9-]*`. And it does not flatten anything on rollback: `rollback/015_subscopes.sql`
+**refuses** if a sub-scope row exists, because version 14 cannot represent one and silently moving it to the owner's
+root would merge two scopes' beliefs.
+
+**Implementation.** `src/custom_memory_engine/schema/015_subscopes.sql`, `schema/rollback/015_subscopes.sql`,
+`schema/migrate.py` (version 15), `schema/README.md`; `ARCHITECTURE_V2.md` §5 rule 4 note and §13.
+
+**Verification.** `tests/integration/test_migration_m15.py` (30):
+- `test_every_scoped_table_admits_a_sub_scope_inside_its_owner_namespace` (13 tables)
+- `test_a_sub_scope_inside_the_owners_namespace_is_accepted`; `..._inside_another_tenants_namespace_is_refused`
+- `test_the_prefix_boundary_holds_for_ids_that_share_a_prefix` (`/u/4/` vs `/u/42/`)
+- `test_the_exclusion_key_is_the_scope_not_the_user`; `test_a_v1_row_in_the_personal_root_still_excludes`;
+  `test_two_users_with_the_same_sub_scope_do_not_collide`
+- `test_the_watermark_is_keyed_by_scope`; `test_a_sibling_scope_cannot_walk_belief_time_backwards`;
+  `test_belief_time_still_cannot_move_backwards_within_one_scope`
+- `test_the_facet_index_is_led_by_the_scope_path`; `test_the_facet_index_serves_a_scope_and_facet_filtered_read`
+- `test_a_top_level_org_root_is_still_not_a_namespace`; `test_the_resolver_grammar_admits_the_shapes_the_schema_now_accepts`
+- `test_rollback_restores_version_14_exactly_and_reapply_works` (catalog fingerprint identical);
+  `test_rollback_refuses_while_a_sub_scope_row_exists`
+
+**Mutation-checked.** Each of the following makes at least one test fail: restoring the equality `CHECK`, keying the
+exclusion constraint on `user_id`, keying the watermark on `user_id`, leading the facet index with `user_id`, and
+dropping the rollback's sub-scope guard.
+
+**Status:** decided and verified.

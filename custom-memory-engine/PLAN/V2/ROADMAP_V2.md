@@ -128,7 +128,7 @@ mechanical guarantee that the plan stays consistent as it is edited.
 | `E-040` | **`create_scope`** (r13, `V2-D63`): the operation `API_V2.md` §3 defines and `E-011`'s `SCOPE` table was migrated for, which `E-011` (#62) deliberately left unwired while every scope is personal | Split out of `E-011` at its closure so no operation is owned by a closed task; `E-011` keeps the M2+M9 migration, this task owns the behaviour. Wired through `Engine.call` under `namespace_owner_only`, then driven by `E-018`'s suite (§4.1) | S |
 
 **W1 progress (r13).** Eleven of the thirteen W1 tasks are complete on `main`: `E-010` (migration 5), `E-011`
-(migrations 11 and m2/m9, #131), `E-012` (migration 9, closing `T-28`), `E-013` (migration 8), `E-014` (migration 10,
+(migrations 11 and 15, #131 and #150), `E-012` (migration 9, closing `T-28`), `E-013` (migration 8), `E-014` (migration 10,
 #130), `E-015`, `E-016` (migrations 7 and 14), `E-017`, `E-018` (`V2-D62`), `E-019` and `E-020` (migration 6). The two
 remaining are `E-039` (#97), open on criterion 5 only, which completes as the 18 unwired operations land (§4.1,
 `V2-D63`), and `E-040` (#148), the `create_scope` behaviour split out of `E-011` at its closure (`V2-D63`). The r11
