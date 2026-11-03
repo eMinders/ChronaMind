@@ -135,6 +135,11 @@ require are `E-014`'s (`METHOD`, `VERIFICATION`, adjudication and reason codes),
 `E-014` (M6), `E-011` (M2+M9) and `E-018` (G1 conformance) are the remaining W1 work, and `E-039`'s last criterion
 belongs with `E-018` because that suite is what drives the entry point.
 
+**`E-016` complete.** Migration 10 (`E-014`, #130) added the records of every transition between lifecycles, and
+migration 14 adds the records of entry into the lifecycle: the gate decision at creation, and the adjudication of a
+staged or held candidate (`V2-D61`). Every §2.3 row is now enforced at commit for every non-superuser role. `I1'` stays
+`PARTIAL` only for the channel contract (`E-017`, `E-035`).
+
 **r10 requirements binding on every W1 task** (`V2-D54`, `V2-D55`; pre-W1 audit `audits/PRE_W1_INDEPENDENT_AUDIT.md`):
 1. W1 migrations are files **005+**; `migrate.MIGRATIONS` is append-only and checksum-bound.
 2. Every foreign key between two tables carrying `user_id` is composite on `(id, user_id)`, and every SQL function

@@ -53,6 +53,13 @@ async def believe(
         await conn.execute(
             "INSERT INTO memory_evidence VALUES (%s, 't1', %s, 'I am vegetarian', 'support')", (version_id, user)
         )
+        # the gate decision that admitted it (migration 14 requires it of the application role)
+        await conn.execute(
+            "INSERT INTO memory_conflict (id, candidate_version_id, user_id, relation, decision, reason_code, "
+            "decided_by, decided_at) VALUES (%s, %s, %s, 'unrelated', 'accept', 'gate_passed', 'validation-gate', "
+            "clock_now())",
+            ("mc-" + version_id, version_id, user),
+        )
 
 
 # ----------------------------------------------------------------------------------- atomicity and equivalence

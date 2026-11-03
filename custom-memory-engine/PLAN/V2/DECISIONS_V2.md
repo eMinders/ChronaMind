@@ -998,3 +998,72 @@ owned by a `NOSUPERUSER NOBYPASSRLS` role, and `FORCE` is asserted restored on e
 `clock_watermark` excepted. **Mutation-checked:** running the same suite against the pre-change runner fails `[5]`, `[8]`
 and `[9]` with `migration_database_failure`; `[10]` passes either way, because #130 lifts `FORCE` itself.
 **Status:** decided and verified.
+
+### V2-D61 — The records of entry into the lifecycle bind the application role; a re-record carries its belief's decision (closes issue #67)
+
+**Decision.** Migration 14 (`014_entry_records.sql`) enforces the creation rows of `ARCHITECTURE_V2.md` §2.3 at commit,
+with two deferred constraint triggers, `trg_memory_version_record_of_creation` and
+`trg_memory_version_record_of_entry`. Both are listed in `engine.deletion.ARCHIVAL_GUARD_TRIGGERS`, as r10 requires.
+(1) `— → asserted` needs its evidence (migration 7) and an `accept` gate decision for that version in
+`memory_conflict`. `— → contested` needs a `hold` decision. `— → inferred` needs a derivation and a registered method
+(migrations 7 and 10). `— → observed` needs its evidence. (2) The two v1 ways into the lifecycle that are not
+creations need the adjudication that v1's `resolve_conflict_pending` already writes: a staged `candidate` promoted
+to a belief, and a held candidate accepted as an inference. Both need an `accept` decision, and the inference also
+needs a derivation. (3) **A re-record is not a new assertion.** Close-then-insert (R1–R3, E3, R7) closes a belief at
+tick `c` and inserts a copy at `[c, NULL)`. That copy is admitted without a decision of its own only when a version
+with the same memory key, subject, predicate, kind and content was closed at exactly `c`, and when its event range
+lies inside what was believed for that subject and predicate until `c`. A copy that claims new content or new event
+time is a new assertion and needs the gate. (4) **Who is bound:** every role that is not a superuser, which includes
+the runtime role and a non-superuser schema owner. (5) The v1 `persona` exemption from the derivation half of `I1′`
+(migration 7) is narrowed by the same rule. A persona row the application role creates, or brings into the lifecycle,
+needs a derivation. Existing persona rows and later writes to them keep the exemption, so the D7 backfill
+(`V2-D49`) is unaffected.
+
+**Why.** Issue #67 criterion 4 ("each allowed transition attempted without its record raises") was met for every
+transition between lifecycles by migration 10. The two creation rows that need a gate decision were not enforced,
+because v1 direct commits (`commit_initial_version`) write no decision row. The same issue also requires that the v1
+archival and immutability tests pass **unchanged**, and those tests (`test_full_schema.py`,
+`archival/test_t1_to_t5.py`) create asserted claims directly while connected as a superuser. A superuser can disable
+any trigger and bypasses row security, so no trigger can bind it. The issue names the application role as the
+boundary ("enforcement holds for direct SQL under the application role"), and every engine path that role reaches
+already records its decision in the same transaction (`engine.ingest.apply_candidate`, the API). The Project Owner
+chose this scope over two alternatives:
+- Making the commit primitives write an `accept` themselves was rejected. It would record "grounding passed" when no
+  gate ran, which is the silent coercion #67 forbids.
+- Binding every role was rejected because it would break the frozen v1 tests.
+
+The re-record rule is needed because supersession, boundary revision and multi-valued end each insert a copy of an
+existing belief, and requiring a fresh decision for that copy would invent one.
+
+**What it does not mean.** It is not an exemption for the engine: its gate paths are tested under the runtime role.
+It does not cover the ablations that **delete** the closed version (`A2`, `A2b`). Those leave no belief to continue,
+so under the application role they are refused. They are evaluation-only and run by the operator. The record is
+checked for presence, not for truth: the runtime role may insert `memory_conflict` rows, as it must for the gate to
+record its decisions, exactly as for the adjudication records of migration 10.
+
+**Implementation.** `schema/014_entry_records.sql::enforce_entry_records`, `rollback/014_entry_records.sql`,
+`schema/migrate.py`, `engine/deletion.py::ARCHIVAL_GUARD_TRIGGERS`, `schema/bitemporal_on_full.sql` (the frozen
+design-check script steps the two triggers aside, as it does for the others), and `schema/README.md`.
+`INVARIANT_LEDGER.md` `I1′` names the new site and tests. `I1′` stays `PARTIAL` only for the channel contract
+(`E-017`, `E-035`).
+
+**Verification.** `tests/integration/test_lifecycle_transitions.py`:
+- `test_each_creation_needs_its_record_under_the_application_role`: no decision, or the wrong one, refuses the commit.
+- `test_a_staged_or_held_candidate_enters_the_lifecycle_only_with_its_adjudication`
+- `test_every_engine_write_path_satisfies_the_entry_records_under_the_application_role`: accept, supersession with a
+  re-record, reject, hold and its adjudication, boundary revision and multi-valued end all commit as the runtime role,
+  and `A2` is refused.
+- `test_a_re_record_may_claim_neither_new_event_time_nor_new_content`
+- `test_a_superuser_is_not_bound_by_the_entry_records`
+- `test_the_entry_record_triggers_are_deferrable_and_listed_for_deletion`
+- `test_rollback_restores_version_13_exactly_and_reapply_works`
+
+**Mutation-checked.** Each of the following makes at least one of these tests fail:
+- removing the gate-decision raise
+- the event-range containment
+- the content match
+- the re-record path
+- the adjudication raise
+- the derivation raise
+
+**Status:** decided by the Project Owner (scope), and verified.

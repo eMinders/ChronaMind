@@ -35,6 +35,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (11, "011_scope.sql"),
     (12, "012_api_runtime.sql"),
     (13, "013_generic_predicates.sql"),
+    (14, "014_entry_records.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -86,6 +87,7 @@ FUNCTIONS = (
     "enforce_transition_records",
     "fill_scope_path",
     "guard_creator_fixed",
+    "enforce_entry_records",
 )
 logger = structlog.get_logger(__name__)
 

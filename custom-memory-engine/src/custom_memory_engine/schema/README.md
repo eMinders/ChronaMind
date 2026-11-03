@@ -12,6 +12,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 | `006_facet_floors.sql` | Migration 6 (`E-020`, M8): the `um_facet` tag and the retention floor for claims and abstractions |
 | `007_lifecycle_guard.sql` | Migration 7 (`E-016`): the closed lifecycle transition table, kind-conditioned legality, and the `I1′` derivation record |
 | `008_source.sql` | Migration 8 (`E-013`, M4): evidence becomes a `(source_type, source_ref, span, content_hash)` reference, `turn` kept byte-identical and `external` outside the deletion boundary |
+| `014_entry_records.sql` | Migration 14 (`E-016`, `V2-D61`): the records of entry into the lifecycle (the gate decision at creation, the adjudication of a staged or held candidate) for every non-superuser role |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
@@ -124,13 +125,15 @@ The §2.3 transition table is closed in the database, for every writer (direct S
   Re-asserting retired content creates a new row.
 * **Records at commit** (extends `enforce_provenance`, so it shares `trg_memory_version_provenance`): an active
   `observed`/`asserted` row needs an evidence row; an active `inferred` row needs a derivation row (`I1′`, derivation half).
-* **Not yet checkable** (named, not faked): the `I1′` method reference and the adjudication, verification and
-  retirement-reason records have no table until `E-014`, which extends `enforce_provenance` when it adds them.
+* **Records added later:** the `I1′` method reference and the adjudication, verification and retirement-reason
+  records are migration 10's; the gate decision at creation and the adjudication of a staged or held candidate are
+  migration 14's (`V2-D61`).
 * **Dual-write allowances** (end with the window): staged `candidate`/`rejected` rows are born `retired` and a
   `candidate` may be promoted; a derived claim becomes `inferred` when its derivation row arrives; accepting a held
-  derived/persona candidate activates it as `inferred`; v1 `persona` rows are exempt from the derivation record.
-* **Decision (a)** (does `I10` apply to explicit withdrawal?) is unmade. As the issue instructs, `(S)` or `(C)` is
-  required for system-initiated retirement only, which is migration 1's archival trigger on `status = 'archived'`.
+  derived/persona candidate activates it as `inferred`; v1 `persona` rows are exempt from the derivation record
+  (narrowed by migration 14 to existing rows and the operator).
+* **Decision (a)** (does `I10` apply to explicit withdrawal?) was left open by this migration and is decided by `V2-D59`:
+  it applies, at no cost, because the withdrawal's recorded-time close is branch `(S)`.
 
 Rollback: `rollback/007_lifecycle_guard.sql`. Tested by `tests/integration/test_lifecycle_transitions.py`.
 
@@ -209,8 +212,8 @@ recorded transition of `ARCHITECTURE_V2` 2.3:
 | `inferred -> retired` | one of those, or a refuting `verification`, or a dissent (`negative_constraint`), or a `reject` decision |
 | `inferred -> contested` | a Tier C `contradicts` association |
 
-The v1 staging promotion and the dual-write `-> inferred` corrections record nothing (migration 7). **Not enforced:** the gate-decision
-record at *creation* (v1 direct commits write none).
+The v1 staging promotion and the dual-write `-> inferred` corrections record nothing here (migration 7). The records of
+*entry* into the lifecycle, the gate decision at creation among them, are migration 14's.
 
 **The backfills run as the owner, and the owner is subject to `FORCE ROW LEVEL SECURITY`.** A migration applied by an
 ordinary role matched zero rows in an unqualified `UPDATE`/`INSERT ... SELECT`, leaving every pre-existing inferred
@@ -297,6 +300,40 @@ first gate decision and the stored belief time), so a replayed key gets exactly 
 reference carries a hash, not the captured text, so asserting from external evidence alone is a `validation_error`.
 Tested by `tests/integration/test_api_wiring_ingest.py`.
 
+## Migration 14: the records of entry into the lifecycle (`014_entry_records.sql`, `E-016`, `V2-D61`)
+
+Migrations 7 and 10 enforce the transitions *between* lifecycles and their records. This one enforces the creation rows of
+`ARCHITECTURE_V2` 2.3 and the two v1 ways into the lifecycle that are not creations, at commit, with the deferred constraint
+triggers `trg_memory_version_record_of_creation` (`AFTER INSERT`) and `trg_memory_version_record_of_entry` (`AFTER UPDATE`).
+Both are listed in `engine.deletion.ARCHIVAL_GUARD_TRIGGERS`, and both are named so they fire after `trg_memory_version_provenance`
+(a row with no evidence reports Invariant 1 first).
+
+| Entry | Record required at commit |
+|---|---|
+| `- -> asserted` | evidence (migration 7) and an `accept` decision for the version in `memory_conflict`, unless it is a re-record (below) |
+| `- -> contested` | a `hold` decision |
+| `- -> inferred` | a derivation and a registered method (migrations 7, 10); now also for a persona row |
+| `- -> observed` | evidence from a declared source (migrations 7, 8) |
+| staged `candidate` -> `asserted`/`inferred` | an `accept` decision (the R4 promotion record `resolve_conflict_pending` writes) |
+| staged `candidate` -> `contested` | a `hold` decision |
+| `contested -> inferred` (a held derived or persona candidate accepted) | an `accept` decision and a derivation |
+
+* **A re-record is not a new assertion.** Close-then-insert (supersession, boundary revision, multi-valued end) closes a belief at
+  tick `c` and inserts its copy at `[c, NULL)`. The copy is admitted on the decision of the belief it continues when a version with
+  the same memory key, subject, predicate, kind and content was closed at exactly `c` and the copy's event range lies within what was
+  believed for that subject and predicate until `c`. New content or new event time is a new assertion. The ablations that *delete*
+  the closed version (`A2`, `A2b`) leave nothing to continue and are refused under the application role (evaluation-only).
+* **Who is bound:** every role that is not a superuser. A superuser can disable any trigger and bypasses row security, so no
+  trigger binds it. The v1 test and evaluation harnesses connect as one and commit claims without the gate, and the v1
+  archival and immutability tests pass unchanged. Every engine path the runtime role reaches records its decision in the
+  same transaction.
+* **The v1 persona exemption** from the derivation half of `I1′` (migration 7) now covers only existing persona rows and the
+  operator. A persona row the application role creates or brings into the lifecycle needs a derivation.
+
+Rollback: `rollback/014_entry_records.sql` restores version 13 exactly. Tested by `tests/integration/test_lifecycle_transitions.py`
+(the creation records, the adjudicated entries, every engine write path under the runtime role, the re-record bounds, the
+superuser scope, deferrability, rollback).
+
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
 revalidates copied configuration. CLI output uses JSON, with diagnostics on stderr;
@@ -322,7 +359,7 @@ verification command. The migration CLI never executes it on runtime data.
 
 | Invariant | Enforcement site in this DDL | Notes |
 |---|---|---|
-| **Invariant 1** | Constraint trigger `trg_memory_version_provenance` on `memory_version`, function `enforce_provenance()`, `DEFERRABLE INITIALLY DEFERRED` | Extended by migration 7 (`E-016`) with the lifecycle record obligations. Commit of `active`/`archived` requires ≥1 `memory_evidence` row or ≥1 outgoing `memory_derivation` row. `bitemporal_on_full.sql` disables it because that harness inserts believed rows without evidence, and re-enables it as its final statement, so a replay never leaves a persistent database with invariant 1 off. |
+| **Invariant 1** | Constraint trigger `trg_memory_version_provenance` on `memory_version`, function `enforce_provenance()`, `DEFERRABLE INITIALLY DEFERRED` | Extended by migration 7 (`E-016`) with the lifecycle record obligations; the records of every lifecycle transition (migration 10) and of entry into the lifecycle (migration 14) are separate deferred triggers, which `bitemporal_on_full.sql` steps aside the same way. Commit of `active`/`archived` requires ≥1 `memory_evidence` row or ≥1 outgoing `memory_derivation` row. `bitemporal_on_full.sql` disables it because that harness inserts believed rows without evidence, and re-enables it as its final statement, so a replay never leaves a persistent database with invariant 1 off. |
 | **Invariant 2** | `CHECK` constraints `valid_wellformed`, `recorded_iff_believed`, `recorded_wellformed` on `memory_version` | Same predicates as the reduced schema. |
 | **Invariant 3** | `clock_now()` reads `app.clock` then `transaction_timestamp()`; `BEFORE UPDATE` trigger `trg_memory_version_guard_update` / `guard_update()` | One instant per transaction, so `recorded_range` bounds written by several statements share `c` (R1). Post-insert updates allowed only for `status`, `archival_branch` (only together with `status = 'archived'`), staging-to-active `recorded_range = [clock_now(), ∞)`, and closing `upper(recorded_range)` to `clock_now()`. Replay monotonicity remains a harness/`RL-044` concern. |
 | **Invariant 4** | `EXCLUDE USING gist` constraint `no_bitemporal_overlap` (`btree_gist`) | Partial: `single_valued AND status IN ('active','archived')`. Per-user advisory locks stay in `RL-042`. |

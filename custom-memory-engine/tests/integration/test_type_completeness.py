@@ -186,6 +186,12 @@ async def insert_tuple(conn: AsyncConnection, tid: str, t: Tuple4, *, user: str 
             "VALUES (%s, %s, %s, 'x', 'support')",
             (tid, "t-" + user, user),
         )
+    if t.lifecycle in ("asserted", "contested"):  # the gate decision that admitted it (migration 14)
+        await conn.execute(
+            "INSERT INTO memory_conflict (id, candidate_version_id, user_id, relation, decision, reason_code, "
+            "decided_by, decided_at) VALUES (%s, %s, %s, 'unrelated', %s, 'gate_passed', 'validation-gate', clock_now())",
+            ("mc-" + tid, tid, user, "accept" if t.lifecycle == "asserted" else "hold"),
+        )
     if (
         t.lifecycle == "inferred"
     ):  # I1': a derivation row and a registered method (v1 persona rows carry both implicitly)
