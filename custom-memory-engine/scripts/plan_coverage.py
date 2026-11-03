@@ -126,11 +126,21 @@ def coverage_owners(coverage: str) -> dict[tuple[str, str], tuple[list[str], str
 
 
 def ledger_owners(ledger: str) -> dict[tuple[str, str], tuple[list[str], str]]:
-    """V2 invariant rows of the ledger: owner column → task ids."""
+    """V2 invariant rows of the ledger: owner column → task ids.
+
+    An ``ENFORCED`` row carries no owner in the ledger (the invariant test forbids it); its sites and
+    tests are the evidence of closure. To avoid a false "owner row names no task" finding for such rows,
+    treat ``ENFORCED`` as self-evidencing by injecting a synthetic ``enforced`` token, which the coverage
+    resolver then counts as valid (parallel to how ``deferred`` works for deferred elements).
+    """
     owners: dict[tuple[str, str], tuple[list[str], str]] = {}
     for row in _table_rows(ledger):
         if len(row) >= 6 and re.fullmatch(r"I\d+′?", row[0]):
-            owners[("invariant", row[0])] = (TASK_REF.findall(row[5]), row[4])
+            status = row[1].strip("`")
+            tokens = TASK_REF.findall(row[5])
+            if status == "ENFORCED" and not tokens:
+                tokens = ["enforced"]  # self-evidencing: sites and tests are the proof
+            owners[("invariant", row[0])] = (tokens, row[4])
     return owners
 
 
@@ -154,7 +164,7 @@ def resolve(plan: Path = PLAN) -> tuple[list[Element], dict[Element, list[str]],
             continue
         tokens, note = declared[key]
         valid = [t for t in tokens if t in tasks]
-        unknown = sorted({t for t in tokens if t != "deferred" and t not in tasks})
+        unknown = sorted({t for t in tokens if t != "deferred" and t != "enforced" and t not in tasks})
         if unknown:
             findings.append(Finding(element, f"owner is not a ROADMAP_V2 task: {', '.join(unknown)}"))
         if "deferred" in tokens:
@@ -162,6 +172,8 @@ def resolve(plan: Path = PLAN) -> tuple[list[Element], dict[Element, list[str]],
                 findings.append(Finding(element, "deferred without a reason and a V2-D decision reference"))
             else:
                 valid.append("deferred")
+        if "enforced" in tokens:
+            valid.append("enforced")  # ENFORCED ledger rows are self-evidencing; sites and tests are the proof
         if not valid and not unknown:
             findings.append(Finding(element, "owner row names no task"))
         owners[element] = valid
