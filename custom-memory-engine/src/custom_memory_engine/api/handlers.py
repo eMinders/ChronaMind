@@ -5,9 +5,8 @@ already run. A handler still never trusts that: it operates under the caller's r
 (``Runtime.session``), so a row the caller may not write is simply not affected, and it answers with the entry
 point's static errors (``EntryError``) and no identifier, path, scope or content.
 
-Operations wired here: ``register_method``, ``create_entity``, ``link``, ``unlink``, ``adjudicate``, ``retract_own``,
-``grant_access`` and ``revoke_access``. ``create_scope`` is deliberately not wired: while every scope is personal
-(``V2-D49`` D11) a sub-scope cannot hold a row, so creating one would record a scope nothing can use.
+Operations wired here: ``register_method``, ``create_entity``, ``link_entity``, ``create_scope``, ``link``, ``unlink``,
+``adjudicate``, ``retract_own``, ``grant_access`` and ``revoke_access``.
 """
 
 import re
@@ -26,6 +25,8 @@ from custom_memory_engine.security.audit_guard import content_free_details
 
 _HASH = re.compile(r"[a-f0-9]{64}")
 _CODE = re.compile(r"[a-z0-9_]{1,64}")
+_ENTITY_RELATION = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_SCOPE_KINDS = frozenset({"project", "session", "task", "shared"})
 _ASSERTABLE_KINDS = frozenset({"claim", "procedure"})  # V2-D48: an abstraction or an episode can only be denied
 
 
@@ -109,6 +110,8 @@ class Handlers:
         async with self.runtime.session(user) as connection:
             if (found := await replayed(self.runtime, connection, user, "create_entity", key)) is not None:
                 return found
+            if not await self.runtime.scope_exists(connection, user, scope):
+                raise EntryError("forbidden")
             async with connection.cursor(row_factory=tuple_row) as cursor:
                 await cursor.execute(
                     sql.SQL(
@@ -121,6 +124,44 @@ class Handlers:
             assert row is not None
             await remember(self.runtime, connection, user, "create_entity", key, str(row[0]))
             return str(row[0])
+
+    async def link_entity(self, call: Call) -> Receipt:
+        entity_a = _text(call, "entity_a")
+        entity_b = _text(call, "entity_b")
+        relation = _text(call, "relation", limit=64)
+        if not _ENTITY_RELATION.fullmatch(relation):
+            raise EntryError("validation_error", "entity_relation_invalid")
+        if entity_a == entity_b:
+            raise EntryError("validation_error", "entity_link_requires_two_entities")
+        entity_a, entity_b = sorted((entity_a, entity_b))
+        user = call.ctx.principal
+        try:
+            async with self.runtime.session(user) as connection:
+                async with connection.cursor(row_factory=tuple_row) as cursor:
+                    await cursor.execute(
+                        sql.SQL(
+                            "INSERT INTO {t} (id, user_id, entity_a, entity_b, relation) "
+                            "VALUES (%s, %s, %s, %s, %s) "
+                            "ON CONFLICT (user_id, entity_a, entity_b, relation) DO NOTHING "
+                            "RETURNING id, created_at"
+                        ).format(t=self.runtime.table("entity_link")),
+                        (new_id("elink"), user, entity_a, entity_b, relation),
+                    )
+                    row = await cursor.fetchone()
+                    if row is None:
+                        await cursor.execute(
+                            sql.SQL(
+                                "SELECT id, created_at FROM {t} "
+                                "WHERE user_id = %s AND entity_a = %s AND entity_b = %s AND relation = %s"
+                            ).format(t=self.runtime.table("entity_link")),
+                            (user, entity_a, entity_b, relation),
+                        )
+                        row = await cursor.fetchone()
+        except ForeignKeyViolation:
+            raise EntryError("forbidden") from None
+        if row is None:
+            raise EntryError("forbidden")
+        return Receipt(str(row[0]), "linked", row[1])
 
     # -- ASSOCIATION -------------------------------------------------------------------------------------------
 
@@ -300,6 +341,49 @@ class Handlers:
             raise EntryError("precondition_failed", "already_revoked")
         raise EntryError("forbidden")
 
+    async def create_scope(self, call: Call) -> str:
+        parent = _scope(call, "parent")
+        segment = _text(call, "segment", limit=128)
+        kind = _text(call, "kind", limit=32)
+        key, user = _key(call), call.ctx.principal
+        if kind not in _SCOPE_KINDS:
+            raise EntryError("validation_error", "scope_kind_invalid")
+        try:
+            scope_path = parse_scope(parent).child(segment).text
+        except ScopeError:
+            raise EntryError("validation_error", "scope_segment_invalid") from None
+
+        async with self.runtime.session(user) as connection:
+            if (found := await replayed(self.runtime, connection, user, "create_scope", key)) is not None:
+                return found
+            if not await self.runtime.scope_exists(connection, user, parent):
+                raise EntryError("forbidden")
+            parent_path = None if parent == user_scope(user).text else parent
+            async with connection.cursor(row_factory=tuple_row) as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {t} (scope_path, user_id, parent_path, segment, kind) "
+                        "VALUES (%s, %s, %s, %s, %s) "
+                        "ON CONFLICT (scope_path) DO NOTHING RETURNING scope_path, kind"
+                    ).format(t=self.runtime.table("scope")),
+                    (scope_path, user, parent_path, segment, kind),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    await cursor.execute(
+                        sql.SQL("SELECT scope_path, kind FROM {t} WHERE user_id = %s AND scope_path = %s").format(
+                            t=self.runtime.table("scope")
+                        ),
+                        (user, scope_path),
+                    )
+                    row = await cursor.fetchone()
+            if row is None:
+                raise EntryError("forbidden")
+            if row[1] != kind:
+                raise EntryError("validation_error", "scope_already_exists")
+            await remember(self.runtime, connection, user, "create_scope", key, scope_path)
+            return scope_path
+
 
 def register_structure_handlers(engine: Engine, runtime: Runtime) -> Handlers:
     """Wire the operations above onto ``engine``; returns the bound handlers."""
@@ -307,6 +391,8 @@ def register_structure_handlers(engine: Engine, runtime: Runtime) -> Handlers:
     table: Mapping[str, Handler] = {
         "register_method": handlers.register_method,
         "create_entity": handlers.create_entity,
+        "link_entity": handlers.link_entity,
+        "create_scope": handlers.create_scope,
         "link": handlers.link,
         "unlink": handlers.unlink,
         "adjudicate": handlers.adjudicate,

@@ -128,6 +128,7 @@ VALUES: dict[str, object] = {
     "label": "x",
     "entity_a": "e1",
     "entity_b": "e2",
+    "subject_entity": "e1",
     "relation": "x",
     "procedure_id": "p1",
     "outcome": "success",

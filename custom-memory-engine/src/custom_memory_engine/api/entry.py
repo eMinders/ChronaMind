@@ -56,7 +56,17 @@ INTERNAL_ERROR = "internal_error"
 # `principal` - the grantee - so that name is validated like any other input instead.)
 RESERVED_ARGUMENTS = frozenset({"tier", "admin", "user_id", "caller", "ctx", "credential", "read_set"})
 #: Argument names that name an existing artifact, association, entity or result (single id each).
-SINGLE_TARGETS = ("artifact_id", "result_id", "association_id", "from", "to", "entity_a", "entity_b", "procedure_id")
+SINGLE_TARGETS = (
+    "artifact_id",
+    "result_id",
+    "association_id",
+    "from",
+    "to",
+    "entity_a",
+    "entity_b",
+    "subject_entity",
+    "procedure_id",
+)
 EVIDENCE_ARGUMENTS = ("evidence", "counter_evidence")
 
 type Origin = Literal["tier_b", "tier_c"]
@@ -245,6 +255,8 @@ def _target_ids(op: Operation, args: dict[str, object]) -> list[str]:
     ids: list[str] = []
     for name in SINGLE_TARGETS:
         if name in op.inputs:
+            if name == "subject_entity" and name not in args:
+                continue
             value = args.get(name)
             if not isinstance(value, str) or not value:
                 raise _fail(op, "validation_error", "target_required")
@@ -263,6 +275,8 @@ async def _targets_readable(
     engine: Engine, ctx: CallerContext, op: Operation, args: dict[str, object], state: dict[str, object]
 ) -> None:
     ids = _target_ids(op, args)
+    if not ids:
+        return
     # An opaque provenance handle is never an identifier: answer exactly like an unknown id, with no lookup.
     if any(is_opaque_reference(i) for i in ids):
         raise _fail(op, "forbidden")
