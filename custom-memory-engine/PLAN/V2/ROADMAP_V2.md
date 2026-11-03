@@ -161,6 +161,19 @@ are resolved through `scope_grant` with forced RLS (`V2-D36`); the association d
 is attached by trigger and its concurrency test passes (`V2-D13`); provenance to unreadable
 scopes renders opaque (`V2-D37`).
 
+**E-018 / G1 status after W1 (r12, `V2-D62`).** The conformance suite is green on `main` for all four properties
+(storable, queryable, deletable, routed) on every legal `(kind × retention × lifecycle × facet)` tuple, and both
+`I3` (method registry) and `I6` (retention orthogonality) are `ENFORCED` in the ledger. Two properties are measured
+below `Engine.call` because the required W3 operations are not yet wired:
+- **deletable** via `Engine.call`: requires `delete` (`E-037`).
+- **queryable** via `Engine.call`: requires `query` (`E-033`).
+- **procedural memory via `Engine.call`**: requires `infer`/procedure creation (`E-030`).
+
+When these three W3 operations land, the conformance suite's corresponding assertions must be re-pointed at
+`Engine.call` and `tests/integration/test_type_completeness.py` updated. Until then, those properties are reported
+as "not yet testable", never as passes. `E-018` (#69) is closed with this record; the W3 tasks carry the
+outstanding criterion (`V2-D62`).
+
 ---
 
 ## 5. W2 — Generality proof
