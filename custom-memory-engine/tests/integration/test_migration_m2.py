@@ -304,7 +304,7 @@ async def test_user_id_stays_stored_and_a_v1_writer_still_gets_the_personal_root
         assert await rows(conn, "SELECT user_id, scope_path, visibility FROM session WHERE id = 's9'") == [
             ("u9", "/u/u9/", "private")
         ]
-        with pytest.raises(CheckViolation, match="scope_matches_user"):  # an inconsistent dual-write is refused
+        with pytest.raises(CheckViolation, match="scope_within_user"):  # an inconsistent dual-write is refused
             await conn.execute(
                 "INSERT INTO session (id, user_id, started_at, scope_path) VALUES ('bad', 'u9', now(), '/u/u1/')"
             )

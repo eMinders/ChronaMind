@@ -36,6 +36,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (12, "012_api_runtime.sql"),
     (13, "013_generic_predicates.sql"),
     (14, "014_entry_records.sql"),
+    (15, "015_subscopes.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
