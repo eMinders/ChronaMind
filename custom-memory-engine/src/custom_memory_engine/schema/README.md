@@ -38,9 +38,9 @@ The default target is **`cme_engine`**. `--schema cme_other_name` selects anothe
 lowercase `cme_` namespace; reset requires that exact value in `--confirm-schema`.
 Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
-canonical tables stay unchanged; `_cme_schema_migrations` is a private thirteenth
+canonical tables stay unchanged; `_cme_schema_migrations` is a private migration-history
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–13** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–14** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -188,7 +188,7 @@ tables is composite on `(id, user_id)` and every function is pinned to the engin
 | Table | What the database guarantees |
 |---|---|
 | `association` | Ten closed types, same-tenant endpoints, no self-loop, weight in `[0,1]`, the degree cap of 32 (`V2-D13`, migration 3's function), and an `origin` (`tier_b` edges have no channel effect, `V2-D48`). Deleting an endpoint deletes the row and **never** cascades to the other endpoint. |
-| `entity` | Opaque random ids (`ent_` + 32 hex), principal-scoped (`scope_path` inside the creator's `/u/<id>/`), invisible to every other user, indistinguishable from a missing id. |
+| `entity` | Opaque random ids (`ent_` + 32 hex), scope-local within the creator's `/u/<id>/` namespace, invisible to every other user and indistinguishable from a missing id. |
 | `method` | Shared registry, **append-only**: `UPDATE`, `DELETE` and `TRUNCATE` are refused; `(name, version)` is unique. Seeded with the v1 operators. The runtime role may read and append, nothing else. |
 | `abstraction_stats` | The stored ledger: `o = s + k + u`, counts `>= 0`, `coverage` generated as `(s+k)/o`, **no `stale` column** (`V2-D24`); only an abstraction may have one; a `verified`/`refuted` status needs a `verification` record. |
 | `verification` | Append-only held-out record with the support and held-out windows and context keys (`windows_disjoint` is derived) for `I11`. Append-only includes removal: `UPDATE`, `DELETE` and `TRUNCATE` are refused, so a `refuted` record cannot be deleted out from under the status that cites it. Only the `memory_version` cascade may remove a row. |
@@ -237,7 +237,7 @@ Rollback: `rollback/010_structural_tables.sql` restores version 9 exactly. Teste
 ## Migration 11: scope hierarchy and path-based RLS (`011_scope.sql`, `E-011`, M2 + M9)
 
 Every scoped row gains `scope_path` and `visibility` (`private | project | shared`); existing rows are backfilled to
-`/u/<user_id>/` and `private`. **`user_id` stays stored** (`V2-D49` D11) and a `CHECK` ties the path to it while every scope is personal, so
+`/u/<user_id>/` and `private`. **`user_id` stays stored** (`V2-D49` D11) and a `CHECK` ties the path to it, so
 a v1 writer that names only `user_id` still works (a `BEFORE INSERT` trigger fills the personal root) and an inconsistent dual-write is
 refused. 15 tables are scoped: the ten of the plan, the three new association/ledger/verification tables, and `entity` and `negative_constraint`
 (which already had a path and gain `visibility`). `app_user` is the principal table and `scope_grant` keeps its own policy.
@@ -255,10 +255,8 @@ refused. 15 tables are scoped: the ten of the plan, the three new association/le
 * **Backfill under FORCE RLS.** The runner lifts `FORCE` around the body and restores it (`V2-D60`), so the backfill reaches every row for an
   owner that does not bypass RLS (`tests/integration/test_migration_owner.py`, case `[11]`); the backfill disables user triggers so
   provenance/clock/lifecycle guards are not re-run.
-* **Only personal-root rows can exist** on thirteen of the tables until a later decision admits sub-scopes (`D11`); `entity` and
-  `negative_constraint` already admit them, so the whole `MA-011` universe, sub-scopes and sub-scope grants included, runs on the real
-  `entity` table. `scope.audit.record_scope_read` writes the content-free `scope_read` audit row (counts only) for a read that leaves the
-  caller's namespace.
+* Migration 14 replaces the personal-root-only checks with an own-namespace subtree check. Child scopes are persisted in
+  `scope`; `entity` rows remain scope-local and cross-scope identity is represented only by explicit `entity_link` rows.
 
 Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if two users now share a job key). Tested by
 `tests/integration/test_migration_m2.py`.
@@ -273,10 +271,10 @@ Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if tw
   result and never a second effect" (`I9`). Per user, append-only, forced per-user RLS; the runtime role may read and append
   but never rewrite. It stores the engine-generated result id, never a request.
 
-`api/runtime.py` and `api/handlers.py` wire eight operations through `Engine.call`: `register_method`, `create_entity`,
-`link`, `unlink`, `adjudicate`, `retract_own`, `grant_access` and `revoke_access`. Every lookup and write runs as the
-caller under the restricted role, so an id the caller may not read is absent to the engine itself. `create_scope` stays
-unwired: while every scope is personal (`V2-D49` D11) a sub-scope cannot hold a row.
+`api/runtime.py` and `api/handlers.py` wire ten operations through `Engine.call`: `register_method`, `create_entity`,
+`link_entity`, `create_scope`, `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access` and `revoke_access`.
+Every lookup and write runs as the caller under the restricted role, so an id the caller may not read is absent to
+the engine itself. `create_scope` creates persisted child scopes; the user's root remains implicit.
 
 Rollback: `rollback/012_api_runtime.sql` restores version 11 exactly. Tested by `tests/integration/test_migration_m12.py`
 and `tests/integration/test_api_wiring_structure.py`.
@@ -290,11 +288,24 @@ Multi-valued means two of them never supersede or conflict; a caller that wants 
 refuses the migration (fail closed; `tests/integration/test_migration_m13.py`). Rollback: `rollback/013_generic_predicates.sql` (refuses while
 any artifact uses them).
 
+## Migration 14: persisted child scopes and entity links (`014_scope_entity_links.sql`, E-024)
+
+`scope` stores child scope paths under one principal's namespace. The root is implicit; child paths must have a persisted
+parent and are validated again by the API before an entity or memory write. `entity_link` relates two opaque, scope-local
+entity ids without merging their identity or attributes. Both tables use forced RLS and append-only least-privilege
+runtime grants. Existing scoped tables now admit canonical descendant paths below their owning user's root; their RLS
+policy still limits the caller to its own namespace or explicitly granted shared/project rows.
+
+The migration also replaces `fill_scope_path()` so dependent evidence, derivation, conflict, association, statistics,
+verification and audit rows inherit the scope of their owning memory version. A memory version with a repeated
+`memory_key` inherits its prior version's scope unless a caller supplies the path explicitly.
+
 `api/ingest_handlers.py` wires `ingest_episode`, `assert` and `ingest_artifact`. An episode is recorded `observed` from a declared
 source with no gate. A claim goes through the v1 validation gate (`engine.ingest.apply_candidate`) and is answered `asserted`,
 `contested` or a `Rejected` result with the gate's static reason code. The answer is read back from what was recorded (the
 first gate decision and the stored belief time), so a replayed key gets exactly the original answer. Only `turn` evidence can be grounded: an `external`
 reference carries a hash, not the captured text, so asserting from external evidence alone is a `validation_error`.
+`assert` may optionally name a same-scope `subject_entity`, which is stored as the claim's subject key.
 Tested by `tests/integration/test_api_wiring_ingest.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
