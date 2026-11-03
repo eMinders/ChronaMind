@@ -184,25 +184,38 @@ async def test_backfill_leaves_every_existing_row_without_a_facet(database) -> N
         assert await rows(conn, "SELECT count(*), count(um_facet) FROM memory_version") == [(4, 0)]
 
 
-async def test_the_facet_index_supports_facet_filtered_queries_per_user(database) -> None:  # noqa: F811
+async def test_the_facet_index_supports_facet_filtered_queries_per_scope(database) -> None:  # noqa: F811
+    """Migration 15 re-led the index on `scope_path`: facet-filtered reads are scope-filtered reads (`V2-D64`).
+
+    The property this test owns is unchanged - a facet-filtered read uses the index and returns only the tagged row -
+    and it is now expressed over the scope key, which is what the read path filters on.
+    """
     async with connect(database) as conn:
+        # Pinned to the schema under test: a database-wide lookup can find another test schema's index.
         definition = (
-            await rows(conn, "SELECT indexdef FROM pg_indexes WHERE indexname = 'memory_version_um_facet_idx'")
+            await rows(
+                conn,
+                "SELECT indexdef FROM pg_catalog.pg_indexes "
+                "WHERE schemaname = current_schema() AND indexname = 'memory_version_um_facet_idx'",
+            )
         )[0][0]
-        assert "(user_id, um_facet)" in str(definition) and "WHERE (um_facet IS NOT NULL)" in str(definition)
+        assert "(scope_path text_pattern_ops, um_facet)" in str(definition)
+        assert "WHERE (um_facet IS NOT NULL)" in str(definition)
         await insert_row(conn, "v1", "claim", facet="goal")
         await insert_row(conn, "v2", "claim")
         await conn.execute("SET enable_seqscan = off")
         plan = " ".join(
             str(row[0])
             for row in await rows(
-                conn, "EXPLAIN SELECT id FROM memory_version WHERE user_id = 'u1' AND um_facet = 'goal'"
+                conn,
+                "EXPLAIN SELECT id FROM memory_version WHERE scope_path = '/u/u1/' AND um_facet = 'goal'",
             )
         )
         assert "memory_version_um_facet_idx" in plan
-        assert await rows(conn, "SELECT id FROM memory_version WHERE user_id = 'u1' AND um_facet = 'goal'") == [
-            ("v1",)
-        ]
+        assert await rows(
+            conn,
+            "SELECT id FROM memory_version WHERE scope_path = '/u/u1/' AND um_facet = 'goal'",
+        ) == [("v1",)]
 
 
 # ----------------------------------------------------------------------------------------- rollback
