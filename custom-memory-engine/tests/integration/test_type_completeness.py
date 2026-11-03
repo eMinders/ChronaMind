@@ -447,6 +447,41 @@ def test_no_profile_specific_code_path_in_the_generic_engine_api() -> None:
         assert find_profile_branching((root / relative).read_text(encoding="utf-8")) == [], relative
 
 
+async def test_register_method_is_wired_through_engine_call(database) -> None:  # noqa: F811
+    """I3 enforcement via the entry point: ``register_method`` is admin-only, idempotent on the same hash,
+    and wired through Engine.call so the contract's static errors govern every call.
+
+    This test drives the entry point only; the append-only and uniqueness guarantees are
+    in ``test_migration_m6.py::test_method_rejects_update_delete_and_truncate_and_keeps_name_version_unique``.
+    """
+    digest = "a" * 64
+    args: dict[str, object] = {
+        "name": "e018-method",
+        "version": "1",
+        "params_schema_hash": digest,
+        "description": "registered in test_type_completeness",
+        "idempotency_key": "e018-m1",
+    }
+    async with world(database) as (conn, engine, _schema):
+        del conn
+        # non-admin callers are forbidden regardless of tier
+        for ctx in (caller("alice"), caller("alice", "B", admin=True)):
+            with pytest.raises(Exception, match="forbidden"):
+                await engine.call(ctx, "register_method", args)
+        # a Tier C admin caller succeeds and the result is a method id
+        first = await engine.call(caller("alice", admin=True), "register_method", args)
+        assert isinstance(first, str) and first.startswith("m_")
+        # the same call replays: same hash → same id
+        assert await engine.call(caller("alice", admin=True), "register_method", args) == first
+        # a different hash for the same (name, version) is precondition_failed
+        with pytest.raises(Exception, match="precondition_failed"):
+            await engine.call(
+                caller("alice", admin=True),
+                "register_method",
+                {**args, "params_schema_hash": "b" * 64, "idempotency_key": "e018-m2"},
+            )
+
+
 async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_passes(database) -> None:  # noqa: F811
     async with world(database) as (conn, engine, _schema):
         del conn
