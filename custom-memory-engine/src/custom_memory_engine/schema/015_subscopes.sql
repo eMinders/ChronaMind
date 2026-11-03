@@ -1,4 +1,4 @@
--- Migration 15: sub-scopes, the per-scope exclusion key, and scope-keyed indexes - E-011 (#62) r13, V2-D62, V2-D49
+-- Migration 15: sub-scopes, the per-scope exclusion key, and scope-keyed indexes - E-011 (#62) r13, V2-D64, V2-D49
 -- D10, I5, I4.
 --
 -- Migration 11 admitted only the personal root on thirteen tables: `scope_path = '/u/' || user_id || '/'`
@@ -13,7 +13,7 @@
 --    path inside another's subtree) is preserved, not weakened. The sub-scope grammar is already the shape CHECK's:
 --    lower-case segments matching `[a-z0-9][a-z0-9-]*`.
 --
--- 2. D10 revisited (`V2-D62`): the exclusion key moves from `user_id` to `scope_path`. While every scope was the
+-- 2. D10 revisited (`V2-D64`): the exclusion key moves from `user_id` to `scope_path`. While every scope was the
 --    personal root the two were equivalent, so D10's "stays `user_id` in W1" cost nothing. With sub-scopes they are
 --    not: two distinct scopes of ONE user (`/u/4/p/a/`, `/u/4/p/b/`) must each be able to hold the same single-valued
 --    predicate, and a `user_id`-keyed constraint would refuse the second. This is what `I5` declares ("single-valued
@@ -32,7 +32,7 @@
 --
 -- No existing row changes: every row is in its personal root, `starts_with(scope_path, '/u/' || user_id || '/')`
 -- holds for all of them, and re-keying the exclusion constraint and the watermark preserves every key that existed.
--- The enterprise root `/o/<org>/` is NOT admitted as a top-level namespace (V2-D62): grants and RLS both key on a
+-- The enterprise root `/o/<org>/` is NOT admitted as a top-level namespace (V2-D64): grants and RLS both key on a
 -- user namespace (`scope_grant.owner_user_id` references `app_user`, and the read policy matches `/u/<caller>/`), so
 -- an `/o/` row would have no owner able to grant it and no policy able to return it. The enterprise profile uses
 -- `/u/<owner>/o/<org>/`, shared to colleagues through `scope_grant` - the same mechanism as any project scope.

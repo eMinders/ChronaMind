@@ -240,9 +240,9 @@ Rollback: `rollback/010_structural_tables.sql` restores version 9 exactly. Teste
 ## Migration 11: scope hierarchy and path-based RLS (`011_scope.sql`, `E-011`, M2 + M9)
 
 Every scoped row gains `scope_path` and `visibility` (`private | project | shared`); existing rows are backfilled to
-`/u/<user_id>/` and `private`. **`user_id` stays stored** (`V2-D49` D11) and a `CHECK` ties the path to it while every scope is personal, so
-a v1 writer that names only `user_id` still works (a `BEFORE INSERT` trigger fills the personal root) and an inconsistent dual-write is
-refused. 15 tables are scoped: the ten of the plan, the three new association/ledger/verification tables, and `entity` and `negative_constraint`
+`/u/<user_id>/` and `private`. **`user_id` stays stored** (`V2-D49` D11) and a `CHECK` ties the path to it - the personal-root
+equality here, relaxed to *inside* the owner's namespace by migration 15 - so a v1 writer that names only `user_id` still works (a
+`BEFORE INSERT` trigger fills the personal root) and an inconsistent dual-write is refused. 15 tables are scoped: the ten of the plan, the three new association/ledger/verification tables, and `entity` and `negative_constraint`
 (which already had a path and gain `visibility`). `app_user` is the principal table and `scope_grant` keeps its own policy.
 
 * **Read policy** `<table>_scope_read` (`SELECT` only, `V2-D45`): own namespace, plus `project`/`shared` rows inside a scope an **active**
@@ -258,10 +258,11 @@ refused. 15 tables are scoped: the ten of the plan, the three new association/le
 * **Backfill under FORCE RLS.** The runner lifts `FORCE` around the body and restores it (`V2-D60`), so the backfill reaches every row for an
   owner that does not bypass RLS (`tests/integration/test_migration_owner.py`, case `[11]`); the backfill disables user triggers so
   provenance/clock/lifecycle guards are not re-run.
-* **Only personal-root rows can exist** on thirteen of the tables until a later decision admits sub-scopes (`D11`); `entity` and
-  `negative_constraint` already admit them, so the whole `MA-011` universe, sub-scopes and sub-scope grants included, runs on the real
-  `entity` table. `scope.audit.record_scope_read` writes the content-free `scope_read` audit row (counts only) for a read that leaves the
-  caller's namespace.
+* **Only personal-root rows could exist** on thirteen of the tables until migration 15 admitted sub-scopes inside the owner's
+  namespace (`V2-D64`); `entity` and `negative_constraint` already admitted them, so the whole `MA-011` universe, sub-scopes and
+  sub-scope grants included, ran on the real `entity` table from this migration on. `scope.audit.record_scope_read` writes the
+  content-free `scope_read` audit row (counts only) for a read that leaves the caller's namespace; see migration 15 for the path that
+  actually calls it.
 
 Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if two users now share a job key). Tested by
 `tests/integration/test_migration_m2.py`.
@@ -279,7 +280,8 @@ Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if tw
 `api/runtime.py` and `api/handlers.py` wire eight operations through `Engine.call`: `register_method`, `create_entity`,
 `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access` and `revoke_access`. Every lookup and write runs as the
 caller under the restricted role, so an id the caller may not read is absent to the engine itself. `create_scope` stays
-unwired: while every scope is personal (`V2-D49` D11) a sub-scope cannot hold a row.
+unwired: no operation of `API_V2.md` creates a scope as a side effect, and a scope needs no row of its own (`scope_grant`
+records membership, and migration 15 lets a scoped row lie anywhere inside its owner's namespace).
 
 Rollback: `rollback/012_api_runtime.sql` restores version 11 exactly. Tested by `tests/integration/test_migration_m12.py`
 and `tests/integration/test_api_wiring_structure.py`.
@@ -333,6 +335,43 @@ Both are listed in `engine.deletion.ARCHIVAL_GUARD_TRIGGERS`, and both are named
 Rollback: `rollback/014_entry_records.sql` restores version 13 exactly. Tested by `tests/integration/test_lifecycle_transitions.py`
 (the creation records, the adjudicated entries, every engine write path under the runtime role, the re-record bounds, the
 superuser scope, deferrability, rollback).
+
+## Migration 15: sub-scopes, per-scope keys and the scope-keyed indexes (`015_subscopes.sql`, `E-011`, `V2-D64`)
+
+Migration 11 admitted only the personal root on thirteen tables (`scope_path = '/u/' || user_id || '/'`) and deferred
+everything below it to "the per-scope `I9` decision". This is that decision.
+
+* **A row may lie anywhere inside its owner's namespace.** `<table>_scope_matches_user` becomes
+  `<table>_scope_within_user`: `pg_catalog.starts_with(scope_path, '/u/' || user_id || '/')`. Exact by construction,
+  because `D13` forbids the separator in `app_user.id` and in a scope segment: `/u/4/` still does not contain
+  `/u/42/`, and a row can never be placed inside another tenant's namespace. What becomes possible is only what the
+  profiles need - `/u/<id>/p/<repo>/` (coding), `/u/<id>/o/<org>/` (enterprise), `/u/<id>/p/<topic>/` (research),
+  `/u/<id>/s/<task>/`. `authorize_write` is unchanged: a write still lands only in the caller's own namespace (`V2-D53`).
+* **`I5` keys on the scope.** `no_bitemporal_overlap` moves from `user_id WITH =` to `scope_path WITH =`, so two
+  sibling scopes of one user may each hold the same declared single-valued predicate, and a second open belief in the
+  *same* scope is still refused (23P01). `V2-D49` D10 kept the `user_id` key while every scope was the personal root,
+  where the two were equivalent; with sub-scopes they are not, and `I5` declares exclusivity per scope.
+* **`I4` keys on the scope.** `clock_watermark` is keyed by `scope_path`, so a sibling scope cannot walk another
+  scope's belief timeline backwards. The trigger derives the personal root when `scope_path` is still NULL, because
+  `trg_memory_version_recorded_watermark` sorts before `trg_memory_version_scope_default` and must not depend on trigger
+  order.
+* **The indexes whose notes pointed here.** `memory_version_um_facet_idx` becomes `(scope_path text_pattern_ops, um_facet)`:
+  facet-filtered reads are scope-filtered reads. `<table>_scope_path_idx` (migration 11) already keys on `scope_path`.
+* **`/o/<org>/` is a sub-scope, not a namespace.** §13 gives the enterprise profile the root `/o/<org>`; the implemented
+  form is `/u/<owner>/o/<org>/`, shared through `scope_grant`. A top-level `/o/` is refused, because `scope_grant.owner_user_id`
+  references `app_user` and the read policy matches `/u/<caller>/`: an `/o/` row would have no owner to grant it and no policy
+  to return it.
+* **No existing row changes.** Every row is in its personal root, for which the new `CHECK` holds; re-keying the exclusion
+  constraint and the watermark preserves every key that existed.
+
+The content-free `scope_read` row of rule 6 is written by the public entry point, not by this migration:
+`api.entry.Engine.call` reports every scope path a call resolved outside the caller's namespace to a `ScopeReadRecorder`, and
+`api.wiring.build_engine` wires `scope.audit.ConnectionScopeReads` so a deployment cannot omit it.
+
+Rollback: `rollback/015_subscopes.sql` restores version 14 exactly (byte-identical catalog fingerprint, including the
+exclusion index's legacy `valid_range` attribute, which a table rename does not propagate). It **refuses** if any row
+lies in a sub-scope, because version 14 cannot represent one and flattening it into the owner's root would merge two
+scopes' beliefs. Tested by `tests/integration/test_migration_m15.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner

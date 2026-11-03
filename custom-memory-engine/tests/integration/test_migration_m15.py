@@ -1,4 +1,4 @@
-"""E-011 r13 / migration 15: sub-scopes, the per-scope exclusion key and the scope-keyed indexes (``V2-D62``).
+"""E-011 r13 / migration 15: sub-scopes, the per-scope exclusion key and the scope-keyed indexes (``V2-D64``).
 
 Migration 11 admitted only the personal root on thirteen tables and deferred everything below it to "the per-scope
 ``I9`` decision". This suite proves that decision: a row may lie anywhere INSIDE its owner's namespace, and nowhere
@@ -293,7 +293,7 @@ def test_the_resolver_grammar_admits_the_shapes_the_schema_now_accepts(path: str
 
 
 def test_a_top_level_org_root_is_still_not_a_namespace() -> None:
-    """`V2-D62`: `/o/<org>/` is a *sub-scope* of a user namespace, not a namespace of its own."""
+    """`V2-D64`: `/o/<org>/` is a *sub-scope* of a user namespace, not a namespace of its own."""
     for path in ("/o/acme/", "/org/acme/"):
         with pytest.raises(ScopeError):
             parse_scope(path)
