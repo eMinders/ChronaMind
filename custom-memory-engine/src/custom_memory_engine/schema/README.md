@@ -277,11 +277,11 @@ Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if tw
   result and never a second effect" (`I9`). Per user, append-only, forced per-user RLS; the runtime role may read and append
   but never rewrite. It stores the engine-generated result id, never a request.
 
-`api/runtime.py` and `api/handlers.py` wire eight operations through `Engine.call`: `register_method`, `create_entity`,
-`link`, `unlink`, `adjudicate`, `retract_own`, `grant_access` and `revoke_access`. Every lookup and write runs as the
-caller under the restricted role, so an id the caller may not read is absent to the engine itself. `create_scope` stays
-unwired: no operation of `API_V2.md` creates a scope as a side effect, and a scope needs no row of its own (`scope_grant`
-records membership, and migration 15 lets a scoped row lie anywhere inside its owner's namespace).
+`api/runtime.py` and `api/handlers.py` wire nine operations through `Engine.call`: `register_method`, `create_entity`,
+`create_scope`, `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access` and `revoke_access`. Every lookup and write
+runs as the caller under the restricted role, so an id the caller may not read is absent to the engine itself.
+`create_scope` (`E-040`) creates no row: a scope is its canonical path, and migrating 15 lets a scoped row lie anywhere
+inside its owner's namespace, so the created path is immediately usable. `scope_grant` records read membership.
 
 Rollback: `rollback/012_api_runtime.sql` restores version 11 exactly. Tested by `tests/integration/test_migration_m12.py`
 and `tests/integration/test_api_wiring_structure.py`.

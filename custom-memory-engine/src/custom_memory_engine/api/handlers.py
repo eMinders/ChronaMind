@@ -6,8 +6,9 @@ already run. A handler still never trusts that: it operates under the caller's r
 point's static errors (``EntryError``) and no identifier, path, scope or content.
 
 Operations wired here: ``register_method``, ``create_entity``, ``link``, ``unlink``, ``adjudicate``, ``retract_own``,
-``grant_access`` and ``revoke_access``. ``create_scope`` is deliberately not wired: while every scope is personal
-(``V2-D49`` D11) a sub-scope cannot hold a row, so creating one would record a scope nothing can use.
+``grant_access``, ``revoke_access`` and ``create_scope``. ``create_scope`` was held back by ``E-011`` while every
+scope was the personal root; migration 15 admits a row anywhere inside its owner's namespace (``V2-D64``), so a
+created sub-scope now holds entities, associations and memories like any other (``E-040``).
 """
 
 import re
@@ -27,6 +28,9 @@ from custom_memory_engine.security.audit_guard import content_free_details
 _HASH = re.compile(r"[a-f0-9]{64}")
 _CODE = re.compile(r"[a-z0-9_]{1,64}")
 _ASSERTABLE_KINDS = frozenset({"claim", "procedure"})  # V2-D48: an abstraction or an episode can only be denied
+#: The scope kinds `create_scope` may mint (`API_V2.md` 4.10). `personal` is the `/u/<user>/` root, which is
+#: created with the user and cannot be minted by this operation.
+_CREATABLE_SCOPE_KINDS = frozenset({"project", "session", "task", "shared"})
 
 
 def _text(call: Call, name: str, *, limit: int = 256) -> str:
@@ -237,6 +241,33 @@ class Handlers:
 
     # -- SCOPE ACCESS ------------------------------------------------------------------------------------------
 
+    async def create_scope(self, call: Call) -> str:
+        """``create_scope(parent, segment, kind, idempotency_key)`` -> the canonical scope path (``API_V2.md`` 4.10).
+
+        A scope is identified by its path alone: no row records it, so creation is argument validation plus an
+        idempotency entry and a content-free audit row. ``namespace_owner_only`` has already refused a parent outside
+        the caller's namespace before this runs, and ``ScopePath.child`` re-checks the grammar, so a caller cannot
+        mint a path the database would later refuse. A replay returns the original path and creates nothing.
+        """
+        key, user = _key(call), call.ctx.principal
+        kind = call.arguments.get("kind")
+        if kind not in _CREATABLE_SCOPE_KINDS:
+            raise EntryError("validation_error", "scope_kind_invalid")
+        try:
+            child = parse_scope(call.arguments.get("parent")).child(_text(call, "segment", limit=128))
+        except ScopeError:
+            raise EntryError("validation_error", "scope_invalid") from None
+        if not child.is_within(user_scope(user)):  # defence in depth: the condition already refused this
+            raise EntryError("forbidden")
+        created = child.text
+        async with self.runtime.session(user) as connection:
+            if (found := await replayed(self.runtime, connection, user, "create_scope", key)) is not None:
+                return found
+            await remember(self.runtime, connection, user, "create_scope", key, created)
+            # Counts and a declared word only: a path names a user and a segment, so it is never audited (V2-D54).
+            await _audit(self.runtime, connection, user, "scope_created", {"scope_kind": kind, "depth": child.depth})
+        return created
+
     async def grant_access(self, call: Call) -> str:
         scope, key, user = _scope(call), _key(call), call.ctx.principal
         grantee = call.arguments.get("principal")
@@ -307,6 +338,7 @@ def register_structure_handlers(engine: Engine, runtime: Runtime) -> Handlers:
     table: Mapping[str, Handler] = {
         "register_method": handlers.register_method,
         "create_entity": handlers.create_entity,
+        "create_scope": handlers.create_scope,
         "link": handlers.link,
         "unlink": handlers.unlink,
         "adjudicate": handlers.adjudicate,
