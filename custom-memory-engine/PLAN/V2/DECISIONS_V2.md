@@ -1067,3 +1067,38 @@ design-check script steps the two triggers aside, as it does for the others), an
 - the derivation raise
 
 **Status:** decided by the Project Owner (scope), and verified.
+
+---
+
+### V2-D62 — E-018 conformance suite closed at its W1 scope; three assertions deferred to W3 (closes #69 after W1)
+
+**Context.** The E-018 conformance suite (`tests/integration/test_type_completeness.py`) is green on `main` and passes
+all four properties (storable, queryable, deletable, routed) for every legal `(kind × retention × lifecycle × facet)`
+tuple against the real migrated schema under a `NOSUPERUSER NOBYPASSRLS` role. Both ledger entries E-018 owns are
+`ENFORCED` (`I3` method registry, `I6` retention orthogonality). The v1 regression wall is intact.
+
+**Gap.** Three conformance assertions cannot drive through `Engine.call` because the operations they require are not
+yet wired — they are W3 work:
+
+| Property | Blocks on | W3 task |
+|---|---|---|
+| deletable via `Engine.call` | `delete` operation | `E-037` |
+| queryable via `Engine.call` | `query` operation | `E-033` |
+| procedural memory via `Engine.call` | procedure creation (`infer`) | `E-030` |
+
+The suite reports each of these as "not yet testable" via a positive assertion
+(`test_unwired_operations_are_reported_as_not_yet_testable_never_as_passes`), never as a silent pass.
+
+**Decision.** E-018 is closed at its W1 scope. The three deferred assertions are carried forward as a named
+acceptance criterion on each of `E-030`, `E-033`, and `E-037`: when those operations land, the implementer
+must re-point the suite's corresponding assertions at `Engine.call` and confirm the conformance suite
+`tests/integration/test_type_completeness.py` drives those properties end-to-end through the entry point.
+
+The condition is recorded in `ROADMAP_V2.md` §4 (G1 status block) and in the W3 tracker (#73). G1 is already green
+for the properties that can be tested today; the entry-point criterion for the remaining three is G3's responsibility.
+
+**What it does not mean.** It is not permission to skip these properties. Each W3 issue must include an explicit
+acceptance criterion requiring the conformance suite re-point. An implementer who lands `E-033` without updating
+`test_type_completeness.py` has not met their AC.
+
+**Status:** decided; binding on `E-030`, `E-033`, `E-037`.
