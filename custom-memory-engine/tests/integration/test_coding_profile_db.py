@@ -11,7 +11,7 @@ from typing import cast
 import pytest
 
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
-from custom_memory_engine.api.runtime import Receipt
+from custom_memory_engine.api.runtime import DbTargets, Receipt
 from custom_memory_engine.engine.channels import channel_of
 from custom_memory_engine.model.axes import Kind, Lifecycle
 from custom_memory_engine.profile import load_profile
@@ -26,7 +26,9 @@ PROFILE = Path(__file__).resolve().parents[2] / "src" / "custom_memory_engine" /
 async def test_captured_episode_via_wired_api_uses_profile_retention(database, position: int) -> None:  # noqa: F811
     item = coding_artifacts()[position]
     async with world(database) as (conn, engine, _schema):
-        register_ingest_handlers(engine, engine.resolver.runtime, load_profile(PROFILE))  # type: ignore[attr-defined]
+        assert isinstance(engine.resolver, DbTargets)
+        runtime = engine.resolver.runtime
+        register_ingest_handlers(engine, runtime, load_profile(PROFILE))
         receipt = await engine.call(
             caller("alice"),
             "ingest_episode",
@@ -44,15 +46,15 @@ async def test_captured_episode_via_wired_api_uses_profile_retention(database, p
             },
         )
         assert isinstance(receipt, Receipt)
-        assert await rows(
-            conn, "SELECT kind, lifecycle, retention, scope_path FROM memory_version WHERE id = %s", (receipt.id,)
-        ) == [("episode", "observed", "session", "/u/alice/")]
-        assert await rows(
-            conn, "SELECT source_type, source_ref FROM memory_evidence WHERE version_id = %s", (receipt.id,)
-        ) == [("external", item.source.ref)]
-        async with engine.resolver.runtime.session("alice"):  # type: ignore[attr-defined]
-            stored = await rows(conn, "SELECT kind, lifecycle FROM memory_version WHERE id = %s", (receipt.id,))
-        assert len(stored) == 1, item.name
+        async with runtime.session("alice"):
+            stored = await rows(
+                conn, "SELECT kind, lifecycle, retention, scope_path FROM memory_version WHERE id = %s", (receipt.id,)
+            )
+            evidence = await rows(
+                conn, "SELECT source_type, source_ref FROM memory_evidence WHERE version_id = %s", (receipt.id,)
+            )
+        assert stored == [("episode", "observed", "session", "/u/alice/")], item.name
+        assert evidence == [("external", item.source.ref)], item.name
         kind, lifecycle = cast(Kind, stored[0][0]), cast(Lifecycle, stored[0][1])
         channel = channel_of(kind, lifecycle, "none", False, False)
         assert channel == item.expected_channel, f"{item.name}: expected {item.expected_channel}, got {channel}"
@@ -62,7 +64,9 @@ async def test_captured_episode_via_wired_api_uses_profile_retention(database, p
 async def test_literal_coding_sources_are_currently_rejected(database, position: int) -> None:  # noqa: F811
     item = coding_artifacts()[position]
     async with world(database) as (conn, engine, _schema):
-        register_ingest_handlers(engine, engine.resolver.runtime, load_profile(PROFILE))  # type: ignore[attr-defined]
+        assert isinstance(engine.resolver, DbTargets)
+        runtime = engine.resolver.runtime
+        register_ingest_handlers(engine, runtime, load_profile(PROFILE))
         error = await forbidden(
             engine,
             caller("alice"),
@@ -93,7 +97,9 @@ async def test_grounded_repository_claim_routes_from_stored_row(database) -> Non
             "VALUES (%s, 's-alice', 'alice', 2, 'user', %s, %s)",
             (item.source.ref, item.source.content, item.event_time),
         )
-        register_ingest_handlers(engine, engine.resolver.runtime, load_profile(PROFILE))  # type: ignore[attr-defined]
+        assert isinstance(engine.resolver, DbTargets)
+        runtime = engine.resolver.runtime
+        register_ingest_handlers(engine, runtime, load_profile(PROFILE))
         receipt = await engine.call(
             caller("alice"),
             "assert",
@@ -114,7 +120,7 @@ async def test_grounded_repository_claim_routes_from_stored_row(database) -> Non
             },
         )
         assert isinstance(receipt, Receipt) and receipt.effect == "asserted", item.name
-        async with engine.resolver.runtime.session("alice"):  # type: ignore[attr-defined]
+        async with runtime.session("alice"):
             stored = await rows(
                 conn, "SELECT kind, lifecycle, retention, scope_path FROM memory_version WHERE id = %s", (receipt.id,)
             )
