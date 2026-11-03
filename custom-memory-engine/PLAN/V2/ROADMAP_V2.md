@@ -130,7 +130,7 @@ mechanical guarantee that the plan stays consistent as it is edited.
 **W1 progress (r13).** Eleven of the thirteen W1 tasks are complete on `main`: `E-010` (migration 5), `E-011`
 (migrations 11 and 15, #131 and #150), `E-012` (migration 9, closing `T-28`), `E-013` (migration 8), `E-014` (migration 10,
 #130), `E-015`, `E-016` (migrations 7 and 14), `E-017`, `E-018` (`V2-D62`), `E-019` and `E-020` (migration 6). The two
-remaining are `E-039` (#97), open on criterion 5 only, which completes as the 18 unwired operations land (§4.1,
+remaining are `E-039` (#97), open on criterion 5 only, which completes as the 17 unwired operations land (§4.1,
 `V2-D63`), and `E-040` (#148), the `create_scope` behaviour split out of `E-011` at its closure (`V2-D63`). The r11
 note counted `E-014`, `E-011` and `E-018` as outstanding; all three have since closed. This paragraph replaces the r11
 one (it contradicted `E-016`'s completion and `E-011`/`E-014`/`E-018`'s closures); the r11 text remains in this file's
@@ -175,12 +175,12 @@ When these three W3 operations land, the conformance suite's corresponding asser
 as "not yet testable", never as passes. `E-018` (#69) is closed with this record; the W3 tasks carry the
 outstanding criterion (`V2-D62`).
 
-### 4.1 `E-039` deferral register — the 18 unwired operations (r13, `V2-D63`)
+### 4.1 `E-039` deferral register — the 17 unwired operations (r13, `V2-D63`)
 
-`Engine.call` dispatches to registered handlers and nothing else. **11 of 29** operations are wired
-(`register_method`, `create_entity`, `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access`, `revoke_access`
-via `api/handlers.py`; `ingest_episode`, `assert`, `ingest_artifact` via `api/ingest_handlers.py`). The remaining
-**18** answer `forbidden` (`operation_not_wired`) before any statement runs, so `E-039`'s criterion 5 — *"`E-018`'s
+`Engine.call` dispatches to registered handlers and nothing else. **12 of 29** operations are wired
+(`register_method`, `create_entity`, `create_scope`, `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access`,
+`revoke_access` via `api/handlers.py`; `ingest_episode`, `assert`, `ingest_artifact` via `api/ingest_handlers.py`).
+The remaining **17** answer `forbidden` (`operation_not_wired`) before any statement runs, so `E-039`'s criterion 5 — *"`E-018`'s
 conformance suite drives the engine only through this entry point"* — cannot be satisfied yet, and `E-039` (#97)
 stays open until it is.
 
