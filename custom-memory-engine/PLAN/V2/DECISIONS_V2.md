@@ -1109,7 +1109,7 @@ acceptance criterion requiring the conformance suite re-point. An implementer wh
 
 **Context.** `E-039` (#97) is the one runtime door to the 29 operations of `API_V2.md`. On `main` it enforces
 authorisation, every condition code and the static error contract, and it dispatches to whatever handlers are
-registered — but only **11 of 29** operations are wired: `register_method`, `create_entity`, `link`, `unlink`,
+registered — but only **11 of 29** operations were wired as recorded at r13 (12 now, after `E-040` wired `create_scope`): `register_method`, `create_entity`, `link`, `unlink`,
 `adjudicate`, `retract_own`, `grant_access`, `revoke_access` (`api/handlers.py`, #132) and `ingest_episode`,
 `assert`, `ingest_artifact` (`api/ingest_handlers.py`, #133). The remaining **18** return `forbidden`
 (`operation_not_wired`) before any statement runs.
