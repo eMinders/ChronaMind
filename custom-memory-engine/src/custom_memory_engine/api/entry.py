@@ -248,6 +248,14 @@ async def _namespace_owner_only(
             raise _fail(op, "forbidden")
     if target is None:
         raise _fail(op, "validation_error", "scope_required")
+    # A malformed target is a grammar fault, not an authorisation decision: `API_V2.md` 4.10 separates
+    # `validation_error` (the grammar of section 6) from `forbidden` (outside the caller's namespace). Answering
+    # `forbidden` for an unparseable path would tell a caller its input was well formed.
+    if isinstance(target, str):
+        try:
+            parse_scope(target)
+        except ScopeError:
+            raise _fail(op, "validation_error", "scope_invalid") from None
     try:
         authorize_write(ctx.principal, target, "private")
     except ScopeError:

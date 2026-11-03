@@ -1225,3 +1225,45 @@ exclusion constraint on `user_id`, keying the watermark on `user_id`, leading th
 dropping the rollback's sub-scope guard.
 
 **Status:** decided and verified.
+
+### V2-D65 — `create_scope` ships now, and a malformed scope argument is a grammar error, not `forbidden` (closes #148)
+
+**Decision.** Two parts, the first answering the open question issue #148 required to be settled before code.
+
+1. **`create_scope` ships now** (option (a) of that issue), because the premise of its deferral is gone. `E-011` left it
+   unwired on the grounds that "while every scope is personal a sub-scope cannot hold a row, so creating one would
+   record a scope nothing can use". Migration 15 (`V2-D64`) admits a row anywhere inside its owner's namespace on all
+   thirteen scoped tables, so a created sub-scope is immediately usable for entities, sessions and memories alike, and
+   the operation does exactly what `API_V2.md` §4.10 says. It is not a writer for `project`/`shared` *visibility*, which
+   stays `I7`'s remaining gap: a scope can now exist and hold `private` rows.
+2. **A malformed scope argument is `validation_error`, not `forbidden`.** `API_V2.md` §4.10 separates the two:
+   `validation_error` for the §6 grammar, `forbidden` for a target outside the caller's namespace. The
+   `namespace_owner_only` check previously answered `forbidden` for an unparseable path, which told a caller its input
+   was well formed. It now parses first and refuses grammar faults as `validation_error`/`scope_invalid`, then applies
+   the namespace rule. The mutation test in `tests/test_api_entry.py` still removes the namespace check and shows the
+   same call succeeding, so the authorisation half is still the reason `/u/bob/` is refused.
+
+**Why a scope needs no row.** A scope *is* its canonical path: `scope_grant` records read membership of a subtree, and
+`memory_version.scope_path` records where a row lives. A `SCOPE` table would duplicate the path in every row that
+already carries one and would need its own RLS, its own consistency checks against thirteen tables, and a cascade story
+for revocation. Creating a scope is therefore validation plus an idempotency entry, and a content-free audit row.
+
+**Consequential change.** `namespace_owner_only` is shared with `grant_access` and `revoke_access`, so those now also
+answer `validation_error` for a malformed scope instead of `forbidden`. That is the contract's own distinction and the
+tests for both are green; a well-formed target outside the namespace is still exactly `forbidden`, so nothing about
+existence leaks.
+
+**Implementation.** `api/handlers.py::Handlers.create_scope`, registered in `register_structure_handlers`;
+`api/entry.py::_namespace_owner_only`; `security/audit_guard.py` gains `scope_kind` and `depth` (a declared word and a
+small integer, so neither can carry a path segment, a user or a scope).
+
+**Verification.** `tests/integration/test_create_scope.py` (26): wired and absent from `unwired_operations`; every
+creatable kind; `personal` refused; nesting below an existing sub-scope; a Tier B caller refused before any statement;
+a parent outside the namespace refused with the same `forbidden` as an unknown one; eight malformed-argument cases;
+depth limit; replayed key returns the original path with one idempotency row and one audit row; a second key for the
+same path succeeds; another caller's key never leaks a scope; the audit row carries the kind and depth but no path,
+segment or user; and the created scope really holds an entity, a session row and a memory version.
+`tests/integration/test_type_completeness.py` drives `create_scope` through `Engine.call` and asserts it has left the
+unwired set. `tests/test_api_entry.py` keeps the mutation case for `namespace_owner_only`.
+
+**Status:** decided and verified.

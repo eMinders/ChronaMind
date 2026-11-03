@@ -220,7 +220,7 @@ criteria in its own task:
 | 13 | `rebuild_index` | `A-014` | W7 tracker #79 (child not yet created) | wires `rebuild_index`; admin-only refusal asserted through `Engine.call` |
 | 14 | `delete` | `E-037` | W3 tracker #73 (child not yet created) | wires `delete`; suite's **deletable** property runs through `Engine.call` |
 | 15 | `export` | `A-015` | W7 tracker #79 (child not yet created) | wires `export`; export selector set asserted through `Engine.call` |
-| 16 | `create_scope` | `E-040` | #148 | wires `create_scope` under `namespace_owner_only`; scope creation asserted through `Engine.call` |
+| 16 | ~~`create_scope`~~ | ~~`E-040`~~ | **wired** (#151) | `create_scope` is wired under `namespace_owner_only` and asserted through `Engine.call` (`tests/integration/test_create_scope.py`); it leaves this register |
 | 17 | `stats` | `C-010` | W4 tracker #74 (child not yet created) | wires `stats`; `ABSTRACTION_STATS` read asserted through `Engine.call` |
 | 18 | `cost` | `E-036` | W3 tracker #73 (child not yet created) | wires `cost`; per-stage cost report asserted through `Engine.call` |
 
