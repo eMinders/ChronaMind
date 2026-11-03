@@ -85,7 +85,7 @@ lineage produced; Tier C: its own assertions), `scope_writable` (`scope.access.a
 | 4 | Read | `refine` | ✓ | ✓ | ✓ | `targets_readable` |
 | 5 | Read | `get` | ✓ | ✓ | ✓ | `targets_readable` |
 | 6 | Read | `provenance` | ✓ | ✓ | ✓ | `targets_readable` |
-| 7 | Write (grounded) | `assert` | ✓ | ✓ | ✓ | `evidence_required`, `scope_writable` |
+| 7 | Write (grounded) | `assert` | ✓ | ✓ | ✓ | `evidence_required`, `scope_writable`, `targets_readable` |
 | 8 | Write (grounded) | `retract_own` | ✓ | ✓ | ✓ | `own_lineage_only`, `targets_readable` |
 | 9 | Write (inferred) | `infer` | ✓ | — | — | `registered_method`, `scope_writable`, `targets_readable` |
 | 10 | Write (inferred) | `verify` | ✓ | — | — | `own_lineage_only`, `targets_readable` |
@@ -167,10 +167,11 @@ only (`CHANNELS.md` R6, `THREAT_MODEL.md` T-10). *Errors:* `forbidden` for absen
 
 ### 4.3 Write (grounded)
 
-**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key) → Receipt | rejected`**
+**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key, subject_entity?) → Receipt | rejected`**
 A grounded statement through the grounding policy. **`evidence` must be non-empty for Tier B and Tier C
-alike** (TB3). Result lifecycle: `asserted` or `contested`. *Errors:* `validation_error` (no evidence, bad
-range), `rejected` (instruction screen, assertion mode, conflict), `forbidden`.
+alike** (TB3). An optional `subject_entity` names an entity in the same scope as the claim; the claim's subject and
+entity remain scope-local. Result lifecycle: `asserted` or `contested`. *Errors:* `validation_error` (no evidence, bad
+range), `rejected` (instruction screen, assertion mode, conflict), `forbidden` (unreadable or different-scope entity).
 
 **`retract_own(ctx, artifact_id, reason) → Receipt`**
 Moves an artifact to `retired` (recorded-time close). Tier B: only artifacts **its own method produced**. Tier C:
@@ -207,13 +208,14 @@ as an association with `origin='tier_b'` and has **no** channel effect; a Tier B
 against its own inference uses `refute`. *Errors:* `forbidden`, `validation_error` (unknown type).
 
 **`create_entity(ctx, scope, entity_type, label, idempotency_key) → EntityId`** (`V2-D46`)
-Creates a principal-scoped, opaque entity (`ARCHITECTURE_V2.md` 5.2, `V2-D25`) in a scope the caller may write.
+Creates a scope-local, opaque entity (`ARCHITECTURE_V2.md` 5.2) in a persisted scope the caller may write.
 The `EntityId` is engine-generated; `label` is content and follows the scope's read rules. A replay with the same
 key returns the same id. *Errors:* `forbidden` (scope not writable), `validation_error`.
 
 **`link_entity(ctx, entity_a, entity_b, relation) → Receipt`**
-Links two entities and requires authorisation on **both** scopes; otherwise it fails with the same `forbidden`
-as a missing entity (`THREAT_MODEL.md` T-09).
+Records an explicit relation between two scope-local entities. It requires authorisation on **both** scopes;
+otherwise it fails with the same `forbidden` as a missing entity (`THREAT_MODEL.md` T-09). The link does not
+merge their ids or move either entity's attributes.
 
 **`record_outcome(ctx, procedure_id, outcome: success|failure, cost?, episode_ref?) → OutcomeStats`**
 Retrospective only; updates `outcome_stats`. There is no execution. *Errors:* `precondition_failed` (not a
@@ -266,7 +268,8 @@ Scope administration is part of the engine API, because it decides every read se
 
 **`create_scope(ctx, parent, segment, kind, idempotency_key) → ScopePath`** — creates `parent + segment + '/'`
 with `kind ∈ {project, session, task, shared}` inside the caller's own namespace (`personal` scopes are the
-`/u/<user>/` roots, created with the user). The segment follows the `API_V2.md` §6 grammar. *Errors:*
+`/u/<user>/` roots, created with the user). Child scopes are persisted and can hold their own memories and entities;
+the root path remains implicit for backwards compatibility. The segment follows the `API_V2.md` §6 grammar. *Errors:*
 `validation_error` (grammar), `forbidden` (outside the caller's namespace).
 
 **`grant_access(ctx, scope, principal, idempotency_key) → GrantId`** — a `scope_grant` row (`V2-D36`): `principal`

@@ -8,6 +8,8 @@ Unified research specification, benchmark corpus, evaluation harness, and implem
 
 All specifications, literature references, decision records, public/synthetic benchmarks, evaluation harnesses, and engine modules are consolidated in this single self-contained directory, maintaining strict code, dependency, database, and runtime isolation from the root `app/` service.
 
+**Cross-domain entity rule (E-024):** entities are scope-local, so the same person has separate opaque ids in separate scopes. An explicit `link_entity` relation can connect those ids only when the caller can read both scopes; neither id's claims or attributes become readable from the other scope. This avoids a global identity index. See [`ARCHITECTURE_V2.md` §5.2](PLAN/V2/ARCHITECTURE_V2.md), [`API_V2.md` §4.5](PLAN/V2/API_V2.md), and the [cross-domain integration scenario](tests/integration/test_cross_domain_entity.py).
+
 ---
 
 ## 1. Completed & Verified Deliverables (`P0`, `P1`, and Wave 2 `#14`–`#19`)
