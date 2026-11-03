@@ -1102,3 +1102,61 @@ acceptance criterion requiring the conformance suite re-point. An implementer wh
 `test_type_completeness.py` has not met their AC.
 
 **Status:** decided; binding on `E-030`, `E-033`, `E-037`.
+
+---
+
+### V2-D63 — The `E-039` deferral register: every unwired operation has a named owner and an entry-point acceptance criterion
+
+**Context.** `E-039` (#97) is the one runtime door to the 29 operations of `API_V2.md`. On `main` it enforces
+authorisation, every condition code and the static error contract, and it dispatches to whatever handlers are
+registered — but only **11 of 29** operations are wired: `register_method`, `create_entity`, `link`, `unlink`,
+`adjudicate`, `retract_own`, `grant_access`, `revoke_access` (`api/handlers.py`, #132) and `ingest_episode`,
+`assert`, `ingest_artifact` (`api/ingest_handlers.py`, #133). The remaining **18** return `forbidden`
+(`operation_not_wired`) before any statement runs.
+
+`E-039`'s criterion 5 — *"`E-018`'s conformance suite drives the engine only through this entry point"* — is
+therefore a **forward obligation that no single task owns**. `V2-D62` named only three of the blocking operations
+(`delete`, `query`, procedure creation); the other fifteen were named nowhere, so an implementer landing one of them
+could satisfy their own acceptance criteria and still leave the conformance suite unable to reach the entry point.
+
+**Gap this record closes.** Two defects were found while auditing the deferral:
+
+1. **Fifteen operations had no entry-point criterion at all.** `V2-D62` binds `E-030`, `E-033` and `E-037`; nothing
+   bound `refine`, `get`, `provenance`, `infer`, `verify`, `refute`, `link_entity`, `record_outcome`, `dissent`,
+   `purge_working`, `expire`, `rebuild_index`, `export`, `stats`, or `cost`.
+2. **The operation owners are not all represented as issues.** Every W3 task (`E-030`–`E-038`) and most W4/W5/W7
+   tasks read "Child issue: *not yet created*" in their trackers (#73, #74, #75, #79), per the trackers' own rule
+   that a child issue is opened **when its wave opens**. `A-014`/`A-015` have no issue either: the earlier
+   appearance of `#57`/`#58` as their owners was a false match on `MA-014`/`MA-015`.
+
+**Decision.**
+
+1. **The owner of an unwired operation is the task that builds its behaviour**, exactly as `COVERAGE.md` already
+   declares it. Ownership is authoritative in the plan, not in the issue tracker; between them, `COVERAGE.md` and
+   `COVERAGE_MATRIX.md` bind every operation to a roadmap task, and `plan_coverage.py --check` fails if any
+   operation is unowned. The plan is the owner of record until the wave opens and its child issue exists.
+2. **Every one of the 18 carries the same three-part entry-point acceptance criterion**, stated per operation in
+   the deferral register of `ROADMAP_V2.md` §4.1 and summarised here: (a) the operation is wired through
+   `Engine.call` and reachable only through it; (b) the `E-018` conformance suite is updated to exercise that
+   operation **exclusively** through `Engine.call`; (c) the queryable, deletable and procedural properties it
+   touches are verified **through the public entry point**, not below it.
+3. **`E-039` stays open** until criterion 5 is genuinely satisfied, i.e. until all 29 operations are wired and the
+   conformance suite drives the engine only through the entry point. `E-039` does **not** implement any of the 18;
+   its remaining work is the criterion, not the operations.
+4. **`create_scope` gets a new owning task**, `E-040` (#148), because its declared owner `E-011` (#62) closed on its
+   migration scope with the operation deliberately unwired (`api/handlers.py`: "while every scope is personal").
+   Leaving it on a closed issue would have left one operation with no open owner.
+5. **No duplicate issues.** This record does not open W3/W4/W5/W7 children ahead of their wave gates; the
+   trackers keep them "not yet created" and gain the deferral criterion to apply when they are written.
+
+**What it does not mean.** It is not permission to wire an operation under `E-039`, and it is not permission to skip
+a criterion 5 obligation because a task is not yet an issue. It also does not reopen `E-018` (#69), which `V2-D62`
+closed at its W1 scope: the suite's re-point is the owning tasks' work, verified against `E-039`.
+
+**Consequence for the gates.** `G1` is already green for the properties testable today (`V2-D62`). Criterion 5, and
+therefore the last of `E-039`'s five, completes with the last of the 18 operations; the binding obligations are
+listed in `ROADMAP_V2.md` §4.1, and the three gate-critical ones (`delete`, `query`, procedure creation) remain the
+`G3` conditions `V2-D62` recorded.
+
+**Status:** decided; binding on `E-039` (#97), on all 18 owner tasks in `ROADMAP_V2.md` §4.1, on `E-040`, and on the
+W2/W3/W4/W5/W7 trackers (#72, #73, #74, #75, #79).
