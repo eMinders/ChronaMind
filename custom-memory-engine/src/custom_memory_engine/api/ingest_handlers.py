@@ -3,15 +3,16 @@
 Same contract as :mod:`api.handlers`: reached only through :meth:`api.entry.Engine.call`, run as the caller under
 the restricted role, static errors only.
 
-* ``ingest_episode`` records an ``observed`` episode of a declared source: a ``turn`` of the caller's own, or an
-  ``external`` reference (locator + SHA-256 of the captured text, no engine row). No gate runs: an episode asserts
-  nothing, it records that a source said something at a time (``ARCHITECTURE_V2.md`` 2.3).
-* ``assert`` / ``ingest_artifact`` send a claim through the **v1 validation gate** (``engine.ingest.apply_candidate``,
-  whose verdicts ``engine.admission.ground`` reproduces exactly for turns) and answer ``asserted`` (accepted),
-  ``contested`` (held) or a ``Rejected`` **result** with the gate's static reason code; the decision is recorded
-  either way. Only ``turn`` evidence can be grounded: an external reference carries a hash, not the captured text,
-  so the engine has nothing to check a span against. Asserting from external evidence alone is therefore a
-  ``validation_error`` here, not a silent pass.
+* ``ingest_episode`` records an ``observed`` episode of a declared source: a ``turn`` of the caller's own, an
+  ``external`` reference, or one of the coding-profile source types ``tool``, ``file``, or ``event`` (V2-D66,
+  V2-D41 extension). No gate runs: an episode asserts nothing, it records that a source said something at a time
+  (``ARCHITECTURE_V2.md`` 2.3). The optional ``scope`` argument (``API_V2.md`` §4) is propagated to
+  ``CandidateVersionInput.scope_path`` so repository-scoped episodes persist under the requested path (issue #155).
+* ``assert`` / ``ingest_artifact`` send a claim or procedure through the **v1 validation gate**
+  (``engine.ingest.apply_candidate``) and answer ``asserted``, ``contested`` or a ``Rejected`` result; the
+  decision is recorded either way. ``kind='procedure'`` is now accepted in addition to ``kind='claim'``
+  (V2-D66, issue #157). Only ``turn`` evidence can be grounded through the gate; ``external``/``tool``/``file``/
+  ``event`` evidence carries a hash, not captured text. The ``scope`` argument is propagated as above.
 
 Both write under the generic predicates of migration 13 (multi-valued), so they never supersede one another.
 """
@@ -30,8 +31,12 @@ from custom_memory_engine.engine.transactions import CandidateVersionInput, Evid
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.model.axes import Kind, Retention
 from custom_memory_engine.profile import Profile
+from custom_memory_engine.scope.paths import ScopeError, parse_scope
 
-_SOURCE_TYPES = ("turn", "external")  # V2-D41: the declared source types
+# V2-D41 + V2-D66: tool/file/event are the coding-profile source types; turn and external are the W1 originals.
+_SOURCE_TYPES = ("turn", "external", "tool", "file", "event")
+# Kinds that the assert / ingest_artifact path accepts.  Abstractions come from `infer` (C-021).
+_ASSERTABLE_KINDS = frozenset({"claim", "procedure"})
 _CONTENT_LIMIT = 20_000
 
 
@@ -58,6 +63,24 @@ def _when(value: object, field: str) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _scope_path(raw: object, user: str) -> str | None:
+    """Parse and validate the optional ``scope`` argument; returns the canonical text or ``None``.
+
+    ``None`` means fall back to the caller's personal root, preserving backward compatibility.
+    The entry point's ``scope_writable`` condition has already verified the path is within
+    ``/u/<user>/``; this is defence in depth.
+    """
+    if raw is None:
+        return None
+    try:
+        path = parse_scope(raw)
+    except ScopeError:
+        raise EntryError("validation_error", "scope_invalid") from None
+    if not path.text.startswith(f"/u/{user}/"):
+        raise EntryError("forbidden")
+    return path.text
+
+
 def _source(raw: object) -> Mapping[str, object]:
     if not isinstance(raw, Mapping):
         raise EntryError("validation_error", "source_invalid")
@@ -68,6 +91,28 @@ def _source(raw: object) -> Mapping[str, object]:
     if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise EntryError("validation_error", "content_hash_invalid")
     return raw
+
+
+def _evidence_for_source(source: Mapping[str, object], span: str) -> EvidenceInput:
+    """Build an ``EvidenceInput`` from a validated source mapping.
+
+    ``turn`` sources link to a turn row; all other declared source types are stored as
+    external references with their declared content hash (the turn-grounding gate runs
+    separately in ``_assert`` for claim/procedure writes).
+    """
+    source_type = str(source["type"])
+    ref = str(source["ref"])
+    content_hash = str(source["content_hash"])
+    if source_type == "turn":
+        # Caller pre-validated the hash matches the turn text before calling this helper.
+        return EvidenceInput(turn_id=ref, evidence_span=span)
+    # tool / file / event / external — stored as external reference rows (V2-D41, V2-D66).
+    return EvidenceInput(
+        source_type="external",
+        source_ref=ref,
+        content_hash=content_hash,
+        evidence_span=span,
+    )
 
 
 async def _turns(
@@ -157,6 +202,7 @@ class IngestHandlers:
         content = _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT)
         source = _source(call.arguments.get("source"))
         event_time = _when(call.arguments.get("event_time"), "event_time")
+        scope = _scope_path(call.arguments.get("scope"), user)
         self._require_kind("episode")
         span = _text(source.get("span") or source["ref"], "source_span")
         try:
@@ -172,20 +218,14 @@ class IngestHandlers:
                         raise EntryError("forbidden")  # absent and another user's are the same answer
                     if source["content_hash"] != canonical_hash(turns[turn_id][1]):
                         raise EntryError("validation_error", "content_hash_mismatch")
-                    evidence = EvidenceInput(turn_id=turn_id, evidence_span=span)
-                else:
-                    evidence = EvidenceInput(
-                        source_type="external",
-                        source_ref=str(source["ref"]),
-                        content_hash=str(source["content_hash"]),
-                        evidence_span=span,
-                    )
+                evidence = _evidence_for_source(source, span)
                 version_id = new_id("v")
                 recorded = await now(connection)
                 candidate = CandidateVersionInput(
                     version_id=version_id,
                     memory_key=new_id("ep"),
                     user_id=user,
+                    scope_path=scope,
                     subject_key="self",
                     predicate_key="episode",
                     single_valued=False,
@@ -208,18 +248,19 @@ class IngestHandlers:
     async def _assert(self, call: Call, content: str, evidence: object, event_range: object) -> Receipt | Rejected:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
         kind = call.arguments.get("kind")
-        if kind != "claim":
+        if kind not in _ASSERTABLE_KINDS:
             raise EntryError(
                 "validation_error", "kind_not_supported"
-            )  # procedures: W3; abstractions come from `infer`
-        self._require_kind("claim")
+            )  # abstractions come from `infer` (C-021); episodes are never asserted
+        self._require_kind(kind)  # type: ignore[arg-type]
         if not isinstance(evidence, Sequence) or isinstance(evidence, str | bytes) or not evidence:
             raise EntryError("validation_error", "evidence_required")
         sources = [_source(item) for item in evidence]
         if any(source["type"] != "turn" for source in sources):
-            # An external reference carries a hash, not the captured text: there is nothing to check a span against.
+            # An external/tool/file/event reference carries a hash, not the captured text: nothing to ground a span.
             raise EntryError("validation_error", "external_evidence_cannot_be_grounded")
         spans = [_text(source.get("span"), "source_span") for source in sources]
+        scope = _scope_path(call.arguments.get("scope"), user)
         start, end = (None, None)
         if event_range is not None:
             if not isinstance(event_range, Sequence) or isinstance(event_range, str | bytes) or len(event_range) != 2:
@@ -236,10 +277,13 @@ class IngestHandlers:
                 if source["content_hash"] != canonical_hash(turns[str(source["ref"])][1]):
                     raise EntryError("validation_error", "content_hash_mismatch")
             version_id, recorded = new_id("v"), await now(connection)
+            # layer: procedures use semantic layer; claims too — both are grounded beliefs
+            layer = "semantic"
             candidate = CandidateVersionInput(
                 version_id=version_id,
                 memory_key=new_id("st"),
                 user_id=user,
+                scope_path=scope,
                 subject_key="self",
                 predicate_key="statement",
                 single_valued=False,
@@ -247,7 +291,7 @@ class IngestHandlers:
                 valid_from=start or recorded,
                 valid_until=end,
                 valid_from_basis="explicit" if start else "inferred",
-                layer="semantic",
+                layer=layer,
                 evidence=tuple(
                     EvidenceInput(turn_id=turn_id, evidence_span=span)
                     for turn_id, span in zip(turn_ids, spans, strict=True)
@@ -260,7 +304,7 @@ class IngestHandlers:
                 schema_name=self.runtime.schema_name,
             )
             await _stamp_creator(self.runtime, connection, call, version_id)
-            await self._apply_retention(connection, user, version_id, "claim")
+            await self._apply_retention(connection, user, version_id, kind)  # type: ignore[arg-type]
             await remember(self.runtime, connection, user, "assert", key, version_id)
             # the answer is read back from what was recorded, exactly as a replay reads it
             return await _original_answer(self.runtime, connection, user, version_id, "asserted")

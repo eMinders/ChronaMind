@@ -101,7 +101,7 @@ class EvidenceInput(_TransactionModel):
     turn_id: str | None = None
     evidence_span: str
     evidence_role: str = "primary"
-    source_type: Literal["turn", "external"] = "turn"
+    source_type: Literal["turn", "external", "tool", "file", "event"] = "turn"
     source_ref: str | None = None
     content_hash: str | None = None
 
@@ -117,6 +117,8 @@ class EvidenceInput(_TransactionModel):
                 raise ValueError("turn_evidence_requires_only_a_turn_id")
             _validate_nonblank(self.turn_id, code="evidence_nonblank_field_required")
             return self
+        # external / tool / file / event: all stored as external-reference rows.
+        # They carry a content_hash and source_ref but no turn_id.
         if self.turn_id is not None or self.source_ref is None or self.content_hash is None:
             raise ValueError("external_evidence_requires_source_ref_and_content_hash")
         _validate_nonblank(self.source_ref, code="evidence_nonblank_field_required")

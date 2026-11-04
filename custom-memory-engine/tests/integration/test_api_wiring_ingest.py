@@ -115,7 +115,7 @@ async def test_episode_inputs_are_validated_with_static_codes(database) -> None:
         }
         cases = {
             "undeclared_type": (
-                {**base, "source": {**EXTERNAL, "type": "tool"}},
+                {**base, "source": {**EXTERNAL, "type": "url"}},
                 ("validation_error", "source_type_not_declared"),
             ),
             "short_hash": (
@@ -284,9 +284,8 @@ async def test_assert_refuses_what_it_cannot_ground_or_support(database) -> None
                 ("validation_error", "external_evidence_cannot_be_grounded"),
             ),
             "empty_evidence": (claim(evidence=[], idempotency_key="e2"), ("validation_error", "evidence_required")),
-            "procedure": (claim(kind="procedure", idempotency_key="e3"), ("validation_error", "kind_not_supported")),
             "abstraction": (
-                claim(kind="abstraction", idempotency_key="e4"),
+                claim(kind="abstraction", idempotency_key="e3"),
                 ("validation_error", "kind_not_supported"),
             ),
             "no_span": (
