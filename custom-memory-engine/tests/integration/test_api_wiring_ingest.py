@@ -332,3 +332,46 @@ async def test_what_assert_wrote_can_be_adjudicated_and_retracted_through_the_sa
             caller("alice"), "retract_own", {"artifact_id": receipt.id, "reason": "changed_mind"}
         )
         assert isinstance(retracted, Receipt) and retracted.effect == "retired"
+
+
+# ---------------------------------------------------------------------------------------------- the scope argument
+
+
+SUB = "/u/alice/p/chrona/"
+
+
+async def test_the_scope_argument_places_an_episode_and_a_claim_in_that_scope(database) -> None:  # noqa: F811
+    """E-021-F3: the handlers used to ignore ``scope`` and always stored the personal root."""
+    async with world(database) as (conn, engine, _):
+        await with_turn(conn, engine)
+        episode = await engine.call(
+            caller("alice"),
+            "ingest_episode",
+            {
+                "scope": SUB,
+                "source": turn_source("vegetarian"),
+                "content": "alice said she is vegetarian",
+                "event_time": None,
+                "idempotency_key": "sc-ep",
+            },
+        )
+        asserted = await engine.call(caller("alice"), "assert", claim(scope=SUB, idempotency_key="sc-as"))
+        root = await engine.call(caller("alice"), "assert", claim_at_root())
+        assert isinstance(episode, Receipt) and isinstance(asserted, Receipt) and isinstance(root, Receipt)
+        placed = {str(r[0]): str(r[1]) for r in await rows(conn, "SELECT id, scope_path FROM memory_version")}
+        assert placed == {episode.id: SUB, asserted.id: SUB, root.id: "/u/alice/"}
+
+
+def claim_at_root() -> dict[str, object]:
+    return claim(idempotency_key="sc-root")
+
+
+async def test_a_scope_that_is_not_the_callers_is_refused_and_nothing_is_stored(database) -> None:  # noqa: F811
+    async with world(database) as (conn, engine, _):
+        await with_turn(conn, engine)
+        for scope in ("/u/bob/", "/u/bob/p/x/", "not-a-scope"):
+            error = await forbidden(
+                engine, caller("alice"), "assert", claim(scope=scope, idempotency_key=f"x-{scope}")
+            )
+            assert error.code in ("forbidden", "validation_error"), scope
+        assert await rows(conn, "SELECT count(*) FROM memory_version") == [(0,)]

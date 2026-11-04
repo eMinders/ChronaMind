@@ -30,6 +30,7 @@ from custom_memory_engine.engine.transactions import CandidateVersionInput, Evid
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.model.axes import Kind, Retention
 from custom_memory_engine.profile import Profile
+from custom_memory_engine.scope.paths import ScopeError, parse_scope
 
 _SOURCE_TYPES = ("turn", "external")  # V2-D41: the declared source types
 _CONTENT_LIMIT = 20_000
@@ -39,6 +40,14 @@ def _text(value: object, field: str, *, limit: int = 512) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > limit:
         raise EntryError("validation_error", f"{field}_required")
     return value
+
+
+def _scope(call: Call) -> str:
+    """The scope the caller asked to write into, canonical. The entry point already proved it writable (TB7)."""
+    try:
+        return parse_scope(call.arguments.get("scope")).text
+    except ScopeError:
+        raise EntryError("validation_error", "scope_invalid") from None
 
 
 def _when(value: object, field: str) -> datetime | None:
@@ -157,6 +166,7 @@ class IngestHandlers:
         content = _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT)
         source = _source(call.arguments.get("source"))
         event_time = _when(call.arguments.get("event_time"), "event_time")
+        scope = _scope(call)
         self._require_kind("episode")
         span = _text(source.get("span") or source["ref"], "source_span")
         try:
@@ -193,6 +203,7 @@ class IngestHandlers:
                     valid_from=event_time or recorded,
                     valid_from_basis="explicit" if event_time else "inferred",
                     layer="episodic",
+                    scope_path=scope,
                     evidence=(evidence,),
                 )
                 await commit_initial_version(connection, candidate, schema_name=self.runtime.schema_name)
@@ -208,6 +219,7 @@ class IngestHandlers:
     async def _assert(self, call: Call, content: str, evidence: object, event_range: object) -> Receipt | Rejected:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
         kind = call.arguments.get("kind")
+        scope = _scope(call)
         if kind != "claim":
             raise EntryError(
                 "validation_error", "kind_not_supported"
@@ -248,6 +260,7 @@ class IngestHandlers:
                 valid_until=end,
                 valid_from_basis="explicit" if start else "inferred",
                 layer="semantic",
+                scope_path=scope,
                 evidence=tuple(
                     EvidenceInput(turn_id=turn_id, evidence_span=span)
                     for turn_id, span in zip(turn_ids, spans, strict=True)
