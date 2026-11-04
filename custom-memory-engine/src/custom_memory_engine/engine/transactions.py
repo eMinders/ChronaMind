@@ -404,10 +404,18 @@ async def ensure_archival_trigger(
         raise TransactionError("archival_guards_not_installed")
 
 
-_MEMORY_VERSION_COLUMNS = (
-    "id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
+_INSERT_BASE_SQL = sql.SQL(
+    "INSERT INTO {mv} (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
     "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
-    "importance, reinforcement_count, extractor_version, archival_branch, scope_path"
+    "importance, reinforcement_count, extractor_version, archival_branch) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+)
+
+_INSERT_SCOPED_SQL = sql.SQL(
+    "INSERT INTO {mv} (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
+    "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
+    "importance, reinforcement_count, extractor_version, archival_branch, scope_path) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 )
 
 
@@ -436,32 +444,36 @@ async def _insert_version(
     archival_branch: str | None = None,
 ) -> None:
     """Single write path for memory_version rows; keeps the column list in one place."""
+    base_values = (
+        version_id,
+        memory_key,
+        user_id,
+        status,
+        subject_key,
+        predicate_key,
+        single_valued,
+        content,
+        event_range,
+        recorded_range,
+        layer,
+        valid_from_basis,
+        assertion_mode,
+        confidence,
+        importance,
+        reinforcement_count,
+        extractor_version,
+        archival_branch,
+    )
+    if scope_path is not None:
+        template = _INSERT_SCOPED_SQL
+        values = base_values + (scope_path,)
+    else:
+        template = _INSERT_BASE_SQL
+        values = base_values
+
     await cursor.execute(
-        sql.SQL(
-            "INSERT INTO {mv} (" + _MEMORY_VERSION_COLUMNS + ") "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-        ).format(mv=sql.Identifier(schema_name, "memory_version")),
-        (
-            version_id,
-            memory_key,
-            user_id,
-            status,
-            subject_key,
-            predicate_key,
-            single_valued,
-            content,
-            event_range,
-            recorded_range,
-            layer,
-            valid_from_basis,
-            assertion_mode,
-            confidence,
-            importance,
-            reinforcement_count,
-            extractor_version,
-            archival_branch,
-            scope_path,
-        ),
+        template.format(mv=sql.Identifier(schema_name, "memory_version")),
+        values,
     )
 
 
