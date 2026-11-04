@@ -354,7 +354,7 @@ class Handlers:
         try:
             scope_path = parse_scope(parent).child(segment).text
         except ScopeError:
-            raise EntryError("validation_error", "scope_segment_invalid") from None
+            raise EntryError("validation_error", "scope_invalid") from None
 
         async with self.runtime.session(user) as connection:
             if (found := await replayed(self.runtime, connection, user, "create_scope", key)) is not None:
@@ -384,6 +384,9 @@ class Handlers:
                 raise EntryError("forbidden")
             if row[1] != kind:
                 raise EntryError("validation_error", "scope_already_exists")
+            # Counts and a declared word only: a path names a user and a segment, so it is never audited (V2-D54).
+            depth = scope_path.count("/") - 1  # /u/<user>/seg/ -> depth 3; /u/<user>/ -> depth 2
+            await _audit(self.runtime, connection, user, "scope_created", {"scope_kind": kind, "depth": depth})
             await remember(self.runtime, connection, user, "create_scope", key, scope_path)
             return scope_path
 
