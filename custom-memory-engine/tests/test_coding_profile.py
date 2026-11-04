@@ -1,8 +1,8 @@
 """Verify the coding-agent profile document against its declared configuration contract.
 
-These checks cover profile data and scope grammar. They do not establish that the
-engine currently ingests every declared source type or persists repository-scoped
-artifacts through the public API.
+These checks cover profile data and scope grammar only. That the engine stores and reads every
+coding fixture through the public API, with its declared source type and in the repository
+scope, is established by ``tests/integration/test_coding_profile_db.py``.
 """
 
 import json

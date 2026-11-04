@@ -2,8 +2,9 @@
 
 The six records cover the coding column of ARCHITECTURE_V2.md §13: a tool-call
 episode, a diff episode, a test-run episode, a repository claim, a CI procedure,
-and an inferred recurring failure mode. These are descriptions of intended
-inputs, not evidence that every source kind or public operation is wired.
+and an inferred recurring failure mode. They are offline data only; the
+integration suite ``tests/integration/test_coding_profile_db.py`` stores each one
+through the public API and reads its channel back.
 """
 
 from dataclasses import dataclass
