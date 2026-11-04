@@ -1,5 +1,7 @@
 """EvidenceInput carries a turn (v1, unchanged) or an external source (M4, E-013); anything else is refused."""
 
+from typing import Literal
+
 import pytest
 from pydantic import ValidationError
 
@@ -53,7 +55,9 @@ def test_a_blank_locator_is_refused() -> None:
 
 
 @pytest.mark.parametrize("source_type", ["tool", "file", "event"])
-def test_coding_source_types_are_accepted(source_type: str) -> None:
+def test_coding_source_types_are_accepted(
+    source_type: Literal["tool", "file", "event"],
+) -> None:
     """V2-D66: tool/file/event are declared coding-profile source types stored as external-reference rows."""
     evidence = EvidenceInput(source_type=source_type, source_ref="ci://run/1", content_hash=HASH, evidence_span="s")
     assert evidence.source_type == source_type
