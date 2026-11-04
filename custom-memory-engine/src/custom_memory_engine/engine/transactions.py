@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from re import fullmatch
-from typing import Any, Literal
+from typing import Any, Literal, LiteralString, cast
 from uuid import uuid4
 
 import structlog
@@ -147,6 +147,7 @@ class CandidateVersionInput(_TransactionModel):
     user_id: str
     scope_path: str | None = None
     kind: str | None = None  # set explicitly for kinds the layer cannot imply (e.g. 'procedure')
+    method_id: str | None = None  # the registered METHOD of an inferred artifact (I3); fixed once set
     subject_key: str
     predicate_key: str
     single_valued: bool = True
@@ -407,33 +408,14 @@ async def ensure_archival_trigger(
         raise TransactionError("archival_guards_not_installed")
 
 
-_INSERT_BASE_SQL = sql.SQL(
-    "INSERT INTO {mv} (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
+_INSERT_COLUMNS = (
+    "id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
     "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
-    "importance, reinforcement_count, extractor_version, archival_branch) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    "importance, reinforcement_count, extractor_version, archival_branch"
 )
-
-_INSERT_SCOPED_SQL = sql.SQL(
-    "INSERT INTO {mv} (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
-    "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
-    "importance, reinforcement_count, extractor_version, archival_branch, scope_path) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-)
-
-_INSERT_SCOPED_KINDED_SQL = sql.SQL(
-    "INSERT INTO {mv} (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
-    "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
-    "importance, reinforcement_count, extractor_version, archival_branch, scope_path, kind) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-)
-
-_INSERT_KINDED_SQL = sql.SQL(
-    "INSERT INTO {mv} (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
-    "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
-    "importance, reinforcement_count, extractor_version, archival_branch, kind) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-)
+_INSERT_BASE_ARITY = 18
+#: Columns written only when the caller supplies them; absent, the axes/method triggers derive them.
+_OPTIONAL_COLUMNS = ("scope_path", "kind", "method_id")
 
 
 async def _insert_version(
@@ -459,6 +441,7 @@ async def _insert_version(
     extractor_version: str,
     scope_path: str | None = None,
     kind: str | None = None,
+    method_id: str | None = None,
     archival_branch: str | None = None,
 ) -> None:
     """Single write path for memory_version rows; keeps the column list in one place."""
@@ -482,22 +465,14 @@ async def _insert_version(
         extractor_version,
         archival_branch,
     )
-    if scope_path is not None and kind is not None:
-        template = _INSERT_SCOPED_KINDED_SQL
-        values = base_values + (scope_path, kind)
-    elif scope_path is not None:
-        template = _INSERT_SCOPED_SQL
-        values = base_values + (scope_path,)
-    elif kind is not None:
-        template = _INSERT_KINDED_SQL
-        values = base_values + (kind,)
-    else:
-        template = _INSERT_BASE_SQL
-        values = base_values
-
+    optional = {"scope_path": scope_path, "kind": kind, "method_id": method_id}
+    extra = [name for name in _OPTIONAL_COLUMNS if optional[name] is not None]
+    columns = _INSERT_COLUMNS + "".join(f", {name}" for name in extra)
+    placeholders = ", ".join(["%s"] * (_INSERT_BASE_ARITY + len(extra)))
+    template = sql.SQL(cast(LiteralString, f"INSERT INTO {{mv}} ({columns}) VALUES ({placeholders})"))
     await cursor.execute(
         template.format(mv=sql.Identifier(schema_name, "memory_version")),
-        values,
+        base_values + tuple(optional[name] for name in extra),
     )
 
 
@@ -681,6 +656,7 @@ async def stage_candidate(
                 reinforcement_count=candidate.reinforcement_count,
                 extractor_version=candidate.extractor_version,
                 kind=candidate.kind,
+                method_id=candidate.method_id,
             )
             await _insert_provenance(
                 cursor,
@@ -758,6 +734,7 @@ async def commit_initial_version(
                 reinforcement_count=candidate.reinforcement_count,
                 extractor_version=candidate.extractor_version,
                 kind=candidate.kind,
+                method_id=candidate.method_id,
             )
             await _insert_provenance(
                 cursor,
