@@ -331,3 +331,58 @@ async def test_what_assert_wrote_can_be_adjudicated_and_retracted_through_the_sa
             caller("alice"), "retract_own", {"artifact_id": receipt.id, "reason": "changed_mind"}
         )
         assert isinstance(retracted, Receipt) and retracted.effect == "retired"
+
+
+# ------------------------------------------------------------------------------------------- scope (#155, V2-D66)
+
+
+async def test_both_writers_store_the_scope_the_caller_names(database) -> None:  # noqa: F811
+    """#155: a sub-scope inside the caller's namespace is persisted exactly; the personal root stays the root."""
+    async with world(database) as (conn, engine, _):
+        await with_turn(conn, engine)
+        written = {
+            "episode_sub": await engine.call(
+                caller("alice"),
+                "ingest_episode",
+                {**episode_args(), "scope": "/u/alice/p/chrona/", "idempotency_key": "s1"},
+            ),
+            "claim_sub": await engine.call(
+                caller("alice"), "assert", claim(scope="/u/alice/p/chrona/", idempotency_key="s2")
+            ),
+            "episode_root": await engine.call(
+                caller("alice"), "ingest_episode", {**episode_args(), "idempotency_key": "s3"}
+            ),
+            "claim_root": await engine.call(caller("alice"), "assert", claim(idempotency_key="s4")),
+        }
+        expected = {
+            "episode_sub": "/u/alice/p/chrona/",
+            "claim_sub": "/u/alice/p/chrona/",
+            "episode_root": "/u/alice/",
+            "claim_root": "/u/alice/",
+        }
+        for name, receipt in written.items():
+            assert isinstance(receipt, Receipt), name
+            stored = await rows(conn, "SELECT scope_path FROM memory_version WHERE id = %s", (receipt.id,))
+            assert stored == [(expected[name],)], name
+
+
+async def test_both_writers_refuse_a_foreign_or_missing_scope_before_writing(database) -> None:  # noqa: F811
+    """#155: another namespace is ``forbidden``; an omitted scope is a static ``scope_required``, as before #159."""
+    async with world(database) as (conn, engine, _):
+        await with_turn(conn, engine)
+        no_scope_episode = {k: v for k, v in episode_args().items() if k != "scope"}
+        no_scope_claim = {k: v for k, v in claim().items() if k != "scope"}
+        cases = {
+            "episode_foreign": (
+                "ingest_episode",
+                {**episode_args(), "scope": "/u/bob/p/chrona/"},
+                ("forbidden", None),
+            ),
+            "claim_foreign": ("assert", claim(scope="/u/bob/"), ("forbidden", None)),
+            "episode_missing": ("ingest_episode", no_scope_episode, ("validation_error", "scope_required")),
+            "claim_missing": ("assert", no_scope_claim, ("validation_error", "scope_required")),
+        }
+        for name, (operation, arguments, expected) in cases.items():
+            error = await forbidden(engine, caller("alice"), operation, arguments)
+            assert (error.code, error.detail) == expected, name
+        assert await rows(conn, "SELECT count(*) FROM memory_version") == [(0,)]
