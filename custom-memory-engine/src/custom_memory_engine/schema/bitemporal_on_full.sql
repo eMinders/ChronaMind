@@ -23,6 +23,9 @@ ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_provenance;
 ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_recorded_watermark;
 -- Likewise the lifecycle transition records of migration 10: the script builds bare versions, not their decisions.
 ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_transition_records;
+-- And the entry records of migration 14 (the gate decision a version is created under).
+ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_record_of_creation;
+ALTER TABLE memory_version DISABLE TRIGGER trg_memory_version_record_of_entry;
 
 -- Supersession for a single-valued predicate: close-then-insert, one transaction, one recorded instant.
 CREATE FUNCTION supersede_single(p_new_id text, p_reissue_id text, p_user text, p_subject text,
@@ -264,5 +267,7 @@ SELECT expect('other memory items of the user survive',
 ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_provenance;
 ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_recorded_watermark;
 ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_transition_records;
+ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_record_of_creation;
+ALTER TABLE memory_version ENABLE TRIGGER trg_memory_version_record_of_entry;
 
 \echo 'ALL ASSERTIONS PASSED'

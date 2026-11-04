@@ -289,6 +289,19 @@ Rules:
 so v1's `user_id` semantics are exactly recoverable, and the v1 isolation suite `I`
 keeps its meaning.
 
+**A scope below the root is a normal scope (r13, `V2-D64`).** Until migration 15 the substrate admitted only the
+personal root on thirteen tables; it now admits any scope *inside* the caller's own namespace (`/u/<id>/p/<repo>/`,
+`/u/<id>/o/<org>/`, `/u/<id>/s/<task>/`), which is what the profiles of §13 use. The boundary is unchanged:
+`D13` forbids the separator in a user id, so `/u/4/` still does not contain `/u/42/`, and `authorize_write` still
+requires the caller's own namespace (`V2-D53`). Single-valued exclusivity (`I5`) and the belief-time watermark (`I4`)
+key on the **scope**, not the user, so two scopes of one user are independent for both.
+
+**`/o/<org>/` is a sub-scope, not a namespace (r13, `V2-D64`).** §13 gives the enterprise profile the scope root
+`/o/<org>`; the implemented form is `/u/<owner>/o/<org>/`. A top-level `/o/` namespace would need an org principal to
+own it, an org-membership ACL, and a policy resolving two principal kinds, because `scope_grant.owner_user_id`
+references `app_user` and the read policy matches `/u/<caller>/`. Organisational sharing therefore uses `scope_grant`
+on the owner's `/u/<owner>/o/<org>/` subtree - the same mechanism as any project scope, and no schema change.
+
 ### 5.1 Known limitation, stated rather than hidden
 
 PostgreSQL RLS policies cannot parameterise over a set-valued selector without a
@@ -590,7 +603,7 @@ inference confidence, which is a consistency the first draft lacked.
 | I1′ | Grounded-or-hypothesis: an artifact is rendered as knowledge only if grounded; inferred artifacts carry support + uncertainty and appear only in the hypothesis channel. | `CHECK` (inferred ⇒ derivation + method) + API channel contract + test |
 | I2 | Every artifact has provenance: evidence or derivation. No orphan rows. | Deferred constraint trigger (v1 Invariant 1, generalised) |
 | I3 | Inferred artifacts record method id, version, and parameter hash; the method registry is immutable and versioned. | FK to `METHOD` + append-only (`register_method`, `V2-D46`) |
-| I4 | Event, observation, and belief clocks are distinct; belief time is never caller-supplied; belief time is strictly increasing per scope. | v1 Invariant 3 + `observed_at` requirement |
+| I4 | Event, observation, and belief clocks are distinct; belief time is never caller-supplied; belief time is non-decreasing per scope, advancing at every new belief and allowed to repeat only where a single logical step closes one belief and opens its successor (`V2-D64`). | v1 Invariant 3 + `observed_at` requirement + `clock_watermark` keyed by `scope_path` |
 | I5 | Single-valued exclusivity within a scope for declared single-valued predicates; open-domain content relies on the conflict detector, whose error rate is **measured**, not assumed. | Exclusion constraint (v1) + measured detector accuracy |
 | I6 | Retention is orthogonal: durability never changes answerability; retirement never changes retrievability-for-audit. | Property test over the reachability matrix |
 | I7 | Scope isolation: no read outside the caller's declared scope path. | RLS on `path` prefix + isolation suite `I` |
@@ -639,7 +652,7 @@ Profiles are config, and this table is the W2 exit test.
 | Claims | user facts & preferences | repo facts, build invariants | findings, citations | policies, entities |
 | Procedures | conversation norms | fix patterns, CI recipes | repro recipes | escalation paths |
 | Abstractions | preferences, tendencies | recurring failure modes | methodological patterns | institutional norms |
-| Scope root | `/u/<id>` | `/u/<id>/p/<repo>` | `/u/<id>/p/<topic>` | `/o/<org>` |
+| Scope root | `/u/<id>` | `/u/<id>/p/<repo>` | `/u/<id>/p/<topic>` | `/u/<id>/o/<org>` (`V2-D64`) |
 | Retention default | durable | session→durable on promotion | durable | durable + policy TTL |
 
 No row of this table requires a schema change. That is the claim; W2 proves it or

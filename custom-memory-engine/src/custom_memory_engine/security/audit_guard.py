@@ -42,6 +42,10 @@ AUDIT_DETAIL_KEYS = frozenset(
         "archival_branch",
         # deletion receipts (counts only)
         "scope",
+        # Scope administration (`E-040`): `scope_kind` is one of four declared words and `depth` is a small integer,
+        # so neither can carry a path segment, a user id or a scope.
+        "scope_kind",
+        "depth",
         "deletion_epoch",
         "deleted_versions",
         "dependents",

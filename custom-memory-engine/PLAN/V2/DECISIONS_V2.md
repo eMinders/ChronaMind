@@ -998,3 +998,272 @@ owned by a `NOSUPERUSER NOBYPASSRLS` role, and `FORCE` is asserted restored on e
 `clock_watermark` excepted. **Mutation-checked:** running the same suite against the pre-change runner fails `[5]`, `[8]`
 and `[9]` with `migration_database_failure`; `[10]` passes either way, because #130 lifts `FORCE` itself.
 **Status:** decided and verified.
+
+### V2-D61 — The records of entry into the lifecycle bind the application role; a re-record carries its belief's decision (closes issue #67)
+
+**Decision.** Migration 14 (`014_entry_records.sql`) enforces the creation rows of `ARCHITECTURE_V2.md` §2.3 at commit,
+with two deferred constraint triggers, `trg_memory_version_record_of_creation` and
+`trg_memory_version_record_of_entry`. Both are listed in `engine.deletion.ARCHIVAL_GUARD_TRIGGERS`, as r10 requires.
+(1) `— → asserted` needs its evidence (migration 7) and an `accept` gate decision for that version in
+`memory_conflict`. `— → contested` needs a `hold` decision. `— → inferred` needs a derivation and a registered method
+(migrations 7 and 10). `— → observed` needs its evidence. (2) The two v1 ways into the lifecycle that are not
+creations need the adjudication that v1's `resolve_conflict_pending` already writes: a staged `candidate` promoted
+to a belief, and a held candidate accepted as an inference. Both need an `accept` decision, and the inference also
+needs a derivation. (3) **A re-record is not a new assertion.** Close-then-insert (R1–R3, E3, R7) closes a belief at
+tick `c` and inserts a copy at `[c, NULL)`. That copy is admitted without a decision of its own only when a version
+with the same memory key, subject, predicate, kind and content was closed at exactly `c`, and when its event range
+lies inside what was believed for that subject and predicate until `c`. A copy that claims new content or new event
+time is a new assertion and needs the gate. (4) **Who is bound:** every role that is not a superuser, which includes
+the runtime role and a non-superuser schema owner. (5) The v1 `persona` exemption from the derivation half of `I1′`
+(migration 7) is narrowed by the same rule. A persona row the application role creates, or brings into the lifecycle,
+needs a derivation. Existing persona rows and later writes to them keep the exemption, so the D7 backfill
+(`V2-D49`) is unaffected.
+
+**Why.** Issue #67 criterion 4 ("each allowed transition attempted without its record raises") was met for every
+transition between lifecycles by migration 10. The two creation rows that need a gate decision were not enforced,
+because v1 direct commits (`commit_initial_version`) write no decision row. The same issue also requires that the v1
+archival and immutability tests pass **unchanged**, and those tests (`test_full_schema.py`,
+`archival/test_t1_to_t5.py`) create asserted claims directly while connected as a superuser. A superuser can disable
+any trigger and bypasses row security, so no trigger can bind it. The issue names the application role as the
+boundary ("enforcement holds for direct SQL under the application role"), and every engine path that role reaches
+already records its decision in the same transaction (`engine.ingest.apply_candidate`, the API). The Project Owner
+chose this scope over two alternatives:
+- Making the commit primitives write an `accept` themselves was rejected. It would record "grounding passed" when no
+  gate ran, which is the silent coercion #67 forbids.
+- Binding every role was rejected because it would break the frozen v1 tests.
+
+The re-record rule is needed because supersession, boundary revision and multi-valued end each insert a copy of an
+existing belief, and requiring a fresh decision for that copy would invent one.
+
+**What it does not mean.** It is not an exemption for the engine: its gate paths are tested under the runtime role.
+It does not cover the ablations that **delete** the closed version (`A2`, `A2b`). Those leave no belief to continue,
+so under the application role they are refused. They are evaluation-only and run by the operator. The record is
+checked for presence, not for truth: the runtime role may insert `memory_conflict` rows, as it must for the gate to
+record its decisions, exactly as for the adjudication records of migration 10.
+
+**Implementation.** `schema/014_entry_records.sql::enforce_entry_records`, `rollback/014_entry_records.sql`,
+`schema/migrate.py`, `engine/deletion.py::ARCHIVAL_GUARD_TRIGGERS`, `schema/bitemporal_on_full.sql` (the frozen
+design-check script steps the two triggers aside, as it does for the others), and `schema/README.md`.
+`INVARIANT_LEDGER.md` `I1′` names the new site and tests. `I1′` stays `PARTIAL` only for the channel contract
+(`E-017`, `E-035`).
+
+**Verification.** `tests/integration/test_lifecycle_transitions.py`:
+- `test_each_creation_needs_its_record_under_the_application_role`: no decision, or the wrong one, refuses the commit.
+- `test_a_staged_or_held_candidate_enters_the_lifecycle_only_with_its_adjudication`
+- `test_every_engine_write_path_satisfies_the_entry_records_under_the_application_role`: accept, supersession with a
+  re-record, reject, hold and its adjudication, boundary revision and multi-valued end all commit as the runtime role,
+  and `A2` is refused.
+- `test_a_re_record_may_claim_neither_new_event_time_nor_new_content`
+- `test_a_superuser_is_not_bound_by_the_entry_records`
+- `test_the_entry_record_triggers_are_deferrable_and_listed_for_deletion`
+- `test_rollback_restores_version_13_exactly_and_reapply_works`
+
+**Mutation-checked.** Each of the following makes at least one of these tests fail:
+- removing the gate-decision raise
+- the event-range containment
+- the content match
+- the re-record path
+- the adjudication raise
+- the derivation raise
+
+**Status:** decided by the Project Owner (scope), and verified.
+
+---
+
+### V2-D62 — E-018 conformance suite closed at its W1 scope; three assertions deferred to W3 (closes #69 after W1)
+
+**Context.** The E-018 conformance suite (`tests/integration/test_type_completeness.py`) is green on `main` and passes
+all four properties (storable, queryable, deletable, routed) for every legal `(kind × retention × lifecycle × facet)`
+tuple against the real migrated schema under a `NOSUPERUSER NOBYPASSRLS` role. Both ledger entries E-018 owns are
+`ENFORCED` (`I3` method registry, `I6` retention orthogonality). The v1 regression wall is intact.
+
+**Gap.** Three conformance assertions cannot drive through `Engine.call` because the operations they require are not
+yet wired — they are W3 work:
+
+| Property | Blocks on | W3 task |
+|---|---|---|
+| deletable via `Engine.call` | `delete` operation | `E-037` |
+| queryable via `Engine.call` | `query` operation | `E-033` |
+| procedural memory via `Engine.call` | procedure creation (`infer`) | `E-030` |
+
+The suite reports each of these as "not yet testable" via a positive assertion
+(`test_unwired_operations_are_reported_as_not_yet_testable_never_as_passes`), never as a silent pass.
+
+**Decision.** E-018 is closed at its W1 scope. The three deferred assertions are carried forward as a named
+acceptance criterion on each of `E-030`, `E-033`, and `E-037`: when those operations land, the implementer
+must re-point the suite's corresponding assertions at `Engine.call` and confirm the conformance suite
+`tests/integration/test_type_completeness.py` drives those properties end-to-end through the entry point.
+
+The condition is recorded in `ROADMAP_V2.md` §4 (G1 status block) and in the W3 tracker (#73). G1 is already green
+for the properties that can be tested today; the entry-point criterion for the remaining three is G3's responsibility.
+
+**What it does not mean.** It is not permission to skip these properties. Each W3 issue must include an explicit
+acceptance criterion requiring the conformance suite re-point. An implementer who lands `E-033` without updating
+`test_type_completeness.py` has not met their AC.
+
+**Status:** decided; binding on `E-030`, `E-033`, `E-037`.
+
+---
+
+### V2-D63 — The `E-039` deferral register: every unwired operation has a named owner and an entry-point acceptance criterion
+
+**Context.** `E-039` (#97) is the one runtime door to the 29 operations of `API_V2.md`. On `main` it enforces
+authorisation, every condition code and the static error contract, and it dispatches to whatever handlers are
+registered — but only **11 of 29** operations were wired as recorded at r13 (12 now, after `E-040` wired `create_scope`): `register_method`, `create_entity`, `link`, `unlink`,
+`adjudicate`, `retract_own`, `grant_access`, `revoke_access` (`api/handlers.py`, #132) and `ingest_episode`,
+`assert`, `ingest_artifact` (`api/ingest_handlers.py`, #133). The remaining **18** return `forbidden`
+(`operation_not_wired`) before any statement runs.
+
+`E-039`'s criterion 5 — *"`E-018`'s conformance suite drives the engine only through this entry point"* — is
+therefore a **forward obligation that no single task owns**. `V2-D62` named only three of the blocking operations
+(`delete`, `query`, procedure creation); the other fifteen were named nowhere, so an implementer landing one of them
+could satisfy their own acceptance criteria and still leave the conformance suite unable to reach the entry point.
+
+**Gap this record closes.** Two defects were found while auditing the deferral:
+
+1. **Fifteen operations had no entry-point criterion at all.** `V2-D62` binds `E-030`, `E-033` and `E-037`; nothing
+   bound `refine`, `get`, `provenance`, `infer`, `verify`, `refute`, `link_entity`, `record_outcome`, `dissent`,
+   `purge_working`, `expire`, `rebuild_index`, `export`, `stats`, or `cost`.
+2. **The operation owners are not all represented as issues.** Every W3 task (`E-030`–`E-038`) and most W4/W5/W7
+   tasks read "Child issue: *not yet created*" in their trackers (#73, #74, #75, #79), per the trackers' own rule
+   that a child issue is opened **when its wave opens**. `A-014`/`A-015` have no issue either: the earlier
+   appearance of `#57`/`#58` as their owners was a false match on `MA-014`/`MA-015`.
+
+**Decision.**
+
+1. **The owner of an unwired operation is the task that builds its behaviour**, exactly as `COVERAGE.md` already
+   declares it. Ownership is authoritative in the plan, not in the issue tracker; between them, `COVERAGE.md` and
+   `COVERAGE_MATRIX.md` bind every operation to a roadmap task, and `plan_coverage.py --check` fails if any
+   operation is unowned. The plan is the owner of record until the wave opens and its child issue exists.
+2. **Every one of the 18 carries the same three-part entry-point acceptance criterion**, stated per operation in
+   the deferral register of `ROADMAP_V2.md` §4.1 and summarised here: (a) the operation is wired through
+   `Engine.call` and reachable only through it; (b) the `E-018` conformance suite is updated to exercise that
+   operation **exclusively** through `Engine.call`; (c) the queryable, deletable and procedural properties it
+   touches are verified **through the public entry point**, not below it.
+3. **`E-039` stays open** until criterion 5 is genuinely satisfied, i.e. until all 29 operations are wired and the
+   conformance suite drives the engine only through the entry point. `E-039` does **not** implement any of the 18;
+   its remaining work is the criterion, not the operations.
+4. **`create_scope` gets a new owning task**, `E-040` (#148), because its declared owner `E-011` (#62) closed on its
+   migration scope with the operation deliberately unwired (`api/handlers.py`: "while every scope is personal").
+   Leaving it on a closed issue would have left one operation with no open owner.
+5. **No duplicate issues.** This record does not open W3/W4/W5/W7 children ahead of their wave gates; the
+   trackers keep them "not yet created" and gain the deferral criterion to apply when they are written.
+
+**What it does not mean.** It is not permission to wire an operation under `E-039`, and it is not permission to skip
+a criterion 5 obligation because a task is not yet an issue. It also does not reopen `E-018` (#69), which `V2-D62`
+closed at its W1 scope: the suite's re-point is the owning tasks' work, verified against `E-039`.
+
+**Consequence for the gates.** `G1` is already green for the properties testable today (`V2-D62`). Criterion 5, and
+therefore the last of `E-039`'s five, completes with the last of the 18 operations; the binding obligations are
+listed in `ROADMAP_V2.md` §4.1, and the three gate-critical ones (`delete`, `query`, procedure creation) remain the
+`G3` conditions `V2-D62` recorded.
+
+**Status:** decided; binding on `E-039` (#97), on all 18 owner tasks in `ROADMAP_V2.md` §4.1, on `E-040`, and on the
+W2/W3/W4/W5/W7 trackers (#72, #73, #74, #75, #79).
+### V2-D64 — Sub-scopes are admissible; the enterprise root is a sub-scope, and `I5`/`I4` key on the scope (closes the E-011 residual items)
+
+**Decision.** Migration 15 (`015_subscopes.sql`) takes the decision migration 11 deferred to "the per-scope `I9`
+decision". Four parts:
+
+1. **A scoped row may lie anywhere inside its owner's namespace.** `<table>_scope_matches_user`
+   (`scope_path = '/u/' || user_id || '/'`) becomes `<table>_scope_within_user`
+   (`pg_catalog.starts_with(scope_path, '/u/' || user_id || '/')`) on the thirteen tables migration 11 pinned to the
+   personal root. The isolation property is preserved, not weakened: `D13` forbids the separator in `app_user.id`, so
+   `/u/4/` still does not contain `/u/42/`, and a row can never be placed inside another tenant's namespace. What
+   becomes possible is only what the plan already names: `/u/<id>/p/<repo>/` (the coding profile), `/u/<id>/o/<org>/`
+   (the enterprise profile), `/u/<id>/p/<topic>/` (research), `/u/<id>/s/<task>/`.
+2. **`I5` keys on the scope.** `no_bitemporal_overlap` moves from `user_id WITH =` to `scope_path WITH =`. `V2-D49`
+   D10 said the key "stays `user_id` (the owner namespace) in W1"; while every scope *was* the personal root the two
+   were equivalent, so that cost nothing. With sub-scopes they are not equivalent: two distinct scopes of one user
+   must each be able to hold the same single-valued predicate, and a `user_id` key would refuse the second. `I5`
+   declares exclusivity "within a scope", so the constraint now states the invariant instead of an approximation.
+3. **`I4` keys on the scope.** `clock_watermark` is keyed by `scope_path` instead of `user_id`, so a sub-scope's
+   belief timeline cannot be walked backwards by writing a sibling scope. The watermark is otherwise unchanged.
+4. **The enterprise root `/o/<org>/` is a sub-scope, not a namespace.** It is `/u/<owner>/o/<org>/`. A top-level
+   `/o/` namespace is *not* admitted, and `scope.paths.parse_scope` continues to reject it. The reason is that both
+   ACL and RLS key on a **user** namespace: `scope_grant.owner_user_id` references `app_user`, the read policy matches
+   `/u/<caller>/`, and `authorize_write` requires the caller's own namespace. An `/o/<org>/` row would therefore have
+   no owner able to grant it and no policy able to return it - representable on disk but unreadable and unwritable,
+   which is worse than refused. Organisational sharing uses the mechanism that already exists: the owner creates
+   `/u/<owner>/o/<org>/` and shares it with colleagues through `scope_grant`, exactly as any project scope. Admitting
+   a first-class org principal would need an org table, an org-membership ACL and a policy that resolves both
+   principal kinds; no task owns that, and W2's generality claim (`ARCHITECTURE_V2.md` §13, "no row of this table
+   requires a schema change") is satisfied without it.
+
+**Why.** Issue #62 named three residual items and left the fourth implicit: the missing `scope_read` audit path, the
+`um_facet`/`clock_watermark` index ownership notes that still pointed at `E-011`, the `I9`/`D10` exclusion-key review,
+and the enterprise root, which `parse_scope` rejected. All four turn on the same fact - the substrate could not
+represent a scope below the personal root - so resolving them separately would have meant three migrations that each
+partly duplicated the others. The `um_facet` index moves to `(scope_path text_pattern_ops, um_facet)` in the same
+migration, since facet-filtered reads are scope-filtered reads.
+
+**What it does not mean.** It does not admit a first-class organisational principal (above). It does not change
+`authorize_write`: a write still lands only in the caller's own namespace (`V2-D53`), so a sub-scope is not a way to
+write into someone else's tree. It does not reopen `D13` or the path grammar: the shape `CHECK` is unchanged and a
+segment is still `[a-z0-9][a-z0-9-]*`. And it does not flatten anything on rollback: `rollback/015_subscopes.sql`
+**refuses** if a sub-scope row exists, because version 14 cannot represent one and silently moving it to the owner's
+root would merge two scopes' beliefs.
+
+**Implementation.** `src/custom_memory_engine/schema/015_subscopes.sql`, `schema/rollback/015_subscopes.sql`,
+`schema/migrate.py` (version 15), `schema/README.md`; `ARCHITECTURE_V2.md` §5 rule 4 note and §13.
+
+**Verification.** `tests/integration/test_migration_m15.py` (30):
+- `test_every_scoped_table_admits_a_sub_scope_inside_its_owner_namespace` (13 tables)
+- `test_a_sub_scope_inside_the_owners_namespace_is_accepted`; `..._inside_another_tenants_namespace_is_refused`
+- `test_the_prefix_boundary_holds_for_ids_that_share_a_prefix` (`/u/4/` vs `/u/42/`)
+- `test_the_exclusion_key_is_the_scope_not_the_user`; `test_a_v1_row_in_the_personal_root_still_excludes`;
+  `test_two_users_with_the_same_sub_scope_do_not_collide`
+- `test_the_watermark_is_keyed_by_scope`; `test_a_sibling_scope_cannot_walk_belief_time_backwards`;
+  `test_belief_time_still_cannot_move_backwards_within_one_scope`
+- `test_the_facet_index_is_led_by_the_scope_path`; `test_the_facet_index_serves_a_scope_and_facet_filtered_read`
+- `test_a_top_level_org_root_is_still_not_a_namespace`; `test_the_resolver_grammar_admits_the_shapes_the_schema_now_accepts`
+- `test_rollback_restores_version_14_exactly_and_reapply_works` (catalog fingerprint identical);
+  `test_rollback_refuses_while_a_sub_scope_row_exists`
+
+**Mutation-checked.** Each of the following makes at least one test fail: restoring the equality `CHECK`, keying the
+exclusion constraint on `user_id`, keying the watermark on `user_id`, leading the facet index with `user_id`, and
+dropping the rollback's sub-scope guard.
+
+**Status:** decided and verified.
+
+### V2-D65 — `create_scope` ships now, and a malformed scope argument is a grammar error, not `forbidden` (closes #148)
+
+**Decision.** Two parts, the first answering the open question issue #148 required to be settled before code.
+
+1. **`create_scope` ships now** (option (a) of that issue), because the premise of its deferral is gone. `E-011` left it
+   unwired on the grounds that "while every scope is personal a sub-scope cannot hold a row, so creating one would
+   record a scope nothing can use". Migration 15 (`V2-D64`) admits a row anywhere inside its owner's namespace on all
+   thirteen scoped tables, so a created sub-scope is immediately usable for entities, sessions and memories alike, and
+   the operation does exactly what `API_V2.md` §4.10 says. It is not a writer for `project`/`shared` *visibility*, which
+   stays `I7`'s remaining gap: a scope can now exist and hold `private` rows.
+2. **A malformed scope argument is `validation_error`, not `forbidden`.** `API_V2.md` §4.10 separates the two:
+   `validation_error` for the §6 grammar, `forbidden` for a target outside the caller's namespace. The
+   `namespace_owner_only` check previously answered `forbidden` for an unparseable path, which told a caller its input
+   was well formed. It now parses first and refuses grammar faults as `validation_error`/`scope_invalid`, then applies
+   the namespace rule. The mutation test in `tests/test_api_entry.py` still removes the namespace check and shows the
+   same call succeeding, so the authorisation half is still the reason `/u/bob/` is refused.
+
+**Why a scope needs no row.** A scope *is* its canonical path: `scope_grant` records read membership of a subtree, and
+`memory_version.scope_path` records where a row lives. A `SCOPE` table would duplicate the path in every row that
+already carries one and would need its own RLS, its own consistency checks against thirteen tables, and a cascade story
+for revocation. Creating a scope is therefore validation plus an idempotency entry, and a content-free audit row.
+
+**Consequential change.** `namespace_owner_only` is shared with `grant_access` and `revoke_access`, so those now also
+answer `validation_error` for a malformed scope instead of `forbidden`. That is the contract's own distinction and the
+tests for both are green; a well-formed target outside the namespace is still exactly `forbidden`, so nothing about
+existence leaks.
+
+**Implementation.** `api/handlers.py::Handlers.create_scope`, registered in `register_structure_handlers`;
+`api/entry.py::_namespace_owner_only`; `security/audit_guard.py` gains `scope_kind` and `depth` (a declared word and a
+small integer, so neither can carry a path segment, a user or a scope).
+
+**Verification.** `tests/integration/test_create_scope.py` (26): wired and absent from `unwired_operations`; every
+creatable kind; `personal` refused; nesting below an existing sub-scope; a Tier B caller refused before any statement;
+a parent outside the namespace refused with the same `forbidden` as an unknown one; eight malformed-argument cases;
+depth limit; replayed key returns the original path with one idempotency row and one audit row; a second key for the
+same path succeeds; another caller's key never leaks a scope; the audit row carries the kind and depth but no path,
+segment or user; and the created scope really holds an entity, a session row and a memory version.
+`tests/integration/test_type_completeness.py` drives `create_scope` through `Engine.call` and asserts it has left the
+unwired set. `tests/test_api_entry.py` keeps the mutation case for `namespace_owner_only`.
+
+**Status:** decided and verified.

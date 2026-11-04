@@ -136,6 +136,13 @@ async def write_memory(conn: AsyncConnection, job: Job, tick: ClockTick) -> None
            VALUES (%s,%s,%s,'synthetic supporting user statement','support')""",
         (version_id, job.turn_id, job.user_id),
     )
+    # the gate decision that admitted it (migration 14 requires it of the application role)
+    await conn.execute(
+        """INSERT INTO memory_conflict
+               (id,candidate_version_id,user_id,relation,decision,reason_code,decided_by,decided_at)
+           VALUES (%s,%s,%s,'unrelated','accept','gate_passed','validation-gate',clock_now())""",
+        ("conflict-" + job.id, version_id, job.user_id),
+    )
     assert await scalar(conn, "SELECT lower(recorded_range) FROM memory_version WHERE id=%s", (version_id,)) == (
         tick.instant
     )

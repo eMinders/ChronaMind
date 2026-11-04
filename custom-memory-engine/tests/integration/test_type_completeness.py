@@ -186,6 +186,12 @@ async def insert_tuple(conn: AsyncConnection, tid: str, t: Tuple4, *, user: str 
             "VALUES (%s, %s, %s, 'x', 'support')",
             (tid, "t-" + user, user),
         )
+    if t.lifecycle in ("asserted", "contested"):  # the gate decision that admitted it (migration 14)
+        await conn.execute(
+            "INSERT INTO memory_conflict (id, candidate_version_id, user_id, relation, decision, reason_code, "
+            "decided_by, decided_at) VALUES (%s, %s, %s, 'unrelated', %s, 'gate_passed', 'validation-gate', clock_now())",
+            ("mc-" + tid, tid, user, "accept" if t.lifecycle == "asserted" else "hold"),
+        )
     if (
         t.lifecycle == "inferred"
     ):  # I1': a derivation row and a registered method (v1 persona rows carry both implicitly)
@@ -434,11 +440,68 @@ async def test_procedural_memory_is_the_procedure_kind_storable_under_every_rete
         ]  # fmt: skip
 
 
+async def test_create_scope_creates_a_usable_scope_through_the_entry_point_only(database) -> None:  # noqa: F811
+    """G1 / E-040: scope creation is configuration, verified through `Engine.call` and never against a table.
+
+    Migration 15 (`V2-D64`) is what makes this meaningful: before it a created sub-scope could hold no row, so the
+    operation would have recorded a scope nothing could use.
+    """
+    async with world(database) as (conn, engine, _schema):
+        created = await engine.call(
+            caller("alice"),
+            "create_scope",
+            {"parent": "/u/alice/", "segment": "repo", "kind": "project", "idempotency_key": "sc"},
+        )
+        assert created == "/u/alice/repo/"
+        assert "create_scope" not in engine.unwired_operations()
+        await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+        await conn.execute(
+            "INSERT INTO session (id, user_id, started_at, scope_path) VALUES ('s-scope', 'alice', %s, '/u/alice/repo/')",
+            (START,),
+        )
+        assert await rows(conn, "SELECT scope_path FROM session WHERE id = 's-scope'") == [("/u/alice/repo/",)]
+
+
 def test_no_profile_specific_code_path_in_the_generic_engine_api() -> None:
     """Requirement 6: the handlers read a profile's DATA (kinds, retention); they never branch on which profile it is."""
     root = Path(__file__).resolve().parents[2] / "src" / "custom_memory_engine"
     for relative in ("api/ingest_handlers.py", "api/handlers.py", "api/entry.py", "api/runtime.py"):
         assert find_profile_branching((root / relative).read_text(encoding="utf-8")) == [], relative
+
+
+async def test_register_method_is_wired_through_engine_call(database) -> None:  # noqa: F811
+    """I3 enforcement via the entry point: ``register_method`` is admin-only, idempotent on the same hash,
+    and wired through Engine.call so the contract's static errors govern every call.
+
+    This test drives the entry point only; the append-only and uniqueness guarantees are
+    in ``test_migration_m6.py::test_method_rejects_update_delete_and_truncate_and_keeps_name_version_unique``.
+    """
+    digest = "a" * 64
+    args: dict[str, object] = {
+        "name": "e018-method",
+        "version": "1",
+        "params_schema_hash": digest,
+        "description": "registered in test_type_completeness",
+        "idempotency_key": "e018-m1",
+    }
+    async with world(database) as (conn, engine, _schema):
+        del conn
+        # non-admin callers are forbidden regardless of tier
+        for ctx in (caller("alice"), caller("alice", "B", admin=True)):
+            with pytest.raises(Exception, match="forbidden"):
+                await engine.call(ctx, "register_method", args)
+        # a Tier C admin caller succeeds and the result is a method id
+        first = await engine.call(caller("alice", admin=True), "register_method", args)
+        assert isinstance(first, str) and first.startswith("m_")
+        # the same call replays: same hash → same id
+        assert await engine.call(caller("alice", admin=True), "register_method", args) == first
+        # a different hash for the same (name, version) is precondition_failed
+        with pytest.raises(Exception, match="precondition_failed"):
+            await engine.call(
+                caller("alice", admin=True),
+                "register_method",
+                {**args, "params_schema_hash": "b" * 64, "idempotency_key": "e018-m2"},
+            )
 
 
 async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_passes(database) -> None:  # noqa: F811
@@ -447,6 +510,8 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         register_ingest_handlers(engine, engine.resolver.runtime)  # type: ignore[attr-defined]
         unwired = set(engine.unwired_operations())
         assert {"delete", "query", "get", "infer", "export"} <= unwired  # W3+ owners: E-037, E-033, C-021, A-015
+        # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
+        assert "create_scope" not in unwired
         print(
             f"\nG1: {len(OPERATIONS) - len(unwired)} of {len(OPERATIONS)} operations wired; "
             f"unwired (not yet testable): {sorted(unwired)}"

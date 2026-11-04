@@ -6,7 +6,10 @@ already run. A handler still never trusts that: it operates under the caller's r
 point's static errors (``EntryError``) and no identifier, path, scope or content.
 
 Operations wired here: ``register_method``, ``create_entity``, ``link_entity``, ``create_scope``, ``link``, ``unlink``,
-``adjudicate``, ``retract_own``, ``grant_access`` and ``revoke_access``.
+``adjudicate``, ``retract_own``, ``grant_access`` and ``revoke_access``. ``create_scope`` was held back by ``E-011``
+while every scope was the personal root; migration 16 admits a row anywhere inside its owner's namespace
+(``V2-D64``), so a created sub-scope now holds entities, associations and memories like any other (``E-040``).
+``link_entity`` records a cross-scope entity link; both endpoints must be in the caller's read set (``E-024``).
 """
 
 import re

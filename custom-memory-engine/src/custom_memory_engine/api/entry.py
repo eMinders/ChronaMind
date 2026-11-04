@@ -165,6 +165,17 @@ class PrincipalRegistry(Protocol):
     async def exists(self, principal: str) -> bool: ...
 
 
+class ScopeReadRecorder(Protocol):
+    """Records a read that reached outside the caller's namespace (``ARCHITECTURE_V2.md`` section 5 rule 6).
+
+    It receives the principal and the scope paths the call actually resolved outside that namespace. It never
+    receives content: what it may write is ``scope.audit.record_scope_read``'s decision, and its ``scope_read``
+    detail carries counts only.
+    """
+
+    async def record(self, principal: str, cross_scope_paths: Sequence[str]) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class Call:
     """What a handler receives: an already authorised, already validated call."""
@@ -179,6 +190,18 @@ class Call:
 
 type Handler = Callable[[Call], Awaitable[object]]
 type Check = Callable[["Engine", CallerContext, Operation, dict[str, object], dict[str, object]], Awaitable[None]]
+
+
+def _within_callers_namespace(principal: str, scope_path: str) -> bool:
+    """Whether ``scope_path`` lies in the caller's own ``/u/<principal>/`` namespace.
+
+    A malformed principal or path is treated as *not* ours, so it is recorded rather than silently skipped: the
+    audit must over-report a doubtful read, never under-report one.
+    """
+    try:
+        return parse_scope(scope_path).is_within(parse_scope("/u/" + principal + "/"))
+    except ScopeError:
+        return False
 
 
 # --- condition checks ----------------------------------------------------------------------------------
@@ -235,6 +258,14 @@ async def _namespace_owner_only(
             raise _fail(op, "forbidden")
     if target is None:
         raise _fail(op, "validation_error", "scope_required")
+    # A malformed target is a grammar fault, not an authorisation decision: `API_V2.md` 4.10 separates
+    # `validation_error` (the grammar of section 6) from `forbidden` (outside the caller's namespace). Answering
+    # `forbidden` for an unparseable path would tell a caller its input was well formed.
+    if isinstance(target, str):
+        try:
+            parse_scope(target)
+        except ScopeError:
+            raise _fail(op, "validation_error", "scope_invalid") from None
     try:
         authorize_write(ctx.principal, target, "private")
     except ScopeError:
@@ -363,10 +394,12 @@ class Engine:
         methods: MethodRegistry,
         principals: PrincipalRegistry | None = None,
         handlers: Mapping[str, Handler] | None = None,
+        scope_reads: ScopeReadRecorder | None = None,
     ) -> None:
         self.resolver = resolver
         self.methods = methods
         self.principals = principals
+        self.scope_reads = scope_reads
         self._handlers: dict[str, Handler] = {}
         for name, handler in (handlers or {}).items():
             self.register(name, handler)
@@ -397,6 +430,25 @@ class Engine:
         if self.principals is None:
             return False
         return await self.principals.exists(principal)
+
+    async def _record_scope_read(self, ctx: CallerContext, spec: Operation, targets: Mapping[str, TargetInfo]) -> None:
+        """``ARCHITECTURE_V2.md`` section 5 rule 6: log a read that reached outside the caller's own namespace.
+
+        The read set is what the call actually resolved, not what it may have asked for: only a target the engine
+        returned can have been read. A read confined to the caller's namespace records nothing. With no recorder wired
+        (a unit test, or a deployment with no audit sink) this is a no-op, never a silent pass: the *recorder* is what
+        decides, and `scope.audit.record_scope_read` is the one that writes.
+        """
+        if self.scope_reads is None or not targets:
+            return
+        cross = {
+            info.scope_path: info.visibility
+            for info in targets.values()
+            if not _within_callers_namespace(ctx.principal, info.scope_path)
+        }
+        if not cross:
+            return
+        await self.scope_reads.record(ctx.principal, tuple(sorted(cross)))
 
     async def call(self, ctx: CallerContext, operation: str, arguments: Mapping[str, object] | None = None) -> object:
         # 1. Authorisation first: nothing below runs for an unknown or unpermitted operation.
@@ -434,7 +486,11 @@ class Engine:
                 bool(state.get("opens_contradiction", False)),
                 dict(state.get("targets", {})),  # type: ignore[call-overload]
             )
-            return await handler(call)
+            result = await handler(call)
+            # 5. Rule 6: a read that left the caller's namespace leaves one content-free `scope_read` row. It runs
+            #    after the handler so a refused read records nothing, and a failure to record fails the call closed.
+            await self._record_scope_read(ctx, spec, call.targets)
+            return result
         except EntryError as error:
             raise self._contract_error(spec, error) from None
         except Exception as error:
@@ -480,6 +536,7 @@ __all__ = [
     "Handler",
     "MethodRegistry",
     "PrincipalRegistry",
+    "ScopeReadRecorder",
     "TargetInfo",
     "TargetResolver",
 ]

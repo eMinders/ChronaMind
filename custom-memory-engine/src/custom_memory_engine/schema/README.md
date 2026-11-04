@@ -12,6 +12,14 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 | `006_facet_floors.sql` | Migration 6 (`E-020`, M8): the `um_facet` tag and the retention floor for claims and abstractions |
 | `007_lifecycle_guard.sql` | Migration 7 (`E-016`): the closed lifecycle transition table, kind-conditioned legality, and the `I1′` derivation record |
 | `008_source.sql` | Migration 8 (`E-013`, M4): evidence becomes a `(source_type, source_ref, span, content_hash)` reference, `turn` kept byte-identical and `external` outside the deletion boundary |
+| `009_clocks.sql` | Migration 9 (`E-012`): three system clocks; `valid_range` renamed to `event_range`; `clock_watermark` per user |
+| `010_structural_tables.sql` | Migration 10 (`E-014`, `E-016`): structural tables (`method`, `association`, `entity`, etc.) and lifecycle entry records |
+| `011_scope.sql` | Migration 11 (`E-011`): `scope_path` and `visibility` on every scoped table; path-based RLS read policy; sub-scope grammar |
+| `012_api_runtime.sql` | Migration 12 (`E-039`): `created_by`/`created_tier` on `memory_version`; `api_idempotency` table |
+| `013_generic_predicates.sql` | Migration 13 (`E-039`): seeds `episode` and `statement` predicates |
+| `014_entry_records.sql` | Migration 14 (`E-016`, `V2-D61`): the records of entry into the lifecycle (the gate decision at creation, the adjudication of a staged or held candidate) for every non-superuser role |
+| `015_subscopes.sql` | Migration 15 (`E-011`, `V2-D64`): sub-scopes inside the owner's namespace; per-scope exclusion key (`I5`); per-scope belief watermark (`I4`) |
+| `015_scope_entity_links.sql` | Migration 16 (`E-024`): persisted `scope` rows and `entity_link` table for cross-scope entity opacity |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
@@ -40,7 +48,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private migration-history
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–14** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–16** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -124,13 +132,15 @@ The §2.3 transition table is closed in the database, for every writer (direct S
   Re-asserting retired content creates a new row.
 * **Records at commit** (extends `enforce_provenance`, so it shares `trg_memory_version_provenance`): an active
   `observed`/`asserted` row needs an evidence row; an active `inferred` row needs a derivation row (`I1′`, derivation half).
-* **Not yet checkable** (named, not faked): the `I1′` method reference and the adjudication, verification and
-  retirement-reason records have no table until `E-014`, which extends `enforce_provenance` when it adds them.
+* **Records added later:** the `I1′` method reference and the adjudication, verification and retirement-reason
+  records are migration 10's; the gate decision at creation and the adjudication of a staged or held candidate are
+  migration 14's (`V2-D61`).
 * **Dual-write allowances** (end with the window): staged `candidate`/`rejected` rows are born `retired` and a
   `candidate` may be promoted; a derived claim becomes `inferred` when its derivation row arrives; accepting a held
-  derived/persona candidate activates it as `inferred`; v1 `persona` rows are exempt from the derivation record.
-* **Decision (a)** (does `I10` apply to explicit withdrawal?) is unmade. As the issue instructs, `(S)` or `(C)` is
-  required for system-initiated retirement only, which is migration 1's archival trigger on `status = 'archived'`.
+  derived/persona candidate activates it as `inferred`; v1 `persona` rows are exempt from the derivation record
+  (narrowed by migration 14 to existing rows and the operator).
+* **Decision (a)** (does `I10` apply to explicit withdrawal?) was left open by this migration and is decided by `V2-D59`:
+  it applies, at no cost, because the withdrawal's recorded-time close is branch `(S)`.
 
 Rollback: `rollback/007_lifecycle_guard.sql`. Tested by `tests/integration/test_lifecycle_transitions.py`.
 
@@ -209,8 +219,8 @@ recorded transition of `ARCHITECTURE_V2` 2.3:
 | `inferred -> retired` | one of those, or a refuting `verification`, or a dissent (`negative_constraint`), or a `reject` decision |
 | `inferred -> contested` | a Tier C `contradicts` association |
 
-The v1 staging promotion and the dual-write `-> inferred` corrections record nothing (migration 7). **Not enforced:** the gate-decision
-record at *creation* (v1 direct commits write none).
+The v1 staging promotion and the dual-write `-> inferred` corrections record nothing here (migration 7). The records of
+*entry* into the lifecycle, the gate decision at creation among them, are migration 14's.
 
 **The backfills run as the owner, and the owner is subject to `FORCE ROW LEVEL SECURITY`.** A migration applied by an
 ordinary role matched zero rows in an unqualified `UPDATE`/`INSERT ... SELECT`, leaving every pre-existing inferred
@@ -237,6 +247,7 @@ Rollback: `rollback/010_structural_tables.sql` restores version 9 exactly. Teste
 ## Migration 11: scope hierarchy and path-based RLS (`011_scope.sql`, `E-011`, M2 + M9)
 
 Every scoped row gains `scope_path` and `visibility` (`private | project | shared`); existing rows are backfilled to
+<<<<<<< HEAD
 `/u/<user_id>/` and `private`. **`user_id` stays stored** (`V2-D49` D11) and a `CHECK` ties the path to it, so
 a v1 writer that names only `user_id` still works (a `BEFORE INSERT` trigger fills the personal root) and an inconsistent dual-write is
 refused. 15 tables are scoped: the ten of the plan, the three new association/ledger/verification tables, and `entity` and `negative_constraint`
@@ -255,7 +266,8 @@ refused. 15 tables are scoped: the ten of the plan, the three new association/le
 * **Backfill under FORCE RLS.** The runner lifts `FORCE` around the body and restores it (`V2-D60`), so the backfill reaches every row for an
   owner that does not bypass RLS (`tests/integration/test_migration_owner.py`, case `[11]`); the backfill disables user triggers so
   provenance/clock/lifecycle guards are not re-run.
-* Migration 14 replaces the personal-root-only checks with an own-namespace subtree check. Child scopes are persisted in
+<<<<<<< HEAD
+* Migration 16 replaces the personal-root-only checks with an own-namespace subtree check. Child scopes are persisted in
   `scope`; `entity` rows remain scope-local and cross-scope identity is represented only by explicit `entity_link` rows.
 
 Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if two users now share a job key). Tested by
@@ -271,10 +283,11 @@ Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if tw
   result and never a second effect" (`I9`). Per user, append-only, forced per-user RLS; the runtime role may read and append
   but never rewrite. It stores the engine-generated result id, never a request.
 
+<<<<<<< HEAD
 `api/runtime.py` and `api/handlers.py` wire ten operations through `Engine.call`: `register_method`, `create_entity`,
 `link_entity`, `create_scope`, `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access` and `revoke_access`.
 Every lookup and write runs as the caller under the restricted role, so an id the caller may not read is absent to
-the engine itself. `create_scope` creates persisted child scopes; the user's root remains implicit.
+the engine itself. `create_scope` creates persisted child scopes (migration 16); the user's root remains implicit.
 
 Rollback: `rollback/012_api_runtime.sql` restores version 11 exactly. Tested by `tests/integration/test_migration_m12.py`
 and `tests/integration/test_api_wiring_structure.py`.
@@ -288,7 +301,7 @@ Multi-valued means two of them never supersede or conflict; a caller that wants 
 refuses the migration (fail closed; `tests/integration/test_migration_m13.py`). Rollback: `rollback/013_generic_predicates.sql` (refuses while
 any artifact uses them).
 
-## Migration 14: persisted child scopes and entity links (`014_scope_entity_links.sql`, E-024)
+## Migration 16: persisted child scopes and entity links (`015_scope_entity_links.sql`, E-024)
 
 `scope` stores child scope paths under one principal's namespace. The root is implicit; child paths must have a persisted
 parent and are validated again by the API before an entity or memory write. `entity_link` relates two opaque, scope-local
@@ -307,6 +320,77 @@ first gate decision and the stored belief time), so a replayed key gets exactly 
 reference carries a hash, not the captured text, so asserting from external evidence alone is a `validation_error`.
 `assert` may optionally name a same-scope `subject_entity`, which is stored as the claim's subject key.
 Tested by `tests/integration/test_api_wiring_ingest.py`.
+
+## Migration 14: the records of entry into the lifecycle (`014_entry_records.sql`, `E-016`, `V2-D61`)
+
+Migrations 7 and 10 enforce the transitions *between* lifecycles and their records. This one enforces the creation rows of
+`ARCHITECTURE_V2` 2.3 and the two v1 ways into the lifecycle that are not creations, at commit, with the deferred constraint
+triggers `trg_memory_version_record_of_creation` (`AFTER INSERT`) and `trg_memory_version_record_of_entry` (`AFTER UPDATE`).
+Both are listed in `engine.deletion.ARCHIVAL_GUARD_TRIGGERS`, and both are named so they fire after `trg_memory_version_provenance`
+(a row with no evidence reports Invariant 1 first).
+
+| Entry | Record required at commit |
+|---|---|
+| `- -> asserted` | evidence (migration 7) and an `accept` decision for the version in `memory_conflict`, unless it is a re-record (below) |
+| `- -> contested` | a `hold` decision |
+| `- -> inferred` | a derivation and a registered method (migrations 7, 10); now also for a persona row |
+| `- -> observed` | evidence from a declared source (migrations 7, 8) |
+| staged `candidate` -> `asserted`/`inferred` | an `accept` decision (the R4 promotion record `resolve_conflict_pending` writes) |
+| staged `candidate` -> `contested` | a `hold` decision |
+| `contested -> inferred` (a held derived or persona candidate accepted) | an `accept` decision and a derivation |
+
+* **A re-record is not a new assertion.** Close-then-insert (supersession, boundary revision, multi-valued end) closes a belief at
+  tick `c` and inserts its copy at `[c, NULL)`. The copy is admitted on the decision of the belief it continues when a version with
+  the same memory key, subject, predicate, kind and content was closed at exactly `c` and the copy's event range lies within what was
+  believed for that subject and predicate until `c`. New content or new event time is a new assertion. The ablations that *delete*
+  the closed version (`A2`, `A2b`) leave nothing to continue and are refused under the application role (evaluation-only).
+* **Who is bound:** every role that is not a superuser. A superuser can disable any trigger and bypasses row security, so no
+  trigger binds it. The v1 test and evaluation harnesses connect as one and commit claims without the gate, and the v1
+  archival and immutability tests pass unchanged. Every engine path the runtime role reaches records its decision in the
+  same transaction.
+* **The v1 persona exemption** from the derivation half of `I1′` (migration 7) now covers only existing persona rows and the
+  operator. A persona row the application role creates or brings into the lifecycle needs a derivation.
+
+Rollback: `rollback/014_entry_records.sql` restores version 13 exactly. Tested by `tests/integration/test_lifecycle_transitions.py`
+(the creation records, the adjudicated entries, every engine write path under the runtime role, the re-record bounds, the
+superuser scope, deferrability, rollback).
+
+## Migration 15: sub-scopes, per-scope keys and the scope-keyed indexes (`015_subscopes.sql`, `E-011`, `V2-D64`)
+
+Migration 11 admitted only the personal root on thirteen tables (`scope_path = '/u/' || user_id || '/'`) and deferred
+everything below it to "the per-scope `I9` decision". This is that decision.
+
+* **A row may lie anywhere inside its owner's namespace.** `<table>_scope_matches_user` becomes
+  `<table>_scope_within_user`: `pg_catalog.starts_with(scope_path, '/u/' || user_id || '/')`. Exact by construction,
+  because `D13` forbids the separator in `app_user.id` and in a scope segment: `/u/4/` still does not contain
+  `/u/42/`, and a row can never be placed inside another tenant's namespace. What becomes possible is only what the
+  profiles need - `/u/<id>/p/<repo>/` (coding), `/u/<id>/o/<org>/` (enterprise), `/u/<id>/p/<topic>/` (research),
+  `/u/<id>/s/<task>/`. `authorize_write` is unchanged: a write still lands only in the caller's own namespace (`V2-D53`).
+* **`I5` keys on the scope.** `no_bitemporal_overlap` moves from `user_id WITH =` to `scope_path WITH =`, so two
+  sibling scopes of one user may each hold the same declared single-valued predicate, and a second open belief in the
+  *same* scope is still refused (23P01). `V2-D49` D10 kept the `user_id` key while every scope was the personal root,
+  where the two were equivalent; with sub-scopes they are not, and `I5` declares exclusivity per scope.
+* **`I4` keys on the scope.** `clock_watermark` is keyed by `scope_path`, so a sibling scope cannot walk another
+  scope's belief timeline backwards. The trigger derives the personal root when `scope_path` is still NULL, because
+  `trg_memory_version_recorded_watermark` sorts before `trg_memory_version_scope_default` and must not depend on trigger
+  order.
+* **The indexes whose notes pointed here.** `memory_version_um_facet_idx` becomes `(scope_path text_pattern_ops, um_facet)`:
+  facet-filtered reads are scope-filtered reads. `<table>_scope_path_idx` (migration 11) already keys on `scope_path`.
+* **`/o/<org>/` is a sub-scope, not a namespace.** §13 gives the enterprise profile the root `/o/<org>`; the implemented
+  form is `/u/<owner>/o/<org>/`, shared through `scope_grant`. A top-level `/o/` is refused, because `scope_grant.owner_user_id`
+  references `app_user` and the read policy matches `/u/<caller>/`: an `/o/` row would have no owner to grant it and no policy
+  to return it.
+* **No existing row changes.** Every row is in its personal root, for which the new `CHECK` holds; re-keying the exclusion
+  constraint and the watermark preserves every key that existed.
+
+The content-free `scope_read` row of rule 6 is written by the public entry point, not by this migration:
+`api.entry.Engine.call` reports every scope path a call resolved outside the caller's namespace to a `ScopeReadRecorder`, and
+`api.wiring.build_engine` wires `scope.audit.ConnectionScopeReads` so a deployment cannot omit it.
+
+Rollback: `rollback/015_subscopes.sql` restores version 14 exactly (byte-identical catalog fingerprint, including the
+exclusion index's legacy `valid_range` attribute, which a table rename does not propagate). It **refuses** if any row
+lies in a sub-scope, because version 14 cannot represent one and flattening it into the owner's root would merge two
+scopes' beliefs. Tested by `tests/integration/test_migration_m15.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
@@ -333,7 +417,7 @@ verification command. The migration CLI never executes it on runtime data.
 
 | Invariant | Enforcement site in this DDL | Notes |
 |---|---|---|
-| **Invariant 1** | Constraint trigger `trg_memory_version_provenance` on `memory_version`, function `enforce_provenance()`, `DEFERRABLE INITIALLY DEFERRED` | Extended by migration 7 (`E-016`) with the lifecycle record obligations. Commit of `active`/`archived` requires ≥1 `memory_evidence` row or ≥1 outgoing `memory_derivation` row. `bitemporal_on_full.sql` disables it because that harness inserts believed rows without evidence, and re-enables it as its final statement, so a replay never leaves a persistent database with invariant 1 off. |
+| **Invariant 1** | Constraint trigger `trg_memory_version_provenance` on `memory_version`, function `enforce_provenance()`, `DEFERRABLE INITIALLY DEFERRED` | Extended by migration 7 (`E-016`) with the lifecycle record obligations; the records of every lifecycle transition (migration 10) and of entry into the lifecycle (migration 14) are separate deferred triggers, which `bitemporal_on_full.sql` steps aside the same way. Commit of `active`/`archived` requires ≥1 `memory_evidence` row or ≥1 outgoing `memory_derivation` row. `bitemporal_on_full.sql` disables it because that harness inserts believed rows without evidence, and re-enables it as its final statement, so a replay never leaves a persistent database with invariant 1 off. |
 | **Invariant 2** | `CHECK` constraints `valid_wellformed`, `recorded_iff_believed`, `recorded_wellformed` on `memory_version` | Same predicates as the reduced schema. |
 | **Invariant 3** | `clock_now()` reads `app.clock` then `transaction_timestamp()`; `BEFORE UPDATE` trigger `trg_memory_version_guard_update` / `guard_update()` | One instant per transaction, so `recorded_range` bounds written by several statements share `c` (R1). Post-insert updates allowed only for `status`, `archival_branch` (only together with `status = 'archived'`), staging-to-active `recorded_range = [clock_now(), ∞)`, and closing `upper(recorded_range)` to `clock_now()`. Replay monotonicity remains a harness/`RL-044` concern. |
 | **Invariant 4** | `EXCLUDE USING gist` constraint `no_bitemporal_overlap` (`btree_gist`) | Partial: `single_valued AND status IN ('active','archived')`. Per-user advisory locks stay in `RL-042`. |

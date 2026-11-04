@@ -18,6 +18,7 @@ from custom_memory_engine.api.contract import Tier
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
 from custom_memory_engine.api.handlers import register_structure_handlers
 from custom_memory_engine.api.runtime import DbMethods, DbTargets, ForeignKeyPrincipals, Receipt, Runtime
+from custom_memory_engine.api.wiring import build_engine
 from custom_memory_engine.scope.access import Selector, resolve_read_set
 from custom_memory_engine.security import provision_runtime_role
 from tests.integration.test_migration_m1 import (
@@ -67,7 +68,8 @@ async def world(database) -> AsyncIterator[tuple[AsyncConnection, Engine, str]]:
             )
         await provision_runtime_role(conn, schema, role)
         runtime = Runtime(conn, role, schema)
-        engine = Engine(resolver=DbTargets(runtime), methods=DbMethods(runtime), principals=ForeignKeyPrincipals())
+        # The one production wiring, so this fixture cannot drift from what a deployment builds (E-011 rule 6).
+        engine = build_engine(runtime)
         register_structure_handlers(engine, runtime)
         try:
             yield conn, engine, schema

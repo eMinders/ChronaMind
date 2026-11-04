@@ -124,16 +124,22 @@ mechanical guarantee that the plan stays consistent as it is edited.
 | `E-018` | **Conformance suite**: enumerate `(kind × retention × lifecycle × facet)` legal tuples; assert storable, queryable, deletable, correctly channelled; assert `claim`/`abstraction` cannot take `working` | This is what makes "type-completeness" real | M |
 | `E-019` | **Profile schema**: kinds, extractors, operators, retention defaults, scope root, render conventions, facet vocabulary | Config only; no code branches on profile name | M |
 | `E-020` | M8: `um_facet` tag + index; retention floor `CHECK` | Needed before `C-024`, not before | S |
-| `E-039` | **Public API entry point** (r9, found by `MA-017`): one callable per `API_V2.md` operation; tier and admin role from the authenticated credential; `api.contract.authorize` on every call; every condition code enforced; static error contract (§1.1). Each operation is wired as its owning task lands; it never adds an operation outside `API_V2.md` | Without it no task owns the dispatch layer, authorization or the error contract; `E-018`'s conformance suite drives the engine through it | M |
+| `E-039` | **Public API entry point** (r9, found by `MA-017`): one callable per `API_V2.md` operation; tier and admin role from the authenticated credential; `api.contract.authorize` on every call; every condition code enforced; static error contract (§1.1). Each operation is wired as its owning task lands; it never adds an operation outside `API_V2.md` | Without it no task owns the dispatch layer, authorization or the error contract; `E-018`'s conformance suite drives the engine through it. **Open (#97) on criterion 5 only**: the suite must drive the engine only through this entry point, which completes as the 18 unwired operations land (§4.1, `V2-D63`) | M |
+| `E-040` | **`create_scope`** (r13, `V2-D63`): the operation `API_V2.md` §3 defines and `E-011`'s `SCOPE` table was migrated for, which `E-011` (#62) deliberately left unwired while every scope is personal | Split out of `E-011` at its closure so no operation is owned by a closed task; `E-011` keeps the M2+M9 migration, this task owns the behaviour. Wired through `Engine.call` under `namespace_owner_only`, then driven by `E-018`'s suite (§4.1) | S |
 
-**W1 progress (r11).** Six of the twelve tasks are complete on `main` and were verified against their own acceptance
-criteria, not against CI alone: `E-010` (migration 5), `E-012` (migration 9, closing `T-28`), `E-013` (migration 8),
-`E-015`, `E-017`, `E-019`, `E-020` (migration 6), and `E-039` in all but its `E-018`-facing criterion. Their migrations
-are 5-9; 4 was already shipped. `E-016` (migration 7) is **partial**: the closed transition table, kind-conditioned
-legality and the `I1'` derivation guard are enforced for every writer, but the record tables the table's own §2.3 rows
-require are `E-014`'s (`METHOD`, `VERIFICATION`, adjudication and reason codes), so `I1'` stays `PARTIAL`.
-`E-014` (M6), `E-011` (M2+M9) and `E-018` (G1 conformance) are the remaining W1 work, and `E-039`'s last criterion
-belongs with `E-018` because that suite is what drives the entry point.
+**W1 progress (r13).** Eleven of the thirteen W1 tasks are complete on `main`: `E-010` (migration 5), `E-011`
+(migrations 11 and 15, #131 and #150), `E-012` (migration 9, closing `T-28`), `E-013` (migration 8), `E-014` (migration 10,
+#130), `E-015`, `E-016` (migrations 7 and 14), `E-017`, `E-018` (`V2-D62`), `E-019` and `E-020` (migration 6). The two
+remaining are `E-039` (#97), open on criterion 5 only, which completes as the 17 unwired operations land (§4.1,
+`V2-D63`), and `E-040` (#148), the `create_scope` behaviour split out of `E-011` at its closure (`V2-D63`). The r11
+note counted `E-014`, `E-011` and `E-018` as outstanding; all three have since closed. This paragraph replaces the r11
+one (it contradicted `E-016`'s completion and `E-011`/`E-014`/`E-018`'s closures); the r11 text remains in this file's
+git history.
+
+**`E-016` complete.** Migration 10 (`E-014`, #130) added the records of every transition between lifecycles, and
+migration 14 adds the records of entry into the lifecycle: the gate decision at creation, and the adjudication of a
+staged or held candidate (`V2-D61`). Every §2.3 row is now enforced at commit for every non-superuser role. `I1'` stays
+`PARTIAL` only for the channel contract (`E-017`, `E-035`).
 
 **r10 requirements binding on every W1 task** (`V2-D54`, `V2-D55`; pre-W1 audit `audits/PRE_W1_INDEPENDENT_AUDIT.md`):
 1. W1 migrations are files **005+**; `migrate.MIGRATIONS` is append-only and checksum-bound.
@@ -155,6 +161,81 @@ queryable, deletable via config only; `MA-011`'s isolation test green.
 are resolved through `scope_grant` with forced RLS (`V2-D36`); the association degree cap
 is attached by trigger and its concurrency test passes (`V2-D13`); provenance to unreadable
 scopes renders opaque (`V2-D37`).
+
+**E-018 / G1 status after W1 (r12, `V2-D62`).** The conformance suite is green on `main` for all four properties
+(storable, queryable, deletable, routed) on every legal `(kind × retention × lifecycle × facet)` tuple, and both
+`I3` (method registry) and `I6` (retention orthogonality) are `ENFORCED` in the ledger. Two properties are measured
+below `Engine.call` because the required W3 operations are not yet wired:
+- **deletable** via `Engine.call`: requires `delete` (`E-037`).
+- **queryable** via `Engine.call`: requires `query` (`E-033`).
+- **procedural memory via `Engine.call`**: requires `infer`/procedure creation (`E-030`).
+
+When these three W3 operations land, the conformance suite's corresponding assertions must be re-pointed at
+`Engine.call` and `tests/integration/test_type_completeness.py` updated. Until then, those properties are reported
+as "not yet testable", never as passes. `E-018` (#69) is closed with this record; the W3 tasks carry the
+outstanding criterion (`V2-D62`).
+
+### 4.1 `E-039` deferral register — the 17 unwired operations (r13, `V2-D63`)
+
+`Engine.call` dispatches to registered handlers and nothing else. **12 of 29** operations are wired
+(`register_method`, `create_entity`, `create_scope`, `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access`,
+`revoke_access` via `api/handlers.py`; `ingest_episode`, `assert`, `ingest_artifact` via `api/ingest_handlers.py`).
+The remaining **17** answer `forbidden` (`operation_not_wired`) before any statement runs, so `E-039`'s criterion 5 — *"`E-018`'s
+conformance suite drives the engine only through this entry point"* — cannot be satisfied yet, and `E-039` (#97)
+stays open until it is.
+
+**The owner of each operation is the task that builds its behaviour**, as `COVERAGE.md` declares it. The owner is a
+roadmap task, not necessarily an open issue: the W3/W4/W5/W7 trackers open child issues when their wave opens, and
+`plan_coverage.py --check` fails if any operation loses its owner. `E-039` owns the *door*, never the behaviour, and
+must not implement any row below.
+
+**Every row carries the same three-part entry-point acceptance criterion**, in addition to its own behavioural
+criteria in its own task:
+
+- **(a) Wired through `Engine.call`** — the operation is registered in `Engine._handlers` and is reachable only
+  through the entry point, so authorisation and every declared condition code run before any statement. A call
+  made without permission is `forbidden` before anything executes, and `Engine.unwired_operations()` no longer
+  lists it.
+- **(b) `E-018` conformance updated** — `tests/integration/test_type_completeness.py` is updated to exercise this
+  operation **exclusively** through `Engine.call`, and its entry in
+  `test_unwired_operations_are_reported_as_not_yet_testable_never_as_passes` is removed as the operation lands.
+- **(c) Properties verified through the public entry point** — the queryable, deletable and procedural
+  properties this operation touches are asserted through `Engine.call`, never below it and never against the
+  table or the module directly.
+
+| # | Operation | Owner | Issue | Entry-point criterion (a)(b)(c) |
+|---|---|---|---|---|
+| 1 | `query` | `E-033` | W3 tracker #73 (child not yet created) | wires `query`; suite's **queryable** property runs through `Engine.call` |
+| 2 | `get` | `E-033` | W3 tracker #73 (child not yet created) | wires `get`; suite's **queryable** property runs through `Engine.call` |
+| 3 | `provenance` | `E-033` | W3 tracker #73 (child not yet created) | wires `provenance`; suite's **queryable** property runs through `Engine.call`, opaque handles intact (`V2-D37`) |
+| 4 | `refine` | `E-034` | W3 tracker #73 (child not yet created) | wires `refine`; suite's **queryable** property runs through `Engine.call` |
+| 5 | `infer` | `C-021` | W5 tracker #75 (child not yet created) | wires `infer`; suite's **procedural** property runs through `Engine.call` |
+| 6 | `verify` | `C-021` | W5 tracker #75 (child not yet created) | wires `verify`; `I11`/`I15` ledger properties asserted through `Engine.call` |
+| 7 | `refute` | `C-026` | W5 tracker #75 (child not yet created) | wires `refute`; recovery-or-retirement asserted through `Engine.call` |
+| 8 | `link_entity` | `E-024` | #139 | wires `link_entity`; `ENTITY` opacity asserted through `Engine.call` |
+| 9 | `record_outcome` | `E-030` | W3 tracker #73 (child not yet created) | wires `record_outcome`; suite's **procedural** property runs through `Engine.call` |
+| 10 | `dissent` | `UM-012` | W5 tracker #75 (child not yet created) | wires `dissent`; sticky dissent (`I16`) asserted through `Engine.call` |
+| 11 | `purge_working` | `E-026` | #141 | wires `purge_working`; the retention-floor survivor test runs through `Engine.call` |
+| 12 | `expire` | `A-014` | W7 tracker #79 (child not yet created) | wires `expire`; `I9` idempotency asserted through `Engine.call` |
+| 13 | `rebuild_index` | `A-014` | W7 tracker #79 (child not yet created) | wires `rebuild_index`; admin-only refusal asserted through `Engine.call` |
+| 14 | `delete` | `E-037` | W3 tracker #73 (child not yet created) | wires `delete`; suite's **deletable** property runs through `Engine.call` |
+| 15 | `export` | `A-015` | W7 tracker #79 (child not yet created) | wires `export`; export selector set asserted through `Engine.call` |
+| 16 | ~~`create_scope`~~ | ~~`E-040`~~ | **wired** (#151) | `create_scope` is wired under `namespace_owner_only` and asserted through `Engine.call` (`tests/integration/test_create_scope.py`); it leaves this register |
+| 17 | `stats` | `C-010` | W4 tracker #74 (child not yet created) | wires `stats`; `ABSTRACTION_STATS` read asserted through `Engine.call` |
+| 18 | `cost` | `E-036` | W3 tracker #73 (child not yet created) | wires `cost`; per-stage cost report asserted through `Engine.call` |
+
+**Closure conditions for `E-039` (#97).** Criterion 5 is satisfied when, and only when:
+
+1. `Engine.unwired_operations()` is empty — all 29 contract operations dispatch through `Engine.call`;
+2. `E-018`'s conformance suite drives every property it asserts through `Engine.call`, with no assertion below it;
+3. the suite's "not yet testable" reporting test has nothing left to report.
+
+Criteria 1–4 of `E-039` are already met and verified against behaviour (see the issue's r12 comment); nothing in
+this register reopens them.
+
+**Scope protection.** A task acquiring a row here does not thereby acquire permission to start outside its wave: W3
+tasks wait for `G2` and the Project Owner's authorisation, `C-021`/`C-026`/`UM-012` for `G4`/`G4b`, `A-014`/`A-015`
+for `G6`. The register records an obligation, not a start signal.
 
 ---
 
