@@ -6,13 +6,14 @@ artifacts through the public API.
 """
 
 import json
+from importlib import resources
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from custom_memory_engine.model.axes import FACETS
-from custom_memory_engine.profile import PLACEHOLDER_V2_D14, Profile, dump_profile, load_profile
+from custom_memory_engine.profile import PLACEHOLDER_V2_D14, Profile, dump_profile, load_profile, parse_profile
 from custom_memory_engine.scope.paths import parse_scope
 
 PACKAGED = Path(__file__).resolve().parents[1] / "src" / "custom_memory_engine" / "profiles" / "coding.json"
@@ -102,3 +103,15 @@ def test_coding_profile_rejects_unknown_keys(tmp_path: Path) -> None:
     with pytest.raises(ValidationError) as raised:
         load_profile(mutated)
     assert any(error["loc"] == ("retention", "default_typo") for error in raised.value.errors())
+
+
+def test_the_coding_profile_loads_from_its_packaged_resource() -> None:
+    """E-019 loads ``conversational`` through ``importlib.resources``; the coding document must ship too.
+
+    A filesystem-path read passes in the source tree even if the file is excluded from the built wheel,
+    so this mirrors the conversational check and reads the document as a package resource.
+    """
+    text = resources.files("custom_memory_engine").joinpath("profiles/coding.json").read_text("utf-8")
+    profile = parse_profile(json.loads(text))
+    assert profile.name == "coding"
+    assert profile == load_profile(PACKAGED)
