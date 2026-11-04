@@ -15,6 +15,7 @@ from psycopg.types.range import TimestamptzRange
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from custom_memory_engine.clock.allocation import ClockError, ClockTick, allocate_clock
+from custom_memory_engine.scope.paths import ScopeError, parse_scope
 from custom_memory_engine.security.audit_guard import content_free_details
 
 logger = structlog.get_logger(__name__)
@@ -142,6 +143,7 @@ class CandidateVersionInput(_TransactionModel):
     version_id: str
     memory_key: str
     user_id: str
+    scope_path: str | None = None
     subject_key: str
     predicate_key: str
     single_valued: bool = True
@@ -170,6 +172,16 @@ class CandidateVersionInput(_TransactionModel):
     @classmethod
     def check_nonblank_fields(cls, value: str) -> str:
         return _validate_nonblank(value, code="version_nonblank_field_required")
+
+    @field_validator("scope_path")
+    @classmethod
+    def check_scope_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return parse_scope(value).text
+        except ScopeError:
+            raise TransactionError("scope_path_invalid") from None
 
     @field_validator("valid_from", mode="before")
     @classmethod
@@ -393,7 +405,7 @@ async def ensure_archival_trigger(
 _MEMORY_VERSION_COLUMNS = (
     "id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
     "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
-    "importance, reinforcement_count, extractor_version, archival_branch"
+    "importance, reinforcement_count, extractor_version, archival_branch, scope_path"
 )
 
 
@@ -418,13 +430,14 @@ async def _insert_version(
     importance: float | None,
     reinforcement_count: int,
     extractor_version: str,
+    scope_path: str | None = None,
     archival_branch: str | None = None,
 ) -> None:
     """Single write path for memory_version rows; keeps the column list in one place."""
     await cursor.execute(
         sql.SQL(
             "INSERT INTO {mv} (" + _MEMORY_VERSION_COLUMNS + ") "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         ).format(mv=sql.Identifier(schema_name, "memory_version")),
         (
             version_id,
@@ -445,6 +458,7 @@ async def _insert_version(
             reinforcement_count,
             extractor_version,
             archival_branch,
+            scope_path,
         ),
     )
 
@@ -613,6 +627,7 @@ async def stage_candidate(
                 version_id=candidate.version_id,
                 memory_key=candidate.memory_key,
                 user_id=candidate.user_id,
+                scope_path=candidate.scope_path,
                 status=initial_status,
                 subject_key=candidate.subject_key,
                 predicate_key=candidate.predicate_key,
@@ -688,6 +703,7 @@ async def commit_initial_version(
                 version_id=candidate.version_id,
                 memory_key=candidate.memory_key,
                 user_id=candidate.user_id,
+                scope_path=candidate.scope_path,
                 status="active",
                 subject_key=candidate.subject_key,
                 predicate_key=candidate.predicate_key,

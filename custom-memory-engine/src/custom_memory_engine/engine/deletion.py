@@ -45,14 +45,11 @@ logger = structlog.get_logger(__name__)
 
 type DeletionScope = Literal["memory", "topic", "all"]
 
-# Deferrable constraint triggers that judge a final state: Invariant 10 (migration 1) and the lifecycle records
-# (migrations 10 and 14), so deletion defers them and re-checks them before it returns.
+# Invariant 10 constraint triggers (migration 1); deferrable, so deletion can check its final state.
 ARCHIVAL_GUARD_TRIGGERS = (
     "trg_memory_version_archival_invariant",
     "trg_memory_derivation_archival_coverage",
     "trg_memory_version_transition_records",
-    "trg_memory_version_record_of_creation",
-    "trg_memory_version_record_of_entry",
 )
 
 
