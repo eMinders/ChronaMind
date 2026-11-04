@@ -1314,11 +1314,11 @@ Every other W3/W5/W7 operation remains gated behind its wave entry condition. Th
 
 **Implementation PRs.** Each of the following will be opened, reviewed, and merged in order before the E-021 PR (#143) is finalised:
 1. **E-039 scope propagation** — ingest handlers read the `scope` argument and pass it to `CandidateVersionInput.scope_path`.
-2. **Source-type extension (V2-D41)** — migration 16 extends the DB constraint; grounding updated; `tool`/`file`/`event` accepted in handlers.
+2. **Source-type extension (V2-D41)** — migration 16 extends the DB constraint; grounding updated; `tool`/`file`/`event` accepted in handlers. *Correction:* migration 16 left the shape rule (`memory_evidence_turn_source_check`) and the source trigger knowing only `external`, so the handlers recorded every such source as `external` and the declared type was lost. Migration 17 widens both; the rollback refuses while a declared row exists. Earlier `external` rows keep their recorded type (the declared one was never stored and is not invented).
 3. **E-030 minimal — `assert` for procedure** — `_assert` accepts `kind='procedure'`; retention floor applied.
 4. **E-033 minimal — `query` and `get`** — read path wired through `Engine.call`; channel membership verified from response.
 5. **C-021 minimal — `infer` for abstraction** — creates an `inferred` abstraction via registered method; abstraction carries its bound stub pending W5 statistical verifier.
-6. **E-021 final** — rebase PR #143 onto the above; all six fixtures exercised end-to-end.
+6. **E-021 final** — merge `main` into PR #143 (not a rebase: the branch carries another contributor's commits, which are not rewritten); all six fixtures exercised end-to-end.
 
 **Links.** Issue #136, PR #143, tracker #72, E-021-F5 on #72, W3 tracker #73, W5 tracker #75, E-039 issue #97.
 

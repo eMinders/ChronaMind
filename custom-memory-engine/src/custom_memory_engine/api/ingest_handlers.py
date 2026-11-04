@@ -19,6 +19,7 @@ Both write under the generic predicates of migration 13 (multi-valued), so they 
 
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from typing import Literal, cast
 
 from psycopg import AsyncConnection, sql
 from psycopg.errors import ForeignKeyViolation
@@ -96,19 +97,19 @@ def _source(raw: object) -> Mapping[str, object]:
 def _evidence_for_source(source: Mapping[str, object], span: str) -> EvidenceInput:
     """Build an ``EvidenceInput`` from a validated source mapping.
 
-    ``turn`` sources link to a turn row; all other declared source types are stored as
-    external references with their declared content hash (the turn-grounding gate runs
-    separately in ``_assert`` for claim/procedure writes).
+    ``turn`` sources link to a turn row; every other declared source type is a reference row stored under the type
+    the caller declared, with its content hash (migration 17). The turn-grounding gate runs separately in
+    ``_assert`` for claim/procedure writes.
     """
-    source_type = str(source["type"])
     ref = str(source["ref"])
-    content_hash = str(source["content_hash"])
-    if source_type == "turn":
+    if source["type"] == "turn":
         # Caller pre-validated the hash matches the turn text before calling this helper.
         return EvidenceInput(turn_id=ref, evidence_span=span)
-    # tool / file / event / external — stored as external reference rows (V2-D41, V2-D66).
+    content_hash = str(source["content_hash"])
+    # `_source` admitted only `_SOURCE_TYPES`, so a non-turn type is one of these four
+    reference_type = cast(Literal["external", "tool", "file", "event"], source["type"])
     return EvidenceInput(
-        source_type="external",
+        source_type=reference_type,
         source_ref=ref,
         content_hash=content_hash,
         evidence_span=span,
