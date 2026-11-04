@@ -277,13 +277,14 @@ class IngestHandlers:
                 if source["content_hash"] != canonical_hash(turns[str(source["ref"])][1]):
                     raise EntryError("validation_error", "content_hash_mismatch")
             version_id, recorded = new_id("v"), await now(connection)
-            # layer: procedures use semantic layer; claims too — both are grounded beliefs
-            layer = "semantic"
+            # layer: procedures and claims both use the semantic layer (the axes trigger allows 'procedure' as an
+            # override kind when the layer is semantic; see schema/005_axes.sql)
             candidate = CandidateVersionInput(
                 version_id=version_id,
                 memory_key=new_id("st"),
                 user_id=user,
                 scope_path=scope,
+                kind=str(kind) if kind == "procedure" else None,  # only supply when the trigger cannot infer it
                 subject_key="self",
                 predicate_key="statement",
                 single_valued=False,
@@ -291,7 +292,7 @@ class IngestHandlers:
                 valid_from=start or recorded,
                 valid_until=end,
                 valid_from_basis="explicit" if start else "inferred",
-                layer=layer,
+                layer="semantic",
                 evidence=tuple(
                     EvidenceInput(turn_id=turn_id, evidence_span=span)
                     for turn_id, span in zip(turn_ids, spans, strict=True)
