@@ -108,3 +108,20 @@ async def test_end_multivalued_rejects_a1_flat_mode() -> None:
             valid_end=T2,
             ablation="A1",
         )
+
+
+def test_candidate_version_input_scope_path_validation() -> None:
+    # Default is None
+    cand_default = _valid_candidate()
+    assert cand_default.scope_path is None
+
+    # Valid scope path is canonicalized
+    cand_scoped = _valid_candidate(scope_path="/u/u1/repo/")
+    assert cand_scoped.scope_path == "/u/u1/repo/"
+
+    # Invalid scope paths raise TransactionError("scope_path_invalid")
+    with pytest.raises(TransactionError, match="scope_path_invalid"):
+        _valid_candidate(scope_path="not_a_valid_scope")
+
+    with pytest.raises(TransactionError, match="scope_path_invalid"):
+        _valid_candidate(scope_path="/u/u1/UPPERCASE/")
