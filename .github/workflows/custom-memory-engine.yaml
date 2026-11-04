@@ -92,7 +92,9 @@ jobs:
       - name: Install database extensions
         run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
       - name: pytest (full CI scope, PostgreSQL integration and RLS)
-        run: uv run --no-sync pytest -q
+        # One worker per core; each test module stays on one worker (--dist loadfile), so module fixtures and any
+        # intra-module order are unchanged. Every DB test already owns a uniquely named schema and role.
+        run: uv run --no-sync pytest -q -n auto --dist loadfile --durations=15
       - name: Bitemporal assertions (reduced-schema v1 asset)
         run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql
 
