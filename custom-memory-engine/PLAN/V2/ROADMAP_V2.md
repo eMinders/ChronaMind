@@ -243,7 +243,7 @@ for `G6`. The register records an obligation, not a start signal.
 
 | ID | Task | Notes | Effort |
 |---|---|---|---|
-| `E-021` | **Coding-agent profile**: episodes from tool calls/diffs/test runs; repo claims; build/CI procedures; scope `/u/<id>/p/<repo>/` | **No engine code change permitted.** A needed change is a W1 finding to log, not a W2 patch. | L |
+| `E-021` | **Coding-agent profile**: episodes from tool calls/diffs/test runs; repo claims; build/CI procedures; scope `/u/<id>/p/<repo>/` | **V2-D66**: Project Owner authorized early W3/W5 execution to unblock AC4/5 (2026-11-04). See `DECISIONS_V2.md` `V2-D66` for the exact early-execution scope. Profile document scope guard (`W6`/`W7`) still applies to the profile PR itself; engine changes land in separate PRs. | L |
 | `E-022` | **Coding-agent benchmark**: script-first, planted CI-failure patterns, "what did we try before", procedure reuse | Extends the suite generator family; keeps script-first discipline | L |
 | `E-023` | **Dual-profile CI job**: migrate once, run conversational + coding suites in one database, assert isolation + parity | Proves `I7` and domain-independence together | M |
 | `E-024` | **Cross-domain entity resolution**: one entity as colleague and running partner, referenced from two scopes | Tests `ENTITY` opacity; deliberately the hardest case | M |

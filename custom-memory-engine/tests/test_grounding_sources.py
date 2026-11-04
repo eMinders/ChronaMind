@@ -98,7 +98,7 @@ def test_inferred_artifacts_are_never_evidence() -> None:
     assert run(inferred).reasons == ("inferred_artifact_is_not_evidence",)
 
 
-@pytest.mark.parametrize("source_type", ["url", "tool", "TURN", ""])
+@pytest.mark.parametrize("source_type", ["url", "TURN", ""])
 def test_unsupported_source_types_fail_closed(source_type: str) -> None:
     assert run(Evidence(source_type, "r", "x", "x")).reasons == ("unsupported_source_type",)
 

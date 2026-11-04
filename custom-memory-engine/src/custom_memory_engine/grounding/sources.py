@@ -36,8 +36,8 @@ from typing import Literal
 
 from custom_memory_engine.engine.gate import evidence_supported
 
-type SourceType = Literal["turn", "external"]
-DECLARED_SOURCE_TYPES: tuple[SourceType, ...] = ("turn", "external")
+type SourceType = Literal["turn", "external", "tool", "file", "event"]
+DECLARED_SOURCE_TYPES: tuple[SourceType, ...] = ("turn", "external", "tool", "file", "event")
 
 
 def canonical_hash(content: str) -> str:
@@ -93,20 +93,32 @@ def _check(item: Evidence, now: datetime, max_external_age: timedelta) -> tuple[
         if not evidence_supported((item.span,), ((item.role, item.content),)):
             return "span_not_in_user_turn", None
         return None, SourceRecord("turn", item.ref, item.span, canonical_hash(item.content), None, True)
-    # external
-    if item.content_hash is None or item.fetched_at is None:
+    # external: imported URL/fetched content — requires fetched_at for staleness checking.
+    if item.source_type == "external":
+        if item.content_hash is None or item.fetched_at is None:
+            return "incomplete_source", None
+        if item.fetched_at.utcoffset() is None:
+            return "fetched_at_must_be_timezone_aware", None
+        if canonical_hash(item.content) != item.content_hash:
+            return "content_hash_mismatch", None
+        if item.span not in item.content:
+            return "span_not_in_source_content", None
+        if item.fetched_at > now:
+            return "fetched_at_in_future", None
+        if now - item.fetched_at > max_external_age:
+            return "stale_source", None
+        record = SourceRecord("external", item.ref, item.span, item.content_hash, item.fetched_at, False)
+        return None, record
+    # tool / file / event (V2-D66, V2-D41 extension): coding-profile source types.
+    # These come from automated CI tooling; fetched_at is not required (freshness is
+    # carried by event_time on ingest_episode, not at the grounding layer).
+    if item.content_hash is None:
         return "incomplete_source", None
-    if item.fetched_at.utcoffset() is None:
-        return "fetched_at_must_be_timezone_aware", None
     if canonical_hash(item.content) != item.content_hash:
         return "content_hash_mismatch", None
     if item.span not in item.content:
         return "span_not_in_source_content", None
-    if item.fetched_at > now:
-        return "fetched_at_in_future", None
-    if now - item.fetched_at > max_external_age:
-        return "stale_source", None
-    record = SourceRecord("external", item.ref, item.span, item.content_hash, item.fetched_at, False)
+    record = SourceRecord(item.source_type, item.ref, item.span, item.content_hash, None, False)
     return None, record
 
 
