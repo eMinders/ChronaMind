@@ -168,8 +168,8 @@ def test_external_evidence_grounds_and_is_labelled_as_outside_the_deletion_bound
 @pytest.mark.parametrize(
     ("evidence", "reason"),
     [
-        (Evidence("tool", "run-9", "ok", "ok"), "unsupported_source_type"),
-        (Evidence("file", "f", "x", "x"), "unsupported_source_type"),
+        (Evidence("tool", "run-9", "ok", "ok"), "incomplete_source"),  # no content_hash
+        (Evidence("file", "f", "x", "x"), "incomplete_source"),  # no content_hash
         (Evidence("artifact", "a1", "x", "x"), "inferred_artifact_is_not_evidence"),
         (
             Evidence("external", "d", "span", "other text", content_hash=canonical_hash("text"), fetched_at=NOW),
