@@ -488,17 +488,19 @@ async def _insert_provenance(
     ident_ev = sql.Identifier(schema_name, "memory_evidence")
     ident_md = sql.Identifier(schema_name, "memory_derivation")
     for ev in evidence:
-        if ev.source_type == "external":
+        if ev.source_type != "turn":
+            # external / tool / file / event: a reference row under its declared type (migrations 8, 17)
             await cursor.execute(
                 sql.SQL(
                     "INSERT INTO {ev} (version_id, user_id, evidence_span, evidence_role, "
-                    "source_type, source_ref, span, content_hash) VALUES (%s, %s, %s, %s, 'external', %s, %s, %s)"
+                    "source_type, source_ref, span, content_hash) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
                 ).format(ev=ident_ev),
                 (
                     version_id,
                     user_id,
                     ev.evidence_span,
                     ev.evidence_role,
+                    ev.source_type,
                     ev.source_ref,
                     ev.evidence_span,
                     ev.content_hash,
@@ -1025,7 +1027,7 @@ async def supersede_single(
                     EvidenceInput(turn_id=r[0], evidence_span=r[1], evidence_role=r[2])
                     if r[3] == "turn"
                     else EvidenceInput(
-                        source_type="external",
+                        source_type=r[3],
                         source_ref=r[4],
                         content_hash=r[5],
                         evidence_span=r[1],
