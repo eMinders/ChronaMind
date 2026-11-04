@@ -146,6 +146,7 @@ class CandidateVersionInput(_TransactionModel):
     memory_key: str
     user_id: str
     scope_path: str | None = None
+    kind: str | None = None  # set explicitly for kinds the layer cannot imply (e.g. 'procedure')
     subject_key: str
     predicate_key: str
     single_valued: bool = True
@@ -420,6 +421,20 @@ _INSERT_SCOPED_SQL = sql.SQL(
     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 )
 
+_INSERT_SCOPED_KINDED_SQL = sql.SQL(
+    "INSERT INTO {mv} (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
+    "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
+    "importance, reinforcement_count, extractor_version, archival_branch, scope_path, kind) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+)
+
+_INSERT_KINDED_SQL = sql.SQL(
+    "INSERT INTO {mv} (id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
+    "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
+    "importance, reinforcement_count, extractor_version, archival_branch, kind) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+)
+
 
 async def _insert_version(
     cursor: Any,
@@ -443,6 +458,7 @@ async def _insert_version(
     reinforcement_count: int,
     extractor_version: str,
     scope_path: str | None = None,
+    kind: str | None = None,
     archival_branch: str | None = None,
 ) -> None:
     """Single write path for memory_version rows; keeps the column list in one place."""
@@ -466,9 +482,15 @@ async def _insert_version(
         extractor_version,
         archival_branch,
     )
-    if scope_path is not None:
+    if scope_path is not None and kind is not None:
+        template = _INSERT_SCOPED_KINDED_SQL
+        values = base_values + (scope_path, kind)
+    elif scope_path is not None:
         template = _INSERT_SCOPED_SQL
         values = base_values + (scope_path,)
+    elif kind is not None:
+        template = _INSERT_KINDED_SQL
+        values = base_values + (kind,)
     else:
         template = _INSERT_BASE_SQL
         values = base_values
@@ -658,6 +680,7 @@ async def stage_candidate(
                 importance=candidate.importance,
                 reinforcement_count=candidate.reinforcement_count,
                 extractor_version=candidate.extractor_version,
+                kind=candidate.kind,
             )
             await _insert_provenance(
                 cursor,
@@ -734,6 +757,7 @@ async def commit_initial_version(
                 importance=candidate.importance,
                 reinforcement_count=candidate.reinforcement_count,
                 extractor_version=candidate.extractor_version,
+                kind=candidate.kind,
             )
             await _insert_provenance(
                 cursor,
