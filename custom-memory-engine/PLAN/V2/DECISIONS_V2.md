@@ -1322,4 +1322,39 @@ Every other W3/W5/W7 operation remains gated behind its wave entry condition. Th
 
 **Links.** Issue #136, PR #143, tracker #72, E-021-F5 on #72, W3 tracker #73, W5 tracker #75, E-039 issue #97.
 
-**Status:** decided (Project Owner authorization 2026-11-04). Implementation in progress.
+**Outcome (2026-11-04).** All five validation conditions hold. The implementation PRs merged in order:
+- #159: scope propagation, `procedure` through `assert`, and the source types.
+- #160: `query`/`get` (E-033 minimal, #156).
+- #161: `infer` (C-021 minimal, #158).
+- #162: migration 17, the correction under item 2.
+- #143: E-021, merge `11ea247`.
+
+The `verify` job was green on every merge. `tests/integration/test_coding_profile_db.py` exercises all six fixtures end to end.
+
+Two statements above were overtaken during implementation:
+- The `C-021` admission-placement question was already settled by `V2-D40` (adopted and implemented: the bound gates verification, not creation). The minimal `infer` applies only the creation verdict of `engine.admission.assess_soundness`.
+- The minimal `infer` stores the ledger the caller supplies, not a computed one. The full `C-021` row of W5 (#75) owns ledger counting, the dependence correction and `verify`/`refute`.
+
+Deferred work surfaced by E-021 is tracked separately:
+- #163: the `promote_to_durable` runtime consumer, E-021-F4.
+- #164: enforcement of a profile's extractor source types.
+
+**Status:** decided and implemented (Project Owner authorization 2026-11-04).
+
+---
+
+### V2-D67 — A profile is bound when the generic handlers are registered, not per call (E-021 requirement 4.6)
+
+**Context.** #136 requirement 4.6 says every fixture artifact is "created, queried and read through the public entry point / generic engine API, with the profile passed as a parameter". The handlers take the profile at registration: `register_ingest_handlers(engine, runtime, profile)` and `register_infer_handlers(..., profile=)`. `Engine.call` does not take it. Read literally, the sentence could ask for a per-call profile.
+
+**Decision.** Binding at registration satisfies the requirement. A per-call profile argument is not added.
+
+**Rationale.**
+1. **The contract forbids it.** `Engine.call` admits only an operation's contract inputs (`api/entry.py`, step 2, `unknown_argument`), and no `API_V2.md` operation declares a profile input. A per-call profile would change the public contract, which E-021's scope guard does not allow.
+2. **It would weaken a guarantee.** `V2-D08` makes a profile configuration of the one engine. If the profile came per call, a Tier B/C caller could choose its own `kinds` and retention defaults, and a deployment guarantee would become a caller choice.
+3. **The requirement's purpose is met.** Every artifact enters only through `Engine.call`. The profile is a parameter of the generic API. No helper special-cases a profile (the E-019 no-branching scanner and the name-literal scan).
+4. **It is the established pattern.** The E-018 conformance suite (closed under `V2-D62`) proves the other profile-defined memory types with exactly this binding.
+
+**Consequence.** One engine serves one profile. A deployment that serves several profiles builds one engine per profile from the same code. That is what `E-023`'s dual-profile job and `E-025`'s fork audit measure.
+
+**Status:** decided under the Project Owner's delegation (2026-11-04). Evidence: #136 closing comment, PR #143.
