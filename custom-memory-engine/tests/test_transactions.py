@@ -125,3 +125,7 @@ def test_candidate_version_input_scope_path_validation() -> None:
 
     with pytest.raises(TransactionError, match="scope_path_invalid"):
         _valid_candidate(scope_path="/u/u1/UPPERCASE/")
+
+    # Scope path outside caller's own namespace raises TransactionError("scope_path_outside_user_namespace")
+    with pytest.raises(TransactionError, match="scope_path_outside_user_namespace"):
+        _valid_candidate(user_id="u1", scope_path="/u/u2/repo/")

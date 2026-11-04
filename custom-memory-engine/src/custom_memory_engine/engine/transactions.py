@@ -200,6 +200,8 @@ class CandidateVersionInput(_TransactionModel):
         for deriv in self.derivations:
             if deriv.source_version_id == self.version_id:
                 raise TransactionError("self_derivation_forbidden")
+        if self.scope_path is not None and not self.scope_path.startswith(f"/u/{self.user_id}/"):
+            raise TransactionError("scope_path_outside_user_namespace")
         return self
 
     def require_provenance(self) -> None:
