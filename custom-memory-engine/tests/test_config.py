@@ -26,6 +26,12 @@ def test_explicit_environment_and_redacted_representation() -> None:
         "postgresql://cme_test@localhost/cme_compatibility",
         URL + "?hostaddr=203.0.113.1",
         URL + "?service=production",
+        # the xdist worker form (#167) is exact: nothing that merely resembles it
+        URL.replace("cme_compatibility", "cme_compatibility_production"),
+        URL.replace("cme_compatibility", "cme_compatibility_gw"),
+        URL.replace("cme_compatibility", "cme_compatibility_gw1234"),
+        URL.replace("cme_compatibility", "cme_compatibility_gw0x"),
+        URL.replace("cme_compatibility", "xcme_compatibility_gw0"),
     ],
 )
 def test_unsafe_or_invalid_targets_are_rejected_without_secret_leak(url: str) -> None:
@@ -37,3 +43,10 @@ def test_unsafe_or_invalid_targets_are_rejected_without_secret_leak(url: str) ->
 def test_missing_environment_is_rejected() -> None:
     with pytest.raises(ValidationError):
         DatabaseConfig.from_environment({})
+
+
+@pytest.mark.parametrize("name", ["cme_compatibility", "cme_compatibility_gw0", "cme_compatibility_gw15"])
+def test_the_disposable_database_and_its_xdist_worker_copies_are_accepted(name: str) -> None:
+    """#167: each pytest-xdist worker uses its own copy of the disposable database (``conftest.py``)."""
+    config = DatabaseConfig.from_environment({"CME_TEST_DATABASE_URL": URL.replace("cme_compatibility", name)})
+    assert config.database_url.get_secret_value().endswith("/" + name)
