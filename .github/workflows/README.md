@@ -2,7 +2,7 @@
 
 | Workflow | Trigger | Jobs (check names) | Purpose |
 |---|---|---|---|
-| `custom-memory-engine.yaml` | PRs and pushes to `main` touching `custom-memory-engine/**`, this workflow, or `.github/actions/setup-cme/**`; manual | `static`, `verify`, `default-install` (parallel) | Engine quality gates (below) |
+| `custom-memory-engine.yaml` | Every PR (a `changes` job skips the gates when no engine path changed, so required checks still report); pushes to `main` touching `custom-memory-engine/**`, this workflow, or `.github/actions/setup-cme/**`; manual | `changes`, then `static`, `verify`, `default-install` (parallel) | Engine quality gates (below) |
 | `ci.yaml` | Every PR; pushes to `main`; manual | `checks`, `workflows` | `checks`: root application lint, format, type check (no path filter: root `ruff check .` also lints `custom-memory-engine/`). `workflows`: actionlint over every workflow, pinned by digest |
 | `claude-code-review.yml` | Same-repository, non-draft PRs | `claude-review` | Advisory automated review: a second pair of eyes, not the review gate. The gate is the AI review on the Project Owner's behalf (`V2-D57`, `PLAN/CONTRIBUTING.md` §1.1); no human peer review is a prerequisite |
 | `claude.yml` | `@claude` mentions by an owner, member or collaborator | `claude` | On-demand assistant |
@@ -16,9 +16,9 @@
 | `verify` | Full CI-scope `pytest`, in parallel with one disposable database per xdist worker (`conftest.py`, #167) (PostgreSQL 16 + pgvector + FalkorDB service containers, prepared model assets): PostgreSQL integration, restricted-role RLS, cross-tenant, migration, bitemporal, deletion and API-contract tests; `validation/bitemporal_checks.sql` |
 | `default-install` | `pytest` on the default install with no optional extras |
 
-All three must be green. A PR is not "CI green" because `verify` alone passed.
+All three must be green (or skipped by `changes` when no engine path changed). A PR is not "CI green" because `verify` alone passed.
 
-`main` has **no branch protection and no rulesets**. Re-checked on 2026-11-05 after the transfer to `eMinders`, the account is admin, but the Free plan returns `403` for both on a private repository. The configuration to apply, and its path-filter prerequisite, are in `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2. Nothing is claimed as applied.
+`main` branch protection and its six required checks are specified in `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2, including why none of them can leave a PR pending forever.
 
 ## Conventions
 

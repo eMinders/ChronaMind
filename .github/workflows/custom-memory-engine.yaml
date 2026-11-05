@@ -4,14 +4,19 @@ name: Custom Memory Engine verification
 #   static          lint, format, type check, frozen research records (no services; fast feedback)
 #   verify          full CI-scope pytest + bitemporal SQL against PostgreSQL/pgvector and FalkorDB
 #   default-install pytest on the default install (no optional extras): proves extras stay optional
-# The three jobs are independent and run in parallel.
+#   changes         decides whether a PR touches engine paths (see below)
+# The three gating jobs are independent and run in parallel.
+#
+# Required checks (PLAN/CONTRIBUTING.md 1.2): a workflow skipped by a trigger-level `paths:` filter never reports, so a
+# required check would stay pending forever on a root-only PR. Pull requests therefore always run this workflow; the
+# `changes` job decides, and a job skipped by its `if:` reports success to branch protection. Pushes to main keep the
+# trigger filter (required checks do not apply to them).
 
 on:
   push:
     branches: [main]
     paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml", ".github/actions/setup-cme/**"]
   pull_request:
-    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml", ".github/actions/setup-cme/**"]
   workflow_dispatch:
 
 permissions:
@@ -25,7 +30,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      engine: ${{ steps.diff.outputs.engine }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+        with:
+          fetch-depth: 0
+      - id: diff
+        name: Engine paths changed?
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Fail open: anything other than a pull request with a computable diff runs the full gates.
+          if [ "$EVENT" != "pull_request" ]; then echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if ! changed="$(git diff --name-only "$BASE...$HEAD")"; then echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if grep -qE '^(custom-memory-engine/|\.github/workflows/custom-memory-engine\.yaml$|\.github/actions/setup-cme/)' <<< "$changed"; then
+            echo "engine=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "engine=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "changed files:"; printf '%s\n' "$changed"
+
   static:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -54,6 +87,8 @@ jobs:
           uv run --no-sync python scripts/plan_coverage.py --check
 
   verify:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
@@ -100,6 +135,8 @@ jobs:
         run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql
 
   default-install:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
