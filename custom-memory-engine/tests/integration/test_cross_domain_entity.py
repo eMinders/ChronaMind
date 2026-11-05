@@ -296,7 +296,7 @@ async def test_two_scopes_keep_claims_and_entities_private_while_explicit_link_i
             user_id="alice",
             scope_path=personal_scope,
             subject_key="self",
-            predicate_key="summary",
+            predicate_key="statement",
             single_valued=False,
             content="Ada is known in two contexts.",
             valid_from=T0,

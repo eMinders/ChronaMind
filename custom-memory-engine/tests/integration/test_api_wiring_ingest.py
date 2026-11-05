@@ -340,6 +340,16 @@ async def test_both_writers_store_the_scope_the_caller_names(database) -> None: 
     """#155: a sub-scope inside the caller's namespace is persisted exactly; the personal root stays the root."""
     async with world(database) as (conn, engine, _):
         await with_turn(conn, engine)
+        await engine.call(
+            caller("alice"),
+            "create_scope",
+            {"parent": "/u/alice/", "segment": "p", "kind": "project", "idempotency_key": "s-parent"},
+        )
+        await engine.call(
+            caller("alice"),
+            "create_scope",
+            {"parent": "/u/alice/p/", "segment": "chrona", "kind": "project", "idempotency_key": "s-repo"},
+        )
         written = {
             "episode_sub": await engine.call(
                 caller("alice"),

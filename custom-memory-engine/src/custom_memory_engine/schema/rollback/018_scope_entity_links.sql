@@ -20,40 +20,13 @@ END
 $guard$;
 
 -- 1. Remove the fill_scope_path trigger modifications and revert to the migration-11 version.
---    Migration 18 replaced fill_scope_path() to support entity and negative_constraint tables.
---    Restore the simpler version that only handles the core scoped tables.
+--    Migration 18 added scope inheritance; migration 11 only defaulted missing paths to the personal root.
 CREATE OR REPLACE FUNCTION fill_scope_path() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
-DECLARE
-  parent_id text;
-  inherited_scope text;
 BEGIN
   IF NEW.scope_path IS NULL THEN
-    IF TG_TABLE_NAME = 'memory_version' THEN
-      SELECT scope_path INTO inherited_scope
-        FROM memory_version
-       WHERE user_id = NEW.user_id AND memory_key = NEW.memory_key
-       ORDER BY id
-       LIMIT 1;
-    ELSE
-      parent_id := CASE TG_TABLE_NAME
-        WHEN 'memory_evidence' THEN NEW.version_id
-        WHEN 'memory_embedding' THEN NEW.version_id
-        WHEN 'memory_conflict' THEN NEW.candidate_version_id
-        WHEN 'memory_derivation' THEN NEW.derived_version_id
-        WHEN 'association' THEN NEW.from_id
-        WHEN 'abstraction_stats' THEN NEW.artifact_id
-        WHEN 'verification' THEN NEW.artifact_id
-        ELSE NULL
-      END;
-      IF parent_id IS NOT NULL THEN
-        SELECT scope_path INTO inherited_scope
-          FROM memory_version
-         WHERE id = parent_id AND user_id = NEW.user_id;
-      END IF;
-    END IF;
-    NEW.scope_path := COALESCE(inherited_scope, '/u/' || NEW.user_id || '/');
+    NEW.scope_path := '/u/' || NEW.user_id || '/';
   END IF;
   RETURN NEW;
 END
