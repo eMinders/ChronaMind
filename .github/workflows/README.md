@@ -30,3 +30,4 @@ All three must be green (or skipped by `changes` when no engine path changed). A
 - **Shared setup.** `.github/actions/setup-cme` is the single place that pins the uv version (0.13.5), the engine Python (3.12.12) and `uv sync --frozen`. The root `ci.yaml` intentionally does not use it: the engine and the root application keep independent CI (`custom-memory-engine/PLAN/INDEPENDENCE_BOUNDARY.md` §4).
 - **Secrets.** Never interpolate `${{ secrets.* }}` or event data directly into `run:` scripts; pass them through `env:`.
 - **Validation.** `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7` (includes shellcheck) must report nothing.
+
