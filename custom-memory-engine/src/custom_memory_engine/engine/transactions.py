@@ -411,7 +411,7 @@ async def ensure_archival_trigger(
 _INSERT_COLUMNS = (
     "id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
     "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
-    "importance, reinforcement_count, extractor_version, archival_branch, scope_path"
+    "importance, reinforcement_count, extractor_version, archival_branch"
 )
 _INSERT_BASE_ARITY = 18
 #: Columns written only when the caller supplies them; absent, the axes/method triggers derive them.

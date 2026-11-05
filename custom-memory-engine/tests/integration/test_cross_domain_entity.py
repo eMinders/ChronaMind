@@ -113,6 +113,37 @@ async def _expect_forbidden(engine: Engine, ctx: CallerContext, args: dict[str, 
 
 
 @pytest.mark.integration
+async def test_e024_preserves_m15_namespace_guards_and_adds_the_missing_entity_guards(database) -> None:  # noqa: F811
+    async with world(database) as (connection, _engine, _schema):
+        cursor = await connection.execute(
+            "SELECT c.relname, p.conname FROM pg_catalog.pg_constraint AS p "
+            "JOIN pg_catalog.pg_class AS c ON c.oid = p.conrelid "
+            "WHERE p.connamespace = current_schema()::regnamespace AND p.conname LIKE '%scope%user'"
+        )
+        constraints = set(await cursor.fetchall())
+        core_tables = (
+            "memory_version",
+            "memory_evidence",
+            "memory_derivation",
+            "memory_embedding",
+            "memory_conflict",
+            "turn",
+            "session",
+            "job",
+            "audit_event",
+            "deletion_request",
+            "association",
+            "abstraction_stats",
+            "verification",
+        )
+        for table in core_tables:
+            assert (table, f"{table}_scope_within_user") in constraints
+            assert (table, f"{table}_scope_matches_user") not in constraints
+        for table in ("entity", "negative_constraint"):
+            assert (table, f"{table}_scope_matches_user") in constraints
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "scope_order", [("work", "personal"), ("personal", "work")], ids=["work-first", "personal-first"]
 )
@@ -184,8 +215,8 @@ async def test_two_scopes_keep_claims_and_entities_private_while_explicit_link_i
             assert isinstance(entity_id, str)
             entities[name] = entity_id
         work_entity, personal_entity = entities["work"], entities["personal"]
-        assert isinstance(work_entity, str) and work_entity.startswith("e_")
-        assert isinstance(personal_entity, str) and personal_entity.startswith("e_")
+        assert isinstance(work_entity, str) and work_entity.startswith("ent_")
+        assert isinstance(personal_entity, str) and personal_entity.startswith("ent_")
         assert work_entity != personal_entity
 
         claim_args = {

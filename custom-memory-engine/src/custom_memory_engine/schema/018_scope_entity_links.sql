@@ -95,11 +95,8 @@ $$;
 DO $scope$
 DECLARE
   tbl text;
-  scoped_tables text[] := ARRAY[
-    'memory_version', 'memory_evidence', 'memory_derivation', 'memory_embedding', 'memory_conflict',
-    'turn', 'session', 'job', 'audit_event', 'deletion_request',
-    'association', 'abstraction_stats', 'verification', 'entity', 'negative_constraint'
-  ];
+  -- Migration 15 replaced this guard on the thirteen core tables; only these two still need it.
+  scoped_tables text[] := ARRAY['entity', 'negative_constraint'];
 BEGIN
   FOREACH tbl IN ARRAY scoped_tables LOOP
     EXECUTE pg_catalog.format(
