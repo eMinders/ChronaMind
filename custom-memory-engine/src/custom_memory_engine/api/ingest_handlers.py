@@ -65,11 +65,13 @@ def _when(value: object, field: str) -> datetime | None:
 
 
 def _scope_path(raw: object, user: str) -> str | None:
-    """Parse and validate the optional ``scope`` argument; returns the canonical text or ``None``.
+    """The canonical text of the caller's explicit ``scope`` argument (``V2-D68``: full paths, never expanded).
 
-    ``None`` means fall back to the caller's personal root, preserving backward compatibility.
-    The entry point's ``scope_writable`` condition has already verified the path is within
-    ``/u/<user>/``; this is defence in depth.
+    The path is used exactly as given: no profile ``scope_root`` is applied and nothing is constructed from it.
+    Through :meth:`Engine.call` the argument is always present, because the entry point's ``scope_writable``
+    condition refuses an omitted scope (``scope_required``) and one outside ``/u/<user>/`` (``forbidden``) before
+    this runs; the namespace check here is defence in depth. ``None`` is reachable only by an in-process caller
+    that bypasses the entry point.
     """
     if raw is None:
         return None

@@ -1,5 +1,6 @@
 """E-039: ``ingest_episode``, ``assert`` and ``ingest_artifact`` through ``Engine.call``, as a restricted role."""
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -9,6 +10,7 @@ from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.runtime import Receipt, Rejected
 from custom_memory_engine.engine.sources import fetch_sources
 from custom_memory_engine.grounding.sources import canonical_hash
+from custom_memory_engine.profile import conversational, parse_profile
 from tests.integration.test_api_wiring_structure import (
     caller,
     database,  # noqa: F401  (fixture)
@@ -386,3 +388,21 @@ async def test_both_writers_refuse_a_foreign_or_missing_scope_before_writing(dat
             error = await forbidden(engine, caller("alice"), operation, arguments)
             assert (error.code, error.detail) == expected, name
         assert await rows(conn, "SELECT count(*) FROM memory_version") == [(0,)]
+
+
+async def test_a_profile_scope_root_never_rewrites_the_scope_the_caller_names(database) -> None:  # noqa: F811
+    """V2-D68: ``scope_root`` is deployment metadata. The stored scope is the request's, whatever the profile says."""
+    async with world(database) as (conn, engine, _):
+        await with_turn(conn, engine)
+        stored: dict[str, list[tuple[object, ...]]] = {}
+        for root in ("/u/{user}/", "/u/{user}/p/{repo}/"):
+            document = json.loads(conversational().model_dump_json())
+            document.update(name="scope-root-probe", scope_root=root)
+            register_ingest_handlers(engine, engine.resolver.runtime, parse_profile(document))  # type: ignore[attr-defined]
+            receipt = await engine.call(
+                caller("alice"), "ingest_episode", {**episode_args(), "idempotency_key": f"root-{root}"}
+            )
+            assert isinstance(receipt, Receipt), root
+            stored[root] = await rows(conn, "SELECT scope_path FROM memory_version WHERE id = %s", (receipt.id,))
+        # the request named the personal root; neither profile expanded it towards its own scope_root
+        assert stored == {"/u/{user}/": [("/u/alice/",)], "/u/{user}/p/{repo}/": [("/u/alice/",)]}
