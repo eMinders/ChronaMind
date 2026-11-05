@@ -127,7 +127,10 @@ jobs:
       - name: Install database extensions
         run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
       - name: pytest (full CI scope, PostgreSQL integration and RLS)
-        run: uv run --no-sync pytest -q
+        # One xdist worker per core, each with its own copy of the disposable database (conftest.py, #167): the
+        # migration runner's database-wide advisory lock would otherwise serialize the workers. --dist loadfile keeps
+        # each module on one worker, so module fixtures and intra-module order are unchanged.
+        run: uv run --no-sync pytest -q -n auto --dist loadfile --durations=15
       - name: Bitemporal assertions (reduced-schema v1 asset)
         run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql
 
