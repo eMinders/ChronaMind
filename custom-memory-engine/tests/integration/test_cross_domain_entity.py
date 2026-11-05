@@ -1,8 +1,8 @@
-"""Pin scope-local entity ids, scope-isolated claims, and opaque cross-scope provenance under a restricted role.
+"""Pin three cross-scope opacity properties from ARCHITECTURE_V2.md §5.2 under the restricted role.
 
-Entity claims remain scope-local; links require both endpoint scopes in the read set; provenance hides unreadable
-source metadata behind the caller-specific opaque handle. The profile-neutral scopes avoid requiring E-021's optional
-coding profile.
+Entity ids and claims remain scope-local; an explicit entity link requires both endpoint scopes in the read set; and
+provenance for an unreadable source renders only the caller-specific opaque handle. The profile-neutral scenario does
+not require E-021's optional coding profile.
 """
 
 from datetime import UTC, datetime

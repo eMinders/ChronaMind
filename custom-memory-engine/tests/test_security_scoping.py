@@ -86,7 +86,7 @@ def test_user_tables_are_every_table_except_the_shared_catalog() -> None:
     # `clock_watermark` (migration 9) is engine-internal: the runtime role has no privilege on it and only a definer
     # trigger writes it, so it is neither a tenant table nor the shared catalog.
     assert set(USER_TABLES) == set(SCHEMA_SQL_TABLES) - {"predicate_schema", "clock_watermark", "method"}
-    assert len(USER_TABLES) == 20  # plus migration 14's persisted scopes and scope-local entity links
+    assert len(USER_TABLES) == 20  # plus migration 18's persisted scopes and scope-local entity links
 
 
 def test_rls_sql_grants_cover_every_user_table_and_only_reads_the_catalog() -> None:

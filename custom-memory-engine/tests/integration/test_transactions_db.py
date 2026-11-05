@@ -906,3 +906,58 @@ async def test_archival_guard_verification_fails_closed_when_triggers_are_absent
         await conn.execute("DROP FUNCTION enforce_archival_invariant()")
         with pytest.raises(TransactionError, match="archival_guards_not_installed"):
             await ensure_archival_trigger(conn, schema_name=schema)
+
+
+@pytest.mark.asyncio
+async def test_commit_initial_version_with_and_without_scope_path(
+    database: tuple[DatabaseConfig, str],
+) -> None:
+    _, schema = database
+    async with connect(database) as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.user_id', 'u1', true)")
+            # 1. Without scope_path: defaults to personal root /u/u1/ via fill_scope_path()
+            _, tick = await commit_initial_version(
+                conn,
+                CandidateVersionInput(
+                    version_id="v_def_scope",
+                    memory_key="user:scope_default",
+                    user_id="u1",
+                    subject_key="user",
+                    predicate_key="hobby",
+                    single_valued=False,
+                    content="Chess",
+                    valid_from=MAR10,
+                    evidence=(EvidenceInput(turn_id="t5", evidence_span="chess"),),
+                ),
+                schema_name=schema,
+                replay_time=MAR10,
+            )
+            # 2. With explicit sub-scope path inside /u/u1/
+            await commit_initial_version(
+                conn,
+                CandidateVersionInput(
+                    version_id="v_sub_scope",
+                    memory_key="user:sub_scope",
+                    user_id="u1",
+                    scope_path="/u/u1/project-alpha/",
+                    subject_key="user",
+                    predicate_key="hobby",
+                    single_valued=False,
+                    content="Cycling",
+                    valid_from=MAR10,
+                    evidence=(EvidenceInput(turn_id="t5", evidence_span="cycling"),),
+                ),
+                schema_name=schema,
+                clock_tick=tick,
+            )
+            cursor = await conn.execute(
+                sql.SQL(
+                    "SELECT id, scope_path FROM {mv} WHERE id IN ('v_def_scope', 'v_sub_scope') ORDER BY id"
+                ).format(mv=sql.Identifier(schema, "memory_version"))
+            )
+            rows = await cursor.fetchall()
+            assert rows == [
+                ("v_def_scope", "/u/u1/"),
+                ("v_sub_scope", "/u/u1/project-alpha/"),
+            ]

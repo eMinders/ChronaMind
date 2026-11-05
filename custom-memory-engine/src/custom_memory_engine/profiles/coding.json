@@ -1,0 +1,78 @@
+{
+  "abstraction_expiry": {
+    "days_by_facet": {},
+    "status": "placeholder:V2-D14"
+  },
+  "association": {
+    "degree_cap": 32,
+    "extensions": []
+  },
+  "description": "A repository-scoped coding-agent profile for tool calls, diffs and test runs, with session memory eligible for durable promotion.",
+  "extractors": [
+    {
+      "name": "tool_call_log",
+      "source_types": [
+        "tool"
+      ],
+      "version": "1"
+    },
+    {
+      "name": "diff_reader",
+      "source_types": [
+        "file"
+      ],
+      "version": "1"
+    },
+    {
+      "name": "ci_test_run_reader",
+      "source_types": [
+        "event"
+      ],
+      "version": "1"
+    },
+    {
+      "name": "user_instructions",
+      "source_types": [
+        "turn"
+      ],
+      "version": "1"
+    }
+  ],
+  "facets": [
+    "constraint",
+    "context",
+    "decision_pattern"
+  ],
+  "kinds": [
+    "episode",
+    "claim",
+    "procedure",
+    "abstraction"
+  ],
+  "name": "coding",
+  "operators": [
+    "consolidation"
+  ],
+  "render": {
+    "channel_budget_share": {
+      "conflicts": 0.1,
+      "facts": 0.5,
+      "hypotheses": 0.2,
+      "procedures": 0.2
+    },
+    "show_provenance": true,
+    "show_validity_intervals": true
+  },
+  "retention": {
+    "defaults": {
+      "abstraction": "durable",
+      "claim": "durable",
+      "episode": "session",
+      "procedure": "session"
+    },
+    "promote_to_durable": true,
+    "status": "placeholder:V2-D14"
+  },
+  "schema_version": 1,
+  "scope_root": "/u/{user}/p/{repo}/"
+}

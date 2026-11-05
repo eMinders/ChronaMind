@@ -34,7 +34,9 @@ from psycopg.errors import CheckViolation, RaiseException
 
 from custom_memory_engine.api.contract import OPERATIONS
 from custom_memory_engine.api.entry import Engine
+from custom_memory_engine.api.infer_handlers import register_infer_handlers
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
+from custom_memory_engine.api.read_handlers import Artifact, QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import Receipt
 from custom_memory_engine.engine.channels import Verification, channel_of
 from custom_memory_engine.engine.deletion import delete_memory
@@ -423,7 +425,7 @@ async def test_semantic_memory_is_a_claim_that_is_observed_or_asserted_and_comes
 async def test_procedural_memory_is_the_procedure_kind_storable_under_every_retention_and_routed_to_procedures(
     database,
 ) -> None:  # noqa: F811
-    """No public operation creates a procedure until W3 (``E-030``), so this is shown at the storage layer, honestly."""
+    """The storage-layer half: every lifecycle of a procedure is legal. The entry-point half follows (V2-D62 item 3)."""
     async with env(database) as (conn, schema, role, user):
         await provision_runtime_role(conn, schema, role)
         await seed_base(conn)
@@ -438,6 +440,43 @@ async def test_procedural_memory_is_the_procedure_kind_storable_under_every_rete
         assert [t.lifecycle for t in LEGAL if t.kind == "procedure" and t.retention == "working" and t.facet is None] == [
             "asserted", "inferred", "contested", "retired"
         ]  # fmt: skip
+
+
+@pytest.mark.parametrize("retention", RETENTIONS)
+async def test_procedural_memory_is_created_and_read_back_through_engine_call(database, retention: str) -> None:  # noqa: F811
+    """V2-D62 deferred item 3: ``assert`` (kind ``procedure``) creates it, ``get``/``query`` route it to ``procedures``."""
+    async with world(database) as (conn, engine, _schema):
+        await add_turn(conn)
+        profile = profile_with("procedural", kinds=["procedure"], retention={"procedure": retention})
+        register_ingest_handlers(engine, engine.resolver.runtime, profile)  # type: ignore[attr-defined]
+        register_read_handlers(engine, engine.resolver.runtime)  # type: ignore[attr-defined]
+        receipt = await engine.call(
+            caller("alice"),
+            "assert",
+            {
+                "scope": "/u/alice/",
+                "kind": "procedure",
+                "content": "Cook without meat",
+                "evidence": [
+                    {
+                        "type": "turn",
+                        "ref": "said",
+                        "span": "I am vegetarian",
+                        "content_hash": canonical_hash("I am vegetarian"),
+                    }
+                ],
+                "event_range": None,
+                "idempotency_key": f"p-{retention}",
+            },
+        )
+        assert isinstance(receipt, Receipt)
+        assert await rows(
+            conn, "SELECT kind, retention, lifecycle FROM memory_version WHERE id = %s", (receipt.id,)
+        ) == [("procedure", retention, "asserted")]
+        got = await engine.call(caller("alice"), "get", {"artifact_id": receipt.id})
+        assert isinstance(got, Artifact) and got.channel == "procedures"
+        found = await engine.call(caller("alice"), "query", {"request": {"scope": "/u/alice/"}})
+        assert isinstance(found, QueryResult) and [a.artifact_id for a in found.procedures] == [receipt.id]
 
 
 async def test_create_scope_creates_a_usable_scope_through_the_entry_point_only(database) -> None:  # noqa: F811
@@ -507,11 +546,19 @@ async def test_register_method_is_wired_through_engine_call(database) -> None:  
 async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_passes(database) -> None:  # noqa: F811
     async with world(database) as (conn, engine, _schema):
         del conn
-        register_ingest_handlers(engine, engine.resolver.runtime)  # type: ignore[attr-defined]
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_ingest_handlers(engine, runtime)
+        register_read_handlers(engine, runtime)
+        register_infer_handlers(engine, runtime, tau_confidence=0.90, tau_coverage=0.60)  # V2-D30 suggested values
         unwired = set(engine.unwired_operations())
-        assert {"delete", "query", "get", "infer", "export"} <= unwired  # W3+ owners: E-037, E-033, C-021, A-015
+        assert {"delete", "export"} <= unwired  # W3+ owners: E-037, A-015
+        # query/get (E-033 minimal) and infer (C-021 minimal) are wired under V2-D66 and tested through Engine.call
+        assert not {"query", "get", "infer"} & unwired
         # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
         assert "create_scope" not in unwired
+        # E-024 wires `link_entity`; its restricted-role behavior is exercised through Engine.call in
+        # `test_cross_domain_entity.py`.
+        assert "link_entity" not in unwired
         print(
             f"\nG1: {len(OPERATIONS) - len(unwired)} of {len(OPERATIONS)} operations wired; "
             f"unwired (not yet testable): {sorted(unwired)}"

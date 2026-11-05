@@ -325,6 +325,11 @@ def assess_soundness(
 # --- recording (the only database effect) --------------------------------------------------------------
 
 
+def _fixed6(value: float | None) -> str:
+    """Six decimals as an identifier-shaped token; ``none`` when ``o = 0`` left the value undefined."""
+    return "none" if value is None else f"{value:.6f}"
+
+
 async def record_soundness_assessment(
     connection: AsyncConnection,
     *,
@@ -358,8 +363,8 @@ async def record_soundness_assessment(
             "undetermined": candidate.ledger.undetermined,
             "opportunity": assessment.opportunity,
             # floats are not audit-safe values (RL-072); six decimals as an identifier-shaped token
-            "coverage": f"{assessment.coverage:.6f}",
-            "confidence_lower": f"{assessment.confidence_lower:.6f}",
+            "coverage": _fixed6(assessment.coverage),
+            "confidence_lower": _fixed6(assessment.confidence_lower),
             "tau_confidence": f"{tau_confidence:.6f}",
             "tau_coverage": f"{tau_coverage:.6f}",
             "creation_allowed": assessment.creation.allowed,

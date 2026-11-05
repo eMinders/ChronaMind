@@ -342,4 +342,4 @@ async def test_rollback_refuses_while_a_sub_scope_row_exists(database) -> None: 
             await conn.execute(cast(LiteralString, rollback_sql(from_version=M15, to_version=M15 - 1)), prepare=False)
         # Nothing was changed by the refused rollback.
         assert await constraint(conn, "session_scope_within_user") is not None
-    assert (await runner.status()).version == M15
+    assert (await runner.status()).version == migrate.VERSION

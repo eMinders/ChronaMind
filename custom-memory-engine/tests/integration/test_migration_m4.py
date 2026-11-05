@@ -176,7 +176,7 @@ async def test_external_sources_need_a_hash_and_a_locator_and_no_engine_row(data
             (None, "external", "ci://run/42")
         ]
         bad_inserts = {
-            "unknown_type": ("tool", None, "ci://x", "s", EXTERNAL_HASH),
+            "unknown_type": ("url", None, "ci://x", "s", EXTERNAL_HASH),  # tool/file/event are declared (m17)
             "artifact_is_not_evidence": ("artifact", None, "a1", "s", EXTERNAL_HASH),
             "short_hash": ("external", None, "ci://x", "s", "abc"),
             "upper_hash": ("external", None, "ci://x", "s", EXTERNAL_HASH.upper()),

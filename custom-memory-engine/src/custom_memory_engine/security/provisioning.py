@@ -36,8 +36,8 @@ USER_TABLES = (
     "verification",
     "negative_constraint",
     "api_idempotency",  # migration 12 (E-039)
-    "scope",  # migration 14 (E-024 child-scope substrate)
-    "entity_link",  # migration 14 (E-024 cross-scope opaque links)
+    "scope",  # migration 18 (E-024 child-scope substrate)
+    "entity_link",  # migration 18 (E-024 cross-scope opaque links)
 )
 
 

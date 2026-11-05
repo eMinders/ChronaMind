@@ -243,7 +243,7 @@ for `G6`. The register records an obligation, not a start signal.
 
 | ID | Task | Notes | Effort |
 |---|---|---|---|
-| `E-021` | **Coding-agent profile**: episodes from tool calls/diffs/test runs; repo claims; build/CI procedures; scope `/u/<id>/p/<repo>/` | **No engine code change permitted.** A needed change is a W1 finding to log, not a W2 patch. | L |
+| `E-021` | **Coding-agent profile**: episodes from tool calls/diffs/test runs; repo claims; build/CI procedures; scope `/u/<id>/p/<repo>/` | **Closed (#136, PR #143, `11ea247`).** Six fixtures stored, queried and routed through `Engine.call`. The engine work landed early under `V2-D66` (#159–#162), and profile binding is decided by `V2-D67`. Deferred: promotion consumer #163, extractor enforcement #164, full `C-021` in W5 (#75). | L |
 | `E-022` | **Coding-agent benchmark**: script-first, planted CI-failure patterns, "what did we try before", procedure reuse | Extends the suite generator family; keeps script-first discipline | L |
 | `E-023` | **Dual-profile CI job**: migrate once, run conversational + coding suites in one database, assert isolation + parity | Proves `I7` and domain-independence together | M |
 | `E-024` | **Cross-domain entity resolution**: one entity as colleague and running partner, referenced from two scopes | Tests `ENTITY` opacity; deliberately the hardest case | M |

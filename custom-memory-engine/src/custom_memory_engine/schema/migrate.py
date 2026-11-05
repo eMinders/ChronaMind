@@ -37,7 +37,9 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (13, "013_generic_predicates.sql"),
     (14, "014_entry_records.sql"),
     (15, "015_subscopes.sql"),
-    (16, "015_scope_entity_links.sql"),
+    (16, "016_source_types.sql"),
+    (17, "017_declared_source_types.sql"),
+    (18, "018_scope_entity_links.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"

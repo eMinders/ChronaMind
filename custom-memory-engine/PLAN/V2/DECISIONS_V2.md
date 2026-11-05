@@ -1267,3 +1267,94 @@ segment or user; and the created scope really holds an entity, a session row and
 unwired set. `tests/test_api_entry.py` keeps the mutation case for `namespace_owner_only`.
 
 **Status:** decided and verified.
+
+---
+
+### V2-D66 — Early W3/W5 execution for E-021 acceptance criteria 4 and 5 (Option B; Project Owner authorization 2026-11-04)
+
+**Context.** Issue #136 (`E-021`, W2) cannot satisfy its acceptance criteria 4 and 5 with the operations wired at the close of W1. The dependency analysis — recorded as `E-021-F5` on #72 — established the following:
+
+- AC4 requires six coding fixtures to be stored **and queried** through the generic public API. `query` and `get` are unwired; `Engine.call` answers `forbidden(operation_not_wired)` for both.
+- AC4 also requires a `ci_procedure` (`kind='procedure'`) fixture to be stored. `api/ingest_handlers.py::_assert` refuses any kind other than `claim` (`kind_not_supported`).
+- AC4 requires a `recurring_failure_mode` abstraction (`kind='abstraction'`, `lifecycle='inferred'`) to be generated. The `infer` operation is unwired.
+- AC5 requires each fixture to be observed routing to its declared channel from a public API response, not only from a stored-row read.
+- The source-type constraint in migration 8 (`source_type IN ('turn','external')`) and the handler (`_SOURCE_TYPES = ("turn","external")`) reject the declared profile source types `tool`, `file`, and `event`.
+- `api/ingest_handlers.py` never reads its declared `scope` argument; a call requesting `/u/alice/p/chrona/` stores `/u/alice/`. The transaction layer is ready (PR #153 wired `CandidateVersionInput.scope_path`); only the handler hookup is missing.
+
+Ordinarily `E-033` (`query`/`get`), `E-030` (procedure creation/`record_outcome`), and `C-021` (`infer`) are gated behind `G2`, which itself requires `E-021` to be complete. This is a circular dependency that cannot be resolved by configuration alone, and the `E-021` scope guard (`W6`/`W7`) forbids engine changes inside that issue.
+
+**Decision.** The Project Owner explicitly authorized **Option B** (2026-11-04): execute the minimum W3 and W5 operations required by E-021 acceptance criteria 4 and 5 early, ahead of the `G2`/`G4` gate sequence that would ordinarily govern them. This resolves the circular dependency without dropping any acceptance criterion.
+
+**Scope of the early execution.** The following and only the following operations are authorized to land before their wave gates for the purpose of satisfying E-021:
+
+| Operation | Owning task | Reason needed |
+|---|---|---|
+| `ingest_episode` scope propagation | `E-039`/`E-011` residual | repository-scoped episode writes |
+| `assert` for `procedure` kind | `E-030` partial | store `ci_procedure` fixture |
+| `query` | `E-033` partial | retrieve all six fixtures through public API |
+| `get` | `E-033` partial | single-artifact retrieval |
+| `infer` for `abstraction` (minimal) | `C-021` partial | generate `recurring_failure_mode` fixture |
+| `tool`/`file`/`event` source types | `V2-D41` extension | declared coding-profile source types |
+
+Every other W3/W5/W7 operation remains gated behind its wave entry condition. The register entry (`ROADMAP_V2.md` §4.1) for each operation is **not** removed; the full behaviour its owning wave requires remains an open obligation. This decision records the early-landing permission only.
+
+**What this decision does not change.**
+- `G2` definition is unchanged: zero-fork dual-profile, cross-tenant exposure zero, `E-026` retention-floor proof. Nothing in this decision is evidence for `G2`; `G2` requires all W2 issues complete and their own gates.
+- The full-scope behaviour of `query` (channel budgets, cost report, provenance bundle, temporal predicates, `refine`) and `infer` (statistical ledger, CP-bound admission, dependence correction) belong to their owning W3/W5 tasks.
+- The admission-placement question for `C-021` (whether the CP bound rejects at `infer` time or only gates `verify`) must still be settled before `C-021`'s full W5 implementation. The minimal `infer` landing here registers the method call and creates an `inferred` abstraction; it does not implement the statistical verifier.
+- Source-type additions (`tool`/`file`/`event`) require a schema migration and grounding-policy update consistent with `V2-D41`'s canonicalization rules.
+- All W1 quality rules (`W1`–`W8`), the `PLAN/CONTRIBUTING.md` workflow, regression-wall integrity, and the security/isolation invariants apply to every PR in this workstream.
+
+**Validation conditions.** This decision is satisfied when:
+1. All six coding fixtures (tool_call, diff, test_run, repo_claim, ci_procedure, recurring_failure_mode) can be created through `Engine.call` under `src/custom_memory_engine/profiles/coding.json`.
+2. Each fixture can be retrieved through `Engine.call(query)` or `Engine.call(get)` with the correct channel and scope.
+3. Repository-scope writes (`/u/<user>/p/<repo>/`) persist correctly.
+4. The full CI-scope suite (`verify`) is green on every merged commit.
+5. `E-021` issue #136 acceptance criteria 1–10 all hold simultaneously, verified in `tests/integration/test_coding_profile_db.py`.
+
+**Implementation PRs.** Each of the following will be opened, reviewed, and merged in order before the E-021 PR (#143) is finalised:
+1. **E-039 scope propagation** — ingest handlers read the `scope` argument and pass it to `CandidateVersionInput.scope_path`.
+2. **Source-type extension (V2-D41)** — migration 16 extends the DB constraint; grounding updated; `tool`/`file`/`event` accepted in handlers. *Correction:* migration 16 left the shape rule (`memory_evidence_turn_source_check`) and the source trigger knowing only `external`, so the handlers recorded every such source as `external` and the declared type was lost. Migration 17 widens both; the rollback refuses while a declared row exists. Earlier `external` rows keep their recorded type (the declared one was never stored and is not invented).
+3. **E-030 minimal — `assert` for procedure** — `_assert` accepts `kind='procedure'`; retention floor applied.
+4. **E-033 minimal — `query` and `get`** — read path wired through `Engine.call`; channel membership verified from response.
+5. **C-021 minimal — `infer` for abstraction** — creates an `inferred` abstraction via registered method; abstraction carries its bound stub pending W5 statistical verifier.
+6. **E-021 final** — merge `main` into PR #143 (not a rebase: the branch carries another contributor's commits, which are not rewritten); all six fixtures exercised end-to-end.
+
+**Links.** Issue #136, PR #143, tracker #72, E-021-F5 on #72, W3 tracker #73, W5 tracker #75, E-039 issue #97.
+
+**Outcome (2026-11-04).** All five validation conditions hold. The implementation PRs merged in order:
+- #159: scope propagation, `procedure` through `assert`, and the source types.
+- #160: `query`/`get` (E-033 minimal, #156).
+- #161: `infer` (C-021 minimal, #158).
+- #162: migration 17, the correction under item 2.
+- #143: E-021, merge `11ea247`.
+
+The `verify` job was green on every merge. `tests/integration/test_coding_profile_db.py` exercises all six fixtures end to end.
+
+Two statements above were overtaken during implementation:
+- The `C-021` admission-placement question was already settled by `V2-D40` (adopted and implemented: the bound gates verification, not creation). The minimal `infer` applies only the creation verdict of `engine.admission.assess_soundness`.
+- The minimal `infer` stores the ledger the caller supplies, not a computed one. The full `C-021` row of W5 (#75) owns ledger counting, the dependence correction and `verify`/`refute`.
+
+Deferred work surfaced by E-021 is tracked separately:
+- #163: the `promote_to_durable` runtime consumer, E-021-F4.
+- #164: enforcement of a profile's extractor source types.
+
+**Status:** decided and implemented (Project Owner authorization 2026-11-04).
+
+---
+
+### V2-D67 — A profile is bound when the generic handlers are registered, not per call (E-021 requirement 4.6)
+
+**Context.** #136 requirement 4.6 says every fixture artifact is "created, queried and read through the public entry point / generic engine API, with the profile passed as a parameter". The handlers take the profile at registration: `register_ingest_handlers(engine, runtime, profile)` and `register_infer_handlers(..., profile=)`. `Engine.call` does not take it. Read literally, the sentence could ask for a per-call profile.
+
+**Decision.** Binding at registration satisfies the requirement. A per-call profile argument is not added.
+
+**Rationale.**
+1. **The contract forbids it.** `Engine.call` admits only an operation's contract inputs (`api/entry.py`, step 2, `unknown_argument`), and no `API_V2.md` operation declares a profile input. A per-call profile would change the public contract, which E-021's scope guard does not allow.
+2. **It would weaken a guarantee.** `V2-D08` makes a profile configuration of the one engine. If the profile came per call, a Tier B/C caller could choose its own `kinds` and retention defaults, and a deployment guarantee would become a caller choice.
+3. **The requirement's purpose is met.** Every artifact enters only through `Engine.call`. The profile is a parameter of the generic API. No helper special-cases a profile (the E-019 no-branching scanner and the name-literal scan).
+4. **It is the established pattern.** The E-018 conformance suite (closed under `V2-D62`) proves the other profile-defined memory types with exactly this binding.
+
+**Consequence.** One engine serves one profile. A deployment that serves several profiles builds one engine per profile from the same code. That is what `E-023`'s dual-profile job and `E-025`'s fork audit measure.
+
+**Status:** decided under the Project Owner's delegation (2026-11-04). Evidence: #136 closing comment, PR #143.

@@ -1,4 +1,4 @@
--- Migration 14: persisted child scopes and scope-local entity links (E-024 substrate).
+-- Migration 18: persisted child scopes and scope-local entity links (E-024 substrate).
 --
 -- Scope paths remain principal-owned. Child paths are admitted only below their user's root,
 -- and the API verifies that each path is backed by a persisted scope before writing to it.
@@ -102,9 +102,6 @@ DECLARE
   ];
 BEGIN
   FOREACH tbl IN ARRAY scoped_tables LOOP
-    IF tbl NOT IN ('entity', 'negative_constraint') THEN
-      EXECUTE pg_catalog.format('ALTER TABLE %I DROP CONSTRAINT %I', tbl, tbl || '_scope_matches_user');
-    END IF;
     EXECUTE pg_catalog.format(
       'ALTER TABLE %I ADD CONSTRAINT %I CHECK (pg_catalog.starts_with(scope_path, ''/u/'' || user_id || ''/''))',
       tbl, tbl || '_scope_matches_user'
