@@ -86,11 +86,17 @@ platform setting, not this policy, and no human approval is ever fabricated to s
 
 ### 1.2 Branch protection: the required configuration, not applied
 
-**Status (r11, 2026-11-01): not applied.** The repository has **no branch protection and no rulesets** on `main`:
-`GET /repos/{owner}/{repo}/branches/main/protection` returns `404 Not Found` and `GET /repos/{owner}/{repo}/rulesets`
-returns `[]`. The session account (`elewashy`) holds `write` and `triage`, **not `admin`**, so a `PUT` to the protection
-endpoint also returns `404`; it cannot be configured from here and is not claimed to be. This is a platform setting the
-Project Owner or a repository admin applies once; it is not a code change and needs no PR.
+**Status (re-checked 2026-11-05, after the transfer to the `eMinders` organization): still not applied, and now
+blocked by the plan, not by permission.**
+- The session account (`elewashy`) is an organization `admin`, and the repository reports `permissions.admin: true`. So the r11 limitation (`write` only) no longer applies.
+- `eMinders` is on the GitHub **Free** plan, and the repository is **private**. All four of these return `403 Upgrade to GitHub Pro or make this repository public to enable this feature`:
+  - `GET /repos/eMinders/ChronaMind/branches/main/protection`
+  - `PUT /repos/eMinders/ChronaMind/branches/main/protection` with the payload below
+  - `GET /repos/eMinders/ChronaMind/rulesets`
+  - `POST /repos/eMinders/ChronaMind/rulesets`
+- Nothing was applied, and nothing is claimed.
+- Making the repository public is **not** an acceptable workaround: it would expose the plan, the research record and the code. That is the Project Owner's decision, not a CI-configuration step.
+- What unblocks it is a paid organization plan (Team or above), after which the configuration below applies unchanged, apart from the prerequisite noted after the table.
 
 **Apply exactly this** (Settings → Branches → `main`, or the API call below with an admin token). The five check names
 are the stable job identities the workflows already publish, so nothing in CI needs to change.
@@ -107,11 +113,11 @@ are the stable job identities the workflows already publish, so nothing in CI ne
 | Enforce for administrators | **off** | The Owner must be able to land a hotfix in an emergency; the required checks still run |
 
 ```bash
-# Verification first: expect 404 / [] until an admin applies it.
+# Verification first: on a Free-plan private repository both return 403 (plan), not 404.
 gh api repos/eMinders/ChronaMind/branches/main/protection
 test -z "$(gh api repos/eMinders/ChronaMind/rulesets --jq '.[].id')" && echo "no rulesets"
 
-# Apply (admin token required; `gh` with only write access returns 404).
+# Apply (admin token AND a plan that supports protection on private repositories; otherwise 403).
 gh api --method PUT repos/eMinders/ChronaMind/branches/main/protection \
   -F 'required_status_checks[strict]=true' \
   -f 'required_status_checks[contexts][]=static' \
@@ -123,6 +129,10 @@ gh api --method PUT repos/eMinders/ChronaMind/branches/main/protection \
   -F 'required_pull_request_reviews=null' \
   -F 'restrictions=null'
 ```
+
+**Prerequisite before applying it: path-filtered workflows must still report.** `custom-memory-engine.yaml` runs only when `custom-memory-engine/**`, its own file or `.github/actions/setup-cme/**` change (the `paths:` filter). GitHub leaves a required check **pending forever** when its workflow is skipped by a path filter. So with `static`, `verify` and `default-install` required, a PR that touches only root files could never merge. Apply one of these in the same change as the protection:
+1. Replace the trigger-level `paths:` filter with a first `changes` job (a pinned path-filter step) whose output makes the three jobs skip their steps but still report `success` when no engine path changed. This is preferred: no CI cost for root-only PRs.
+2. Or require only `checks` and `workflows` repository-wide, and add the three engine checks in a ruleset scoped by path once rulesets are available. This is weaker, because GitHub rulesets do not condition required checks on paths.
 
 **What this does not do.** It does not add a human review requirement, does not weaken any existing gate (there are none
 to weaken), and does not make this project's quality depend on a setting that is currently absent. The review standard

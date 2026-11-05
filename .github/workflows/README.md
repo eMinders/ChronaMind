@@ -18,9 +18,7 @@
 
 All three must be green. A PR is not "CI green" because `verify` alone passed.
 
-`main` currently has **no branch protection and no rulesets** (checked via the API in r11; the account has `write`,
-not `admin`, so it cannot set them). The required-check configuration to apply when an admin is available is recorded
-in `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2 rather than claimed here as done.
+`main` has **no branch protection and no rulesets**. Re-checked on 2026-11-05 after the transfer to `eMinders`, the account is admin, but the Free plan returns `403` for both on a private repository. The configuration to apply, and its path-filter prerequisite, are in `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2. Nothing is claimed as applied.
 
 ## Conventions
 
