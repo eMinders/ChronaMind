@@ -7,7 +7,7 @@ model assets: nothing reused from the development checkout.
 ## 1. Procedure
 
 ```bash
-git clone https://github.com/Abdulrahman-Ayman-Farid/ChronaMind.git && cd ChronaMind/custom-memory-engine
+git clone https://github.com/eMinders/ChronaMind.git && cd ChronaMind/custom-memory-engine
 uv sync --frozen --extra baselines --python 3.12.12
 uv run --no-sync python -m evaluation.baselines.assets prepare --directory "$CME_BASELINE_TEST_ASSETS"
 uv run --no-sync pytest -q                                   # full CI scope (DB + FalkorDB + assets)

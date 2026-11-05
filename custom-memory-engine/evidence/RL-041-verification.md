@@ -1,6 +1,6 @@
 # RL-041 schema migration verification
 
-Contribution for [issue #32](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/32),
+Contribution for [issue #32](https://github.com/eMinders/ChronaMind/issues/32),
 originally based on main `e4168c0` and verified on 26 October 2026. The leader
 merged PR #37 at `a9610b7`; the later catalog corrections belong to the separate
 post-merge assurance follow-up. The twelve-table DDL and its adapted full-schema

@@ -84,12 +84,12 @@ Six Phase P1 decision issues are currently published and open on GitHub under mi
 
 | GitHub Issue | Task ID | Title | Decisions Covered | Proposed Owner | Peer Reviewer |
 |---|---|---|---|---|---|
-| [`#1`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/1) | `RL-010` | Prepare research-scope and supervisor decision records | `D-01`–`D-08`, `D-27` | Member 1 (`R-LEAD`) | Member 3 (`R-METHOD`) |
-| [`#2`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/2) | `RL-012` | Verify PostgreSQL and pgvector compatibility evidence | `D-18`, `D-25` | Member 4 (`R-DB`) | Member 2 (`R-ENGINE`) |
-| [`#3`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/3) | `RL-013` | Select and verify the engine runtime | `D-17`, `D-20` | Member 2 (`R-ENGINE`) | Member 5 (`R-APP`) |
-| [`#4`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/4) | `RL-014` | Prepare A2b and Suite D cardinality decisions | `D-15`, `D-16` | Member 3 (`R-METHOD`) | Member 1 (`R-LEAD`) |
-| [`#5`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/5) | `RL-015` | Determine ethics requirements for the optional usability study | `D-19` | Member 5 (`R-APP`) | Member 1 (`R-LEAD`) |
-| [`#6`](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/6) | `RL-016` | Prepare paired D-23/D-24 and suite-release decisions | `D-23`, `D-24`, `D-26` | Member 3 (`R-METHOD`) & Member 4 (`R-DB`) | Member 1 (`R-LEAD`) |
+| [`#1`](https://github.com/eMinders/ChronaMind/issues/1) | `RL-010` | Prepare research-scope and supervisor decision records | `D-01`–`D-08`, `D-27` | Member 1 (`R-LEAD`) | Member 3 (`R-METHOD`) |
+| [`#2`](https://github.com/eMinders/ChronaMind/issues/2) | `RL-012` | Verify PostgreSQL and pgvector compatibility evidence | `D-18`, `D-25` | Member 4 (`R-DB`) | Member 2 (`R-ENGINE`) |
+| [`#3`](https://github.com/eMinders/ChronaMind/issues/3) | `RL-013` | Select and verify the engine runtime | `D-17`, `D-20` | Member 2 (`R-ENGINE`) | Member 5 (`R-APP`) |
+| [`#4`](https://github.com/eMinders/ChronaMind/issues/4) | `RL-014` | Prepare A2b and Suite D cardinality decisions | `D-15`, `D-16` | Member 3 (`R-METHOD`) | Member 1 (`R-LEAD`) |
+| [`#5`](https://github.com/eMinders/ChronaMind/issues/5) | `RL-015` | Determine ethics requirements for the optional usability study | `D-19` | Member 5 (`R-APP`) | Member 1 (`R-LEAD`) |
+| [`#6`](https://github.com/eMinders/ChronaMind/issues/6) | `RL-016` | Prepare paired D-23/D-24 and suite-release decisions | `D-23`, `D-24`, `D-26` | Member 3 (`R-METHOD`) & Member 4 (`R-DB`) | Member 1 (`R-LEAD`) |
 
 ### Immediate Parallel Phase P0 Tasks (Ready to Publish / Execute)
 

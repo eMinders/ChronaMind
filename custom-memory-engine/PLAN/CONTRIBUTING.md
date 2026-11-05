@@ -108,11 +108,11 @@ are the stable job identities the workflows already publish, so nothing in CI ne
 
 ```bash
 # Verification first: expect 404 / [] until an admin applies it.
-gh api repos/Abdulrahman-Ayman-Farid/ChronaMind/branches/main/protection
-test -z "$(gh api repos/Abdulrahman-Ayman-Farid/ChronaMind/rulesets --jq '.[].id')" && echo "no rulesets"
+gh api repos/eMinders/ChronaMind/branches/main/protection
+test -z "$(gh api repos/eMinders/ChronaMind/rulesets --jq '.[].id')" && echo "no rulesets"
 
 # Apply (admin token required; `gh` with only write access returns 404).
-gh api --method PUT repos/Abdulrahman-Ayman-Farid/ChronaMind/branches/main/protection \
+gh api --method PUT repos/eMinders/ChronaMind/branches/main/protection \
   -F 'required_status_checks[strict]=true' \
   -f 'required_status_checks[contexts][]=static' \
   -f 'required_status_checks[contexts][]=verify' \

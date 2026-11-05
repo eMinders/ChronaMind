@@ -1,6 +1,6 @@
 # Gate J5 Benchmark & Own-Suite Split Freeze List (`RL-026`)
 
-- **Task:** `RL-026` ([Issue #22](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/22))
+- **Task:** `RL-026` ([Issue #22](https://github.com/eMinders/ChronaMind/issues/22))
 - **Quality Gate:** `Gate J5` ([`PROJECT_ROADMAP.md`](../../../PROJECT_ROADMAP.md) §J, [`TRACEABILITY_MATRIX.md`](../../../TRACEABILITY_MATRIX.md) §5)
 - **Freeze Date:** `2026-10-26`
 - **Status:** `FROZEN` (development vs. test splits locked prior to any pilot `RL-100` or confirmatory test run `RL-101`–`RL-105`)

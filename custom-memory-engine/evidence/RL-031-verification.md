@@ -1,6 +1,6 @@
 # RL-031 verification and provenance
 
-This contribution implements [issue #23](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/23).
+This contribution implements [issue #23](https://github.com/eMinders/ChronaMind/issues/23).
 The [adapter guide](../evaluation/baselines/README.md) documents operational setup
 and limitations. Final local integration at `780cdd8` passed **603 tests with no
 failures, skips or collection errors**, including all 20 tests marked integration,
@@ -8,7 +8,7 @@ plus **43/43 SQL assertions**. The independent default installation passed **562
 tests with 29 explicit optional-dependency/service skips**. Source/SQL and HEAD
 snapshots were identical before and after the combined run; root and engine locks
 were unchanged. PostgreSQL resources were removed and the graph list was empty.
-The final [PR #36 checks](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/pull/36/checks)
+The final [PR #36 checks](https://github.com/eMinders/ChronaMind/pull/36/checks)
 provide authoritative results for the submitted commit, including the subsequent
 syntax-only lint compatibility and CI-context correction.
 
