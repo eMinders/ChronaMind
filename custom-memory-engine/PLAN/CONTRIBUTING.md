@@ -84,55 +84,44 @@ The reviewer's decisions are recorded as `V2-D##` entries with their rationale a
 confirm, amend or reverse them. Where GitHub's own branch protection would require an approval, that is a
 platform setting, not this policy, and no human approval is ever fabricated to satisfy it.
 
-### 1.2 Branch protection: the required configuration, not applied
+### 1.2 Branch protection on `main`
 
-**Status (re-checked 2026-11-05, after the transfer to the `eMinders` organization): still not applied, and now
-blocked by the plan, not by permission.**
-- The session account (`elewashy`) is an organization `admin`, and the repository reports `permissions.admin: true`. So the r11 limitation (`write` only) no longer applies.
-- `eMinders` is on the GitHub **Free** plan, and the repository is **private**. All four of these return `403 Upgrade to GitHub Pro or make this repository public to enable this feature`:
-  - `GET /repos/eMinders/ChronaMind/branches/main/protection`
-  - `PUT /repos/eMinders/ChronaMind/branches/main/protection` with the payload below
-  - `GET /repos/eMinders/ChronaMind/rulesets`
-  - `POST /repos/eMinders/ChronaMind/rulesets`
-- Nothing was applied, and nothing is claimed.
-- Making the repository public is **not** an acceptable workaround: it would expose the plan, the research record and the code. That is the Project Owner's decision, not a CI-configuration step.
-- What unblocks it is a paid organization plan (Team or above), after which the configuration below applies unchanged, apart from the prerequisite noted after the table.
-
-**Apply exactly this** (Settings → Branches → `main`, or the API call below with an admin token). The five check names
-are the stable job identities the workflows already publish, so nothing in CI needs to change.
+**History.** In r11 the session account had only `write`. After the transfer to `eMinders` (2026-11-05) it was admin, but GitHub's Free plan refused protection and rulesets on a private repository (`403`). The Project Owner made the repository **public** on 2026-11-05, which lifts that restriction. The applied state and how it was verified are recorded in the status line below; the configuration is:
 
 | Setting | Value | Why |
 |---|---|---|
-| Required status checks | `static`, `verify`, `default-install` (from `custom-memory-engine.yaml`) and `checks`, `workflows` (from `ci.yaml`) | These are the gates the Definition of Done already names. A PR is not "CI green" on `verify` alone |
-| Require branches to be up to date | **on** (`strict: true`) | The r11 review found merge-order regressions (a ledger silently reverted across four branches, #123) that per-PR green CI cannot catch. Strict mode forces a rebase onto current `main` before the checks run |
-| Required approving reviews | **none** (`required_pull_request_reviews: null`) | `V2-D57`: AI review is the gate. Requiring a GitHub approval would either block every merge or pressure someone into an approval that did not happen. The policy is review *recorded*, not an approval *clicked* |
-| Dismiss stale approvals | n/a | No approvals are required, so nothing to dismiss |
-| Require conversation resolution | **on** (recommended) | A review finding is a comment; this is what makes "leave the issue open with its gap recorded" binding |
-| Require linear history | **off** | W1 merged 13 PRs with merge commits (`99fe8f8` is one). Turning it on would rewrite how the repo already works for no correctness gain |
+| Required status checks | `changes`, `static`, `verify`, `default-install` (from `custom-memory-engine.yaml`) and `checks`, `workflows` (from `ci.yaml`) | These are the gates the Definition of Done already names. A PR is not "CI green" on `verify` alone |
+| Require branches to be up to date | **on** (`strict: true`) | The r11 review found merge-order regressions (a ledger silently reverted across four branches, #123) that per-PR green CI cannot catch. Strict mode makes a PR's checks run against current `main` before it merges |
+| Required approving reviews | **none** | `V2-D57`: AI review is the gate. A required GitHub approval would block every merge or invite an approval that did not happen |
+| Require conversation resolution | **on** | A review finding is a comment; this makes "resolve or record it" binding |
+| Require linear history | **off** | Merge commits are part of the existing history (`99fe8f8`); squash is the convention, not a rule |
 | Allow force pushes / deletions | **off** | Never needed; the v1 tag and every merge commit are the audit trail |
-| Enforce for administrators | **off** | The Owner must be able to land a hotfix in an emergency; the required checks still run |
+| Enforce for administrators | **off** | The Owner must be able to land an emergency hotfix; the required checks still run on it |
+
+**Why no required check can deadlock a PR.** A workflow skipped by a trigger-level `paths:` filter never reports, so a required check from it would stay pending forever on a root-only PR. `custom-memory-engine.yaml` therefore has **no `paths:` filter on `pull_request`**:
+- A `changes` job diffs the PR against its base.
+- `static`, `verify` and `default-install` run only when an engine path changed (`custom-memory-engine/**`, the workflow itself, `.github/actions/setup-cme/**`).
+- Otherwise they are skipped by their job-level `if:`, and GitHub reports a skipped job as successful.
+- `changes` is itself required. If it fails, the PR is blocked, never waved through by the skips that follow it.
+- It fails open toward running the gates: a non-PR event or an uncomputable diff runs everything.
+- `ci.yaml` has no path filter.
 
 ```bash
-# Verification first: on a Free-plan private repository both return 403 (plan), not 404.
-gh api repos/eMinders/ChronaMind/branches/main/protection
-test -z "$(gh api repos/eMinders/ChronaMind/rulesets --jq '.[].id')" && echo "no rulesets"
-
-# Apply (admin token AND a plan that supports protection on private repositories; otherwise 403).
-gh api --method PUT repos/eMinders/ChronaMind/branches/main/protection \
-  -F 'required_status_checks[strict]=true' \
-  -f 'required_status_checks[contexts][]=static' \
-  -f 'required_status_checks[contexts][]=verify' \
-  -f 'required_status_checks[contexts][]=default-install' \
-  -f 'required_status_checks[contexts][]=checks' \
-  -f 'required_status_checks[contexts][]=workflows' \
-  -F 'enforce_admins=false' \
-  -F 'required_pull_request_reviews=null' \
-  -F 'restrictions=null'
+gh api --method PUT repos/eMinders/ChronaMind/branches/main/protection --input - <<'JSON'
+{
+  "required_status_checks": {"strict": true,
+    "contexts": ["changes", "static", "verify", "default-install", "checks", "workflows"]},
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null,
+  "required_conversation_resolution": true,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "required_linear_history": false
+}
+JSON
+gh api repos/eMinders/ChronaMind/branches/main/protection   # read it back
 ```
-
-**Prerequisite before applying it: path-filtered workflows must still report.** `custom-memory-engine.yaml` runs only when `custom-memory-engine/**`, its own file or `.github/actions/setup-cme/**` change (the `paths:` filter). GitHub leaves a required check **pending forever** when its workflow is skipped by a path filter. So with `static`, `verify` and `default-install` required, a PR that touches only root files could never merge. Apply one of these in the same change as the protection:
-1. Replace the trigger-level `paths:` filter with a first `changes` job (a pinned path-filter step) whose output makes the three jobs skip their steps but still report `success` when no engine path changed. This is preferred: no CI cost for root-only PRs.
-2. Or require only `checks` and `workflows` repository-wide, and add the three engine checks in a ruleset scoped by path once rulesets are available. This is weaker, because GitHub rulesets do not condition required checks on paths.
 
 **What this does not do.** It does not add a human review requirement, does not weaken any existing gate (there are none
 to weaken), and does not make this project's quality depend on a setting that is currently absent. The review standard
