@@ -28,6 +28,8 @@ dependencies = [
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.33",
     "slowapi>=0.1.10",
+    # The app's database layer is async (create_async_engine); SQLAlchemy's asyncio support needs greenlet.
+    "sqlalchemy[asyncio]>=2.1.8",
     "sqlmodel>=0.0.48",
     "structlog>=26.1.0",
     "tenacity>=9.2.1",
@@ -92,7 +94,6 @@ exclude = [
     "migrations",
     "venv",
 ]
-stubPath = "typings"
 pythonVersion = "3.14"
 typeCheckingMode = "standard"
 venvPath = "."
