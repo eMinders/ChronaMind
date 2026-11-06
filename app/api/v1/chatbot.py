@@ -60,7 +60,7 @@ async def chat(
         )
 
         if settings.SESSION_NAMING_ENABLED:
-            maybe_name_session(session.id, session.name, chat_request.messages)
+            await maybe_name_session(session.id, session.name, chat_request.messages)
 
         result = await agent.get_response(
             chat_request.messages, session.id, user_id=str(session.user_id), username=session.username
@@ -102,7 +102,7 @@ async def chat_stream(
         )
 
         if settings.SESSION_NAMING_ENABLED:
-            maybe_name_session(session.id, session.name, chat_request.messages)
+            await maybe_name_session(session.id, session.name, chat_request.messages)
 
         async def event_generator():
             """Generate streaming events.
