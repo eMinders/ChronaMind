@@ -29,7 +29,7 @@ from typing import cast
 from uuid import uuid4
 
 import pytest
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, sql
 from psycopg.errors import CheckViolation, RaiseException
 
 from custom_memory_engine.api.contract import OPERATIONS
@@ -157,7 +157,13 @@ async def env(database) -> AsyncIterator[tuple[AsyncConnection, str, str, str]]:
     async with world(database) as (conn, engine, _schema):
         del engine
         await conn.execute("SELECT set_config('app.clock', %s, false)", (START.isoformat(),))
-        yield conn, schema, role, "alice"
+        try:
+            yield conn, schema, role, "alice"
+        finally:  # tests provision this second role themselves; roles are cluster-wide, so it must not outlive them
+            await conn.execute("RESET ROLE")
+            if await rows(conn, "SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)):
+                await conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+                await conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
 
 
 async def insert_tuple(conn: AsyncConnection, tid: str, t: Tuple4, *, user: str = "alice") -> None:

@@ -1,11 +1,9 @@
 """Retrieval ranking, lineage deletion and gate persistence over the full schema."""
 
 import asyncio
-import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -24,7 +22,7 @@ from custom_memory_engine.engine.render import render_context
 from custom_memory_engine.engine.retrieval import RetrievalError, rank_versions, retrieve_current
 from custom_memory_engine.queue.contracts import Job, JobIdentityConflict, NewJob
 from custom_memory_engine.queue.worker import enqueue, process_one
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -44,24 +42,10 @@ def vector(*weights: float) -> list[float]:
 
 @pytest_asyncio.fixture
 async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database with vector and btree_gist")
-    config = DatabaseConfig.from_environment()
-    schema = "cme_retrieval_" + uuid4().hex
-    async with await AsyncConnection.connect(
-        config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-    ) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-    try:
+    async with engine_database() as (config, schema):
         async with connect((config, schema)) as conn:
-            await apply_migrations(conn)
             await seed(conn)
         yield config, schema
-    finally:
-        async with await AsyncConnection.connect(
-            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-        ) as conn:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 @asynccontextmanager

@@ -1,11 +1,9 @@
 """Write path: turn persistence, gate routing, supersession and consolidation lineage."""
 
-import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import LiteralString, cast
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -23,7 +21,7 @@ from custom_memory_engine.engine.ingest import (
     resolve_held,
 )
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, ResolutionOutcome
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -33,28 +31,14 @@ LATER = datetime(2026, 6, 1, tzinfo=UTC)
 
 @pytest_asyncio.fixture
 async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database with vector and btree_gist")
-    config = DatabaseConfig.from_environment()
-    schema = "cme_ingest_" + uuid4().hex[:16]
-    async with await AsyncConnection.connect(
-        config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-    ) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-        await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await apply_migrations(conn)
-        await conn.execute(
-            "INSERT INTO predicate_schema VALUES "
-            "('diet', 'single', 'semantic'), ('plans_to', 'single', 'semantic'), "
-            "('exercise', 'single', 'semantic')"
-        )
-    try:
+    async with engine_database() as (config, schema):
+        async with connect((config, schema)) as conn:
+            await conn.execute(
+                "INSERT INTO predicate_schema VALUES "
+                "('diet', 'single', 'semantic'), ('plans_to', 'single', 'semantic'), "
+                "('exercise', 'single', 'semantic')"
+            )
         yield config, schema
-    finally:
-        async with await AsyncConnection.connect(
-            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-        ) as conn:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 @asynccontextmanager

@@ -82,3 +82,11 @@ def test_check_workflows_hold_a_read_only_token(workflow: str) -> None:
 
 def test_workflow_files_are_linted_in_ci() -> None:
     assert re.search(r"rhysd/actionlint@sha256:[0-9a-f]{64}", (WORKFLOWS / "ci.yaml").read_text(encoding="utf-8"))
+
+
+def test_verify_runs_in_parallel_on_a_disposable_fast_database(engine: str) -> None:
+    """The per-worker databases and per-test clones (conftest.py, tests/integration/schema.py) are what CI exercises."""
+    verify = _job(engine, "verify")
+    assert re.search(r"pytest -q -n auto\b", verify)
+    for setting in ("fsync", "synchronous_commit", "full_page_writes"):
+        assert f"ALTER SYSTEM SET {setting} = off" in verify

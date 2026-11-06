@@ -1,6 +1,5 @@
 """PostgreSQL integration tests for transactional supersession, boundary revision, archival, and ablations (RL-042)."""
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -34,7 +33,7 @@ from custom_memory_engine.engine.transactions import (
     stage_candidate,
     supersede_single,
 )
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -60,25 +59,11 @@ OCT1 = instant(10, 1)
 
 @pytest_asyncio.fixture
 async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must explicitly name the disposable test database")
-    config = DatabaseConfig.from_environment()
-    schema = "cme_tx_" + uuid4().hex[:20]
-    async with await AsyncConnection.connect(
-        config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-    ) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-    try:
+    async with engine_database() as (config, schema):
         async with connect((config, schema)) as conn:
-            await apply_migrations(conn)
             await ensure_archival_trigger(conn, schema_name=schema)
             await seed_base_entities(conn)
         yield config, schema
-    finally:
-        async with await AsyncConnection.connect(
-            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-        ) as conn:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 @asynccontextmanager

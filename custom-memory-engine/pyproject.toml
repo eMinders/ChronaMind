@@ -57,6 +57,9 @@ testpaths = [
   "evaluation/stats/tests",
 ]
 markers = ["integration: requires a disposable PostgreSQL database"]
+# With `-n` (pytest-xdist), idle workers steal queued tests: per-test isolation (a private database clone per DB
+# test, tests/integration/schema.py) makes any test runnable on any worker, so no module pins one worker.
+addopts = ["--dist=worksteal"]
 filterwarnings = ["error"]
 
 [tool.ruff]

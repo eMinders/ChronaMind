@@ -6,21 +6,18 @@ Found by the Suite D runner. The gate records a ``memory_conflict`` row whose
 ``ForeignKeyViolation`` and the deletion did not happen at all (R6).
 """
 
-import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import LiteralString, cast
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection, sql
 
-from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.engine.deletion import delete_memory
 from custom_memory_engine.engine.ingest import TurnInput, apply_candidate, persist_turn
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -29,22 +26,18 @@ T0 = datetime(2025, 5, 1, tzinfo=UTC)
 
 @pytest_asyncio.fixture
 async def conn() -> AsyncIterator[tuple[AsyncConnection, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database with vector and btree_gist")
-    url = DatabaseConfig.from_environment().database_url.get_secret_value()
-    schema = "cme_conflict_" + uuid4().hex[:12]
-    async with await AsyncConnection.connect(url, autocommit=True, connect_timeout=5) as connection:
-        await connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    async with (
+        engine_database() as (config, schema),
+        await AsyncConnection.connect(
+            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
+        ) as connection,
+    ):
         await connection.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await apply_migrations(connection)
         await connection.execute(
             "INSERT INTO predicate_schema VALUES ('badge', 'single', 'semantic'), ('desk', 'single', 'semantic')"
         )
         await connection.execute("SELECT set_config('app.user_id', 'u1', false)")
-        try:
-            yield connection, schema
-        finally:
-            await connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+        yield connection, schema
 
 
 async def _state(connection: AsyncConnection, schema: str, index: int, key: str, text: str) -> None:

@@ -1,6 +1,5 @@
 """RL-072 on PostgreSQL: the audit backstop CHECK, and Channel 1 now scans audit rows (Invariant 8)."""
 
-import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -11,9 +10,8 @@ from psycopg import AsyncConnection, sql
 from psycopg.errors import CheckViolation
 from psycopg.types.json import Jsonb
 
-from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.deletion.scanner import ProbeMeasurement, ScanContext, database_channel_probes
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -23,19 +21,15 @@ CANARY = "zephyrine-canary-41"
 
 @pytest_asyncio.fixture
 async def env() -> AsyncIterator[tuple[AsyncConnection, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must explicitly name the disposable test database")
-    url = DatabaseConfig.from_environment().database_url.get_secret_value()
-    schema = "cme_audit_" + uuid4().hex[:16]
-    async with await AsyncConnection.connect(url, autocommit=True, connect_timeout=5) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    async with (
+        engine_database() as (config, schema),
+        await AsyncConnection.connect(
+            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
+        ) as conn,
+    ):
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await apply_migrations(conn)
         await conn.execute("INSERT INTO app_user VALUES ('u1', 'ext-u1', %s)", (T0,))
-        try:
-            yield conn, schema
-        finally:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+        yield conn, schema
 
 
 async def _audit(conn: AsyncConnection, details: dict[str, object], memory_ref: str = "ref") -> None:
