@@ -1,6 +1,7 @@
 """B-06 / V2-D40: the bound gates verification, not creation — with the guarantee unchanged."""
 
 import itertools
+from typing import TypedDict, Unpack
 
 import pytest
 
@@ -30,9 +31,15 @@ def test_statistics_section_4_2_table(o: int, expected: float) -> None:
     assert abs(cp_upper(0, o) - expected) < 1e-4
 
 
-def clean(**overrides: object):
-    kwargs = {"refutation_attempts": 3, "negative_control_clean": True} | overrides
-    return kwargs
+class AssessArguments(TypedDict, total=False):
+    refutation_attempts: int
+    negative_control_clean: bool
+    tau_confidence: float
+    tau_coverage: float
+
+
+def clean(**overrides: Unpack[AssessArguments]) -> AssessArguments:
+    return AssessArguments(refutation_attempts=3, negative_control_clean=True) | overrides
 
 
 def test_zero_counter_boundary_is_thirty_six_at_tau_090() -> None:
@@ -112,7 +119,7 @@ def test_malformed_ledgers_are_rejected(args: tuple[object, object, object]) -> 
 
 def test_thresholds_are_validated_and_bound_inputs_are_checked() -> None:
     with pytest.raises(AdmissionError):
-        assess(Ledger(10, 0, 0), **clean(), tau_confidence=1.5)
+        assess(Ledger(10, 0, 0), **clean(tau_confidence=1.5))
     with pytest.raises(AdmissionError):
         cp_upper(3, 2)
     with pytest.raises(AdmissionError):

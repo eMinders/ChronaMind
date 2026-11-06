@@ -70,7 +70,7 @@ async def test_versions_range_vector_and_hnsw(database: tuple[DatabaseConfig, st
         cursor = await conn.execute("SELECT period, embedding FROM values_probe WHERE id=1")
         row = await cursor.fetchone()
         assert row is not None and row[0] == period
-        assert np.array_equal(row[1], embedding)
+        assert np.array_equal(row[1].to_numpy(), embedding)  # pgvector >= 0.5 reads back a Vector
         await conn.execute("CREATE INDEX probe_hnsw ON values_probe USING hnsw (embedding vector_cosine_ops)")
         async with conn.transaction():
             await conn.execute("SET LOCAL hnsw.iterative_scan = strict_order")
