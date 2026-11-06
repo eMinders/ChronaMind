@@ -1,8 +1,8 @@
 name: CI
 
-# Root application (app/, evals/) lint, format and type check, plus validation of every workflow file
-# (actionlint). Runs on every PR and on main: root `ruff check .` also covers custom-memory-engine/, so a path
-# filter here would be unsafe.
+# Root application (app/, evals/): lint, format, type check and its own tests; plus actionlint over every workflow
+# file. Both jobs are required checks, so they run on every PR (no path filter: a skipped workflow never reports).
+# custom-memory-engine/ is excluded from the root Ruff config and verified by its own workflow.
 
 on:
   pull_request:
@@ -26,7 +26,7 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0 (Node 24)
         with:
           version: "0.13.5"
-          python-version: "3.13"
+          python-version: "3.14"
       - name: uv sync --locked
         run: uv sync --locked --all-extras --all-groups
       - name: ruff check
@@ -35,6 +35,8 @@ jobs:
         run: uv run --no-sync ruff format --check .
       - name: pyright
         run: uv run --no-sync pyright
+      - name: pytest (root application; no services needed)
+        run: uv run --no-sync pytest -q
 
   workflows:
     runs-on: ubuntu-24.04

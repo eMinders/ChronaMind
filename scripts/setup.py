@@ -5,7 +5,7 @@ Automates setup for new and existing contributors:
 - Detects / installs Astral `uv` package manager
 - Creates and configures `.env.development` with secure keys and ports
 - Ensures PostgreSQL + pgvector container is running
-- Synchronizes Python 3.13 virtual environment dependencies
+- Synchronizes the Python 3.14 virtual environment dependencies
 - Installs git pre-commit hooks
 - Applies Alembic database migrations
 - Launches the application server with hot-reload

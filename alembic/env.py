@@ -22,12 +22,8 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Build the database URL from app settings
-DATABASE_URL = (
-    f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
-    f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
-)
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# The same URL the app uses (psycopg 3, credentials URL-quoted). ConfigParser interpolates '%', so escape it.
+config.set_main_option("sqlalchemy.url", settings.sqlalchemy_database_url.replace("%", "%%"))
 
 # Point Alembic at our SQLModel metadata for autogenerate support
 target_metadata = SQLModel.metadata

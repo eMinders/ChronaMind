@@ -8,6 +8,7 @@ configuration value parsing.
 import os
 from enum import Enum
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
@@ -289,6 +290,14 @@ class Settings:
             # Only override if environment variable wasn't explicitly set
             if env_var_name not in os.environ:
                 setattr(self, key, value)
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        """The one SQLAlchemy URL for the app and Alembic: psycopg 3 (the driver LangGraph's checkpointer also uses)."""
+        return (
+            f"postgresql+psycopg://{quote_plus(self.POSTGRES_USER)}:{quote_plus(self.POSTGRES_PASSWORD)}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
 
     def validate_jwt_secret_key(self):
         """Reject empty, short, or placeholder JWT secrets outside test runs."""
