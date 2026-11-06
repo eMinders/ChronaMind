@@ -2,8 +2,8 @@
   "assignment_rule": "Scenario-level split for Own Suite C with disjoint seeded generators (dev_seed=102501, test_seed=202501) and deterministic SHA-256(scenario_id) binding so no scenario ever appears in both splits.",
   "cluster_key": "scenario_id",
   "dataset_files": {
-    "own_C_dev.json": "da45a272112107dffe7c4cf555e770cb4753f14d72ccbada3d79a19a27a958b9",
-    "own_C_test.json": "e0d33d78f9fe02bf5e3dd594ad5939b2a16adcc6519ca075c14fdf65192cfb33"
+    "own_C_dev.json": "a3b400d9360fa5b018b02107ef5c9ff45606b97a9b539c5dd1bb36268ce3836d",
+    "own_C_test.json": "2fc269fd6848da0f434a6675cda1fddb767fc43ec9c9db3d76a1f07c797a3913"
   },
   "dev_count": 20,
   "dev_generator_seed": 102501,
@@ -54,7 +54,7 @@
   "gate": "J5",
   "schema_version": 1,
   "seed": 42,
-  "split_payload_sha256": "3742e5474305f001a5225b43866e7974ee969c5e7c5a769769e7886719f1a73c",
+  "split_payload_sha256": "e09af4555a4a53d4af1066ad83c74610b79cf62c6ad5ac53dd74050e893d853f",
   "status": "frozen",
   "strata_counts": {
     "dev": {

@@ -19,7 +19,7 @@ All seven split files are serialized in canonical, deterministic YAML 1.2 (stric
 | [`own_G.yaml`](own_G.yaml) | `G` | `scenario_id` | `42` | `102201` / `202201` | `20` | `50` | `70` | `0` (`∅`) | `ea47b085fe550f05071ae4bf659195d9a5a4a0674768f4b02c5170c61eab0b22` | `b3e944e2b506a1bbaaceb74648e54720007f38cdaeff21bcbeccda77d06bb1ae` |
 | [`own_D.yaml`](own_D.yaml) | `D` | `scenario_id` | `42` | `102301` / `202301` | `20` | `50` | `70` | `0` (`∅`) | `3c158a678c563ae649e526aa0d096edf115addece4e0a56b3cf14014149c1102` | `c04eea6a9e388dd1d25cbdfcce4c24f259ce02260c1afdf8c8ef07c6f65b648d` |
 | [`own_I.yaml`](own_I.yaml) | `I` | `scenario_id` | `42` | `102202` / `202202` | `20` | `50` | `70` | `0` (`∅`) | `d4831effdf9b8336b1308d30cb4d2e9990da8240b983d29f3c11d216b00aaed6` | `0050917cc478ccb2b158eca16502f5cfff323dccbbaa7d71ab8d83df40193331` |
-| [`own_C.yaml`](own_C.yaml) | `C` | `scenario_id` | `42` | `102501` / `202501` | `20` | `50` | `70` | `0` (`∅`) | `3742e5474305f001a5225b43866e7974ee969c5e7c5a769769e7886719f1a73c` | `cf26b7ad13cc2d9dd4531d36837ba0616910e78b7c76b5b443673f57faa6ccce` |
+| [`own_C.yaml`](own_C.yaml) | `C` | `scenario_id` | `42` | `102501` / `202501` | `20` | `50` | `70` | `0` (`∅`) | `e09af4555a4a53d4af1066ad83c74610b79cf62c6ad5ac53dd74050e893d853f` | `45ffda4b43df509af8b2a09faa53c40b7886440603bc0a3d0dc75c2d5fcadfed` |
 
 ---
 
@@ -39,8 +39,8 @@ All seven split files are serialized in canonical, deterministic YAML 1.2 (stric
 | `Own Suite D` | `own_D_test.json` | [`../own_D/MANIFEST.txt`](../own_D/MANIFEST.txt) | `31df556b5346c8a4c3130d271573a5dbfa0af9068be5129c723f87cce36fea6d` |
 | `Own Suite I` | `own_I_dev.json` | [`../own_I/MANIFEST.txt`](../own_I/MANIFEST.txt) | `7da3982c823f24d4909710f3063d604a6bdc04c9cb905ad7646aba84cdcabb4d` |
 | `Own Suite I` | `own_I_test.json` | [`../own_I/MANIFEST.txt`](../own_I/MANIFEST.txt) | `25548ba8038e4fe79335dd4491de52def32c7c36c54109bbd5d51d475983c1f9` |
-| `Own Suite C` | `own_C_dev.json` | [`../own_C/MANIFEST.txt`](../own_C/MANIFEST.txt) | `da45a272112107dffe7c4cf555e770cb4753f14d72ccbada3d79a19a27a958b9` |
-| `Own Suite C` | `own_C_test.json` | [`../own_C/MANIFEST.txt`](../own_C/MANIFEST.txt) | `e0d33d78f9fe02bf5e3dd594ad5939b2a16adcc6519ca075c14fdf65192cfb33` |
+| `Own Suite C` | `own_C_dev.json` | [`../own_C/MANIFEST.txt`](../own_C/MANIFEST.txt) | `a3b400d9360fa5b018b02107ef5c9ff45606b97a9b539c5dd1bb36268ce3836d` |
+| `Own Suite C` | `own_C_test.json` | [`../own_C/MANIFEST.txt`](../own_C/MANIFEST.txt) | `2fc269fd6848da0f434a6675cda1fddb767fc43ec9c9db3d76a1f07c797a3913` |
 
 ---
 

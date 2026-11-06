@@ -33,7 +33,8 @@ research/benchmarks/
 ├── own_C/           # Coding-agent CI-failure suite (E-022)
 │   ├── generator.py
 │   ├── MANIFEST.txt
-│   └── README.md
+│   ├── README.md
+│   └── data/        # Gitignored
 └── splits/          # Frozen dev/test splits & Gate J5 FREEZE_LIST.md (RL-026)
     ├── FREEZE_LIST.md
     ├── freeze.py

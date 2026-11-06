@@ -96,8 +96,9 @@ def test_trivially_refusing_matcher_scores_zero_on_the_reuse_siblings(
 ) -> None:
     """README §1.2 bound: a matcher that offers nothing must score `0.0` on every reuse probe.
 
-    The negative leg of the reuse instrument is exercised with a bindings-stripped probe so
-    a scorer that returns `offered` unconditionally on this family is caught.
+    This pins the negative leg (refusal ⇒ 0.0); the expectation comparison itself is
+    pinned by the near-miss test, where ignoring the expectation would score 0.0 on a
+    refusal that must count as correct.
     """
     for dataset in (dev_suite, test_suite):
         for scenario in _scenarios_by_family(dataset, "procedure_reuse"):
@@ -155,6 +156,17 @@ def test_zero_event_strata_report_counts_with_cp_975_upper_bounds(
             zero_leak_upper(dataset.near_miss_control_probes), abs=1e-12
         )
     assert test_suite.false_offer_cp_975_upper_bound < dev_suite.false_offer_cp_975_upper_bound
+
+
+def test_verify_rejects_a_multi_probe_scenario(
+    dev_suite: SuiteCDataset,
+) -> None:
+    """Genuine control on the verifier: the one-probe-per-scenario contract must fail it."""
+    scenario = dev_suite.scenarios[0]
+    (probe,) = scenario.probes
+    doubled_scenario = scenario.model_copy(update={"probes": (probe, probe)})
+    with pytest.raises(ValueError, match="scenario_requires_single_probe"):
+        verify_suite_c(dev_suite.model_copy(update={"scenarios": (doubled_scenario,)}))
 
 
 def test_verify_rejects_a_cross_scenario_canary_leak(test_suite: SuiteCDataset) -> None:

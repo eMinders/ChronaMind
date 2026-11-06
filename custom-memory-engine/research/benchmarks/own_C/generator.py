@@ -390,7 +390,7 @@ def _build_prior_attempt(
         probe_type="prior_attempt_query",
         mode="qa",
         query_text=f"What fix did we already try for {error_name} in {repo}, and what happened?",
-        gold_answer=f"the fix attempt ({attempt_change}) failed and was reverted",
+        gold_answer=f"the fix attempt ({attempt_change}) failed and was reverted.",
         gold_evidence_episode_ids=(attempt.episode_id, outcome.episode_id),
     )
     return (failure, attempt, outcome, filler), None, (probe,)
@@ -784,7 +784,8 @@ def verify_suite_c(dataset: SuiteCDataset) -> None:
         seen_canaries.add(scenario.canary)
 
         if len(scenario.probes) != 1:
-            # Every count metric (incl. the zero_leak_upper CP bound) assumes one probe per scenario.
+            # Keeps opportunity counts and the zero_leak_upper denominator aligned with the
+            # README's one-probe-per-scenario contract.
             raise ValueError(f"scenario_requires_single_probe: {scenario.scenario_id}")
 
         episode_ids = {episode.episode_id for episode in scenario.episodes}
