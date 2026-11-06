@@ -12,4 +12,4 @@ To bootstrap the repository for the first time (installs `uv` if needed, creates
 
 - **Run dev server**: `uv run python run.py` (or `make dev`)
 - **Run database migrations**: `uv run alembic upgrade head` (or `make migrate`)
-- **Check code quality**: `uv run ruff check . && uv run pyright` (or `make check`)
+- **Check code quality**: `make check` (ruff, format check, pyright, and the root tests; the same gates as CI `checks`)

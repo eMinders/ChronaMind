@@ -30,7 +30,8 @@ make dev                  # Dev server with hot reload (port 8000 via run.py)
 make lint                 # ruff check .
 make format               # ruff format .
 make typecheck            # uv run pyright (static type check)
-make check                # lint + typecheck
+make test                 # root app tests (tests/, no services needed)
+make check                # lint + format-check + typecheck + test (= CI `checks`)
 make eval                 # Run LLM evals (interactive)
 make eval-quick           # Run LLM evals (default settings)
 make migrate              # Run DB migrations to latest (Alembic)
