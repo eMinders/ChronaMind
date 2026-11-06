@@ -16,7 +16,7 @@ dependencies = [
     "langchain-core>=1.7.6",
     "langchain-openai>=1.7.4",
     # <5: Langfuse 5 removed public trace listing (api.trace.list), which evals/ is built on.
-    "langfuse>=4.18.0,<5",
+    "langfuse>=4.18.0,<6",
     "langgraph>=1.2.20",
     "langgraph-checkpoint-postgres>=3.2.0",
     "mem0ai>=2.2.1",
