@@ -132,10 +132,24 @@ JSON
 gh api repos/eMinders/ChronaMind/branches/main/protection   # read it back
 ```
 
-**What this does not do.** It does not add a human review requirement, does not weaken any existing gate (there are none
-to weaken), and does not make this project's quality depend on a setting that is currently absent. The review standard
-is §1.1 and it is enforced by the reviewer, the tests and CI; branch protection is a guard against accidental
-force-pushes and stale-base merges, and its absence is recorded here rather than papered over.
+**What this does not do.** It does not add a human review requirement. The review standard is §1.1, enforced by the
+reviewer, the tests and CI; branch protection makes those gates binding and guards against force pushes and stale-base
+merges.
+
+### 1.3 Repository security settings
+
+Applied and read back through the API on 2026-11-06 (`gh api repos/eMinders/ChronaMind`, `.../actions/permissions`,
+`.../actions/permissions/selected-actions`, `.../vulnerability-alerts`, `.../automated-security-fixes`):
+
+| Setting | Value | Why |
+|---|---|---|
+| Visibility | public | Owner decision; it is also what makes branch protection and the scanners below available |
+| Secret scanning + push protection | **on** | A pushed credential is refused or reported, not merely caught later by the `detect-secrets` pre-commit hook |
+| Dependabot alerts + security updates | **on** | Known-vulnerable locked versions raise an alert and a fix PR; routine updates come from `.github/dependabot.yml` |
+| Actions: allowed actions | **selected**: GitHub-owned, plus `astral-sh/setup-uv`, `anthropics/claude-code-action`, `oven-sh/setup-bun` (the last is nested inside the Claude action) | Least privilege for the supply chain: a typo-squatted or unreviewed action cannot run. **Adding a third-party action requires adding it to this allow list** |
+| Actions: require SHA pinning | **on** | The repository's pinning convention (`.github/workflows/README.md`) is enforced by GitHub, including inside composite actions |
+| Default `GITHUB_TOKEN` permissions | read; cannot approve PRs | Workflows request any extra scope explicitly |
+| Delete head branches on merge | **on** | Merged branches do not accumulate |
 
 ---
 

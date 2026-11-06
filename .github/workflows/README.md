@@ -23,6 +23,7 @@ All three must be green (or skipped by `changes` when no engine path changed). A
 
 ## Conventions
 
+- **Allowed actions.** Only GitHub-owned actions and an explicit allow list may run, and every reference must be SHA-pinned; both are enforced by repository settings (`custom-memory-engine/PLAN/CONTRIBUTING.md` §1.3). A new third-party action must be added to the allow list first.
 - **Pinning.** Third-party actions are pinned to a full **commit** SHA with the version in a comment, and container images to a digest. (An annotated-tag object SHA also works but cannot be checked with the commits API; use the commit it dereferences to.)
 - **Updates.** `.github/dependabot.yml` proposes weekly grouped updates for actions (including `setup-cme`), both uv projects and the root image, after a 7-day cooldown. The engine's evaluated baseline vendors are ignored: they are frozen research inputs (`evidence/RL-031-verification.md`).
 - **Permissions.** Least privilege: `contents: read` by default; only the Claude workflows add the scopes their action needs. Checkouts set `persist-credentials: false`, since no job uses git credentials after cloning. The Claude action manages its own authentication.

@@ -88,10 +88,17 @@ lint:
 format:
 	uv run ruff format .
 
+format-check:
+	uv run ruff format --check .
+
 typecheck:
 	uv run pyright
 
-check: lint typecheck
+test:
+	uv run pytest -q
+
+# The same four gates as the CI `checks` job (.github/workflows/ci.yaml), in the same order.
+check: lint format-check typecheck test
 	@echo "All checks passed"
 
 pre-commit:
@@ -185,7 +192,9 @@ help:
 	@echo "  lint                 Ruff lint check"
 	@echo "  format               Ruff format"
 	@echo "  typecheck            Pyright static type check"
-	@echo "  check                Run lint + typecheck"
+	@echo "  format-check         Ruff format check (no changes)"
+	@echo "  test                 Root application tests (no services needed)"
+	@echo "  check                lint + format-check + typecheck + test (= CI checks job)"
 	@echo "  pre-commit           Run all pre-commit hooks"
 	@echo "  pre-commit-update    Update pre-commit hook versions"
 	@echo ""
@@ -206,7 +215,7 @@ help:
 	@echo "Misc:"
 	@echo "  clean                Remove .venv, __pycache__, .pytest_cache"
 
-.PHONY: install dev staging prod _serve \
+.PHONY: format-check test install dev staging prod _serve \
         migrate migration migrate-downgrade migrate-history \
         eval eval-quick eval-no-report \
         lint format typecheck check pre-commit pre-commit-update \
