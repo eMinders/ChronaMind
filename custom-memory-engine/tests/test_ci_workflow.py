@@ -120,3 +120,12 @@ def test_dependabot_never_proposes_a_frozen_baseline_vendor() -> None:
     dependabot = (REPO / ".github" / "dependabot.yml").read_text(encoding="utf-8")
     ignored = set(re.findall(r"- dependency-name: ([A-Za-z0-9_.-]+)", dependabot))
     assert frozen and frozen <= ignored, frozen - ignored
+
+
+def test_dependabot_respects_the_documented_upgrade_blockers() -> None:
+    """Langfuse stays below 5 (evals/ needs api.trace.list) and the image's Python minor follows .python-version."""
+    dependabot = (REPO / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    major, minor = '"version-update:semver-major"', '"version-update:semver-minor"'
+    assert f"- dependency-name: langfuse\n        update-types: [{major}]" in dependabot
+    assert f"- dependency-name: python\n        update-types: [{major}, {minor}]" in dependabot
+    assert '"langfuse>=4.18.0,<5"' in (REPO / "pyproject.toml").read_text(encoding="utf-8")

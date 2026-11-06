@@ -13,6 +13,10 @@ updates:
     directory: /
     schedule: { interval: weekly }
     cooldown: { default-days: 7 }
+    ignore:
+      # Langfuse 5 removed public trace listing (api.trace.list), which evals/ is built on (pyproject.toml pins <5).
+      - dependency-name: langfuse
+        update-types: ["version-update:semver-major"]
     groups:
       root-app: { patterns: ["*"] }
 
@@ -37,3 +41,8 @@ updates:
     directory: /
     schedule: { interval: weekly }
     cooldown: { default-days: 7 }
+    ignore:
+      # Patch releases only: the interpreter minor is a decision recorded in .python-version, and moving the image
+      # alone would split the two (3.15 is also blocked today: pyyaml has no CPython 3.15 wheels).
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
