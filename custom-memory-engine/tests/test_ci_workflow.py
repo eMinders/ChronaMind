@@ -85,7 +85,7 @@ def test_workflow_files_are_linted_in_ci() -> None:
 
 
 def test_verify_runs_in_parallel_on_a_disposable_fast_database(engine: str) -> None:
-    """The per-worker databases and per-test clones (conftest.py, tests/integration/schema.py) are what CI exercises."""
+    """Per-worker databases and per-test clones (conftest.py, tests/integration/schema.py) are what CI exercises."""
     verify = _job(engine, "verify")
     assert re.search(r"pytest -q -n auto\b", verify)
     for setting in ("fsync", "synchronous_commit", "full_page_writes"):
