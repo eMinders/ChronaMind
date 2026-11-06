@@ -1,0 +1,39 @@
+# Weekly, grouped dependency updates. A cooldown keeps brand-new releases out for a week (supply-chain hygiene), and
+# every update arrives as a PR that must pass the six required checks like any other change.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/setup-cme"]
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: uv
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups:
+      root-app: { patterns: ["*"] }
+
+  - package-ecosystem: uv
+    directory: /custom-memory-engine
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    # The evaluated baseline vendors are frozen: their versions are identity-checked at runtime and hash-recorded in
+    # evidence/RL-031-verification.md. Moving them is a methodology decision, never a routine update.
+    ignore:
+      - dependency-name: mem0ai
+      - dependency-name: graphiti-core
+      - dependency-name: qdrant-client
+      - dependency-name: onnxruntime
+      - dependency-name: tokenizers
+      - dependency-name: tiktoken
+      - dependency-name: openai
+    groups:
+      engine: { patterns: ["*"] }
+
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }

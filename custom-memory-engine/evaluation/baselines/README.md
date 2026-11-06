@@ -43,7 +43,7 @@ management, separate from the unsupported vendor seven-channel deletion metric.
 From this directory's engine root (`custom-memory-engine/`):
 
 ```powershell
-uv sync --frozen --extra baselines --python 3.12.12
+uv sync --frozen --extra baselines   # CPython from .python-version
 uv run --extra baselines python -m evaluation.baselines.assets prepare --directory C:\chronamind-assets
 ```
 

@@ -3,7 +3,7 @@ name: Claude Code Review
 # Advisory automated review on every non-draft PR (a second pair of eyes, not the review gate itself).
 # The review gate is the AI review on the Project Owner's behalf (V2-D57, PLAN/CONTRIBUTING.md §1.1): no human peer
 # review is a prerequisite for merging. This workflow is belt-and-braces, and a red run here blocks nothing.
-# Same-repository, non-draft PRs only: fork PRs never receive the OAuth secret, so they would fail.
+# Same-repository, non-draft, non-Dependabot PRs only: fork and Dependabot PRs never receive the OAuth secret.
 
 on:
   pull_request:
@@ -17,7 +17,8 @@ jobs:
   claude-review:
     if: >-
       !github.event.pull_request.draft &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -28,13 +29,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
