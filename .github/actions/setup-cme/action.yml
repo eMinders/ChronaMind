@@ -1,7 +1,8 @@
 name: Set up custom-memory-engine
 description: >-
   Install the pinned uv and sync custom-memory-engine from its lockfile (frozen).
-  Single source of truth for the uv and Python versions used by every engine CI job.
+  Single source of truth for the uv version used by every engine CI job; Python comes from
+  custom-memory-engine/.python-version.
   Requires the repository to be checked out first.
 
 inputs:
@@ -13,15 +14,18 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0 (Node 24)
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
-        version: "0.13.5"
+        version: "0.13.7"
+        # Only the engine's lock keys its cache: a root uv.lock change must not invalidate it (and vice versa).
+        cache-dependency-glob: custom-memory-engine/uv.lock
     - name: uv sync --frozen
       shell: bash
       working-directory: custom-memory-engine
       env:
         EXTRAS: ${{ inputs.extras }}
       run: |
-        args=(--frozen --python 3.12.12)
+        # The interpreter comes from custom-memory-engine/.python-version (one source for CI and local runs).
+        args=(--frozen)
         for extra in $EXTRAS; do args+=(--extra "$extra"); done
         uv sync "${args[@]}"
