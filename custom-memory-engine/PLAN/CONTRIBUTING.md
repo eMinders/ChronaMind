@@ -86,7 +86,14 @@ platform setting, not this policy, and no human approval is ever fabricated to s
 
 ### 1.2 Branch protection on `main`
 
-**History.** In r11 the session account had only `write`. After the transfer to `eMinders` (2026-11-05) it was admin, but GitHub's Free plan refused protection and rulesets on a private repository (`403`). The Project Owner made the repository **public** on 2026-11-05, which lifts that restriction. The applied state and how it was verified are recorded in the status line below; the configuration is:
+**History.** In r11 the session account had only `write`. After the transfer to `eMinders` (2026-11-05) it was admin, but GitHub's Free plan refused protection and rulesets on a private repository (`403`). The Project Owner made the repository **public** on 2026-11-05, which lifts that restriction.
+
+**Status (2026-11-05): applied and verified.** `PUT /repos/eMinders/ChronaMind/branches/main/protection` succeeded; reading it back returns exactly the table below; `GET /repos/eMinders/ChronaMind/branches/main` reports `protected: true`.
+- Each required check is bound to the **GitHub Actions app** (`app_id` 15368), so a commit status posted by anything else cannot satisfy it.
+- A root-only probe PR (#174, closed unmerged) showed `changes`/`checks`/`workflows` succeeding and the three engine gates completing as `skipped`, never pending. Its merge state was evaluated, not blocked.
+- #172, #173 and #175 then merged through the protection, each brought up to date first.
+
+The configuration is:
 
 | Setting | Value | Why |
 |---|---|---|
@@ -110,7 +117,9 @@ platform setting, not this policy, and no human approval is ever fabricated to s
 gh api --method PUT repos/eMinders/ChronaMind/branches/main/protection --input - <<'JSON'
 {
   "required_status_checks": {"strict": true,
-    "contexts": ["changes", "static", "verify", "default-install", "checks", "workflows"]},
+    "checks": [{"context": "changes", "app_id": 15368}, {"context": "static", "app_id": 15368},
+               {"context": "verify", "app_id": 15368}, {"context": "default-install", "app_id": 15368},
+               {"context": "checks", "app_id": 15368}, {"context": "workflows", "app_id": 15368}]},
   "enforce_admins": false,
   "required_pull_request_reviews": null,
   "restrictions": null,
