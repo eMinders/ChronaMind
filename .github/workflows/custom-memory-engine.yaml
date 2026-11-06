@@ -124,13 +124,19 @@ jobs:
           extras: baselines
       - name: Prepare immutable local model assets
         run: uv run --no-sync python -m evaluation.baselines.assets prepare --directory "$CME_BASELINE_TEST_ASSETS"
-      - name: Install database extensions
-        run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
+      - name: Prepare disposable database (extensions; durability off)
+        # The service container holds throwaway data only. fsync, synchronous_commit and full_page_writes are reloadable
+        # settings; switching them off halves a commit- and DDL-bound suite and changes no query result.
+        run: |
+          psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
+          psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET fsync = off" -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" -c "SELECT pg_reload_conf()"
       - name: pytest (full CI scope, PostgreSQL integration and RLS)
-        # One xdist worker per core, each with its own copy of the disposable database (conftest.py, #167): the
-        # migration runner's database-wide advisory lock would otherwise serialize the workers. --dist loadfile keeps
-        # each module on one worker, so module fixtures and intra-module order are unchanged.
-        run: uv run --no-sync pytest -q -n auto --dist loadfile --durations=15
+        # One xdist worker per core, each with its own copy of the disposable database (conftest.py, #167). Each DB
+        # test gets a private clone of a template the production migration runner built once per worker
+        # (tests/integration/schema.py), so tests share nothing and work-stealing (pyproject addopts) balances them.
+        run: uv run --no-sync pytest -q -n auto --durations=15
       - name: Bitemporal assertions (reduced-schema v1 asset)
         run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql
 

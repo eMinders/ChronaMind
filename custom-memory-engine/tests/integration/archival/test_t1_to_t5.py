@@ -15,19 +15,16 @@ runs the same measurement before deletion and must see the canary, so a clean ve
 """
 
 import json
-import os
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 import structlog
 from psycopg import AsyncConnection, sql
 
-from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.deletion.scanner import ChannelProbe, LeakChannel, ScanContext, scan_deleted_key
 from custom_memory_engine.engine.deletion import delete_memory
 from custom_memory_engine.engine.predicates import audit_as_of, current_state, fetch_versions, historical_as_of
@@ -51,7 +48,7 @@ from evaluation.harness.leak_scanner import (
     vector_probe,
     verdict,
 )
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -72,22 +69,18 @@ class World:
 
 @pytest_asyncio.fixture
 async def world() -> AsyncIterator[World]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must explicitly name the disposable test database")
-    url = DatabaseConfig.from_environment().database_url.get_secret_value()
-    schema = "cme_t15_" + uuid4().hex[:16]
-    async with await AsyncConnection.connect(url, autocommit=True, connect_timeout=5) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    async with (
+        engine_database() as (config, schema),
+        await AsyncConnection.connect(
+            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
+        ) as conn,
+    ):
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
         await conn.execute("SET timezone = 'UTC'")
-        try:
-            with structlog.testing.capture_logs() as captured:
-                await apply_migrations(conn)
-                world = World(conn, schema, captured)
-                await _seed(world)
-                yield world
-        finally:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+        with structlog.testing.capture_logs() as captured:
+            world = World(conn, schema, captured)
+            await _seed(world)
+            yield world
 
 
 async def _seed(w: World) -> None:

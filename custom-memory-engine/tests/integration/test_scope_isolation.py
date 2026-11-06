@@ -23,7 +23,7 @@ from psycopg import AsyncConnection, sql
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.scope.access import acl_readable, read_predicate, resolve_read_set, rls_read_using
 from custom_memory_engine.security import provision_runtime_role, tenant_scope
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 from tests.scope_isolation_cases import CASES, EXPECTED_FAILURES, MATCHERS, ROWS, USERS, Case
 
 pytestmark = pytest.mark.integration
@@ -100,11 +100,14 @@ async def test_library_read_predicate_returns_exactly_the_expected_rows(
 
 @pytest_asyncio.fixture
 async def rls_env() -> AsyncIterator[tuple[AsyncConnection, str]]:
-    schema, role = "cme_iso_" + uuid4().hex[:12], "cme_rt_" + uuid4().hex[:12]
-    async with await AsyncConnection.connect(_url(), autocommit=True, connect_timeout=5) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    role = "cme_rt_" + uuid4().hex[:12]
+    async with (
+        engine_database() as (config, schema),
+        await AsyncConnection.connect(
+            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
+        ) as conn,
+    ):
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await apply_migrations(conn)
         await provision_runtime_role(conn, schema, role)
         for user in USERS:
             await conn.execute("SELECT set_config('app.user_id', %s, false)", (user,))
@@ -124,7 +127,6 @@ async def rls_env() -> AsyncIterator[tuple[AsyncConnection, str]]:
         try:
             yield conn, role
         finally:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
             await conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
             await conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
 

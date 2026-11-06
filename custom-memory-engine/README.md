@@ -83,11 +83,22 @@ uv sync --frozen --extra baselines --python 3.12
 uv run ruff check src tests research/benchmarks evaluation
 uv run ruff format --check src tests research/benchmarks evaluation
 uv run pyright
-uv run pytest -q -m 'not integration'
+uv run pytest -q -m 'not integration'          # fast feedback: no database needed (seconds)
 
-# Start disposable PostgreSQL 16.15 + pgvector 0.8.7 + btree_gist 1.7 container:
+# Start disposable PostgreSQL 16.15 + pgvector 0.8.7 + btree_gist 1.7 container
+# (durability is off in compose.yaml: the data is throwaway and the suite runs about twice as fast):
 docker compose --env-file .env -p cme-verify up -d --wait
-uv run --env-file .env pytest -q
+uv run --env-file .env pytest -q -n auto        # the full suite, one worker per core (what CI `verify` runs)
+uv run --env-file .env pytest -q tests/integration/test_ingest_db.py   # one module, serial
+```
+
+How the suite stays fast without sharing state: each xdist worker gets its own database (`conftest.py`); the
+production migration runner migrates a template from it once; and each database test runs in a private clone of
+that template (`tests/integration/schema.py::engine_database`, about 0.03 s instead of a 0.9 s migration). Clones,
+templates, worker databases and the roles a test grants are all dropped afterwards. Use `engine_database()` for any
+new test that needs the current schema; `apply_migrations(through=...)` is for tests of partial migration chains.
+
+```bash
 
 # Run reduced-schema bitemporal SQL verification (43 assertions):
 docker compose --env-file .env -p cme-verify exec -T db psql -U cme_test -d cme_compatibility \

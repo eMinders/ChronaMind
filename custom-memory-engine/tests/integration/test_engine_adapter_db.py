@@ -4,18 +4,16 @@ import os
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import cast
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection, sql
 
-from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.engine.transactions import AblationMode, CandidateVersionInput, EvidenceInput
 from evaluation.baselines.p_engine import EngineAdapter, EngineOptions
 from evaluation.baselines.tests.helpers import FakeServices, config, settings
 from evaluation.harness.models import QuestionRecord, TurnRecord
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -25,26 +23,16 @@ LATER = datetime(2026, 6, 1, tzinfo=UTC)
 
 @pytest_asyncio.fixture
 async def schema() -> AsyncIterator[str]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database with vector and btree_gist")
-    config_value = DatabaseConfig.from_environment()
-    name = "cme_p_" + uuid4().hex[:16]
-    async with await AsyncConnection.connect(
-        config_value.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-    ) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(name)))
-        await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(name)))
-        await apply_migrations(conn)
-        await conn.execute(
-            "INSERT INTO predicate_schema VALUES ('diet', 'single', 'semantic'), ('plans_to', 'single', 'semantic')"
-        )
-    try:
-        yield name
-    finally:
+    async with engine_database() as (config_value, name):
         async with await AsyncConnection.connect(
             config_value.database_url.get_secret_value(), autocommit=True, connect_timeout=5
         ) as conn:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(name)))
+            await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(name)))
+            await conn.execute(
+                "INSERT INTO predicate_schema VALUES "
+                "('diet', 'single', 'semantic'), ('plans_to', 'single', 'semantic')"
+            )
+        yield name
 
 
 def extractor(turn: TurnRecord) -> Sequence[CandidateVersionInput]:

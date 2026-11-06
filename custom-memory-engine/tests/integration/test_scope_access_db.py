@@ -7,7 +7,6 @@
 """
 
 import itertools
-import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -17,10 +16,9 @@ import pytest_asyncio
 from psycopg import AsyncConnection, sql
 from psycopg.errors import CheckViolation, InsufficientPrivilege, RaiseException
 
-from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.scope.access import Selector, read_predicate, resolve, row_visible
 from custom_memory_engine.security import provision_runtime_role, tenant_scope
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -34,14 +32,14 @@ ROWS = [
 
 @pytest_asyncio.fixture
 async def env() -> AsyncIterator[tuple[AsyncConnection, str, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database with vector and btree_gist")
-    url = DatabaseConfig.from_environment().database_url.get_secret_value()
-    schema, role = "cme_acl_" + uuid4().hex[:12], "cme_rt_" + uuid4().hex[:12]
-    async with await AsyncConnection.connect(url, autocommit=True, connect_timeout=5) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    role = "cme_rt_" + uuid4().hex[:12]
+    async with (
+        engine_database() as (config, schema),
+        await AsyncConnection.connect(
+            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
+        ) as conn,
+    ):
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await apply_migrations(conn)
         await provision_runtime_role(conn, schema, role)
         for user in ("alice", "bob", "carol"):
             await conn.execute("SELECT set_config('app.user_id', %s, false)", (user,))
@@ -50,7 +48,6 @@ async def env() -> AsyncIterator[tuple[AsyncConnection, str, str]]:
         try:
             yield conn, schema, role
         finally:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
             await conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
             await conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
 

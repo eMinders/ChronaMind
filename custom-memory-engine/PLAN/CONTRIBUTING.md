@@ -27,10 +27,10 @@
      CHANGELOG.md
    diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
 
-   # Once RL-003 / RL-006 are merged:
    uv run ruff check .
    uv run pyright
-   uv run pytest
+   uv run pytest -q -m 'not integration'          # seconds, no database
+   uv run --env-file .env pytest -q -n auto       # full suite against the compose database (README §4)
    ```
 6. **Open a Pull Request:**
    - Title format: `[RL-xxx] <Short imperative summary>`
