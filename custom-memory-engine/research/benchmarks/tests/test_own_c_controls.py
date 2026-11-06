@@ -38,12 +38,17 @@ def _scenarios_by_family(dataset: SuiteCDataset, family: str) -> list[CodingScen
 
 
 def test_prior_attempt_family_recalls_the_failed_fix(dev_suite: SuiteCDataset) -> None:
+    """README §1.1: a hypothesis faithful to the recorded evidence must reach 1.0 (non-circular)."""
     scenarios = _scenarios_by_family(dev_suite, "prior_attempt_recall")
     assert len(scenarios) == 4
     for scenario in scenarios:
         (probe,) = scenario.probes
-        correct = score_qa_probe(probe, probe.gold_answer or "")
-        assert correct == 1.0
+        outcome = next(episode for episode in scenario.episodes if episode.name == "attempt_outcome")
+        # The gold phrase is a verbatim span of the outcome evidence, so a system that
+        # quotes the recorded episode text scores 1.0 without ever seeing the label.
+        assert probe.gold_answer is not None and probe.gold_answer in outcome.content
+        hypothesis = f"From {outcome.episode_id}: {' '.join(outcome.content.splitlines())}"
+        assert score_qa_probe(probe, hypothesis) == 1.0
         assert score_qa_probe(probe, "I do not know.") == 0.0
         assert score_qa_probe(probe, "We touched the vendor lockfile and it fixed itself.") == 0.0
 
@@ -56,6 +61,9 @@ def test_repo_fact_family_requires_the_recorded_invariant(dev_suite: SuiteCDatas
         assert probe.gold_evidence_episode_ids
         assert score_qa_probe(probe, probe.gold_answer or "") == 1.0
         assert score_qa_probe(probe, "I do not know.") == 0.0
+        # Fabrication control (README §1.4): echoing the nearest unrelated episode text scores 0.
+        audit_episode = next(episode for episode in scenario.episodes if episode.name == "dependency_audit")
+        assert score_qa_probe(probe, audit_episode.content) == 0.0
 
 
 def test_abstention_control_rejects_trivially_answering_systems(dev_suite: SuiteCDataset) -> None:
@@ -81,6 +89,25 @@ def test_procedure_reuse_offers_the_stored_recipe_on_identical_preconditions(
             library = library_of(scenario)
             assert score_offer_probe(probe, library) == 1.0
             assert offer_by_preconditions(probe, library) is True
+
+
+def test_trivially_refusing_matcher_scores_zero_on_the_reuse_siblings(
+    dev_suite: SuiteCDataset, test_suite: SuiteCDataset
+) -> None:
+    """README §1.2 bound: a matcher that offers nothing must score `0.0` on every reuse probe.
+
+    The negative leg of the reuse instrument is exercised with a bindings-stripped probe so
+    a scorer that returns `offered` unconditionally on this family is caught.
+    """
+    for dataset in (dev_suite, test_suite):
+        for scenario in _scenarios_by_family(dataset, "procedure_reuse"):
+            (probe,) = scenario.probes
+            library = library_of(scenario)
+            refusal = probe.model_copy(update={"observed_bindings": ()})
+            assert offer_by_preconditions(refusal, library) is False
+            expectation = probe.expected_offer
+            assert expectation is not None and expectation.should_offer
+            assert score_offer_probe(refusal, library) == 0.0
 
 
 def test_procedure_recipe_renders_in_the_procedures_channel_and_not_as_a_claim(
@@ -130,15 +157,18 @@ def test_zero_event_strata_report_counts_with_cp_975_upper_bounds(
     assert test_suite.false_offer_cp_975_upper_bound < dev_suite.false_offer_cp_975_upper_bound
 
 
-def test_suite_c_scoring_labels_have_no_cross_tenant_scope_interference(test_suite: SuiteCDataset) -> None:
-    """Repo scopes stay per-scenario (E-011); no scenario's canary appears in another's text."""
-    scenarios = test_suite.scenarios
-    for scenario in scenarios:
-        serialized = scenario.model_dump_json()
-        for other in scenarios:
-            if other.scenario_id == scenario.scenario_id:
-                continue
-            assert other.canary not in serialized
+def test_verify_rejects_a_cross_scenario_canary_leak(test_suite: SuiteCDataset) -> None:
+    """Genuine control on the verifier: spilling another scenario's canary must fail it."""
+    first, second = test_suite.scenarios[0], test_suite.scenarios[1]
+    assert first.canary != second.canary
+    episode = first.episodes[0]
+    leaked_content = f"{episode.content}{second.canary}\n"
+    leaked = episode.model_copy(
+        update={"content": leaked_content, "source": episode.source.model_copy(update={"content": leaked_content})}
+    )
+    tampered_scenario = first.model_copy(update={"episodes": (leaked, *first.episodes[1:])})
+    with pytest.raises(ValueError, match="canary_leak_between_scenarios"):
+        verify_suite_c(test_suite.model_copy(update={"scenarios": (tampered_scenario, *test_suite.scenarios[1:])}))
 
 
 def test_verify_rejects_a_tampered_answerable_probe(dev_suite: SuiteCDataset) -> None:

@@ -19,7 +19,7 @@ All seven split files are serialized in canonical, deterministic YAML 1.2 (stric
 | [`own_G.yaml`](own_G.yaml) | `G` | `scenario_id` | `42` | `102201` / `202201` | `20` | `50` | `70` | `0` (`∅`) | `ea47b085fe550f05071ae4bf659195d9a5a4a0674768f4b02c5170c61eab0b22` | `b3e944e2b506a1bbaaceb74648e54720007f38cdaeff21bcbeccda77d06bb1ae` |
 | [`own_D.yaml`](own_D.yaml) | `D` | `scenario_id` | `42` | `102301` / `202301` | `20` | `50` | `70` | `0` (`∅`) | `3c158a678c563ae649e526aa0d096edf115addece4e0a56b3cf14014149c1102` | `c04eea6a9e388dd1d25cbdfcce4c24f259ce02260c1afdf8c8ef07c6f65b648d` |
 | [`own_I.yaml`](own_I.yaml) | `I` | `scenario_id` | `42` | `102202` / `202202` | `20` | `50` | `70` | `0` (`∅`) | `d4831effdf9b8336b1308d30cb4d2e9990da8240b983d29f3c11d216b00aaed6` | `0050917cc478ccb2b158eca16502f5cfff323dccbbaa7d71ab8d83df40193331` |
-| [`own_C.yaml`](own_C.yaml) | `C` | `scenario_id` | `42` | `102501` / `202501` | `20` | `50` | `70` | `0` (`∅`) | `3ca7c23a00b50925b95c26629c0ea9199b72003426caa0ffb3f95563ac0e69c9` | `f2aaab552cf29d7ae91d292a731487a3659acf1be61cfdfd445815769eae7c25` |
+| [`own_C.yaml`](own_C.yaml) | `C` | `scenario_id` | `42` | `102501` / `202501` | `20` | `50` | `70` | `0` (`∅`) | `3742e5474305f001a5225b43866e7974ee969c5e7c5a769769e7886719f1a73c` | `cf26b7ad13cc2d9dd4531d36837ba0616910e78b7c76b5b443673f57faa6ccce` |
 
 ---
 
@@ -39,8 +39,8 @@ All seven split files are serialized in canonical, deterministic YAML 1.2 (stric
 | `Own Suite D` | `own_D_test.json` | [`../own_D/MANIFEST.txt`](../own_D/MANIFEST.txt) | `31df556b5346c8a4c3130d271573a5dbfa0af9068be5129c723f87cce36fea6d` |
 | `Own Suite I` | `own_I_dev.json` | [`../own_I/MANIFEST.txt`](../own_I/MANIFEST.txt) | `7da3982c823f24d4909710f3063d604a6bdc04c9cb905ad7646aba84cdcabb4d` |
 | `Own Suite I` | `own_I_test.json` | [`../own_I/MANIFEST.txt`](../own_I/MANIFEST.txt) | `25548ba8038e4fe79335dd4491de52def32c7c36c54109bbd5d51d475983c1f9` |
-| `Own Suite C` | `own_C_dev.json` | [`../own_C/MANIFEST.txt`](../own_C/MANIFEST.txt) | `65c423c965122e2dabe92fb47cefd57dfe5aca687339a56acb98dc227ac0c3c9` |
-| `Own Suite C` | `own_C_test.json` | [`../own_C/MANIFEST.txt`](../own_C/MANIFEST.txt) | `827d9199a611238b734428bdef83b17f2205493bb6962ce855132d2b4ecacbf9` |
+| `Own Suite C` | `own_C_dev.json` | [`../own_C/MANIFEST.txt`](../own_C/MANIFEST.txt) | `da45a272112107dffe7c4cf555e770cb4753f14d72ccbada3d79a19a27a958b9` |
+| `Own Suite C` | `own_C_test.json` | [`../own_C/MANIFEST.txt`](../own_C/MANIFEST.txt) | `e0d33d78f9fe02bf5e3dd594ad5939b2a16adcc6519ca075c14fdf65192cfb33` |
 
 ---
 
@@ -84,7 +84,7 @@ Scenario-level splits bound by deterministic `sha256(scenario_id)` digests and d
 ## 4. Gate J5 Governance Sign-Off
 
 Per [`PROJECT_ROADMAP.md`](../../../PROJECT_ROADMAP.md) §J (`Gate J5`) and [`PLAN/ASSIGNMENTS.md`](../../../PLAN/ASSIGNMENTS.md):
-- Zero cluster overlap (`dev ∩ test = ∅`) is verified mechanically across `question_id` (`LongMemEval`), `scenario_id` (`own_T`, `own_G`, `own_D`, `own_I`), and `conversation_id` (`LoCoMo`).
+- Zero cluster overlap (`dev ∩ test = ∅`) is verified mechanically across `question_id` (`LongMemEval`), `scenario_id` (`own_T`, `own_G`, `own_D`, `own_I`, `own_C`), and `conversation_id` (`LoCoMo`).
 - All `dev` splits are available for `RL-100` pilot calibration; all `test` splits remain locked behind the `RL-030` one-shot test-run guard until `Gate J7` (`RL-094`) and `Gate J8` (`RL-100` pilot freeze) are complete.
 
 | Role | Responsibility | Identifier | Status | Date |

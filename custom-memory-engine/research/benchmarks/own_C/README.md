@@ -9,7 +9,7 @@
 
 ## 1. The five scenario families (ticket §5)
 
-Scoring-only labels (gold answers, expected offers, expected channels, `is_near_miss_control`, evidence ids) are never handed to a system under test — the `PreparedCase.case` / `PreparedCase.gold` split (`E-022` §4.6). The generator freezes them in the same JSON files; any consumer must strip them before dispatch.
+Scoring-only labels (gold answers, expected offers, expected channels, `is_near_miss_control`, evidence ids) are never handed to a system under test — the `PreparedCase.case` / `PreparedCase.gold` split (`E-022` §4.6). The generator freezes them in the same JSON files; any consumer must strip them before dispatch. Every probe is dispatched as a later request after the recorded episodes; episode JSON carries the observed event clocks only (`event_time` per episode), and cross-session recall is implied by the recorded clock ordering plus the express query phrasing ("we already try", "later session").
 
 ### 1.1 `prior_attempt_recall` — "what did we try before?"
 
@@ -32,10 +32,11 @@ Scoring-only labels (gold answers, expected offers, expected channels, `is_near_
 
 ### 1.3 `near_miss_control` — same symptom, different cause
 
-**Scripted content:** the sibling scenario's stored procedure for the same error-signature text; the recurrence has **one precondition binding changed** (planted divergent cause), a `kind="abstraction", lifecycle="inferred"` distractor explicitly suggesting to re-apply the old recipe, and the probe asks the *same question in the same phrasing* as the reuse sibling.
+**Scripted content:** the stored recipe for the same error-signature text, frozen as an identically written copy inside this scenario's own repo scope; the recurrence has **one precondition binding changed** (planted divergent cause), a `kind="abstraction", lifecycle="inferred"` distractor explicitly suggesting to re-apply the old recipe, and the probe asks the *same question in the same phrasing* as the reuse sibling.
 **What it proves:** procedures are matched on recorded preconditions, not on symptom similarity (`is_near_miss_control: True` marks the stratum, the `own_D`/`own_I` control convention).
-**Metric:** `near_miss_false_offer` — count of probes where the system under test offers the procedure; expected `0`. Reported with its one-sided 97.5% Clopper–Pearson upper bound (`STATISTICS.md` §4.2; zero-event bound via `zero_leak_upper`, opportunities counted per probe). The generator records `false_offer_cp_975_upper_bound` for each split's own count directly in the JSON payload (e.g. the test split's bound covers its recorded opportunity count as a count, never a bare rate claim).
-**Trade-off bounds:**
+**Metric:** `near_miss_correct` — binary per probe on the same formula as the offer metric (`offered == expected_offer.should_offer`, with `should_offer=False` here): `1.0` iff the procedure is **not** offered.
+**Reported count:** `near_miss_false_offer` — count of probes where the system under test offers the procedure; expected `0`. The generator records `false_offer_cp_975_upper_bound` in the JSON payload: a one-sided 97.5% Clopper–Pearson **rate** upper bound on the false-offer rate computed from the split's near-miss opportunity count (`zero_leak_upper(n_opportunities)`, `STATISTICS.md` §4.2; the bound is a rate bound covering the recorded opportunity count, not a count itself).
+**Trade-off bounds** (on `near_miss_correct`):
 - a similarity-only matcher scores `0.0` here (it offers where it must not) and `1.0` on the reuse siblings: the paired strata are what separate it from a correct matcher;
 - a trivially-refusing matcher (never offers) scores `1.0` here — and is exposed by `procedure_reuse` where it scores `0.0`;
 - a correct precondition matcher scores `1.0` on both.
@@ -69,12 +70,12 @@ Every reported number is a **count** plus a **one-sided 97.5% Clopper–Pearson 
 
 ### 2.1 Template catalog
 
-Four independent, fictional repo/pattern entities (cycled deterministically by `((idx - 1) // 5) % 4`); each carries the error signature, the recorded trigger preconditions, the stored recipe, and the **planted alternate cause** (a changed precondition binding) for the `near_miss_control` siblings. Per-scenario content is assembled from these tables plus a per-scenario high-entropy canary drawn from a fixed non-ambiguous letter set, `own_I` style; the source `span` is always a verbatim substring of its own `content`. No text is composed by free-form string concatenation.
+Four independent, fictional repo/pattern entities (`PatternEntry` models, cycled deterministically by `((idx - 1) // 5) % 4`); each carries the error signature, the recorded trigger preconditions, the stored recipe, and the **planted alternate cause** (a changed precondition binding, and an alternate-cause narrative tied to that changed binding) for the `near_miss_control` siblings. Per-scenario content is assembled from these tables plus a per-scenario high-entropy canary drawn from a fixed non-ambiguous letter set, `own_I` style; the source `span` is always a verbatim substring of its own `content`. All composed text interpolates fixed catalog/template values into fixed sentence frames — no free-form generated prose beyond those interpolated values.
 
 ### 2.2 The precondition matcher and the declared similarity strawman
 
 - `offer_by_preconditions(probe, library)`: the procedure applies iff **every** recorded trigger precondition binding appears unchanged in the probe's observed bindings. This is the suite's scoring instrument.
-- `offer_by_similarity(probe, library)`: the declared **trivial strawman** — offers the most token-overlapping procedure if its trigger overlap ratio exceeds `0.5`. It exists only as a negative control; every near-miss probe in the frozen data deliberately matches its sibling's trigger strings, so the strawman offers on every one of them and only a precondition matcher refuses. Tests assert the strawman is beaten on every near-miss probe.
+- `offer_by_similarity(probe, library)`: the declared **trivial strawman** — offers the probe's own library procedure when its trigger-token overlap with the probe's observed signature is at or above `0.5`. It exists only as a negative control; every near-miss probe in the frozen data deliberately matches its sibling's trigger strings, so the strawman offers on every one of them and only a precondition matcher refuses. Tests assert the strawman is beaten on every near-miss probe.
 
 `score_offer_probe` computes matching-choice correctness: `offered == expected_offer.should_offer` for the probe's own procedure. Replacing the precondition matcher behind it with the similarity strawman flips every `near_miss_control` label — the dedicated test fails in that mode.
 
