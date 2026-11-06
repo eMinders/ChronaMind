@@ -107,7 +107,7 @@ The configuration is:
 
 **Why no required check can deadlock a PR.** A workflow skipped by a trigger-level `paths:` filter never reports, so a required check from it would stay pending forever on a root-only PR. `custom-memory-engine.yaml` therefore has **no `paths:` filter on `pull_request`**:
 - A `changes` job diffs the PR against its base.
-- `static`, `verify` and `default-install` run only when an engine path changed (`custom-memory-engine/**`, the workflow itself, `.github/actions/setup-cme/**`).
+- `static`, `verify` and `default-install` run only when `custom-memory-engine/**` or `.github/**` changed. `.github/` counts because the engine suite tests the CI configuration itself (`tests/test_ci_workflow.py`).
 - Otherwise they are skipped by their job-level `if:`, and GitHub reports a skipped job as successful.
 - `changes` is itself required. If it fails, the PR is blocked, never waved through by the skips that follow it.
 - It fails open toward running the gates: a non-PR event or an uncomputable diff runs everything.

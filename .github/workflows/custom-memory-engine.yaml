@@ -15,7 +15,7 @@ name: Custom Memory Engine verification
 on:
   push:
     branches: [main]
-    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml", ".github/actions/setup-cme/**"]
+    paths: ["custom-memory-engine/**", ".github/**"]
   pull_request:
   workflow_dispatch:
 
@@ -36,8 +36,9 @@ jobs:
     outputs:
       engine: ${{ steps.diff.outputs.engine }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - id: diff
         name: Engine paths changed?
@@ -49,7 +50,8 @@ jobs:
           # Fail open: anything other than a pull request with a computable diff runs the full gates.
           if [ "$EVENT" != "pull_request" ]; then echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           if ! changed="$(git diff --name-only "$BASE...$HEAD")"; then echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          if grep -qE '^(custom-memory-engine/|\.github/workflows/custom-memory-engine\.yaml$|\.github/actions/setup-cme/)' <<< "$changed"; then
+          # Any .github/ change counts: the engine suite also tests the CI configuration (tests/test_ci_workflow.py).
+          if grep -qE '^(custom-memory-engine/|\.github/)' <<< "$changed"; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
           else
             echo "engine=false" >> "$GITHUB_OUTPUT"
@@ -65,7 +67,9 @@ jobs:
       run:
         working-directory: custom-memory-engine
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-cme
         with:
           extras: baselines
@@ -90,7 +94,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 12  # about 2 minutes since per-test clones (#178); a hang should fail fast
     services:
       falkor:
         image: falkordb/falkordb:6.0.3@sha256:a3f7f58482504f49bc1c0d703c472f73e6eb0fc421d0c31a391cc26e21753c33
@@ -118,7 +122,9 @@ jobs:
       run:
         working-directory: custom-memory-engine
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-cme
         with:
           extras: baselines
@@ -149,7 +155,9 @@ jobs:
       run:
         working-directory: custom-memory-engine
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-cme
       - name: pytest on the default install (no optional vendor/model packages)
-        run: uv run --no-sync pytest -q
+        run: uv run --no-sync pytest -q -n auto
