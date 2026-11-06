@@ -121,7 +121,10 @@ class ParentLLM(LLMClient):
             raise ValueError("graphiti_structured_object_required")
         return result
 
-    async def _generate_response_with_retry(
+    # The vendor method is tenacity-wrapped (typed as a retry-decorated callable since tenacity 9.2). Replacing it
+    # with a plain coroutine is the point: the parent's single retry policy owns every attempt, so no vendor retry
+    # may add unaccounted calls.
+    async def _generate_response_with_retry(  # pyright: ignore[reportIncompatibleVariableOverride]
         self,
         messages: list[Any],
         response_model: type[BaseModel] | None = None,
