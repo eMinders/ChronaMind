@@ -1425,5 +1425,32 @@ Deferred work surfaced by E-021 is tracked separately:
 **Evidence.** `tests/integration/test_api_wiring_ingest.py`:
 - `::test_a_bound_profile_admits_only_the_source_types_its_extractors_declare` covers both writers. The refused calls write nothing, and they succeed once the profile's extractors declare the types. A mutant that drops the check fails it.
 - `::test_without_a_profile_every_declared_source_type_is_admitted`
+### V2-D70 — The promotion event: a durable artifact derived from a session source makes that source durable (#163, E-021-F4)
+
+**Context.**
+- A profile declares `retention.promote_to_durable`. The coding profile sets it, and §13's coding row reads "session→durable on promotion".
+- Nothing read it, which was finding E-021-F4.
+- `ARCHITECTURE_V2.md` §1 makes retention mutable "(promotion/demotion)" and says promotion is "an explicit, recorded operation". `V2-D10` requires "a recorded reason".
+- `V2-D14` (default values and expiry) stays open. It owns the numbers, not the event.
+
+**Decision.** The promotion event is **a durable artifact coming to rest on a `session` source**. Within the W2 operations, that is `infer` deriving an abstraction (always `durable`, by the `V2-D10` floor) from its sources. When the bound profile sets `promote_to_durable`:
+- each of those sources whose retention is `session` becomes `durable`, in the same transaction as the derivation;
+- each promotion is recorded as a content-free `audit_event` (`event_type='retention_promoted'`, `reason_code='derived_into_durable'`, the source's `kind`).
+
+Without the flag, the same calls leave the source `session`. Only `session` is promoted: `working` keeps its own purge semantics (`E-026`). Nothing is demoted.
+
+**Rationale.**
+1. **It closes a real hole.** `V2-D10` says retention must never change answerability. If a durable abstraction rested on a session episode, then expiring that session would leave durable knowledge whose provenance had gone. Promoting the source at the moment the durable artifact starts depending on it closes that.
+2. **The frozen API has no `promote` operation**, and adding one is a contract change (`V2-D46`, `V2-D47`). The event therefore lives inside an existing operation, and it is explicit in its trigger and recorded with its reason, as §1 requires.
+3. **It is configuration, not code.** The handler reads `profile.retention.promote_to_durable` and never a profile's name (`V2-D08`). The database still enforces the floors.
+
+**Not decided here.** Other promotion triggers, such as procedure reuse through `record_outcome` (`E-027`, unwired) or reinforcement counts, extend this rule when their operations land. They are not part of #163.
+
+**Evidence.** `tests/integration/test_retention_promotion_db.py`, all through `Engine.call` under a restricted role:
+- the same events promote under one profile and not under another;
+- a `working` source is never promoted;
+- a replayed `infer` records no second promotion.
+
+Two controls each fail at least one test: a mutant that ignores the flag, and a mutant that never promotes.
 
 **Status:** decided and implemented under the Project Owner's delegation (2026-11-05).
