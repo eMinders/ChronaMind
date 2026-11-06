@@ -12,7 +12,7 @@ No human sign-off, pilot, test freeze, or H1–H4 result is created by this code
 
 ## Run the synthetic smoke example
 
-From `custom-memory-engine/`, after `uv sync --frozen --python 3.12.12`:
+From `custom-memory-engine/`, after `uv sync --frozen` (the interpreter comes from `.python-version`):
 
 ```sh
 uv run python -m evaluation.harness --config evaluation/harness/fixtures/config.json --cases evaluation/harness/fixtures/dev.json --suite T --split dev --run-id rl030-smoke-a --runs-root evaluation/runs/scratch

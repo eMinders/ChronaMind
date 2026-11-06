@@ -22,7 +22,7 @@
 | D-09–D-14 | PROTOCOL PRE-REGISTERED (`RL-011`); freeze in `RL-100` | Deterministic dev-split measurement and freeze functions in [`../evaluation/pilot_plan.md`](../evaluation/pilot_plan.md) & `pilot_rules.py` | [`pilot_plan.md`](../evaluation/pilot_plan.md) |
 | D-15 | SELECTED; owner-reviewed | A2b OFF / SKIP | [RL-014](../decisions/RL-014-a2b-and-suite-d.md) |
 | D-16 | SELECTED target; implemented in `RL-023` | Dev 20 / test 50 independent scenarios; test zero-leak upper bound 0.071121736464; D-13 remains pilot-derived | RL-014 |
-| D-17 | VERIFIED; owner-reviewed | CPython 3.12.12, Psycopg 3.3.2 + pool 3.3.3, pgvector client 0.4.2, Pydantic 2.12.5; standalone uv lock | [RL-013](../decisions/RL-013-engine-runtime.md) |
+| D-17 | VERIFIED; owner-reviewed | CPython 3.12 line (3.12.16 via `.python-version` since 2026-11; patch upgrades per RL-013), Psycopg 3.3.8 + pool 3.3.3, pgvector client 0.5.1, Pydantic 2.14.3; standalone uv lock | [RL-013](../decisions/RL-013-engine-runtime.md) |
 | D-18 | SELECTED; load validation pending | Per-user advisory lock + exclusion + R1; measured SERIALIZABLE candidate, bounded whole-transaction tenacity retries for 40001/40P01 | [RL-012](../decisions/RL-012-postgres-pgvector.md) |
 | D-19 | NOT APPLICABLE to disabled scope | H5 OFF; no institutional exemption asserted; written clearance required before recruitment if reopened | [RL-015](../decisions/RL-015-ethics-h5.md) |
 | D-20 | SELECTED; owner-reviewed | React/TypeScript/Vite primary; server HTML/HTMX schedule fallback | RL-013 |

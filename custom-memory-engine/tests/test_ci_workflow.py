@@ -90,3 +90,33 @@ def test_verify_runs_in_parallel_on_a_disposable_fast_database(engine: str) -> N
     assert re.search(r"pytest -q -n auto\b", verify)
     for setting in ("fsync", "synchronous_commit", "full_page_writes"):
         assert f"ALTER SYSTEM SET {setting} = off" in verify
+
+
+def test_check_workflows_do_not_leave_git_credentials_behind() -> None:
+    """No check job uses git credentials after cloning, so none may persist the token in .git/config."""
+    for workflow in ("custom-memory-engine.yaml", "ci.yaml", "app-image.yaml", "deploy.yaml"):
+        text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
+        checkout = r"uses: actions/checkout@[0-9a-f]{40}[^\n]*\n((?:        [^\n]*\n)*)"
+        checkouts = re.findall(checkout, text)
+        assert checkouts, workflow
+        assert all("persist-credentials: false" in block for block in checkouts), workflow
+
+
+def test_the_engine_interpreter_has_one_source_on_its_supported_line() -> None:
+    engine = Path(__file__).resolve().parents[1]
+    version = (engine / ".python-version").read_text(encoding="utf-8").strip()
+    assert re.fullmatch(r"3\.12\.\d+", version), "RL-013: the engine stays on the CPython 3.12 line"
+    assert 'requires-python = ">=3.12,<3.13"' in (engine / "pyproject.toml").read_text(encoding="utf-8")
+    assert "--python" not in SETUP.read_text(encoding="utf-8"), "CI must take the interpreter from .python-version"
+
+
+def test_dependabot_never_proposes_a_frozen_baseline_vendor() -> None:
+    """Every package of the `baselines` extra is a frozen research input (evidence/RL-031-verification.md)."""
+    engine = Path(__file__).resolve().parents[1]
+    pyproject = (engine / "pyproject.toml").read_text(encoding="utf-8")
+    block = re.search(r"^baselines = \[\n(.*?)^\]", pyproject, re.M | re.S)
+    assert block
+    frozen = {re.split(r"[\[=<>!~ ]", item, maxsplit=1)[0] for item in re.findall(r'"([^"]+)"', block.group(1))}
+    dependabot = (REPO / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    ignored = set(re.findall(r"- dependency-name: ([A-Za-z0-9_.-]+)", dependabot))
+    assert frozen and frozen <= ignored, frozen - ignored

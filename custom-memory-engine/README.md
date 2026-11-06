@@ -79,7 +79,7 @@ Install `uv` and CPython 3.12, then run from `custom-memory-engine/`:
 cd custom-memory-engine
 # Install the optional `baselines` extra so `pyright` can resolve the B3/B4
 # vendor imports (mem0ai, graphiti-core, redis); the default sync omits them.
-uv sync --frozen --extra baselines --python 3.12
+uv sync --frozen --extra baselines   # CPython 3.12.x from .python-version
 uv run ruff check src tests research/benchmarks evaluation
 uv run ruff format --check src tests research/benchmarks evaluation
 uv run pyright
