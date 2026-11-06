@@ -44,8 +44,12 @@ jobs:
           docker run --rm --entrypoint python -e APP_ENV=test -e JWT_SECRET_KEY="$(openssl rand -hex 32)"
           chronamind-app:ci -c "from app.main import app; assert '/api/v1/auth/login' in app.openapi()['paths']"
       - name: Image runs as the unprivileged user and cannot modify its code
+        # An explicit if: bash exempts `! cmd` from `set -e`, so a negated command could never fail this step.
         run: |
           test "$(docker run --rm --entrypoint id chronamind-app:ci -un)" = appuser
-          ! docker run --rm --entrypoint touch chronamind-app:ci /app/app/probe
+          if docker run --rm --entrypoint touch chronamind-app:ci /app/app/probe; then
+            echo "::error::application code is writable by the runtime user"
+            exit 1
+          fi
       - name: Image size
         run: docker image ls chronamind-app:ci --format '{{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"
