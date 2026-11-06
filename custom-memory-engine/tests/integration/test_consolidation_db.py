@@ -5,12 +5,10 @@ the full 12-table schema rather than a reduced fixture. They need a database; th
 skip with an explicit reason when ``CME_TEST_DATABASE_URL`` is absent.
 """
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import LiteralString, cast
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -29,7 +27,7 @@ from custom_memory_engine.engine.transactions import (
     CandidateVersionInput,
     commit_initial_version,
 )
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -41,31 +39,17 @@ JULY = datetime(2026, 7, 20, tzinfo=UTC)
 
 @pytest_asyncio.fixture
 async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database with vector and btree_gist")
-    config = DatabaseConfig.from_environment()
-    schema = "cme_cons_" + uuid4().hex[:16]
-    async with await AsyncConnection.connect(
-        config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-    ) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-        await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await apply_migrations(conn)
-        await conn.execute(
-            "INSERT INTO predicate_schema VALUES "
-            "('diet', 'single', 'semantic'), ('hobby', 'multi', 'persona'), ('city', 'single', 'semantic')"
-        )
-        await conn.execute(
-            "INSERT INTO app_user (id, external_ref, created_at) VALUES "
-            "('u1', 'ext-u1', '2026-01-01T00:00:00Z'), ('u2', 'ext-u2', '2026-01-01T00:00:00Z')"
-        )
-    try:
+    async with engine_database() as (config, schema):
+        async with connect((config, schema)) as conn:
+            await conn.execute(
+                "INSERT INTO predicate_schema VALUES "
+                "('diet', 'single', 'semantic'), ('hobby', 'multi', 'persona'), ('city', 'single', 'semantic')"
+            )
+            await conn.execute(
+                "INSERT INTO app_user (id, external_ref, created_at) VALUES "
+                "('u1', 'ext-u1', '2026-01-01T00:00:00Z'), ('u2', 'ext-u2', '2026-01-01T00:00:00Z')"
+            )
         yield config, schema
-    finally:
-        async with await AsyncConnection.connect(
-            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-        ) as conn:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 @asynccontextmanager

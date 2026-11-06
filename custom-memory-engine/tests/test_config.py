@@ -32,6 +32,11 @@ def test_explicit_environment_and_redacted_representation() -> None:
         URL.replace("cme_compatibility", "cme_compatibility_gw1234"),
         URL.replace("cme_compatibility", "cme_compatibility_gw0x"),
         URL.replace("cme_compatibility", "xcme_compatibility_gw0"),
+        URL.replace("cme_compatibility", "cme_compatibility_c"),
+        URL.replace("cme_compatibility", "cme_compatibility_c12345678"),
+        URL.replace("cme_compatibility", "cme_compatibility_tpl_c1"),
+        URL.replace("cme_compatibility", "cme_compatibility_c1_gw0"),
+        URL.replace("cme_compatibility", "cme_compatibility_template"),
     ],
 )
 def test_unsafe_or_invalid_targets_are_rejected_without_secret_leak(url: str) -> None:
@@ -45,7 +50,18 @@ def test_missing_environment_is_rejected() -> None:
         DatabaseConfig.from_environment({})
 
 
-@pytest.mark.parametrize("name", ["cme_compatibility", "cme_compatibility_gw0", "cme_compatibility_gw15"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "cme_compatibility",
+        "cme_compatibility_gw0",
+        "cme_compatibility_gw15",
+        "cme_compatibility_tpl",
+        "cme_compatibility_gw3_tpl",
+        "cme_compatibility_c1",
+        "cme_compatibility_gw3_c1234567",
+    ],
+)
 def test_the_disposable_database_and_its_xdist_worker_copies_are_accepted(name: str) -> None:
     """#167: each pytest-xdist worker uses its own copy of the disposable database (``conftest.py``)."""
     config = DatabaseConfig.from_environment({"CME_TEST_DATABASE_URL": URL.replace("cme_compatibility", name)})

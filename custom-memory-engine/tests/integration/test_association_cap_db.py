@@ -5,16 +5,13 @@ real one) inside a schema migrated to the current version through the runner.
 """
 
 import asyncio
-import os
 from collections.abc import AsyncIterator
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection, sql
 from psycopg.errors import ProgramLimitExceeded, RaiseException
 
-from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.model.association import (
     ASSOCIATION_TYPES,
     DEFAULT_ASSOCIATION_CAP,
@@ -23,7 +20,7 @@ from custom_memory_engine.model.association import (
     degree_allows,
     validate_cap,
 )
-from custom_memory_engine.schema import migrate
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 CAP = 4
@@ -31,24 +28,16 @@ CAP = 4
 
 @pytest_asyncio.fixture
 async def env() -> AsyncIterator[tuple[str, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database")
-    url = DatabaseConfig.from_environment().database_url.get_secret_value()
-    schema = "cme_assoc_" + uuid4().hex[:12]
-    config = migrate.MigrationConfig.model_validate({"database_url": url, "schema_name": schema})
-    await migrate.MigrationRunner(config).apply()
-    async with await AsyncConnection.connect(url, autocommit=True) as conn:
-        await conn.execute(
-            sql.SQL(
-                "CREATE TABLE {} (id text PRIMARY KEY, from_id text NOT NULL, to_id text NOT NULL, type text)"
-            ).format(sql.Identifier(schema, "association_probe"))
-        )
-        await conn.execute(attach_cap_trigger(schema, "association_probe", CAP))
-    try:
-        yield url, schema
-    finally:
+    async with engine_database() as (config, schema):
+        url = config.database_url.get_secret_value()
         async with await AsyncConnection.connect(url, autocommit=True) as conn:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+            await conn.execute(
+                sql.SQL(
+                    "CREATE TABLE {} (id text PRIMARY KEY, from_id text NOT NULL, to_id text NOT NULL, type text)"
+                ).format(sql.Identifier(schema, "association_probe"))
+            )
+            await conn.execute(attach_cap_trigger(schema, "association_probe", CAP))
+        yield url, schema
 
 
 async def insert(url: str, schema: str, edge: str, a: str, b: str) -> None:

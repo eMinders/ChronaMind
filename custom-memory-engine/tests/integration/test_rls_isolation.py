@@ -5,7 +5,6 @@ green suite proves nothing about isolation. These tests connect through the rest
 ``security.provisioning`` creates and prove that cross-user reads and writes are blocked.
 """
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -36,7 +35,7 @@ from custom_memory_engine.security import (
 )
 from evaluation.stats.clopper_pearson import cp_upper
 from research.benchmarks.own_I.generator import generate_suite_i
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -54,27 +53,21 @@ def embedding(*weights: float) -> list[float]:
 
 @pytest_asyncio.fixture
 async def database() -> AsyncIterator[tuple[DatabaseConfig, str, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must explicitly name the disposable test database")
-    config = DatabaseConfig.from_environment()
-    schema = "cme_rls_" + uuid4().hex[:20]
     role = "cme_rt_" + uuid4().hex[:12]
-    async with await AsyncConnection.connect(
-        config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-    ) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-        await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
-        await apply_migrations(conn)
-        await provision_runtime_role(conn, schema, role)
-    try:
-        yield config, schema, role
-    finally:
+    async with engine_database() as (config, schema):
         async with await AsyncConnection.connect(
             config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
         ) as conn:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
-            await conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
-            await conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+            await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+            await provision_runtime_role(conn, schema, role)
+        try:
+            yield config, schema, role
+        finally:
+            async with await AsyncConnection.connect(
+                config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
+            ) as conn:
+                await conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+                await conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
 
 
 @asynccontextmanager

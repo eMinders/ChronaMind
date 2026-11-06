@@ -4,12 +4,10 @@ Every fixture here migrates through the runner (all versions), unlike the older 
 ``001_full_schema.sql`` only, so the v1 write paths are exercised against the schema V2 code will run on.
 """
 
-import os
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import LiteralString, cast
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -30,6 +28,7 @@ from custom_memory_engine.engine.transactions import (
 from custom_memory_engine.model.axes import V1_LAYERS, V1_STATUSES, map_v1_version, validate_axes
 from custom_memory_engine.schema import migrate
 from tests.integration.rollbacks import adapt, rollback_sql
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -42,28 +41,17 @@ PREDICATES = ("diet", "plans_to", "exercise", "diet_summary", "diet_a", "diet_b"
 
 @pytest_asyncio.fixture
 async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database with vector and btree_gist")
-    config = DatabaseConfig.from_environment()
-    schema = "cme_m1_" + uuid4().hex[:16]
-    await migrate.MigrationRunner(
-        migrate.MigrationConfig(database_url=config.database_url, schema_name=schema)
-    ).apply()
-    async with connect((config, schema)) as conn:
-        await conn.execute(
-            "INSERT INTO predicate_schema VALUES " + ", ".join(f"('{p}', 'single', 'semantic')" for p in PREDICATES)
-        )
-        await conn.execute(
-            "INSERT INTO app_user (id, external_ref, created_at) VALUES "
-            "('u1', 'ext-u1', '2026-01-01T00:00:00Z'), ('u2', 'ext-u2', '2026-01-01T00:00:00Z')"
-        )
-    try:
+    async with engine_database() as (config, schema):
+        async with connect((config, schema)) as conn:
+            await conn.execute(
+                "INSERT INTO predicate_schema VALUES "
+                + ", ".join(f"('{p}', 'single', 'semantic')" for p in PREDICATES)
+            )
+            await conn.execute(
+                "INSERT INTO app_user (id, external_ref, created_at) VALUES "
+                "('u1', 'ext-u1', '2026-01-01T00:00:00Z'), ('u2', 'ext-u2', '2026-01-01T00:00:00Z')"
+            )
         yield config, schema
-    finally:
-        async with await AsyncConnection.connect(
-            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-        ) as conn:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 @asynccontextmanager

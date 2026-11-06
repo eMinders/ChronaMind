@@ -9,9 +9,12 @@ Advisory locks are scoped to a database, so each worker gets its own:
 * ``CME_TEST_DATABASE_URL`` (and ``CME_BASELINE_TEST_DATABASE_URL`` when it names the same database) are rewritten
   for that worker only.
 
-Without xdist, or without a test database URL, nothing happens: a serial run uses the configured database unchanged.
-The configured URL must already pass ``TestDatabaseConfig`` (the disposable ``cme_compatibility`` database); worker
-names are accepted by the same guard and by nothing broader.
+Without xdist a serial run uses the configured database unchanged. Either way, the template and per-test clones that
+``tests/integration/schema.py::engine_database`` derives from the effective database are dropped at the start (a
+crashed run's leftovers) and at the end, so no run leaves a database behind.
+
+The configured URL must already pass ``TestDatabaseConfig`` (the disposable ``cme_compatibility`` database); worker,
+template and clone names are accepted by the same guard and by nothing broader.
 """
 
 import os
@@ -25,11 +28,13 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from pydantic import SecretStr
 
 from custom_memory_engine.config import TestDatabaseConfig
+from tests.integration.schema import drop_derived_databases
 
 _URL = "CME_TEST_DATABASE_URL"
 _BASELINE_URL = "CME_BASELINE_TEST_DATABASE_URL"
 _EXTENSIONS = Path(__file__).parent / "tests" / "init_extensions.sql"
 _ORIGINAL = pytest.StashKey[tuple[str, str]]()
+_EFFECTIVE = pytest.StashKey[str]()
 
 
 def _worker_database(config: pytest.Config) -> tuple[str, str] | None:
@@ -48,6 +53,18 @@ def _admin(base: str) -> psycopg.Connection:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    _configure_worker(config)
+    effective = os.environ.get(_URL)
+    if effective:
+        TestDatabaseConfig(database_url=SecretStr(effective))  # validated before anything is dropped
+        try:
+            drop_derived_databases(effective)
+        except psycopg.OperationalError:
+            return  # server unreachable: the database tests fail on their own; unit tests still run
+        config.stash[_EFFECTIVE] = effective
+
+
+def _configure_worker(config: pytest.Config) -> None:
     found = _worker_database(config)
     if found is None:
         return
@@ -67,6 +84,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
+    effective = config.stash.get(_EFFECTIVE, None)
+    if effective is not None:
+        drop_derived_databases(effective)
     found = config.stash.get(_ORIGINAL, None)
     if found is None:
         return

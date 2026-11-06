@@ -6,11 +6,9 @@ through the harness scanner added in this change, and by requiring a *fully
 measured* zero-leak verdict rather than the weaker "no measured leaks" report.
 """
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -34,7 +32,7 @@ from evaluation.harness.leak_scanner import (
     verdict,
     verify_detection,
 )
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -52,26 +50,10 @@ async def connect(database: tuple[DatabaseConfig, str]) -> AsyncIterator[AsyncCo
 
 @pytest_asyncio.fixture
 async def database() -> AsyncIterator[tuple[DatabaseConfig, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must name a disposable database with vector and btree_gist")
-    config = DatabaseConfig.from_environment()
-    schema = "cme_scan_" + uuid4().hex
-    async with await AsyncConnection.connect(
-        config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-    ) as conn:
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS btree_gist")
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-    try:
+    async with engine_database() as (config, schema):
         async with connect((config, schema)) as conn:
-            await apply_migrations(conn)
             await seed(conn)
         yield config, schema
-    finally:
-        async with await AsyncConnection.connect(
-            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
-        ) as conn:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 async def identity(conn: AsyncConnection, user: str, instant: datetime) -> None:

@@ -13,7 +13,7 @@
 | Job | Gates |
 |---|---|
 | `static` | `ruff check`, `ruff format --check`, `pyright` (including `scripts/`); frozen research record (`md5sum -c validation/document_hashes.txt`), mechanical checks, Clopper–Pearson bounds, `scripts/check_statistics.py`, G-TS split gate (`scripts/check_test_split_gate.py`), plan references (`check_plan_refs.py`), status registry (`audit_status.py --check`), architecture ownership (`plan_coverage.py --check`) |
-| `verify` | Full CI-scope `pytest`, in parallel with one disposable database per xdist worker (`conftest.py`, #167) (PostgreSQL 16 + pgvector + FalkorDB service containers, prepared model assets): PostgreSQL integration, restricted-role RLS, cross-tenant, migration, bitemporal, deletion and API-contract tests; `validation/bitemporal_checks.sql` |
+| `verify` | Full CI-scope `pytest -n auto` with work stealing: one disposable database per xdist worker (`conftest.py`, #167) and a private clone of a runner-migrated template per database test (`tests/integration/schema.py`), on a PostgreSQL service with durability switched off (throwaway data) plus FalkorDB and prepared model assets: PostgreSQL integration, restricted-role RLS, cross-tenant, migration, bitemporal, deletion and API-contract tests; `validation/bitemporal_checks.sql` |
 | `default-install` | `pytest` on the default install with no optional extras |
 
 All three must be green (or skipped by `changes` when no engine path changed). A PR is not "CI green" because `verify` alone passed.
