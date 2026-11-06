@@ -4,7 +4,6 @@ from typing import (
     List,
     Optional,
 )
-from urllib.parse import quote_plus
 
 from fastapi import HTTPException
 from sqlalchemy.exc import SQLAlchemyError
@@ -40,14 +39,8 @@ class DatabaseService:
             max_overflow = settings.POSTGRES_MAX_OVERFLOW
 
             # Create engine with appropriate pool configuration
-            connection_url = (
-                "postgresql://"
-                f"{quote_plus(settings.POSTGRES_USER)}:{quote_plus(settings.POSTGRES_PASSWORD)}"
-                f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
-            )
-
             self.engine = create_engine(
-                connection_url,
+                settings.sqlalchemy_database_url,
                 pool_pre_ping=True,
                 poolclass=QueuePool,
                 pool_size=pool_size,

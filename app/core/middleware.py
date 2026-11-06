@@ -11,10 +11,8 @@ from typing import (
 
 from asgi_correlation_id import correlation_id
 from fastapi import Request
-from jose import (
-    JWTError,
-    jwt,
-)
+import jwt
+from jwt import PyJWTError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
@@ -46,6 +44,21 @@ else:
         PYINSTRUMENT_AVAILABLE = False
 
 
+def route_template(request: Request) -> str:
+    """The matched route as a template (``/api/v1/auth/sessions/{session_id}``), never the raw path.
+
+    Raw paths carry ids, and every distinct label value is a new time series held in memory for the life of the
+    process. Included routers expose only their local template, which always matches the tail of the request path, so
+    the router prefix is the request path's leading segments.
+    """
+    template = getattr(request.scope.get("route"), "path", None)
+    if not isinstance(template, str):
+        return "unmatched"
+    segments = request.url.path.split("/")
+    local = len(template.split("/")) - 1
+    return "/".join(segments[: len(segments) - local]) + template
+
+
 class MetricsMiddleware(BaseHTTPMiddleware):
     """Middleware for tracking HTTP request metrics."""
 
@@ -71,10 +84,9 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         finally:
             duration = time.time() - start_time
 
-            # Record metrics
-            http_requests_total.labels(method=request.method, endpoint=request.url.path, status=status_code).inc()
-
-            http_request_duration_seconds.labels(method=request.method, endpoint=request.url.path).observe(duration)
+            endpoint = route_template(request)
+            http_requests_total.labels(method=request.method, endpoint=endpoint, status=status_code).inc()
+            http_request_duration_seconds.labels(method=request.method, endpoint=endpoint).observe(duration)
 
         return response
 
@@ -115,7 +127,7 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
                         # This will be set by the dependency injection if the endpoint uses authentication
                         # We'll check after the request is processed
 
-                except JWTError:
+                except PyJWTError:
                     # Token is invalid, but don't fail the request - let the auth dependency handle it
                     pass
 

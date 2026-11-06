@@ -3,7 +3,7 @@
 | Workflow | Trigger | Jobs (check names) | Purpose |
 |---|---|---|---|
 | `custom-memory-engine.yaml` | Every PR (a `changes` job skips the gates when no engine path changed, so required checks still report); pushes to `main` touching `custom-memory-engine/**`, this workflow, or `.github/actions/setup-cme/**`; manual | `changes`, then `static`, `verify`, `default-install` (parallel) | Engine quality gates (below) |
-| `ci.yaml` | Every PR; pushes to `main`; manual | `checks`, `workflows` | `checks`: root application lint, format, type check (no path filter: root `ruff check .` also lints `custom-memory-engine/`). `workflows`: actionlint over every workflow, pinned by digest |
+| `ci.yaml` | Every PR; pushes to `main`; manual | `checks`, `workflows` | `checks`: root application lint, format, type check and tests (`tests/`, no services). The engine is excluded from the root Ruff config and verified only by its own workflow. `workflows`: actionlint over every workflow, pinned by digest |
 | `claude-code-review.yml` | Same-repository, non-draft PRs | `claude-review` | Advisory automated review: a second pair of eyes, not the review gate. The gate is the AI review on the Project Owner's behalf (`V2-D57`, `PLAN/CONTRIBUTING.md` §1.1); no human peer review is a prerequisite |
 | `claude.yml` | `@claude` mentions by an owner, member or collaborator | `claude` | On-demand assistant |
 | `deploy.yaml` | Manual (`workflow_dispatch`) only | `Build and push to Docker Hub` | Root application image. Automatic publication on `main` is an owner decision and is not enabled |
