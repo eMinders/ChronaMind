@@ -108,26 +108,6 @@ def parse_list_from_env(env_key, default=None):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-# Parse dict of lists from environment variables with prefix
-def parse_dict_of_lists_from_env(prefix, default_dict=None):
-    """Parse dictionary of lists from environment variables with a common prefix."""
-    result = default_dict or {}
-
-    # Look for all env vars with the given prefix
-    for key, value in os.environ.items():
-        if key.startswith(prefix):
-            endpoint = key[len(prefix) :].lower()  # Extract endpoint name
-            # Parse the values for this endpoint
-            if value:
-                value = value.strip("\"'")
-                if "," in value:
-                    result[endpoint] = [item.strip() for item in value.split(",") if item.strip()]
-                else:
-                    result[endpoint] = [value]
-
-    return result
-
-
 class Settings:
     """Application settings without using pydantic."""
 
