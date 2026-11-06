@@ -195,22 +195,18 @@ async def test_an_engine_with_no_recorder_is_a_no_op_not_a_silent_pass() -> None
 # --------------------------------------------------------------------------------- the recorder's own contract
 
 
-def test_the_recorder_refuses_an_unbounded_set_of_paths() -> None:
+async def test_the_recorder_refuses_an_unbounded_set_of_paths() -> None:
     """The count is capped by the same declared limit the read set has; it never grows unbounded."""
     recorder = ConnectionScopeReads(session_factory=None)
     paths = tuple(f"/u/alice/p/x{index}/" for index in range(MAX_READ_SCOPE_PREFIXES + 1))
     with pytest.raises(ScopeError):
-        import asyncio
-
-        asyncio.get_event_loop().run_until_complete(recorder.record("bob", paths))
+        await recorder.record("bob", paths)
 
 
-def test_the_recorder_rejects_a_malformed_path() -> None:
+async def test_the_recorder_rejects_a_malformed_path() -> None:
     recorder = ConnectionScopeReads(session_factory=None)
-    import asyncio
-
     with pytest.raises(ScopeError):
-        asyncio.get_event_loop().run_until_complete(recorder.record("bob", ("/u/alice",)))  # no trailing separator
+        await recorder.record("bob", ("/u/alice",))  # no trailing separator
 
 
 # ------------------------------------------------------------------------------------- the production wiring
