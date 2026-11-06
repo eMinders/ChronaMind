@@ -31,7 +31,6 @@ setup:
 	@uv run python scripts/setup.py
 
 install:
-	pip install uv
 	uv sync
 	uv run pre-commit install
 

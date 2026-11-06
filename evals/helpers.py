@@ -11,7 +11,7 @@ from typing import (
     Tuple,
 )
 
-from langfuse.api.resources.commons.types.trace_with_details import TraceWithDetails
+from langfuse.api import TraceWithDetails
 
 from app.core.logging import logger
 from evals.schemas import ScoreSchema

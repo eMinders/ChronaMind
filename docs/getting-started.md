@@ -2,8 +2,8 @@
 
 ## Prerequisites
 
-- Python 3.13+
-- [uv](https://docs.astral.sh/uv/) — `pip install uv`
+- Python 3.14+ (uv installs it from `.python-version`)
+- [uv](https://docs.astral.sh/uv/) — see the [installation guide](https://docs.astral.sh/uv/getting-started/installation/)
 - Docker + Docker Compose (recommended for local dev)
 - OpenAI API key
 - Langfuse account (optional — set `LANGFUSE_TRACING_ENABLED=false` to skip)

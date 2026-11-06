@@ -135,7 +135,9 @@ class ValkeyCacheService:
         if not self._client:
             return None
         try:
-            return await self._client.get(key)
+            value = await self._client.get(key)
+            # decode_responses=True makes this a str; the client's annotation still admits bytes
+            return value.decode() if isinstance(value, bytes) else value
         except Exception as e:
             logger.warning("cache_get_failed", key=key, error=str(e))
             return None
