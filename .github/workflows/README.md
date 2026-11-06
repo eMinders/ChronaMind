@@ -18,7 +18,7 @@
 
 All three must be green (or skipped by `changes` when no engine path changed). A PR is not "CI green" because `verify` alone passed.
 
-`main` branch protection and its six required checks are specified in `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2, including why none of them can leave a PR pending forever.
+`main` is **protected** (applied and verified 2026-11-05): six required checks bound to GitHub Actions, up-to-date branches, conversation resolution, no force pushes or deletions. Details and the verification are in `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2, including why no required check can leave a PR pending forever.
 
 ## Conventions
 
