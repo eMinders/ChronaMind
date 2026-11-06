@@ -2,10 +2,12 @@
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.metrics import setup_metrics
 from app.core.middleware import route_template
 from app.main import app
+from app.services.database import database_service
 
 
 def test_the_application_imports_and_registers_its_routes() -> None:
@@ -56,3 +58,9 @@ def test_metric_labels_are_route_templates_with_the_router_prefix_never_raw_ids(
         "/health",
         "/api/v1/auth/",
     ]
+
+
+def test_the_database_layer_never_blocks_the_event_loop() -> None:
+    """Every query is awaited on an async engine; a sync engine would stall all concurrent requests per query."""
+    assert isinstance(database_service.engine, AsyncEngine)
+    assert database_service.engine.url.drivername == "postgresql+psycopg"
