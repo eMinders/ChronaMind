@@ -1407,3 +1407,23 @@ Deferred work surfaced by E-021 is tracked separately:
 - `tests/integration/test_coding_profile_db.py` exercises the same behaviour end to end.
 
 **Status:** decided under the Project Owner's delegation (2026-11-05). This answers the open question on #97; it does not affect #97's criterion 5.
+
+---
+
+### V2-D69 — A bound profile admits only the source types its extractors declare (#164)
+
+**Context.** A profile declares `extractors[].source_types` (`E-019`). `V2-D08` makes extractors profile configuration. The ingest path did not use the declaration: under the coding profile, an `external` source was accepted although no coding extractor reads one.
+
+**Decision.** When an ingest handler is bound to a profile (`V2-D67`), `ingest_episode`, `assert` and `ingest_artifact` refuse any source or evidence whose type no extractor of that profile declares. The refusal is a static `validation_error/source_type_not_enabled_by_profile`, raised before any statement runs. Without a bound profile nothing is narrowed: the `API_V2.md` §2 declared types apply, as before. The rule mirrors `kind_not_enabled_by_profile` and branches only on profile data, never on a profile's name.
+
+**Compatibility.**
+- **Conversational profile:** declares `turn` only. It is the v1 equivalent, whose writer is chat turns, so its accepted inputs are unchanged.
+- **Coding profile:** declares `tool`/`file`/`event`/`turn`, so `external` is now refused under it. No coding fixture uses `external`.
+- **Unbound engines:** every engine wired without a profile, including the v1 regression wall, is unaffected.
+- **Tests:** three integration tests had ingested `external` under a profile that does not declare it, as a convenience. They now use declared types.
+
+**Evidence.** `tests/integration/test_api_wiring_ingest.py`:
+- `::test_a_bound_profile_admits_only_the_source_types_its_extractors_declare` covers both writers. The refused calls write nothing, and they succeed once the profile's extractors declare the types. A mutant that drops the check fails it.
+- `::test_without_a_profile_every_declared_source_type_is_admitted`
+
+**Status:** decided and implemented under the Project Owner's delegation (2026-11-05).
