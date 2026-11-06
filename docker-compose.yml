@@ -1,6 +1,6 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.7-pg16-bookworm  # major stays 16: the postgres-data volume needs pg_upgrade to move
     platform: linux/amd64
     environment:
       - POSTGRES_DB=${POSTGRES_DB}
@@ -21,7 +21,7 @@ services:
 
   # Valkey (Redis-compatible) cache — optional, set VALKEY_HOST=valkey in your .env to enable
   valkey:
-    image: valkey/valkey:8.1.6-alpine
+    image: valkey/valkey:9.1.3-alpine
     ports:
       - "6379:6379"
     volumes:
@@ -70,7 +70,7 @@ services:
 
   # Prometheus
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.16.0
     ports:
       - "9090:9090"
     volumes:
@@ -83,7 +83,7 @@ services:
 
   # Grafana
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.3.0
     ports:
       - "3000:3000"
     volumes:
@@ -98,7 +98,7 @@ services:
     restart: always
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: ghcr.io/google/cadvisor:v0.60.6  # cAdvisor moved from gcr.io
     ports:
       - "8080:8080"
     volumes:
