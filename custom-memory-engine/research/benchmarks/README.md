@@ -30,6 +30,11 @@ research/benchmarks/
 │   └── ...
 ├── own_I/           # Cross-user isolation suite (RL-022)
 │   └── ...
+├── own_C/           # Coding-agent CI-failure suite (E-022)
+│   ├── generator.py
+│   ├── MANIFEST.txt
+│   ├── README.md
+│   └── data/        # Gitignored
 └── splits/          # Frozen dev/test splits & Gate J5 FREEZE_LIST.md (RL-026)
     ├── FREEZE_LIST.md
     ├── freeze.py
@@ -38,7 +43,8 @@ research/benchmarks/
     ├── own_T.yaml
     ├── own_G.yaml
     ├── own_D.yaml
-    └── own_I.yaml
+    ├── own_I.yaml
+    └── own_C.yaml
 ```
 
 ## Hashes and oracle counts

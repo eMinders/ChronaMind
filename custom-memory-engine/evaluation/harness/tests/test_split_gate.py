@@ -28,12 +28,14 @@ def copy_splits(tmp_path: Path) -> tuple[Path, Path]:
 def test_repository_splits_pass_the_integrity_gate() -> None:
     report = check_integrity()
     assert report.integrity_passed, report.failure
-    assert len(report.frozen_digests) == 6
+    # E-022 grows the suite family to 7; the six historic digests keep their rows.
+    assert len(report.frozen_digests) == 7
     assert report.unfrozen_suites == ()
 
 
 def test_every_declared_suite_is_frozen() -> None:
-    assert len(ALL_SUITES) == 8
+    # E-022 adds suite id C, so ALL_SUITES grows 8 -> 9 and all nine stay frozen.
+    assert len(ALL_SUITES) == 9
     assert frozen_coverage() == ()
 
 
