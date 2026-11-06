@@ -1,8 +1,7 @@
 """Dynamic multi-provider LLM router and unified gateway adapter.
 
 Discovers available LLM providers from environment variables at runtime,
-manages concrete adapters, and routes requests with automatic fallback.
-Supports both direct completion dict generation and LangChain BaseChatModel instances.
+manages concrete adapters, and hands out LangChain ``BaseChatModel`` instances with automatic provider fallback.
 """
 
 import abc
@@ -16,12 +15,6 @@ from typing import (
 from typing_extensions import override
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import (
-    AIMessage,
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-)
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
@@ -38,29 +31,12 @@ except ImportError:
     _HAS_LANGCHAIN_ANTHROPIC = False
 
 try:
-    from anthropic import Anthropic  # pyright: ignore[reportMissingImports]
-
-    _HAS_DIRECT_ANTHROPIC = True
-except ImportError:
-    Anthropic = None  # type: ignore[assignment,misc]
-    _HAS_DIRECT_ANTHROPIC = False
-
-try:
     from langchain_google_genai import ChatGoogleGenerativeAI  # pyright: ignore[reportMissingImports]
 
     _HAS_LANGCHAIN_GOOGLE = True
 except ImportError:
     ChatGoogleGenerativeAI = None  # type: ignore[assignment,misc]
     _HAS_LANGCHAIN_GOOGLE = False
-
-try:
-    import google.generativeai as genai  # pyright: ignore[reportMissingImports]
-
-    _HAS_DIRECT_GOOGLE = True
-except ImportError:
-    genai = None  # type: ignore[assignment]
-    _HAS_DIRECT_GOOGLE = False
-
 
 # ======================================================================
 # 1. Base Adapter Interface
@@ -71,23 +47,6 @@ class BaseLLMAdapter(abc.ABC):
     """Standard interface that all downstream provider adapters must map to."""
 
     provider_name: str
-
-    @abc.abstractmethod
-    def generate(
-        self,
-        messages: List[Dict[str, str]],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Generate a chat completion response dictionary.
-
-        Args:
-            messages: List of message dicts with 'role' and 'content'.
-            options: Optional invocation parameters (model, temperature, etc.).
-
-        Returns:
-            Dict containing 'content', 'provider', 'model', and 'usage'.
-        """
-        pass
 
     @abc.abstractmethod
     def get_chat_model(
@@ -109,21 +68,6 @@ class BaseLLMAdapter(abc.ABC):
             BaseChatModel instance ready for LangGraph and tool binding.
         """
         pass
-
-
-def _convert_dict_messages_to_langchain(messages: List[Dict[str, str]]) -> List[BaseMessage]:
-    """Convert dict-format messages to LangChain BaseMessage instances."""
-    lc_messages: List[BaseMessage] = []
-    for m in messages:
-        role = m.get("role", "user").lower()
-        content = m.get("content", "")
-        if role == "system":
-            lc_messages.append(SystemMessage(content=content))
-        elif role == "assistant":
-            lc_messages.append(AIMessage(content=content))
-        else:
-            lc_messages.append(HumanMessage(content=content))
-    return lc_messages
 
 
 # ======================================================================
@@ -170,29 +114,6 @@ class OpenAIAdapter(BaseLLMAdapter):
 
         return ChatOpenAI(**model_kwargs)
 
-    @override
-    def generate(
-        self,
-        messages: List[Dict[str, str]],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        options = options or {}
-        model = options.get("model", "gpt-4o-mini")
-        chat_model = self.get_chat_model(model=model, **{k: v for k, v in options.items() if k != "model"})
-        lc_messages = _convert_dict_messages_to_langchain(messages)
-        response = chat_model.invoke(lc_messages)
-
-        usage = None
-        if hasattr(response, "usage_metadata") and response.usage_metadata:
-            usage = response.usage_metadata
-
-        return {
-            "content": str(response.content),
-            "provider": self.provider_name,
-            "model": model,
-            "usage": usage,
-        }
-
 
 class GroqAdapter(BaseLLMAdapter):
     """Adapter for Groq cloud (using OpenAI wire-compatible endpoint)."""
@@ -229,26 +150,6 @@ class GroqAdapter(BaseLLMAdapter):
             max_completion_tokens=target_tokens,
             **kwargs,
         )
-
-    @override
-    def generate(
-        self,
-        messages: List[Dict[str, str]],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        options = options or {}
-        model = options.get("model", self.DEFAULT_MODEL)
-        chat_model = self.get_chat_model(model=model, **{k: v for k, v in options.items() if k != "model"})
-        lc_messages = _convert_dict_messages_to_langchain(messages)
-        response = chat_model.invoke(lc_messages)
-
-        usage = getattr(response, "usage_metadata", None)
-        return {
-            "content": str(response.content),
-            "provider": self.provider_name,
-            "model": model,
-            "usage": usage,
-        }
 
 
 class MistralAdapter(BaseLLMAdapter):
@@ -287,26 +188,6 @@ class MistralAdapter(BaseLLMAdapter):
             **kwargs,
         )
 
-    @override
-    def generate(
-        self,
-        messages: List[Dict[str, str]],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        options = options or {}
-        model = options.get("model", self.DEFAULT_MODEL)
-        chat_model = self.get_chat_model(model=model, **{k: v for k, v in options.items() if k != "model"})
-        lc_messages = _convert_dict_messages_to_langchain(messages)
-        response = chat_model.invoke(lc_messages)
-
-        usage = getattr(response, "usage_metadata", None)
-        return {
-            "content": str(response.content),
-            "provider": self.provider_name,
-            "model": model,
-            "usage": usage,
-        }
-
 
 class DeepSeekAdapter(BaseLLMAdapter):
     """Adapter for DeepSeek (using OpenAI wire-compatible endpoint)."""
@@ -343,26 +224,6 @@ class DeepSeekAdapter(BaseLLMAdapter):
             max_completion_tokens=target_tokens,
             **kwargs,
         )
-
-    @override
-    def generate(
-        self,
-        messages: List[Dict[str, str]],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        options = options or {}
-        model = options.get("model", self.DEFAULT_MODEL)
-        chat_model = self.get_chat_model(model=model, **{k: v for k, v in options.items() if k != "model"})
-        lc_messages = _convert_dict_messages_to_langchain(messages)
-        response = chat_model.invoke(lc_messages)
-
-        usage = getattr(response, "usage_metadata", None)
-        return {
-            "content": str(response.content),
-            "provider": self.provider_name,
-            "model": model,
-            "usage": usage,
-        }
 
 
 class OpenRouterAdapter(BaseLLMAdapter):
@@ -406,26 +267,6 @@ class OpenRouterAdapter(BaseLLMAdapter):
             **kwargs,
         )
 
-    @override
-    def generate(
-        self,
-        messages: List[Dict[str, str]],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        options = options or {}
-        model = options.get("model", self.DEFAULT_MODEL)
-        chat_model = self.get_chat_model(model=model, **{k: v for k, v in options.items() if k != "model"})
-        lc_messages = _convert_dict_messages_to_langchain(messages)
-        response = chat_model.invoke(lc_messages)
-
-        usage = getattr(response, "usage_metadata", None)
-        return {
-            "content": str(response.content),
-            "provider": self.provider_name,
-            "model": model,
-            "usage": usage,
-        }
-
 
 class OllamaAdapter(BaseLLMAdapter):
     """Adapter for local Ollama instances (OpenAI compatibility endpoint)."""
@@ -461,25 +302,6 @@ class OllamaAdapter(BaseLLMAdapter):
             max_completion_tokens=target_tokens,
             **kwargs,
         )
-
-    @override
-    def generate(
-        self,
-        messages: List[Dict[str, str]],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        options = options or {}
-        model = options.get("model", self.DEFAULT_MODEL)
-        chat_model = self.get_chat_model(model=model, **{k: v for k, v in options.items() if k != "model"})
-        lc_messages = _convert_dict_messages_to_langchain(messages)
-        response = chat_model.invoke(lc_messages)
-
-        return {
-            "content": str(response.content),
-            "provider": self.provider_name,
-            "model": model,
-            "usage": getattr(response, "usage_metadata", None),
-        }
 
 
 class AnthropicAdapter(BaseLLMAdapter):
@@ -521,51 +343,6 @@ class AnthropicAdapter(BaseLLMAdapter):
             **kwargs,
         )
 
-    @override
-    def generate(
-        self,
-        messages: List[Dict[str, str]],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        options = options or {}
-        model = options.get("model", self.DEFAULT_MODEL)
-
-        if _HAS_LANGCHAIN_ANTHROPIC:
-            chat_model = self.get_chat_model(model=model, **{k: v for k, v in options.items() if k != "model"})
-            lc_messages = _convert_dict_messages_to_langchain(messages)
-            response = chat_model.invoke(lc_messages)
-            return {
-                "content": str(response.content),
-                "provider": self.provider_name,
-                "model": model,
-                "usage": getattr(response, "usage_metadata", None),
-            }
-
-        if not _HAS_DIRECT_ANTHROPIC:
-            raise ImportError(
-                "Neither langchain-anthropic nor anthropic SDK is installed. "
-                "Install via 'uv add langchain-anthropic' or 'uv add anthropic'."
-            )
-
-        client = Anthropic(api_key=self.api_key)  # type: ignore[misc]
-        system_prompt = next((m["content"] for m in messages if m.get("role") == "system"), "")
-        filtered = [m for m in messages if m.get("role") != "system"]
-
-        res = client.messages.create(
-            model=model,
-            max_tokens=options.get("max_tokens", settings.MAX_TOKENS),
-            system=system_prompt,
-            messages=filtered,
-            **{k: v for k, v in options.items() if k not in ["model", "max_tokens"]},
-        )
-        content_text = res.content[0].text if res.content else ""
-        return {
-            "content": content_text,
-            "provider": self.provider_name,
-            "model": model,
-            "usage": res.usage.model_dump() if hasattr(res, "usage") else None,
-        }
-
 
 class GeminiAdapter(BaseLLMAdapter):
     """Adapter for Google Gemini."""
@@ -605,48 +382,6 @@ class GeminiAdapter(BaseLLMAdapter):
             max_output_tokens=target_tokens,
             **kwargs,
         )
-
-    @override
-    def generate(
-        self,
-        messages: List[Dict[str, str]],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        options = options or {}
-        model_name = options.get("model", self.DEFAULT_MODEL)
-
-        if _HAS_LANGCHAIN_GOOGLE:
-            chat_model = self.get_chat_model(model=model_name, **{k: v for k, v in options.items() if k != "model"})
-            lc_messages = _convert_dict_messages_to_langchain(messages)
-            response = chat_model.invoke(lc_messages)
-            return {
-                "content": str(response.content),
-                "provider": self.provider_name,
-                "model": model_name,
-                "usage": getattr(response, "usage_metadata", None),
-            }
-
-        if not _HAS_DIRECT_GOOGLE:
-            raise ImportError(
-                "Neither langchain-google-genai nor google-generativeai is installed. "
-                "Install via 'uv add langchain-google-genai'."
-            )
-
-        genai.configure(api_key=self.api_key)  # type: ignore[misc]
-        gemini_history = []
-        for msg in messages:
-            role = "user" if msg.get("role") in ["user", "system"] else "model"
-            gemini_history.append({"role": role, "parts": [msg.get("content", "")]})
-
-        gen_model = genai.GenerativeModel(model_name)  # type: ignore[misc]
-        chat = gen_model.start_chat(history=gemini_history[:-1])
-        res = chat.send_message(gemini_history[-1]["parts"][0])
-        return {
-            "content": res.text,
-            "provider": self.provider_name,
-            "model": model_name,
-            "usage": None,
-        }
 
 
 # ======================================================================
@@ -779,10 +514,6 @@ class DynamicLLMRouter:
         """Return list of all registered provider names."""
         return list(self._adapters.keys())
 
-    def is_provider_available(self, provider: str) -> bool:
-        """Check if a specific provider is configured and available."""
-        return provider.lower() in self._adapters
-
     def get_adapter(self, provider: Optional[str] = None) -> BaseLLMAdapter:
         """Retrieve the adapter for a given provider, or fall back to default."""
         target = (provider or self.default_provider).lower()
@@ -815,16 +546,6 @@ class DynamicLLMRouter:
             max_tokens=max_tokens,
             **kwargs,
         )
-
-    def route_request(
-        self,
-        messages: List[Dict[str, str]],
-        provider: Optional[str] = None,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Dynamically dispatch completion request to the active provider adapter."""
-        adapter = self.get_adapter(provider)
-        return adapter.generate(messages=messages, options=options)
 
 
 # Singleton instance exported for use across the application

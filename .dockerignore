@@ -68,7 +68,6 @@ custom-memory-engine/
 tests/
 grafana/
 prometheus/
-typings/
 .claude/
 .agents/
 skills-lock.json
