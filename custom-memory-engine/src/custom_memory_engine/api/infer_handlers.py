@@ -215,13 +215,17 @@ class InferHandlers:
             )
             promoted = await cursor.fetchall()
             for version_id, kind in promoted:
-                details = content_free_details({"reason_code": "derived_into_durable", "kind": str(kind)})
                 await cursor.execute(
                     sql.SQL(
                         "INSERT INTO {a} (id, user_id, memory_ref, event_type, event_at, details) "
                         "VALUES (%s, %s, %s, 'retention_promoted', pg_catalog.transaction_timestamp(), %s)"
                     ).format(a=self.runtime.table("audit_event")),
-                    (f"audit-{uuid4().hex}", user, str(version_id), Jsonb(details)),
+                    (
+                        f"audit-{uuid4().hex}",
+                        user,
+                        str(version_id),
+                        Jsonb(content_free_details({"reason_code": "derived_into_durable", "kind": str(kind)})),
+                    ),
                 )
 
     async def _all_own(self, connection: AsyncConnection, user: str, sources: Sequence[str]) -> bool:

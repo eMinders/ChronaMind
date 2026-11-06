@@ -399,10 +399,60 @@ async def test_a_profile_scope_root_never_rewrites_the_scope_the_caller_names(da
             document = json.loads(conversational().model_dump_json())
             document.update(name="scope-root-probe", scope_root=root)
             register_ingest_handlers(engine, engine.resolver.runtime, parse_profile(document))  # type: ignore[attr-defined]
-            receipt = await engine.call(
-                caller("alice"), "ingest_episode", {**episode_args(), "idempotency_key": f"root-{root}"}
-            )
+            arguments = {**episode_args(), "source": turn_source("vegetarian"), "idempotency_key": f"root-{root}"}
+            receipt = await engine.call(caller("alice"), "ingest_episode", arguments)  # turn: the profile's extractor
             assert isinstance(receipt, Receipt), root
             stored[root] = await rows(conn, "SELECT scope_path FROM memory_version WHERE id = %s", (receipt.id,))
         # the request named the personal root; neither profile expanded it towards its own scope_root
         assert stored == {"/u/{user}/": [("/u/alice/",)], "/u/{user}/p/{repo}/": [("/u/alice/",)]}
+
+
+# --------------------------------------------------------------------------------- extractor source types (V2-D69)
+
+
+def profile_reading(*source_types: str):  # noqa: ANN201  (a Profile)
+    """The conversational document with one extractor that reads exactly ``source_types``."""
+    document = json.loads(conversational().model_dump_json())
+    document.update(
+        name="source-probe",
+        kinds=["episode", "claim"],
+        extractors=[{"name": "probe", "version": "1", "source_types": list(source_types)}],
+    )
+    document["retention"] = {**document["retention"], "defaults": {"episode": "durable", "claim": "durable"}}
+    return parse_profile(document)
+
+
+async def test_a_bound_profile_admits_only_the_source_types_its_extractors_declare(database) -> None:  # noqa: F811
+    """#164: ``ingest_episode`` and ``assert`` refuse a source type no extractor of the profile reads."""
+    async with world(database) as (conn, engine, _):
+        await with_turn(conn, engine)
+        tool = {**EXTERNAL, "type": "tool"}
+        register_ingest_handlers(engine, engine.resolver.runtime, profile_reading("tool"))  # type: ignore[attr-defined]
+        accepted = await engine.call(caller("alice"), "ingest_episode", {**episode_args(), "source": tool})
+        assert isinstance(accepted, Receipt)
+        refused = {
+            "episode_external": ("ingest_episode", {**episode_args(), "idempotency_key": "x1"}),
+            "episode_turn": (
+                "ingest_episode",
+                {**episode_args(), "source": turn_source("vegetarian"), "idempotency_key": "x2"},
+            ),
+            "assert_turn": ("assert", claim(idempotency_key="x3")),
+        }
+        for name, (operation, arguments) in refused.items():
+            error = await forbidden(engine, caller("alice"), operation, arguments)
+            assert (error.code, error.detail) == ("validation_error", "source_type_not_enabled_by_profile"), name
+        assert await rows(conn, "SELECT count(*) FROM memory_version") == [(1,)]
+        # the same calls succeed once the profile's extractors read those types: configuration decides, not code
+        register_ingest_handlers(engine, engine.resolver.runtime, profile_reading("turn", "external"))  # type: ignore[attr-defined]
+        for name, (operation, arguments) in refused.items():
+            assert isinstance(await engine.call(caller("alice"), operation, arguments), Receipt), name
+
+
+async def test_without_a_profile_every_declared_source_type_is_admitted(database) -> None:  # noqa: F811
+    """V2-D69 narrows only under a bound profile; an engine wired without one keeps the API's declared types."""
+    async with world(database) as (conn, engine, _):
+        await with_turn(conn, engine)  # registers the handlers without a profile
+        for key, source_type in enumerate(("external", "tool", "file", "event")):
+            source = {**EXTERNAL, "type": source_type}
+            arguments = {**episode_args(), "source": source, "idempotency_key": f"n{key}"}
+            assert isinstance(await engine.call(caller("alice"), "ingest_episode", arguments), Receipt), source_type
