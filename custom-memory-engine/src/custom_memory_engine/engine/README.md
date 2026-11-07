@@ -13,6 +13,7 @@ all values, and never changes tenant or clock context.
 | `gate.py` | Five-check write validation gate and conflict record | `RL-060` |
 | `ingest.py` | Turn persistence, gate routing, embedding storage | `RL-060` wiring |
 | `deletion.py` | R6 lineage closure, re-derivation, deletion epoch | `RL-070` |
+| `purge.py` | `purge_working`: rule PW-1 (an evidence-bearing working episode is retained), scope event | `E-026` |
 
 The engine makes no provider calls. Model-backed work (extraction, conflict
 classification, tokenization) is injected by the caller so `P` and its ablations
