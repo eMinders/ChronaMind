@@ -55,6 +55,21 @@ async def method(engine: Engine) -> dict[str, str]:
 
 async def observed(engine: Engine, user: str, key: str) -> str:
     content = "run one: NameError: json"
+    await engine.call(
+        caller(user),
+        "create_scope",
+        {"parent": f"/u/{user}/", "segment": "p", "kind": "project", "idempotency_key": f"{user}-coding-parent"},
+    )
+    await engine.call(
+        caller(user),
+        "create_scope",
+        {
+            "parent": f"/u/{user}/p/",
+            "segment": "chrona",
+            "kind": "project",
+            "idempotency_key": f"{user}-coding-repository",
+        },
+    )
     receipt = await engine.call(caller(user), "ingest_episode", episode(f"/u/{user}/p/chrona/", key, content))
     assert isinstance(receipt, Receipt)
     return receipt.id

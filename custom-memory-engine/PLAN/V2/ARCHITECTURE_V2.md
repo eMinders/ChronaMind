@@ -321,21 +321,21 @@ which is the correct behaviour for a memory engine whose batches should be scope
 
 ### 5.2 Entity opacity across scopes
 
-`ENTITY` is global to a *principal*, not to the database, and this is a deliberate
-restriction:
+Entities are **scope-local** opaque ids. A person represented in two scopes has two ids;
+an explicit `link_entity(a, b, relation)` row may relate them, but never replaces them
+with a global canonical id:
 
 - Entity ids are opaque and `CREATE`d only through the public API;
-- An entity's **attributes are never global** — a claim in scope A naming entity `e`
-  does not make `e`'s claims in scope B readable;
-- Cross-scope linking requires an explicit `link_entity(a, b)` call with the caller
-  authorized on **both** scopes; otherwise it is rejected;
+- Attributes and claims stay in their own scope; a claim naming a local entity in scope A
+  does not make that entity's claims in scope B readable;
+- Cross-scope linking requires an explicit call with the caller authorized on **both**
+  entity scopes; otherwise it is rejected;
 - Entity existence is not queryable outside the caller's read set (no "does entity e
-  exist" oracle across tenants).
+  exist" oracle across scopes or tenants).
 
-Without this, a shared `ENTITY` table is a cross-tenant side channel: an attacker could
-enumerate entity ids and infer the existence and attribute-count of another tenant's
-memories. That is the security issue the original V2 draft created by calling `ENTITY`
-"canonical referents" with no tenant scoping. `V2-D25` records the fix.
+Keeping ids local avoids a global identity index that could become a cross-scope side
+channel. `link_entity` records only the requested relationship and preserves independent
+scope-level authorization for each endpoint.
 
 ---
 

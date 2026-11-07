@@ -50,6 +50,13 @@ def _text(value: object, field: str, *, limit: int = 512) -> str:
     return value
 
 
+def _scope(call: Call) -> str:
+    try:
+        return parse_scope(call.arguments.get("scope")).text
+    except ScopeError:
+        raise EntryError("validation_error", "scope_invalid") from None
+
+
 def _when(value: object, field: str) -> datetime | None:
     if value is None:
         return None
@@ -215,6 +222,7 @@ class IngestHandlers:
 
     async def ingest_episode(self, call: Call) -> Receipt:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
+        scope_path = _scope(call)
         content = _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT)
         source = _source(call.arguments.get("source"))
         self._require_source_type(source["type"])
@@ -228,6 +236,8 @@ class IngestHandlers:
                     answer = await _original_answer(self.runtime, connection, user, found, "observed")
                     assert isinstance(answer, Receipt)  # an episode is never gated, so never rejected
                     return answer
+                if not await self.runtime.scope_exists(connection, user, scope_path):
+                    raise EntryError("forbidden")
                 if source["type"] == "turn":
                     turn_id = str(source["ref"])
                     turns = await _turns(self.runtime, connection, user, [turn_id])
@@ -262,8 +272,19 @@ class IngestHandlers:
         except ForeignKeyViolation:
             raise EntryError("forbidden") from None
 
-    async def _assert(self, call: Call, content: str, evidence: object, event_range: object) -> Receipt | Rejected:
+    async def _assert(
+        self, call: Call, content: str, evidence: object, event_range: object, entity_id: object = None
+    ) -> Receipt | Rejected:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
+        scope_path = _scope(call)
+        if entity_id is not None and (not isinstance(entity_id, str) or not entity_id.strip()):
+            raise EntryError("validation_error", "entity_id_invalid")
+        subject_key = "self"
+        if isinstance(entity_id, str):
+            target = call.targets.get(entity_id)
+            if target is None or target.scope_path != scope_path:
+                raise EntryError("forbidden")
+            subject_key = entity_id
         kind = call.arguments.get("kind")
         if kind not in _ASSERTABLE_KINDS:
             raise EntryError(
@@ -288,6 +309,8 @@ class IngestHandlers:
         async with self.runtime.session(user) as connection:
             if (found := await replayed(self.runtime, connection, user, "assert", key)) is not None:
                 return await _original_answer(self.runtime, connection, user, found, "asserted")
+            if not await self.runtime.scope_exists(connection, user, scope_path):
+                raise EntryError("forbidden")
             turn_ids = [str(source["ref"]) for source in sources]
             turns = await _turns(self.runtime, connection, user, turn_ids)
             if any(turn_id not in turns for turn_id in turn_ids):
@@ -304,7 +327,7 @@ class IngestHandlers:
                 user_id=user,
                 scope_path=scope,
                 kind=str(kind) if kind == "procedure" else None,  # only supply when the trigger cannot infer it
-                subject_key="self",
+                subject_key=subject_key,
                 predicate_key="statement",
                 single_valued=False,
                 content=content,
@@ -333,6 +356,7 @@ class IngestHandlers:
         return await self._assert(
             call, _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT),
             call.arguments.get("evidence"), call.arguments.get("event_range"),
+            call.arguments.get("subject_entity"),
         )  # fmt: skip
 
     async def ingest_artifact(self, call: Call) -> Receipt | Rejected:

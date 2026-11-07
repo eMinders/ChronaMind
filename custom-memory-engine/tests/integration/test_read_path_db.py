@@ -141,6 +141,16 @@ async def test_query_honours_the_repository_scope_stored_by_ingest(database) -> 
         runtime = engine.resolver.runtime
         register_ingest_handlers(engine, runtime, CODING_PROFILE)
         register_read_handlers(engine, runtime)
+        await engine.call(
+            caller("alice"),
+            "create_scope",
+            {"parent": "/u/alice/", "segment": "p", "kind": "project", "idempotency_key": "query-parent"},
+        )
+        await engine.call(
+            caller("alice"),
+            "create_scope",
+            {"parent": "/u/alice/p/", "segment": "chrona", "kind": "project", "idempotency_key": "query-repository"},
+        )
         await engine.call(caller("alice"), "ingest_episode", episode("/u/alice/p/chrona/", "r1", "repo fact"))
         await engine.call(caller("alice"), "ingest_episode", episode("/u/alice/", "r2", "root fact"))
         scoped = await engine.call(caller("alice"), "query", {"request": {"scope": "/u/alice/p/chrona/"}})

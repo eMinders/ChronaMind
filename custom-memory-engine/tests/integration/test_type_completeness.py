@@ -562,6 +562,9 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         assert not {"query", "get", "infer"} & unwired
         # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
         assert "create_scope" not in unwired
+        # E-024 wires `link_entity`; its restricted-role behavior is exercised through Engine.call in
+        # `test_cross_domain_entity.py`.
+        assert "link_entity" not in unwired
         print(
             f"\nG1: {len(OPERATIONS) - len(unwired)} of {len(OPERATIONS)} operations wired; "
             f"unwired (not yet testable): {sorted(unwired)}"

@@ -6,6 +6,7 @@ from typing import cast
 import pytest
 from psycopg import AsyncConnection
 
+from custom_memory_engine.engine import transactions
 from custom_memory_engine.engine.transactions import (
     AblationDisabledError,
     CandidateVersionInput,
@@ -129,3 +130,9 @@ def test_candidate_version_input_scope_path_validation() -> None:
     # Scope path outside caller's own namespace raises TransactionError("scope_path_outside_user_namespace")
     with pytest.raises(TransactionError, match="scope_path_outside_user_namespace"):
         _valid_candidate(user_id="u1", scope_path="/u/u2/repo/")
+
+
+def test_version_insert_base_columns_do_not_duplicate_optional_columns() -> None:
+    base_columns = transactions._INSERT_COLUMNS.split(", ")
+    assert len(base_columns) == transactions._INSERT_BASE_ARITY
+    assert set(base_columns).isdisjoint(transactions._OPTIONAL_COLUMNS)
