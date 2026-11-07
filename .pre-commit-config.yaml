@@ -4,10 +4,14 @@ exclude: ^(\.agents|\.cursor|\.claude)/
 repos:
   # General file hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
+      # Fixers never touch custom-memory-engine/: it holds hash-checked research records (validation/document_hashes.txt)
+      # and is formatted by its own pinned tools in its own CI job.
       - id: trailing-whitespace
+        exclude: ^custom-memory-engine/
       - id: end-of-file-fixer
+        exclude: ^custom-memory-engine/
       - id: check-yaml
       - id: check-json
         exclude: ^\.vscode/
@@ -16,7 +20,7 @@ repos:
       - id: check-added-large-files
         args: ["--maxkb=500"]
       - id: no-commit-to-branch
-        args: ["--branch", "master"]
+        args: ["--branch", "main"]
 
   # Secrets detection
   - repo: https://github.com/Yelp/detect-secrets
@@ -24,18 +28,21 @@ repos:
     hooks:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
-        exclude: (\.env\.example$|skills-lock\.json$)
+        exclude: (\.env\.example$|skills-lock\.json$|uv\.lock$)
 
   # Ruff: linting + formatting (replaces black, isort, flake8)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.4
+    rev: v0.17.4
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: ["--fix"]
+        exclude: ^custom-memory-engine/
       - id: ruff-format
+        exclude: ^custom-memory-engine/
 
   # Pyright: static type checker
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.391
+    rev: v1.1.414
     hooks:
       - id: pyright
+        exclude: ^custom-memory-engine/

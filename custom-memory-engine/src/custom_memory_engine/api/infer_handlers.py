@@ -15,6 +15,9 @@ What the database adds, at commit (migrations 5, 10, 14): the ``persona`` layer 
 ``lifecycle='inferred'``; an inferred row must carry a derivation row and its registered method; an abstraction must
 carry its ledger (``I15``), which the insert trigger creates at zero and this handler then fills from the request.
 
+Under a profile with ``retention.promote_to_durable``, each ``session`` source of the new abstraction is promoted to
+``durable`` and the promotion is recorded (``V2-D70``): durable knowledge must not rest on sources that expire.
+
 Not here (W5, full ``C-021``): the statistical verifier, dependence correction, ``verify``/``refute``. The optional
 ``predicate`` stays deferred (``V2-D43``). ``refutation_attempts`` and ``negative_control_clean`` are not inputs of
 ``infer``, so they are passed as ``0`` and ``False``: they affect only the verification verdict, which they keep
@@ -23,9 +26,11 @@ states them.
 """
 
 from collections.abc import Mapping, Sequence
+from uuid import uuid4
 
 from psycopg import AsyncConnection, sql
 from psycopg.rows import tuple_row
+from psycopg.types.json import Jsonb
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Receipt, Rejected, Runtime, new_id, now, remember, replayed
@@ -41,6 +46,7 @@ from custom_memory_engine.engine.transactions import CandidateVersionInput, Deri
 from custom_memory_engine.model.axes import Retention
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
+from custom_memory_engine.security.audit_guard import content_free_details
 
 _STATEMENT_LIMIT = 20_000
 _MAX_SOURCES = 256
@@ -184,9 +190,43 @@ class InferHandlers:
                 schema_name=self.runtime.schema_name,
             )
             await self._fill_ledger(connection, user, version_id, ledger)
+            await self._promote_sources(connection, user, sources)
             await self._stamp(connection, call, version_id)
             await remember(self.runtime, connection, user, "infer", key, version_id)
             return await self._receipt(connection, user, version_id)
+
+    async def _promote_sources(self, connection: AsyncConnection, user: str, sources: Sequence[str]) -> None:
+        """The promotion event of ``V2-D70``: durable knowledge must not rest on sources that expire.
+
+        When the bound profile sets ``retention.promote_to_durable``, each ``session`` source of the new (durable)
+        abstraction becomes ``durable`` in this transaction, and each promotion is recorded as a content-free
+        ``retention_promoted`` audit event with a static reason (``V2-D10``: promotion carries a recorded reason).
+        ``working`` sources keep their own purge semantics (``E-026``); nothing is ever demoted here.
+        """
+        if self.profile is None or not self.profile.retention.promote_to_durable:
+            return
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "UPDATE {t} SET retention = 'durable' WHERE id = ANY(%s) AND user_id = %s "
+                    "AND retention = 'session' RETURNING id, kind"
+                ).format(t=self.runtime.table("memory_version")),
+                (list(sources), user),
+            )
+            promoted = await cursor.fetchall()
+            for version_id, kind in promoted:
+                await cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {a} (id, user_id, memory_ref, event_type, event_at, details) "
+                        "VALUES (%s, %s, %s, 'retention_promoted', pg_catalog.transaction_timestamp(), %s)"
+                    ).format(a=self.runtime.table("audit_event")),
+                    (
+                        f"audit-{uuid4().hex}",
+                        user,
+                        str(version_id),
+                        Jsonb(content_free_details({"reason_code": "derived_into_durable", "kind": str(kind)})),
+                    ),
+                )
 
     async def _all_own(self, connection: AsyncConnection, user: str, sources: Sequence[str]) -> bool:
         async with connection.cursor(row_factory=tuple_row) as cursor:

@@ -47,12 +47,6 @@ def langfuse_init() -> Optional[Langfuse]:
     return None
 
 
-def get_langfuse_client() -> Optional[Langfuse]:
-    """Return the active Langfuse client instance."""
-    global _langfuse_client
-    return _langfuse_client
-
-
 def langfuse_flush() -> None:
     """Flush pending Langfuse events synchronously on shutdown or script exit."""
     global _langfuse_client

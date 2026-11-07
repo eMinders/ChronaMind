@@ -13,7 +13,6 @@ import asyncio
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlmodel import (
-    Session as DBSession,
     col,
     update,
 )
@@ -36,20 +35,20 @@ def _build_placeholder(user_message: str) -> str:
     return cleaned[:_PLACEHOLDER_MAX].rstrip() or "New chat"
 
 
-def _claim_session(session_id: str, placeholder: str) -> bool:
+async def _claim_session(session_id: str, placeholder: str) -> bool:
     """Return True iff this caller wins the atomic Postgres claim.
 
     Executes UPDATE … WHERE name = '' in a single round-trip so exactly one
     concurrent caller receives rowcount == 1.
     """
-    with DBSession(database_service.engine) as db:
+    async with database_service.session() as db:
         stmt = (
             update(ChatSession)
             .where(col(ChatSession.id) == session_id, col(ChatSession.name) == "")
             .values(name=placeholder)
         )
-        result = db.exec(stmt)
-        db.commit()
+        result = await db.exec(stmt)
+        await db.commit()
         return (result.rowcount or 0) == 1
 
 
@@ -74,7 +73,7 @@ async def _persist_session_name(session_id: str, user_message: str) -> None:
         logger.exception("session_name_generation_failed", session_id=session_id)
 
 
-def maybe_name_session(session_id: str, session_name: str, messages: list) -> None:
+async def maybe_name_session(session_id: str, session_name: str, messages: list) -> None:
     """Trigger session auto-naming if the session is still unnamed.
 
     Safe to call from any chat endpoint — concurrent callers for the same
@@ -85,7 +84,7 @@ def maybe_name_session(session_id: str, session_name: str, messages: list) -> No
     first_user_msg = next((m.content for m in messages if m.role == "user"), None)
     if not first_user_msg:
         return
-    if _claim_session(session_id, _build_placeholder(first_user_msg)):
+    if await _claim_session(session_id, _build_placeholder(first_user_msg)):
         task = asyncio.create_task(_persist_session_name(session_id, first_user_msg))
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)

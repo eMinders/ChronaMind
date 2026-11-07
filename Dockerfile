@@ -1,51 +1,35 @@
-FROM python:3.13.2-slim
+# syntax=docker/dockerfile:1
+# Root application image. Base and uv are pinned by digest; bump both together with .python-version / uv.lock.
+FROM python:3.14.10-slim-trixie@sha256:af8a5aa14780025dbfbcfbc81bd8a91ebd87711dd5b0f48ed71090949dd7cb1d
 
-# Set working directory
-WORKDIR /app
+COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /usr/local/bin/uv
 
-# Set non-sensitive environment variables
 ARG APP_ENV=production
-
 ENV APP_ENV=${APP_ENV} \
     PYTHONFAULTHANDLER=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=on \
-    PIP_DEFAULT_TIMEOUT=100
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH="/app/.venv/bin:$PATH"
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libpq-dev \
-    && pip install --upgrade pip \
-    && pip install uv \
-    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
 
-# Install locked dependencies first (cached unless pyproject.toml / uv.lock change)
+# Runtime dependencies only (no dev or test groups), cached unless pyproject.toml / uv.lock change. Every dependency
+# ships a binary wheel (psycopg bundles libpq), so no compiler or system packages are installed.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-default-groups --no-install-project
 
-# Copy the application and install the project itself against the locked deps
 COPY . .
-RUN uv sync --frozen
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-default-groups \
+    && useradd --create-home appuser \
+    && mkdir -p /app/logs \
+    && chown -R appuser:appuser /app/logs \
+    && chmod +x /app/scripts/docker-entrypoint.sh
 
-# Make entrypoint script executable - do this before changing user
-RUN chmod +x /app/scripts/docker-entrypoint.sh
-
-# Create a non-root user
-RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
-
-# Create log directory
-RUN mkdir -p /app/logs
-
-# Default port
 EXPOSE 8000
 
-# Log the environment we're using
-RUN echo "Using ${APP_ENV} environment"
-
-# Command to run the application
 ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
-CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

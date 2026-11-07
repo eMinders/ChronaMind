@@ -27,8 +27,8 @@ persisted-record rejection probes. It found no material defect in these branches
 Both full-service CI runs passed **1,104 tests**, with zero skips/failures;
 both default installations passed **1,032 tests, 56 expected skips**. All six
 checks passed, including SQL/reference checks, root checks and the automated
-review workflow. See [PR engine run](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40443418187)
-and [push engine run](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40443412306).
+review workflow. See [PR engine run](https://github.com/eMinders/ChronaMind/actions/runs/40443418187)
+and [push engine run](https://github.com/eMinders/ChronaMind/actions/runs/40443412306).
 The following evidence-only update receives separate exact-head checks.
 
 ## Earlier hard-review correction
@@ -74,8 +74,8 @@ counts below remain dated evidence for their named commits.
 - Source commit `df074f7bdcc9e66c2e6132723a64a4c0e414d4d6` passed all six
   checks. Both Linux full-service jobs: **1,091 passed**, zero failures/skips.
   Both default-install jobs: **1,019 passed, 56 expected skips**. The
-  [PR engine run](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40441046220)
-  and [push engine run](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40441042005)
+  [PR engine run](https://github.com/eMinders/ChronaMind/actions/runs/40441046220)
+  and [push engine run](https://github.com/eMinders/ChronaMind/actions/runs/40441042005)
   passed SQL assertions and reference consistency; root and automated review
   workflows succeeded. No formal review approval was present at inspection.
 - Earlier independent review passes reproduced and corrected source-mix,
@@ -84,8 +84,8 @@ counts below remain dated evidence for their named commits.
 - Earlier source commit `cad63350c1dfe5b30b44be93bdf50d8552947f19` passed
   all six checks: both Linux full-service jobs **1,060 passed**, zero failures or
   skips; both default-install jobs **988 passed, 56 expected skips**. Engine
-  runs [40429405393](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40429405393)
-  (PR) and [40429332734](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/actions/runs/40429332734)
+  runs [40429405393](https://github.com/eMinders/ChronaMind/actions/runs/40429405393)
+  (PR) and [40429332734](https://github.com/eMinders/ChronaMind/actions/runs/40429332734)
   (push) also passed reduced SQL and reference checks. The root checks and review
   workflow succeeded; no formal/inline review or review comment was present at
   inspection, so workflow success is not described as leader approval.

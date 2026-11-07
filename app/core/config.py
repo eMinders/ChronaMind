@@ -8,6 +8,7 @@ configuration value parsing.
 import os
 from enum import Enum
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
@@ -105,26 +106,6 @@ def parse_list_from_env(env_key, default=None):
         return [value]
     # Split comma-separated values
     return [item.strip() for item in value.split(",") if item.strip()]
-
-
-# Parse dict of lists from environment variables with prefix
-def parse_dict_of_lists_from_env(prefix, default_dict=None):
-    """Parse dictionary of lists from environment variables with a common prefix."""
-    result = default_dict or {}
-
-    # Look for all env vars with the given prefix
-    for key, value in os.environ.items():
-        if key.startswith(prefix):
-            endpoint = key[len(prefix) :].lower()  # Extract endpoint name
-            # Parse the values for this endpoint
-            if value:
-                value = value.strip("\"'")
-                if "," in value:
-                    result[endpoint] = [item.strip() for item in value.split(",") if item.strip()]
-                else:
-                    result[endpoint] = [value]
-
-    return result
 
 
 class Settings:
@@ -289,6 +270,14 @@ class Settings:
             # Only override if environment variable wasn't explicitly set
             if env_var_name not in os.environ:
                 setattr(self, key, value)
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        """The one SQLAlchemy URL for the app and Alembic: psycopg 3 (the driver LangGraph's checkpointer also uses)."""
+        return (
+            f"postgresql+psycopg://{quote_plus(self.POSTGRES_USER)}:{quote_plus(self.POSTGRES_PASSWORD)}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
 
     def validate_jwt_secret_key(self):
         """Reject empty, short, or placeholder JWT secrets outside test runs."""

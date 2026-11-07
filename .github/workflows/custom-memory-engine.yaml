@@ -4,14 +4,19 @@ name: Custom Memory Engine verification
 #   static          lint, format, type check, frozen research records (no services; fast feedback)
 #   verify          full CI-scope pytest + bitemporal SQL against PostgreSQL/pgvector and FalkorDB
 #   default-install pytest on the default install (no optional extras): proves extras stay optional
-# The three jobs are independent and run in parallel.
+#   changes         decides whether a PR touches engine paths (see below)
+# The three gating jobs are independent and run in parallel.
+#
+# Required checks (PLAN/CONTRIBUTING.md 1.2): a workflow skipped by a trigger-level `paths:` filter never reports, so a
+# required check would stay pending forever on a root-only PR. Pull requests therefore always run this workflow; the
+# `changes` job decides, and a job skipped by its `if:` reports success to branch protection. Pushes to main keep the
+# trigger filter (required checks do not apply to them).
 
 on:
   push:
     branches: [main]
-    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml", ".github/actions/setup-cme/**"]
+    paths: ["custom-memory-engine/**", ".github/**"]
   pull_request:
-    paths: ["custom-memory-engine/**", ".github/workflows/custom-memory-engine.yaml", ".github/actions/setup-cme/**"]
   workflow_dispatch:
 
 permissions:
@@ -25,14 +30,46 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      engine: ${{ steps.diff.outputs.engine }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: diff
+        name: Engine paths changed?
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Fail open: anything other than a pull request with a computable diff runs the full gates.
+          if [ "$EVENT" != "pull_request" ]; then echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if ! changed="$(git diff --name-only "$BASE...$HEAD")"; then echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          # Any .github/ change counts: the engine suite also tests the CI configuration (tests/test_ci_workflow.py).
+          if grep -qE '^(custom-memory-engine/|\.github/)' <<< "$changed"; then
+            echo "engine=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "engine=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "changed files:"; printf '%s\n' "$changed"
+
   static:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
         working-directory: custom-memory-engine
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-cme
         with:
           extras: baselines
@@ -54,8 +91,10 @@ jobs:
           uv run --no-sync python scripts/plan_coverage.py --check
 
   verify:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 12  # about 2 minutes since per-test clones (#178); a hang should fail fast
     services:
       falkor:
         image: falkordb/falkordb:6.0.3@sha256:a3f7f58482504f49bc1c0d703c472f73e6eb0fc421d0c31a391cc26e21753c33
@@ -83,27 +122,42 @@ jobs:
       run:
         working-directory: custom-memory-engine
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-cme
         with:
           extras: baselines
       - name: Prepare immutable local model assets
         run: uv run --no-sync python -m evaluation.baselines.assets prepare --directory "$CME_BASELINE_TEST_ASSETS"
-      - name: Install database extensions
-        run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
+      - name: Prepare disposable database (extensions; durability off)
+        # The service container holds throwaway data only. fsync, synchronous_commit and full_page_writes are reloadable
+        # settings; switching them off halves a commit- and DDL-bound suite and changes no query result.
+        run: |
+          psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
+          psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET fsync = off" -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" -c "SELECT pg_reload_conf()"
       - name: pytest (full CI scope, PostgreSQL integration and RLS)
-        run: uv run --no-sync pytest -q
+        # One xdist worker per core, each with its own copy of the disposable database (conftest.py, #167). Each DB
+        # test gets a private clone of a template the production migration runner built once per worker
+        # (tests/integration/schema.py), so tests share nothing and work-stealing (pyproject addopts) balances them.
+        run: uv run --no-sync pytest -q -n auto --durations=15
       - name: Bitemporal assertions (reduced-schema v1 asset)
         run: psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f validation/bitemporal_checks.sql
 
   default-install:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
         working-directory: custom-memory-engine
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-cme
       - name: pytest on the default install (no optional vendor/model packages)
-        run: uv run --no-sync pytest -q
+        run: uv run --no-sync pytest -q -n auto

@@ -136,7 +136,7 @@ class JsonlFileHandler(logging.Handler):
 
             with open(self.file_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_entry) + "\n")
-        except (Exception, NameError):
+        except Exception, NameError:
             try:
                 self.handleError(record)
             except Exception:
@@ -199,8 +199,9 @@ def setup_logging() -> None:
     In development: pretty console output
     In staging/production: structured JSON logs
     """
-    # Determine log level based on DEBUG setting
-    log_level = logging.DEBUG if settings.DEBUG else logging.INFO
+    # The configured level (per environment: DEBUG in development/test, INFO in staging, WARNING in production, or the
+    # LOG_LEVEL variable). It used to be derived from DEBUG alone, so production logged INFO despite its WARNING setting.
+    log_level = logging.getLevelNamesMapping().get(settings.LOG_LEVEL.upper(), logging.INFO)
 
     # Create file handler for JSON logs
     file_handler = JsonlFileHandler(get_log_file_path())
@@ -254,7 +255,7 @@ setup_logging()
 
 # Create logger instance
 logger = structlog.get_logger()
-log_level_name = "DEBUG" if settings.DEBUG else "INFO"
+log_level_name = settings.LOG_LEVEL.upper()
 logger.info(
     "logging_initialized",
     environment=settings.ENVIRONMENT.value,

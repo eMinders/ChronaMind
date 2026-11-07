@@ -121,8 +121,8 @@ Until the Project Owner amends G3, compare V2's **fused P95 at 2000 candidates**
 
   | Issue | Gap at `490904d` | Later status |
   |---|---|---|
-  | [#46](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/46) (`RL-070`) | Scanner channels 3, 5, 6, 7 had no harness probes; Suite D runner absent | Closed in r7 (harness `leak_scanner.py`, Suite D runner); not part of a `490904d` tag |
-  | [#47](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/47) (`RL-071`) | No restricted runtime role, grants or tenant-scoping guard | Closed in r7 (`3d0f7bb`, `84e504f`); not part of a `490904d` tag |
+  | [#46](https://github.com/eMinders/ChronaMind/issues/46) (`RL-070`) | Scanner channels 3, 5, 6, 7 had no harness probes; Suite D runner absent | Closed in r7 (harness `leak_scanner.py`, Suite D runner); not part of a `490904d` tag |
+  | [#47](https://github.com/eMinders/ChronaMind/issues/47) (`RL-071`) | No restricted runtime role, grants or tenant-scoping guard | Closed in r7 (`3d0f7bb`, `84e504f`); not part of a `490904d` tag |
 
   Task-level evidence is in `PLAN/V2/STATUS_AUDIT.md`, and declared-versus-enforced invariants in
   `PLAN/V2/INVARIANT_LEDGER.md` (both describe current `main`, not `490904d`).

@@ -1,11 +1,17 @@
 """Explicit environment configuration for disposable compatibility tests, not deployment."""
 
 import os
+import re
 from collections.abc import Mapping
 
 from psycopg import ProgrammingError
 from psycopg.conninfo import conninfo_to_dict
 from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
+
+#: The disposable test database, one pytest-xdist worker's copy of it (``conftest.py``, issue #167), and that
+#: database's migrated template (``_tpl``) and per-test clones (``_c<n>``, ``tests/integration/schema.py``). Nothing
+#: else: the guard exists so a misconfigured URL can never point destructive test code at a product database.
+TEST_DATABASE_NAME = re.compile(r"cme_compatibility(?:_gw[0-9]{1,3})?(?:_tpl|_c[0-9]{1,7})?")
 
 
 class TestDatabaseConfig(BaseModel):
@@ -23,7 +29,7 @@ class TestDatabaseConfig(BaseModel):
         except ProgrammingError:
             raise ValueError("invalid_test_database_connection") from None
         if (
-            params.get("dbname") != "cme_compatibility"
+            TEST_DATABASE_NAME.fullmatch(str(params.get("dbname", ""))) is None
             or params.get("user") != "cme_test"
             or params.get("host") not in {"127.0.0.1", "localhost", "::1"}
             or not params.get("password")

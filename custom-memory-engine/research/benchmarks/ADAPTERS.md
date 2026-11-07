@@ -137,7 +137,7 @@ hashes and the current code commit. Gold answers are never system inputs. The ha
 ## Software verification
 
 ```sh
-uv sync --frozen --python 3.12.12
+uv sync --frozen   # CPython from .python-version
 uv run pytest -q research/benchmarks/longmemeval/tests research/benchmarks/locomo/tests research/benchmarks/tests
 ```
 

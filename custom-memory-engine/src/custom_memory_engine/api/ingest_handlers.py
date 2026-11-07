@@ -14,6 +14,9 @@ the restricted role, static errors only.
   (V2-D66, issue #157). Only ``turn`` evidence can be grounded through the gate; ``external``/``tool``/``file``/
   ``event`` evidence carries a hash, not captured text. The ``scope`` argument is propagated as above.
 
+Under a bound profile, a source or evidence type that no extractor of the profile declares is refused
+(``validation_error/source_type_not_enabled_by_profile``, ``V2-D69``); without one, the declared types above apply.
+
 Both write under the generic predicates of migration 13 (multi-valued), so they never supersede one another.
 """
 
@@ -72,11 +75,13 @@ def _when(value: object, field: str) -> datetime | None:
 
 
 def _scope_path(raw: object, user: str) -> str | None:
-    """Parse and validate the optional ``scope`` argument; returns the canonical text or ``None``.
+    """The canonical text of the caller's explicit ``scope`` argument (``V2-D68``: full paths, never expanded).
 
-    ``None`` means fall back to the caller's personal root, preserving backward compatibility.
-    The entry point's ``scope_writable`` condition has already verified the path is within
-    ``/u/<user>/``; this is defence in depth.
+    The path is used exactly as given: no profile ``scope_root`` is applied and nothing is constructed from it.
+    Through :meth:`Engine.call` the argument is always present, because the entry point's ``scope_writable``
+    condition refuses an omitted scope (``scope_required``) and one outside ``/u/<user>/`` (``forbidden``) before
+    this runs; the namespace check here is defence in depth. ``None`` is reachable only by an in-process caller
+    that bypasses the entry point.
     """
     if raw is None:
         return None
@@ -190,6 +195,16 @@ class IngestHandlers:
         if self.profile is not None and kind not in self.profile.kinds:
             raise EntryError("validation_error", "kind_not_enabled_by_profile")
 
+    def _require_source_type(self, source_type: object) -> None:
+        """A bound profile admits only the source types its extractors declare (``V2-D69``, #164).
+
+        Without a profile nothing is narrowed: the declared ``SourceRef`` types of ``_SOURCE_TYPES`` apply, as before.
+        """
+        if self.profile is None:
+            return
+        if not any(source_type in extractor.source_types for extractor in self.profile.extractors):
+            raise EntryError("validation_error", "source_type_not_enabled_by_profile")
+
     def _retention(self, kind: Kind) -> Retention:
         """The profile's retention default for ``kind`` (durable without one); the database enforces the floors."""
         return "durable" if self.profile is None else self.profile.retention.defaults.get(kind, "durable")
@@ -210,6 +225,7 @@ class IngestHandlers:
         scope_path = _scope(call)
         content = _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT)
         source = _source(call.arguments.get("source"))
+        self._require_source_type(source["type"])
         event_time = _when(call.arguments.get("event_time"), "event_time")
         scope = _scope_path(call.arguments.get("scope"), user)
         self._require_kind("episode")
@@ -278,6 +294,8 @@ class IngestHandlers:
         if not isinstance(evidence, Sequence) or isinstance(evidence, str | bytes) or not evidence:
             raise EntryError("validation_error", "evidence_required")
         sources = [_source(item) for item in evidence]
+        for source in sources:
+            self._require_source_type(source["type"])
         if any(source["type"] != "turn" for source in sources):
             # An external/tool/file/event reference carries a hash, not the captured text: nothing to ground a span.
             raise EntryError("validation_error", "external_evidence_cannot_be_grounded")

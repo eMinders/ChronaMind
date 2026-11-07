@@ -3,8 +3,8 @@
 This module sets up and configures Prometheus metrics for monitoring the application.
 """
 
-from prometheus_client import Counter, Histogram, Gauge
-from starlette_prometheus import metrics, PrometheusMiddleware
+from fastapi import FastAPI, Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 # Request metrics
 http_requests_total = Counter("http_requests_total", "Total number of HTTP requests", ["method", "endpoint", "status"])
@@ -13,12 +13,7 @@ http_request_duration_seconds = Histogram(
     "http_request_duration_seconds", "HTTP request duration in seconds", ["method", "endpoint"]
 )
 
-# Database metrics
-db_connections = Gauge("db_connections", "Number of active database connections")
-
 # Custom business metrics
-orders_processed = Counter("orders_processed_total", "Total number of orders processed")
-
 llm_inference_duration_seconds = Histogram(
     "llm_inference_duration_seconds",
     "Time spent processing LLM inference",
@@ -41,14 +36,15 @@ session_names_generated_total = Counter(
 )
 
 
-def setup_metrics(app):
-    """Set up Prometheus metrics middleware and endpoints.
+async def metrics_endpoint(_: Request) -> Response:
+    """Expose every registered metric in the Prometheus text format."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+def setup_metrics(app: FastAPI) -> None:
+    """Expose ``/metrics``. Request metrics are recorded by ``MetricsMiddleware`` (app/core/middleware.py).
 
     Args:
         app: FastAPI application instance
     """
-    # Add Prometheus middleware
-    app.add_middleware(PrometheusMiddleware)
-
-    # Add metrics endpoint
-    app.add_route("/metrics", metrics)
+    app.add_route("/metrics", metrics_endpoint, include_in_schema=False)

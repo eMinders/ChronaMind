@@ -1358,3 +1358,99 @@ Deferred work surfaced by E-021 is tracked separately:
 **Consequence.** One engine serves one profile. A deployment that serves several profiles builds one engine per profile from the same code. That is what `E-023`'s dual-profile job and `E-025`'s fork audit measure.
 
 **Status:** decided under the Project Owner's delegation (2026-11-04). Evidence: #136 closing comment, PR #143.
+
+---
+
+### V2-D68 — A write names its scope as an explicit full path; a profile's `scope_root` is never applied to a request (#97)
+
+**Context.** The r14 thread on #97 asked an open question. A profile declares `scope_root` (for the coding profile, `/u/{user}/p/{repo}/`). Should a handler apply it to a request, expanding or defaulting the `scope` argument, or must the caller always send the full path?
+
+**Decision.** The caller sends the **full scope path**. Handlers parse it, check it, and store it exactly as given. They never construct, expand, prefix or default it from `scope_root`.
+
+`scope_root` is **deployment-level metadata**:
+- It is the shape a deployment's scopes take, validated against the scope grammar (`profile.py::_scope_root`).
+- It is consumed by deployment tooling and by tests that substitute its placeholders.
+- It is never consumed by a request.
+
+`scope_path` is **request-level and row-level**: the one path a write lands in.
+
+**Rationale.**
+1. **The contract already says so.** Every writing operation takes `scope` as an explicit input (`API_V2.md` §3–§4). `API_V2.md` §1 and `ARCHITECTURE_V2.md` §5 rule 2 add "nothing is implicit".
+2. **The engine cannot fill the template.** `{repo}` is known only to the caller, so any expansion would need a second, non-contract argument. That is a contract change the frozen API does not allow (`V2-D46`, `V2-D47`).
+3. **It keeps the security decision in one place.** `scope_writable` (`scope.access.authorize_write`) judges the exact path that is stored.
+   - With expansion, the path being authorized and the path being stored could differ.
+   - Two profiles could also map one request to different scopes. That is behaviour branching on configuration in the write path, against the spirit of `V2-D08`.
+4. **Reads are already explicit.** A read selector must equal a private row's scope (§5 rule 4, T-06). A caller that writes `/u/alice/p/chrona/` therefore already has to know that full path to read it back. An implicit write path would make writes and reads asymmetric.
+5. **No existing behaviour changes.** This is what #159 implemented, what #168 pins, and what E-021 (#143) uses.
+
+**Security implications.**
+- **Namespace:** a path outside `/u/<caller>/` is `forbidden` before any statement runs (`scope_writable`). The handler re-checks it as defence in depth.
+- **Omitted scope:** refused with a static `validation_error/scope_required`, never silently defaulted to the personal root or to `scope_root`.
+- **Malformed path:** refused with `validation_error/scope_invalid`, never normalised into a different scope.
+- **Errors:** carry no path (`API_V2.md` §1.1).
+
+**Examples.** Coding profile, caller `alice`:
+
+| Request `scope` | Result |
+|---|---|
+| `/u/alice/p/chrona/` | Stored at `/u/alice/p/chrona/` |
+| `/u/alice/` | Stored at `/u/alice/`, not expanded to a repository |
+| *(omitted)* | `validation_error/scope_required`, nothing written |
+| `/u/bob/p/chrona/` | `forbidden`, nothing written |
+| `chrona` (relative) | `validation_error`, nothing written |
+
+**Evidence.**
+- `tests/integration/test_api_wiring_ingest.py`:
+  - `::test_both_writers_store_the_scope_the_caller_names`
+  - `::test_both_writers_refuse_a_foreign_or_missing_scope_before_writing`
+  - `::test_a_profile_scope_root_never_rewrites_the_scope_the_caller_names`: two profiles with different roots store the same request identically. A handler mutant that expands `scope_root` fails it.
+- `tests/integration/test_coding_profile_db.py` exercises the same behaviour end to end.
+
+**Status:** decided under the Project Owner's delegation (2026-11-05). This answers the open question on #97; it does not affect #97's criterion 5.
+
+---
+
+### V2-D69 — A bound profile admits only the source types its extractors declare (#164)
+
+**Context.** A profile declares `extractors[].source_types` (`E-019`). `V2-D08` makes extractors profile configuration. The ingest path did not use the declaration: under the coding profile, an `external` source was accepted although no coding extractor reads one.
+
+**Decision.** When an ingest handler is bound to a profile (`V2-D67`), `ingest_episode`, `assert` and `ingest_artifact` refuse any source or evidence whose type no extractor of that profile declares. The refusal is a static `validation_error/source_type_not_enabled_by_profile`, raised before any statement runs. Without a bound profile nothing is narrowed: the `API_V2.md` §2 declared types apply, as before. The rule mirrors `kind_not_enabled_by_profile` and branches only on profile data, never on a profile's name.
+
+**Compatibility.**
+- **Conversational profile:** declares `turn` only. It is the v1 equivalent, whose writer is chat turns, so its accepted inputs are unchanged.
+- **Coding profile:** declares `tool`/`file`/`event`/`turn`, so `external` is now refused under it. No coding fixture uses `external`.
+- **Unbound engines:** every engine wired without a profile, including the v1 regression wall, is unaffected.
+- **Tests:** three integration tests had ingested `external` under a profile that does not declare it, as a convenience. They now use declared types.
+
+**Evidence.** `tests/integration/test_api_wiring_ingest.py`:
+- `::test_a_bound_profile_admits_only_the_source_types_its_extractors_declare` covers both writers. The refused calls write nothing, and they succeed once the profile's extractors declare the types. A mutant that drops the check fails it.
+- `::test_without_a_profile_every_declared_source_type_is_admitted`
+### V2-D70 — The promotion event: a durable artifact derived from a session source makes that source durable (#163, E-021-F4)
+
+**Context.**
+- A profile declares `retention.promote_to_durable`. The coding profile sets it, and §13's coding row reads "session→durable on promotion".
+- Nothing read it, which was finding E-021-F4.
+- `ARCHITECTURE_V2.md` §1 makes retention mutable "(promotion/demotion)" and says promotion is "an explicit, recorded operation". `V2-D10` requires "a recorded reason".
+- `V2-D14` (default values and expiry) stays open. It owns the numbers, not the event.
+
+**Decision.** The promotion event is **a durable artifact coming to rest on a `session` source**. Within the W2 operations, that is `infer` deriving an abstraction (always `durable`, by the `V2-D10` floor) from its sources. When the bound profile sets `promote_to_durable`:
+- each of those sources whose retention is `session` becomes `durable`, in the same transaction as the derivation;
+- each promotion is recorded as a content-free `audit_event` (`event_type='retention_promoted'`, `reason_code='derived_into_durable'`, the source's `kind`).
+
+Without the flag, the same calls leave the source `session`. Only `session` is promoted: `working` keeps its own purge semantics (`E-026`). Nothing is demoted.
+
+**Rationale.**
+1. **It closes a real hole.** `V2-D10` says retention must never change answerability. If a durable abstraction rested on a session episode, then expiring that session would leave durable knowledge whose provenance had gone. Promoting the source at the moment the durable artifact starts depending on it closes that.
+2. **The frozen API has no `promote` operation**, and adding one is a contract change (`V2-D46`, `V2-D47`). The event therefore lives inside an existing operation, and it is explicit in its trigger and recorded with its reason, as §1 requires.
+3. **It is configuration, not code.** The handler reads `profile.retention.promote_to_durable` and never a profile's name (`V2-D08`). The database still enforces the floors.
+
+**Not decided here.** Other promotion triggers, such as procedure reuse through `record_outcome` (`E-027`, unwired) or reinforcement counts, extend this rule when their operations land. They are not part of #163.
+
+**Evidence.** `tests/integration/test_retention_promotion_db.py`, all through `Engine.call` under a restricted role:
+- the same events promote under one profile and not under another;
+- a `working` source is never promoted;
+- a replayed `infer` records no second promotion.
+
+Two controls each fail at least one test: a mutant that ignores the flag, and a mutant that never promotes.
+
+**Status:** decided and implemented under the Project Owner's delegation (2026-11-05).

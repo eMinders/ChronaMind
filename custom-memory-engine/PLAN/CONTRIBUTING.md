@@ -27,10 +27,10 @@
      CHANGELOG.md
    diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
 
-   # Once RL-003 / RL-006 are merged:
    uv run ruff check .
    uv run pyright
-   uv run pytest
+   uv run pytest -q -m 'not integration'          # seconds, no database
+   uv run --env-file .env pytest -q -n auto       # full suite against the compose database (README §4)
    ```
 6. **Open a Pull Request:**
    - Title format: `[RL-xxx] <Short imperative summary>`
@@ -84,50 +84,72 @@ The reviewer's decisions are recorded as `V2-D##` entries with their rationale a
 confirm, amend or reverse them. Where GitHub's own branch protection would require an approval, that is a
 platform setting, not this policy, and no human approval is ever fabricated to satisfy it.
 
-### 1.2 Branch protection: the required configuration, not applied
+### 1.2 Branch protection on `main`
 
-**Status (r11, 2026-11-01): not applied.** The repository has **no branch protection and no rulesets** on `main`:
-`GET /repos/{owner}/{repo}/branches/main/protection` returns `404 Not Found` and `GET /repos/{owner}/{repo}/rulesets`
-returns `[]`. The session account (`elewashy`) holds `write` and `triage`, **not `admin`**, so a `PUT` to the protection
-endpoint also returns `404`; it cannot be configured from here and is not claimed to be. This is a platform setting the
-Project Owner or a repository admin applies once; it is not a code change and needs no PR.
+**History.** In r11 the session account had only `write`. After the transfer to `eMinders` (2026-11-05) it was admin, but GitHub's Free plan refused protection and rulesets on a private repository (`403`). The Project Owner made the repository **public** on 2026-11-05, which lifts that restriction.
 
-**Apply exactly this** (Settings → Branches → `main`, or the API call below with an admin token). The five check names
-are the stable job identities the workflows already publish, so nothing in CI needs to change.
+**Status (2026-11-05): applied and verified.** `PUT /repos/eMinders/ChronaMind/branches/main/protection` succeeded; reading it back returns exactly the table below; `GET /repos/eMinders/ChronaMind/branches/main` reports `protected: true`.
+- Each required check is bound to the **GitHub Actions app** (`app_id` 15368), so a commit status posted by anything else cannot satisfy it.
+- A root-only probe PR (#174, closed unmerged) showed `changes`/`checks`/`workflows` succeeding and the three engine gates completing as `skipped`, never pending. Its merge state was evaluated, not blocked.
+- #172, #173 and #175 then merged through the protection, each brought up to date first.
+
+The configuration is:
 
 | Setting | Value | Why |
 |---|---|---|
-| Required status checks | `static`, `verify`, `default-install` (from `custom-memory-engine.yaml`) and `checks`, `workflows` (from `ci.yaml`) | These are the gates the Definition of Done already names. A PR is not "CI green" on `verify` alone |
-| Require branches to be up to date | **on** (`strict: true`) | The r11 review found merge-order regressions (a ledger silently reverted across four branches, #123) that per-PR green CI cannot catch. Strict mode forces a rebase onto current `main` before the checks run |
-| Required approving reviews | **none** (`required_pull_request_reviews: null`) | `V2-D57`: AI review is the gate. Requiring a GitHub approval would either block every merge or pressure someone into an approval that did not happen. The policy is review *recorded*, not an approval *clicked* |
-| Dismiss stale approvals | n/a | No approvals are required, so nothing to dismiss |
-| Require conversation resolution | **on** (recommended) | A review finding is a comment; this is what makes "leave the issue open with its gap recorded" binding |
-| Require linear history | **off** | W1 merged 13 PRs with merge commits (`99fe8f8` is one). Turning it on would rewrite how the repo already works for no correctness gain |
+| Required status checks | `changes`, `static`, `verify`, `default-install` (from `custom-memory-engine.yaml`) and `checks`, `workflows` (from `ci.yaml`) | These are the gates the Definition of Done already names. A PR is not "CI green" on `verify` alone |
+| Require branches to be up to date | **on** (`strict: true`) | The r11 review found merge-order regressions (a ledger silently reverted across four branches, #123) that per-PR green CI cannot catch. Strict mode makes a PR's checks run against current `main` before it merges |
+| Required approving reviews | **none** | `V2-D57`: AI review is the gate. A required GitHub approval would block every merge or invite an approval that did not happen |
+| Require conversation resolution | **on** | A review finding is a comment; this makes "resolve or record it" binding |
+| Require linear history | **off** | Merge commits are part of the existing history (`99fe8f8`); squash is the convention, not a rule |
 | Allow force pushes / deletions | **off** | Never needed; the v1 tag and every merge commit are the audit trail |
-| Enforce for administrators | **off** | The Owner must be able to land a hotfix in an emergency; the required checks still run |
+| Enforce for administrators | **off** | The Owner must be able to land an emergency hotfix; the required checks still run on it |
+
+**Why no required check can deadlock a PR.** A workflow skipped by a trigger-level `paths:` filter never reports, so a required check from it would stay pending forever on a root-only PR. `custom-memory-engine.yaml` therefore has **no `paths:` filter on `pull_request`**:
+- A `changes` job diffs the PR against its base.
+- `static`, `verify` and `default-install` run only when `custom-memory-engine/**` or `.github/**` changed. `.github/` counts because the engine suite tests the CI configuration itself (`tests/test_ci_workflow.py`).
+- Otherwise they are skipped by their job-level `if:`, and GitHub reports a skipped job as successful.
+- `changes` is itself required. If it fails, the PR is blocked, never waved through by the skips that follow it.
+- It fails open toward running the gates: a non-PR event or an uncomputable diff runs everything.
+- `ci.yaml` has no path filter.
 
 ```bash
-# Verification first: expect 404 / [] until an admin applies it.
-gh api repos/Abdulrahman-Ayman-Farid/ChronaMind/branches/main/protection
-test -z "$(gh api repos/Abdulrahman-Ayman-Farid/ChronaMind/rulesets --jq '.[].id')" && echo "no rulesets"
-
-# Apply (admin token required; `gh` with only write access returns 404).
-gh api --method PUT repos/Abdulrahman-Ayman-Farid/ChronaMind/branches/main/protection \
-  -F 'required_status_checks[strict]=true' \
-  -f 'required_status_checks[contexts][]=static' \
-  -f 'required_status_checks[contexts][]=verify' \
-  -f 'required_status_checks[contexts][]=default-install' \
-  -f 'required_status_checks[contexts][]=checks' \
-  -f 'required_status_checks[contexts][]=workflows' \
-  -F 'enforce_admins=false' \
-  -F 'required_pull_request_reviews=null' \
-  -F 'restrictions=null'
+gh api --method PUT repos/eMinders/ChronaMind/branches/main/protection --input - <<'JSON'
+{
+  "required_status_checks": {"strict": true,
+    "checks": [{"context": "changes", "app_id": 15368}, {"context": "static", "app_id": 15368},
+               {"context": "verify", "app_id": 15368}, {"context": "default-install", "app_id": 15368},
+               {"context": "checks", "app_id": 15368}, {"context": "workflows", "app_id": 15368}]},
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null,
+  "required_conversation_resolution": true,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "required_linear_history": false
+}
+JSON
+gh api repos/eMinders/ChronaMind/branches/main/protection   # read it back
 ```
 
-**What this does not do.** It does not add a human review requirement, does not weaken any existing gate (there are none
-to weaken), and does not make this project's quality depend on a setting that is currently absent. The review standard
-is §1.1 and it is enforced by the reviewer, the tests and CI; branch protection is a guard against accidental
-force-pushes and stale-base merges, and its absence is recorded here rather than papered over.
+**What this does not do.** It does not add a human review requirement. The review standard is §1.1, enforced by the
+reviewer, the tests and CI; branch protection makes those gates binding and guards against force pushes and stale-base
+merges.
+
+### 1.3 Repository security settings
+
+Applied and read back through the API on 2026-11-06 (`gh api repos/eMinders/ChronaMind`, `.../actions/permissions`,
+`.../actions/permissions/selected-actions`, `.../vulnerability-alerts`, `.../automated-security-fixes`):
+
+| Setting | Value | Why |
+|---|---|---|
+| Visibility | public | Owner decision; it is also what makes branch protection and the scanners below available |
+| Secret scanning + push protection | **on** | A pushed credential is refused or reported, not merely caught later by the `detect-secrets` pre-commit hook |
+| Dependabot alerts + security updates | **on** | Known-vulnerable locked versions raise an alert and a fix PR; routine updates come from `.github/dependabot.yml` |
+| Actions: allowed actions | **selected**: GitHub-owned, plus `astral-sh/setup-uv`, `anthropics/claude-code-action`, `oven-sh/setup-bun` (the last is nested inside the Claude action) | Least privilege for the supply chain: a typo-squatted or unreviewed action cannot run. **Adding a third-party action requires adding it to this allow list** |
+| Actions: require SHA pinning | **on** | The repository's pinning convention (`.github/workflows/README.md`) is enforced by GitHub, including inside composite actions |
+| Default `GITHUB_TOKEN` permissions | read; cannot approve PRs | Workflows request any extra scope explicitly |
+| Delete head branches on merge | **on** | Merged branches do not accumulate |
 
 ---
 

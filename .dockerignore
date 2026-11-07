@@ -62,3 +62,12 @@ schema.sql
 
 # Reports
 evals/reports/
+
+# Not part of the root application image
+custom-memory-engine/
+tests/
+grafana/
+prometheus/
+.claude/
+.agents/
+skills-lock.json

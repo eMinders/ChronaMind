@@ -1,8 +1,8 @@
 name: CI
 
-# Root application (app/, evals/) lint, format and type check, plus validation of every workflow file
-# (actionlint). Runs on every PR and on main: root `ruff check .` also covers custom-memory-engine/, so a path
-# filter here would be unsafe.
+# Root application (app/, evals/): lint, format, type check and its own tests; plus actionlint over every workflow
+# file. Both jobs are required checks, so they run on every PR (no path filter: a skipped workflow never reports).
+# custom-memory-engine/ is excluded from the root Ruff config and verified by its own workflow.
 
 on:
   pull_request:
@@ -20,13 +20,15 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0 (Node 24)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: "0.13.5"
-          python-version: "3.13"
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          cache-dependency-glob: uv.lock  # the root lock only (Python comes from .python-version)
       - name: uv sync --locked
         run: uv sync --locked --all-extras --all-groups
       - name: ruff check
@@ -35,14 +37,18 @@ jobs:
         run: uv run --no-sync ruff format --check .
       - name: pyright
         run: uv run --no-sync pyright
+      - name: pytest (root application; no services needed)
+        run: uv run --no-sync pytest -q
 
   workflows:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (Node 24)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: actionlint (every workflow and composite action reference)
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
-          rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+          rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667  # 1.7.12
           -color

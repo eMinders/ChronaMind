@@ -49,7 +49,8 @@ CODING_PROFILE = parse_profile(
 T0 = datetime(2026, 3, 10, 12, 0, tzinfo=UTC)
 
 
-def episode(scope: str, key: str, content: str, *, source_type: str = "external") -> dict[str, object]:
+def episode(scope: str, key: str, content: str, *, source_type: str = "tool") -> dict[str, object]:
+    """An episode of a source type the profile declares (V2-D69: an undeclared type is refused)."""
     return {
         "scope": scope,
         "source": {

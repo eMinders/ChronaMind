@@ -6,21 +6,18 @@ recorded as missing ("no gate proves that a replayed job yields zero duplicate m
 """
 
 import ast
-import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection, sql
 
 from custom_memory_engine.clock import ClockTick
-from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, commit_initial_version
 from custom_memory_engine.queue import Job, NewJob, enqueue, process_one
-from tests.integration.schema import apply_migrations
+from tests.integration.schema import engine_database
 
 pytestmark = pytest.mark.integration
 
@@ -70,15 +67,14 @@ def test_every_clause_is_covered_by_a_test_that_exists() -> None:
 
 @pytest_asyncio.fixture
 async def env() -> AsyncIterator[tuple[AsyncConnection, str]]:
-    if not os.environ.get("CME_TEST_DATABASE_URL"):
-        pytest.skip("CME_TEST_DATABASE_URL must explicitly name the disposable test database")
-    url = DatabaseConfig.from_environment().database_url.get_secret_value()
-    schema = "cme_replay_" + uuid4().hex[:16]
-    async with await AsyncConnection.connect(url, autocommit=True, connect_timeout=5) as conn:
-        await conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    async with (
+        engine_database() as (config, schema),
+        await AsyncConnection.connect(
+            config.database_url.get_secret_value(), autocommit=True, connect_timeout=5
+        ) as conn,
+    ):
         await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
         await conn.execute("SET timezone = 'UTC'")
-        await apply_migrations(conn)
         await conn.execute("INSERT INTO predicate_schema VALUES ('fact', 'multi', 'semantic')")
         await conn.execute("SELECT set_config('app.user_id', 'u1', false)")
         await conn.execute("INSERT INTO app_user VALUES ('u1', 'ext-u1', %s)", (T0,))
@@ -87,10 +83,7 @@ async def env() -> AsyncIterator[tuple[AsyncConnection, str]]:
             await conn.execute(
                 "INSERT INTO turn VALUES (%s, 's1', 'u1', %s, 'user', %s, %s)", (turn, sequence, f"fact {turn}", at)
             )
-        try:
-            yield conn, schema
-        finally:
-            await conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+        yield conn, schema
 
 
 def _job(turn: str, *, job_id: str | None = None) -> NewJob:

@@ -1,6 +1,6 @@
 # RL-044 clock and queue — verification record
 
-27 October 2026. Issue [#35](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/35).
+27 October 2026. Issue [#35](https://github.com/eMinders/ChronaMind/issues/35).
 Base: `20e206c320ce74dabcc0061f8413531c735414b2`. All contribution files are inside
 `custom-memory-engine/`; canonical schema, migrations, root product, manifests and
 dependency locks are unchanged.

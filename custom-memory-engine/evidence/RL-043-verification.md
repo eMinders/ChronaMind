@@ -1,6 +1,6 @@
 # RL-043 temporal predicates — verification record
 
-Date: 27 October 2026. Issue: [#34](https://github.com/Abdulrahman-Ayman-Farid/ChronaMind/issues/34).
+Date: 27 October 2026. Issue: [#34](https://github.com/eMinders/ChronaMind/issues/34).
 Baseline: `20e206c320ce74dabcc0061f8413531c735414b2` (merged schema/migration and
 replay/schema assurance). All changes are inside `custom-memory-engine/`.
 
