@@ -54,6 +54,12 @@ dev = [
 ]
 test = ["httpx>=0.28.1", "pytest>=9.2.0"]
 
+[tool.uv]
+# `uv sync` (make install, scripts/setup.py) installs both groups, so `make check` runs the project's own pytest
+# locally; without `test` here `uv run pytest` silently falls back to any pytest on PATH (wrong interpreter).
+# CI syncs --all-groups and the Dockerfile --no-default-groups, so neither changes.
+default-groups = ["dev", "test"]
+
 
 [tool.pytest.ini_options]
 # The root application's own tests. custom-memory-engine/ is a separate project with its own suite and CI job.

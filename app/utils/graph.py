@@ -1,5 +1,8 @@
 """This file contains the graph utilities for the application."""
 
+import threading
+import time
+
 import tiktoken
 from langchain_core.messages import BaseMessage
 from langchain_core.messages import trim_messages as _trim_messages
@@ -8,15 +11,62 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.schemas import Message
 
-# Cache tiktoken encoding at module level — thread-safe and reusable
-try:
-    _TIKTOKEN_ENCODING = tiktoken.encoding_for_model(settings.DEFAULT_LLM_MODEL)
-except KeyError:
-    _TIKTOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
+# The tiktoken encoding is loaded on first use, not at import: tiktoken downloads its BPE file on a cold cache, so an
+# import-time load made importing the app (server start-up, the test suite) depend on outbound network access, and a
+# failed download crashed start-up. Only a successfully loaded encoding is cached; after a failure, token counts fall
+# back to an estimate and the load is retried once the cooldown has passed.
+_ENCODING_RETRY_COOLDOWN_SECONDS = 300.0
+_CHARS_PER_TOKEN_ESTIMATE = 4
+_encoding: tiktoken.Encoding | None = None
+_encoding_failed_at: float | None = None
+_encoding_lock = threading.Lock()
+
+
+def _load_encoding(model: str) -> tiktoken.Encoding:
+    """Return the tiktoken encoding for ``model``, or ``cl100k_base`` when tiktoken does not know the model."""
+    try:
+        return tiktoken.encoding_for_model(model)
+    except KeyError:
+        return tiktoken.get_encoding("cl100k_base")
+
+
+def _get_encoding() -> tiktoken.Encoding | None:
+    """Return the cached encoding, loading it if needed; ``None`` while it cannot be loaded (estimate instead)."""
+    global _encoding, _encoding_failed_at
+    if _encoding is not None:
+        return _encoding
+    with _encoding_lock:
+        if _encoding is not None:
+            return _encoding
+        if (
+            _encoding_failed_at is not None
+            and time.monotonic() - _encoding_failed_at < _ENCODING_RETRY_COOLDOWN_SECONDS
+        ):
+            return None
+        try:
+            _encoding = _load_encoding(settings.DEFAULT_LLM_MODEL)
+        except Exception:
+            _encoding_failed_at = time.monotonic()
+            logger.exception(
+                "tiktoken_encoding_load_failed_using_estimate",
+                model=settings.DEFAULT_LLM_MODEL,
+                retry_after_seconds=_ENCODING_RETRY_COOLDOWN_SECONDS,
+            )
+            return None
+        _encoding_failed_at = None
+        return _encoding
+
+
+def _count_text_tokens(text: str, encoding: tiktoken.Encoding | None) -> int:
+    """Count the tokens of ``text`` exactly, or estimate them (about 4 characters a token) without an encoding."""
+    if encoding is None:
+        return -(-len(text) // _CHARS_PER_TOKEN_ESTIMATE)
+    return len(encoding.encode(text))
 
 
 def _count_tokens_tiktoken(messages: list) -> int:
     """Count tokens locally using tiktoken — no API call needed."""
+    encoding = _get_encoding()
     num_tokens = 0
     for message in messages:
         # Every message has overhead tokens for role/name
@@ -24,17 +74,17 @@ def _count_tokens_tiktoken(messages: list) -> int:
         if isinstance(message, dict):
             for _, value in message.items():
                 if isinstance(value, str):
-                    num_tokens += len(_TIKTOKEN_ENCODING.encode(value))
+                    num_tokens += _count_text_tokens(value, encoding)
         elif isinstance(message, BaseMessage):
             content = message.content
             if isinstance(content, str):
-                num_tokens += len(_TIKTOKEN_ENCODING.encode(content))
+                num_tokens += _count_text_tokens(content, encoding)
             elif isinstance(content, list):
                 for block in content:
                     if isinstance(block, str):
-                        num_tokens += len(_TIKTOKEN_ENCODING.encode(block))
+                        num_tokens += _count_text_tokens(block, encoding)
                     elif isinstance(block, dict) and "text" in block:
-                        num_tokens += len(_TIKTOKEN_ENCODING.encode(block["text"]))
+                        num_tokens += _count_text_tokens(block["text"], encoding)
     num_tokens += 2  # every reply is primed with assistant
     return num_tokens
 
