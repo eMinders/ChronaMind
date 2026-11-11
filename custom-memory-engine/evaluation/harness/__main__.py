@@ -19,7 +19,7 @@ def main() -> int:
     parser.add_argument(
         "--suite",
         required=True,
-        choices=("T", "G", "D", "I", "LongMemEval_oracle", "LongMemEval_S", "LongMemEval_M", "LoCoMo"),
+        choices=("T", "G", "D", "I", "C", "LongMemEval_oracle", "LongMemEval_S", "LongMemEval_M", "LoCoMo"),
     )
     parser.add_argument("--split", required=True, choices=("dev", "test"))
     parser.add_argument("--run-id", required=True)

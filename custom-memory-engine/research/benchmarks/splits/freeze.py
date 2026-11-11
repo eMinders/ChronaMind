@@ -43,6 +43,18 @@ from research.benchmarks.longmemeval.fetch import (
 from research.benchmarks.longmemeval.fetch import (
     load_manifest as load_lme_manifest,
 )
+from research.benchmarks.own_C.generator import (
+    DEFAULT_DEV_SEED as OWN_C_DEV_SEED,
+)
+from research.benchmarks.own_C.generator import (
+    DEFAULT_TEST_SEED as OWN_C_TEST_SEED,
+)
+from research.benchmarks.own_C.generator import (
+    MANIFEST_PATH as OWN_C_MANIFEST_PATH,
+)
+from research.benchmarks.own_C.generator import (
+    generate_suite_c,
+)
 from research.benchmarks.own_D.generator import (
     DEFAULT_DEV_SEED as OWN_D_DEV_SEED,
 )
@@ -99,7 +111,7 @@ SPLITS_DIR = Path(__file__).resolve().parent
 FREEZE_LIST_PATH = SPLITS_DIR / "FREEZE_LIST.md"
 DEFAULT_SPLIT_SEED = 42
 
-SplitSuiteFamily = Literal["LongMemEval", "LoCoMo", "T", "G", "D", "I"]
+SplitSuiteFamily = Literal["LongMemEval", "LoCoMo", "T", "G", "D", "I", "C"]
 ClusterKey = Literal["question_id", "conversation_id", "scenario_id"]
 
 SPLIT_FILENAMES: dict[str, str] = {
@@ -109,6 +121,7 @@ SPLIT_FILENAMES: dict[str, str] = {
     "own_G": "own_G.yaml",
     "own_D": "own_D.yaml",
     "own_I": "own_I.yaml",
+    "own_C": "own_C.yaml",
 }
 
 
@@ -493,7 +506,7 @@ def build_locomo_split(seed: int = DEFAULT_SPLIT_SEED) -> FrozenSuiteSplit:
 
 
 def build_own_suite_split(
-    suite_family: Literal["T", "G", "D", "I"],
+    suite_family: Literal["T", "G", "D", "I", "C"],
     seed: int = DEFAULT_SPLIT_SEED,
 ) -> FrozenSuiteSplit:
     """Build and verify the scenario-level split and SHA-256 scenario digests for an Own Suite."""
@@ -577,6 +590,35 @@ def build_own_suite_split(
                 "expected_total_exposures": test_ds.expected_total_exposures,
             },
         }
+    elif suite_family == "C":
+        dev_ds = generate_suite_c("dev")
+        test_ds = generate_suite_c("test")
+        manifest = _read_manifest_file(OWN_C_MANIFEST_PATH)
+        dev_seed, test_seed = OWN_C_DEV_SEED, OWN_C_TEST_SEED
+        strata_counts = {
+            "dev": {
+                "scenarios": dev_ds.scenario_count,
+                "total_probes": dev_ds.total_probes,
+                "prior_attempt_probes": dev_ds.family_probe_counts["prior_attempt_recall"],
+                "procedure_reuse_probes": dev_ds.family_probe_counts["procedure_reuse"],
+                "near_miss_control_probes": dev_ds.near_miss_control_probes,
+                "repo_fact_probes": dev_ds.family_probe_counts["repo_fact_recall"],
+                "abstention_probes": dev_ds.abstention_probes,
+                "procedure_channel_episodes": dev_ds.procedure_channel_episodes,
+                "expected_false_offers": dev_ds.expected_false_offers,
+            },
+            "test": {
+                "scenarios": test_ds.scenario_count,
+                "total_probes": test_ds.total_probes,
+                "prior_attempt_probes": test_ds.family_probe_counts["prior_attempt_recall"],
+                "procedure_reuse_probes": test_ds.family_probe_counts["procedure_reuse"],
+                "near_miss_control_probes": test_ds.near_miss_control_probes,
+                "repo_fact_probes": test_ds.family_probe_counts["repo_fact_recall"],
+                "abstention_probes": test_ds.abstention_probes,
+                "procedure_channel_episodes": test_ds.procedure_channel_episodes,
+                "expected_false_offers": test_ds.expected_false_offers,
+            },
+        }
     else:
         raise ValueError(f"unsupported_own_suite_family: {suite_family}")
 
@@ -633,7 +675,7 @@ def build_own_suite_split(
 
 
 def build_all_splits(seed: int = DEFAULT_SPLIT_SEED) -> dict[str, FrozenSuiteSplit]:
-    """Construct all 6 frozen suite split specifications deterministically."""
+    """Construct all 7 frozen suite split specifications deterministically."""
     return {
         "longmemeval": build_longmemeval_split(seed=seed),
         "locomo": build_locomo_split(seed=seed),
@@ -641,6 +683,7 @@ def build_all_splits(seed: int = DEFAULT_SPLIT_SEED) -> dict[str, FrozenSuiteSpl
         "own_G": build_own_suite_split("G", seed=seed),
         "own_D": build_own_suite_split("D", seed=seed),
         "own_I": build_own_suite_split("I", seed=seed),
+        "own_C": build_own_suite_split("C", seed=seed),
     }
 
 
@@ -663,7 +706,7 @@ def split_path_for_suite(suite_id: SuiteId, splits_dir: Path = SPLITS_DIR) -> Pa
         return splits_dir / SPLIT_FILENAMES["longmemeval"]
     if suite_id == "LoCoMo":
         return splits_dir / SPLIT_FILENAMES["locomo"]
-    if suite_id in ("T", "G", "D", "I"):
+    if suite_id in ("T", "G", "D", "I", "C"):
         return splits_dir / SPLIT_FILENAMES[f"own_{suite_id}"]
     raise ValueError(f"unsupported_suite_id: {suite_id}")
 
@@ -711,7 +754,7 @@ def to_benchmark_selection(
 
 
 def write_all_splits(splits_dir: Path = SPLITS_DIR, seed: int = DEFAULT_SPLIT_SEED) -> dict[str, str]:
-    """Write all 6 split .yaml files to splits_dir and return a map of filename -> SHA-256."""
+    """Write all 7 split .yaml files to splits_dir and return a map of filename -> SHA-256."""
     reject_links(splits_dir)
     splits_dir.mkdir(parents=True, exist_ok=True)
     built = build_all_splits(seed=seed)
@@ -730,7 +773,7 @@ def verify_frozen_splits(
     freeze_list_path: Path = FREEZE_LIST_PATH,
     seed: int = DEFAULT_SPLIT_SEED,
 ) -> dict[str, str]:
-    """Verify all 6 on-disk split .yaml files and FREEZE_LIST.md against recomputed splits."""
+    """Verify all 7 on-disk split .yaml files and FREEZE_LIST.md against recomputed splits."""
     reject_links(splits_dir)
     reject_links(freeze_list_path)
     if not freeze_list_path.is_file():
@@ -764,7 +807,7 @@ def verify_frozen_splits(
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint to write or verify frozen Gate J5 split files."""
     parser = argparse.ArgumentParser(description="Build or verify Gate J5 frozen benchmark splits (RL-026).")
-    parser.add_argument("--write", action="store_true", help="Write all 6 .yaml split files to splits/.")
+    parser.add_argument("--write", action="store_true", help="Write all 7 .yaml split files to splits/.")
     args = parser.parse_args(argv)
     if args.write:
         digests = write_all_splits()
