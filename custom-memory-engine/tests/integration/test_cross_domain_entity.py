@@ -459,9 +459,10 @@ async def test_the_query_operation_control_breaks_the_scope_isolation_assertion(
 ) -> None:  # noqa: F811
     """Row 2's control at the entry point: make ``query``'s SQL predicate unfiltered and the isolation assertion fails.
 
-    The assertion under control is row 2's, through the public ``query`` operation. The guard is
-    ``scope.access.read_predicate`` as the read handler uses it, so that is what the control replaces; nothing in the
-    product path can be switched, and the monkeypatch lives only inside this test.
+    The assertion under control is row 2's, through the public ``query`` operation. The guards are
+    ``scope.access.read_predicate_named`` (the SQL half, named because it joins the temporal predicate) and
+    ``row_visible`` (the reference half), so those are what the control replaces; nothing in the product path can be
+    switched, and the monkeypatch lives only inside this test.
     """
     async with world(database) as (_connection, engine, _schema):
         runtime = cast(DbTargets, engine.resolver).runtime
@@ -488,13 +489,13 @@ async def test_the_query_operation_control_breaks_the_scope_isolation_assertion(
         # `query` enforces the read set twice: the SQL predicate, then `row_visible` on every row (V2-D45 defence in
         # depth). Either alone keeps scope B out, so each is broken alone (B stays hidden) and then both (B leaks).
         with monkeypatch.context() as patch:
-            patch.setattr(read_handlers, "read_predicate", lambda *_args: (sql.SQL("TRUE"), []))
+            patch.setattr(read_handlers, "read_predicate_named", lambda *_args: (sql.SQL("TRUE"), {}))
             assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}
         with monkeypatch.context() as patch:
             patch.setattr(read_handlers, "row_visible", lambda *_args: True)
             assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}
         with monkeypatch.context() as patch:
-            patch.setattr(read_handlers, "read_predicate", lambda *_args: (sql.SQL("TRUE"), []))
+            patch.setattr(read_handlers, "read_predicate_named", lambda *_args: (sql.SQL("TRUE"), {}))
             patch.setattr(read_handlers, "row_visible", lambda *_args: True)
             with pytest.raises(AssertionError):  # the row-2 assertion now fails: the control is sensitive
                 assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}

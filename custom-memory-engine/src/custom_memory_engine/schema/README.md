@@ -22,6 +22,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` Â
 | `016_source_types.sql` | Migration 16 (`E-021`, `V2-D66`): admits declared tool, file, and event evidence source types |
 | `017_declared_source_types.sql` | Migration 17 (`E-021`, `V2-D66`): stores tool, file, and event evidence under the declared type |
 | `018_scope_entity_links.sql` | Migration 18 (`E-024`): `entity_link`, the authorized links between scope-local entities (no scope table, `V2-D65`) |
+| `019_subject_entity.sql` | Migration 19 (`V2-D74`): `memory_version.subject_entity_id`, making an entity subject a composite foreign key (exists, same principal, same scope) |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
@@ -401,11 +402,28 @@ with no row of its own, and `create_scope` stays validation plus an idempotency 
 
 `link_entity` is the operation this migration unblocks (`api/handlers.py`): `targets_readable` requires both endpoints
 in the caller's read set, and an unreadable endpoint answers exactly like an absent one (`forbidden`, T-09). The
-optional `subject_entity` input of `assert` (`E-024`) records which entity a claim is about; when present it must
-belong to the scope the claim is written in.
+optional `subject_entity` input of `assert` (`E-024`) records which entity a claim is about; migration 19 makes
+the same-scope rule a composite foreign key rather than only a handler check.
 
 Rollback: `rollback/018_scope_entity_links.sql` restores version 17 exactly and **refuses** while any link exists,
 because removing it would destroy cross-scope identity. Tested by `tests/integration/test_cross_domain_entity.py`.
+
+## Migration 19: an entity subject is a foreign key (`019_subject_entity.sql`, `V2-D74`)
+
+`memory_version.subject_entity_id` is typed: `NULL` means the subject is `subject_key` itself (`'self'` for every v1
+claim), and a value means the subject *is* that entity. `subject_key` keeps holding the same id because it is the
+column `no_bitemporal_overlap` and the supersession rules compare.
+
+One composite foreign key `(subject_entity_id, user_id, scope_path) â†’ entity (id, user_id, scope_path)` makes three
+properties structural at once: the entity exists, it belongs to the same principal, and it lies in the claim's own
+scope. `ON DELETE RESTRICT`, because a cited entity is part of the claim (a migration-18 `entity_link` cascades
+instead: the link *is* the relation). `CHECK (subject_entity_id IS NULL OR subject_entity_id = subject_key)` keeps
+the two spellings from disagreeing, and `guard_update` treats the column as belief content, so a claim cannot be
+re-pointed at another entity in place.
+
+Nothing is backfilled: no row written before this migration recorded an entity subject, and inferring one from
+`subject_key` would fabricate a link the caller never made. The rollback restores version 18's catalog fingerprint
+exactly, with `guard_update` restored byte-for-byte and its pinned `search_path` re-applied.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner

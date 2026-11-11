@@ -52,9 +52,11 @@ The table is the **complete** enumeration: `tests/test_api_contract.py` holds it
 ```text
 SourceRef      { type: 'turn'|'tool'|'file'|'paper'|'event'|'external', ref: str, span?: str, content_hash: str }
 ScopeSelector  exact(path) | subtree(path) | with_visibility(path, {project, shared})      # section 6
-QueryRequest   { text, intent?, mode: current|historical_as_of|historical_window|change|audit_as_of,
-                 target_time?, belief_time?, selectors: ScopeSelector[], budget: ChannelBudgets, limit? }
-QueryResult    { facts[], hypotheses[], procedures[], conflicts[], provenance_bundle, cost, coverage }   # CHANNELS.md
+QueryRequest   { text, intent?, mode: current_state|historical_as_of|historical_window|change|audit_as_of,
+                 scope?, target_time?, belief_time?, window_start?, window_end?,
+                 selectors: ScopeSelector[], budget: ChannelBudgets, limit? }
+QueryResult    { facts[], hypotheses[], procedures[], conflicts[], audit[], refused[], is_audit,
+                 provenance_bundle, cost, coverage }   # CHANNELS.md
 Receipt        { id, effect, recorded_at }     # content-free
 PurgeReceipt   { purged_episodes, retained_as_evidence, recorded_at }   # content-free: counts and the clock only
 ```
@@ -153,10 +155,31 @@ this operation without defining its payload; this is the proposed meaning (see 5
 
 **`query(ctx, request: QueryRequest) → QueryResult`**
 Staged retrieval (`ARCHITECTURE_V2.md` 9). Returns the four channels, a provenance bundle, per-stage cost and
-per-channel coverage. The temporal predicate is a filter. `mode='audit_as_of'` requires `belief_time ≤ clock_now()`
-and is **Tier C only** and **never returns answer-context material**, as in v1 (`TECHNICAL_SPECIFICATION.md`
-3.5); Tier B calling it is `forbidden`. *Errors:* `validation_error` (future target time, `t > ρ`),
-`resource_limit` (more than 16 selectors, budget).
+per-channel coverage. The temporal predicate is a filter, never a score term.
+
+**The reference instant ρ is the engine's own clock and is never caller-supplied** (`I4`). `reference_time` is
+therefore not an input: a request that sends one is refused (`validation_error/reference_time_is_the_engine_clock`),
+because a caller-chosen ρ would read a belief the engine never held at that instant. The engine takes ρ from
+`transaction_timestamp()`, the clock `recorded_range` is written against, so "now" means the same thing on both
+sides of the comparison.
+
+`mode` selects the predicate (`TECHNICAL_SPECIFICATION.md` 3.5):
+- `current_state` (default when `mode` is omitted): `status='active' AND recorded_range @> ρ AND event_range @> ρ`;
+- `historical_as_of`: adds `target_time`, must satisfy `target_time ≤ ρ`; `event_range @> target_time`;
+- `historical_window`: adds `window_start`/`window_end`; `event_range && [window_start, window_end)`, and
+  `window_end ≤ ρ`. Both bounds are required and the window must be non-empty;
+- `audit_as_of`: adds `target_time` and `belief_time`; restricted to `belief_time ≤ clock_now()`, admits
+  `status IN ('active','archived')`, and is **Tier C only**. Its rows are returned in `audit[]` and `is_audit=true`,
+  **never** in an answer channel: `TECHNICAL_SPECIFICATION.md` 3.5 forbids using them as answer context, and
+  `channel_of` maps a retired artifact to `none`, so a channel-routed audit would drop exactly the rows it exists to
+  show. Tier B calling it is `forbidden`;
+- `change` is recognised but **not yet wired** (`validation_error/mode_change_not_wired`): it is a diff of two
+  temporal views and belongs to `E-033`.
+
+The read set and the temporal predicate are applied in one statement, so `limit` counts rows the caller may actually
+read. *Errors:* `validation_error` (missing or malformed parameter, `target > ρ`, empty window, unknown mode, a
+caller-supplied `reference_time`), `forbidden` (`audit_as_of` as Tier B, or a scope outside the read set),
+`resource_limit` (more than 16 selectors).
 
 **`refine(ctx, result_id, instruction: str) → QueryResult`**
 Drill-down on a prior result within the same read set; cannot widen it. *Errors:* `forbidden` (unknown or

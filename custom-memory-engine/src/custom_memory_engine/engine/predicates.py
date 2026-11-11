@@ -307,3 +307,80 @@ async def fetch_versions(
             await cursor.execute(statement, compiled.parameters)
             versions = tuple(TemporalVersion.model_validate(row["version"]) for row in await cursor.fetchall())
     return TemporalResult(mode=query.mode, user_id=query.user_id, versions=versions)
+
+
+@dataclass(frozen=True)
+class ScopedRow:
+    """One ``memory_version`` row as a scoped temporal read returns it (the columns channel routing needs)."""
+
+    id: str
+    kind: str
+    lifecycle: str
+    content: str
+    scope_path: str
+    visibility: str
+
+
+async def reference_instant(connection: AsyncConnection) -> datetime:
+    """The engine's present as **writes** record it: ``transaction_timestamp()``.
+
+    ``recorded_range`` opens at the instant ``clock.allocate_clock`` allocates, and that function reads
+    ``transaction_timestamp()`` on purpose — it "never treats an inherited ``app.clock`` as a raw live clock"
+    (a replay harness pins ``app.clock``, and the pin must not leak into a live belief). A read whose reference
+    instant came from ``clock_now()`` would therefore disagree with every row it is filtering over: pinned low,
+    nothing is current; pinned high, a caller reads a belief the engine never held. Using the writer's own clock is
+    the only way "the view now" means the same thing on both sides (``I4``).
+    """
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute("SELECT pg_catalog.transaction_timestamp()")
+        row = await cursor.fetchone()
+    if row is None or not isinstance(row[0], datetime):
+        raise TemporalQueryError("database_clock_instant_required")
+    return row[0]
+
+
+async def fetch_scoped_rows(
+    connection: AsyncConnection,
+    query: TemporalQuery,
+    read_filter: sql.Composable,
+    read_parameters: Mapping[str, object],
+    *,
+    limit: int,
+    schema_name: str = "cme_engine",
+) -> tuple[ScopedRow, ...]:
+    """The temporal predicate and a caller's read predicate in **one** statement, newest belief first.
+
+    Both filters run in SQL before ``LIMIT``, so the limit counts only rows the caller may read: filtering after the
+    limit would silently return fewer rows than exist. ``read_filter`` must bind by name (it is composed with the
+    temporal predicate, which does); ``scope.access.read_predicate_named`` produces it.
+
+    Like :func:`fetch_versions` this runs in the caller's transaction and refuses a context whose ``app.user_id`` is
+    not the query's user. ``audit_as_of`` is checked against the database clock here, never the host's.
+    """
+    query = TemporalQuery.model_validate(query.model_dump())
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise TemporalQueryError("positive_row_limit_required")
+    if not isinstance(schema_name, str) or fullmatch(r"cme_[a-z][a-z0-9_]*", schema_name) is None:
+        raise TemporalQueryError("isolated_engine_schema_identifier_required")
+    if read_parameters.keys() & {"user_id", "reference_time", "target_time", "window_start", "window_end"}:
+        raise TemporalQueryError("read_parameters_collide_with_temporal_parameters")
+    clock_instant = await reference_instant(connection)
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute("SELECT NULLIF(pg_catalog.current_setting('app.user_id', true), '')")
+        context = await cursor.fetchone()
+        if context is None or context[0] != query.user_id:
+            raise InsufficientPrivilege("temporal_user_context_mismatch")
+        compiled = compile_predicate(query, alias="m", database_clock=clock_instant)
+        await cursor.execute(
+            sql.SQL(
+                "SELECT m.id, m.kind, m.lifecycle, m.content, m.scope_path, m.visibility FROM {table} AS m "
+                "WHERE {temporal} AND m.kind IS NOT NULL AND m.lifecycle IS NOT NULL AND {readable} "
+                "ORDER BY lower(m.recorded_range) DESC NULLS LAST, m.id LIMIT %(row_limit)s"
+            ).format(
+                table=sql.Identifier(schema_name, "memory_version"),
+                temporal=compiled.statement,
+                readable=read_filter,
+            ),
+            {**compiled.parameters, **read_parameters, "row_limit": limit},
+        )
+        return tuple(ScopedRow(*(str(value) for value in row)) for row in await cursor.fetchall())
