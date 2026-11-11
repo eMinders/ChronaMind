@@ -56,6 +56,7 @@ QueryRequest   { text, intent?, mode: current|historical_as_of|historical_window
                  target_time?, belief_time?, selectors: ScopeSelector[], budget: ChannelBudgets, limit? }
 QueryResult    { facts[], hypotheses[], procedures[], conflicts[], provenance_bundle, cost, coverage }   # CHANNELS.md
 Receipt        { id, effect, recorded_at }     # content-free
+PurgeReceipt   { purged_episodes, retained_as_evidence, recorded_at }   # content-free: counts and the clock only
 ```
 
 ## 3. Operations and tiers (the tier matrix, `MA-015`)
@@ -237,8 +238,12 @@ service must not dissent on the user's behalf. *Errors:* `precondition_failed` (
 
 ### 4.7 Maintain — Tier C only
 
-**`purge_working(ctx, scope) → Receipt`** — deletes `retention='working'` episodes of one scope, audited; durable
-claims and abstractions are untouched (retention floors). **`expire(ctx, scope, as_of?) → Receipt`** — applies
+**`purge_working(ctx, scope) → PurgeReceipt`** — deletes `retention='working'` episodes of one scope, audited; durable
+claims and abstractions are untouched (retention floors). The receipt carries the two counts and the belief time and
+nothing else: a purge touches no caller-named artifact, so there is no artifact id to return and an id would be the one
+thing §1.1 forbids. A repeated purge returns `(0, retained)` and is not an error; the counts also appear, content-free,
+in the scope event (an `audit_event` of type `working_purged`). An episode that a surviving row cites as evidence is
+retained, not promoted or demoted: rule PW-1 in `engine/purge.py`, logged as `E-026-F1` for a decision record. **`expire(ctx, scope, as_of?) → Receipt`** — applies
 retention expiry; recorded as a scope event, not a deletion of knowledge. **`rebuild_index(ctx, index:
 fts|vector|closure_hash) → JobId`** — queues an index rebuild. *Errors:* `forbidden`, `validation_error`.
 All Maintain operations are **admin-only** (`V2-D47`).

@@ -51,6 +51,9 @@ AUDIT_DETAIL_KEYS = frozenset(
         "dependents",
         "re_derived_versions",
         "purged_jobs",
+        # working-memory purge (E-026): the scope event records how many episodes went and how many stayed as evidence
+        "purged_episodes",
+        "retained_as_evidence",
         # how many outside-the-boundary sources (D-ENG-04) a deletion listed; a count, never a locator or hash
         "external_exclusions",  # a count of external sources outside the deletion boundary (E-013)
         # soundness assessments (E-015): counts, registered-method identifiers, thresholds as decimal tokens

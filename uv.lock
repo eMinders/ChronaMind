@@ -798,6 +798,7 @@ wheels = [
 name = "langgraph-fastapi-template"
 version = "0.1.0"
 source = { virtual = "." }
+default-groups = ["dev", "test"]
 dependencies = [
     { name = "alembic" },
     { name = "asgi-correlation-id" },

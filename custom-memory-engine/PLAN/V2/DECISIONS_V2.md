@@ -1481,4 +1481,43 @@ Two controls each fail at least one test: a mutant that ignores the flag, and a 
 
 Mutation controls each fail at least one test: removing `targets_readable` from `link_entity`, and letting `subject_entity` cross scopes. The four `test_retention_promotion_db.py` tests pass unchanged.
 
+---
+
+### V2-D72 — A working-scope purge deletes only episodes no surviving row cites as evidence (E-026, rule PW-1; closes `E-026-F1`)
+
+**Context.**
+- `ARCHITECTURE_V2.md` §1 says a workspace reset "may purge working-scope episodes, and that purge is recorded as a scope event, **not** a deletion of knowledge", and that working memory is "still evidence-bearing".
+- `DELETION_ORDER.md` / `V2-D09` make a *deletion* remove or re-derive everything derived from what it deletes.
+- A working episode that is the **evidence** for a durable artifact sits between those two statements. E-026 §4 required the choice to be written down before code, and logged it as `E-026-F1` (a purge could retain cited episodes indefinitely, so working memory is not strictly bounded).
+
+**Decision (rule PW-1, `engine/purge.py::plan_purge`).** `purge_working(ctx, scope)` physically deletes every
+`kind='episode'`, `retention='working'` row in the scope's subtree, **except** an episode that a surviving row cites as
+evidence. The citations are:
+- a `memory_derivation` source;
+- a `negative_constraint` lift evidence;
+- a compared version of a `memory_conflict`;
+- an endpoint of a `contradicts` association whose origin routes it to `conflicts` (`V2-D48` C-P4).
+
+Such an episode is retained exactly as it is: not promoted (`V2-D70` promotes `session` only) and not demoted. No
+other row changes, and a second purge purges nothing while the citation stands. The purge records one content-free
+`audit_event` (`working_purged`) carrying two counts.
+
+**Rationale.**
+1. **Following the closure makes the purge a deletion of knowledge.** `V2-D10`/`I10` forbid that; it is the guarantee this task exists to prove.
+2. **Dropping the pointer is worse.** It leaves an `inferred` row with no derivation (`I1'`), and a later lineage deletion of the episode's source can no longer reach the inference built on it (`V2-D09`, `I8`). Retaining the episode breaks neither.
+3. **A grounded claim never points at an episode.** `assert` grounds it on the turn the episode recorded, so purging the episode leaves the claim and its evidence intact by construction.
+4. **The contradiction case is a real cascade.** An association cascades with its endpoint, so purging an episode at one end of a contradiction-opening edge would silently move a durable claim from `conflicts` back to `facts`. Retaining that episode is the only local answer.
+
+**Consequences, recorded rather than hidden.** Working memory is not strictly bounded: an episode cited by a surviving artifact stays until that artifact is deleted. Reclaiming those episodes needs a demotion or re-derivation rule, which `V2-D14` (defaults and expiry) or `E-027` (outcome-driven retention) would have to state. `E-026-F1` is thereby answered on semantics and stays open on the bound.
+
+**Evidence.** `tests/integration/test_purge_working_db.py` through `Engine.call` under the restricted role:
+- only the unreferenced working episodes of the scope go (every table diffed before and after);
+- the durable claim and the inferred abstraction answer exactly as before, in the same channels;
+- a purged episode is absent, not a tombstone, and answers like an unknown id;
+- the retained evidence still lets the deletion closure reach the inference;
+- a `contradicts` edge keeps its artifact in `conflicts`;
+- an admin-only, own-namespace purge is refused for every other credential with no row changed.
+
+`tests/test_purge_rule.py` covers the rule as a pure function, including the fixpoint. Controls: a destructive plan (cascading to dependents) fails the answerability test, and a citation-blind plan is refused by the restrictive derivation key.
+
 **Status:** decided and implemented under the Project Owner's delegation (2026-11-11).

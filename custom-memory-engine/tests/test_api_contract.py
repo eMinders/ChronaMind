@@ -48,6 +48,17 @@ def api_matrix() -> dict[str, tuple[str, frozenset[str]]]:
     }
 
 
+def api_outputs() -> dict[str, str]:
+    """The declared return type of every ``name(...) → Type`` signature in API_V2.md §4 (the first named type)."""
+    text = (PLAN / "API_V2.md").read_text(encoding="utf-8")
+    section = text[text.index("## 4.") : text.index("## 5.")].replace("\n", " ")
+    outputs: dict[str, str] = {}
+    for name, returns in re.findall(r"\*\*`([a-z_]+)\(ctx,[^`]*→\s*([A-Za-z][A-Za-z| ]*)`\*\*", section):
+        # Keep the union's own order and spelling (`Receipt | rejected`), which is the contract's text.
+        outputs[name] = " | ".join(part.strip() for part in returns.split("|"))
+    return outputs
+
+
 def api_signatures() -> dict[str, tuple[str, ...]]:
     """Parse every ``name(ctx, a, b?, …)`` signature in API_V2.md §4."""
     text = (PLAN / "API_V2.md").read_text(encoding="utf-8")
@@ -104,6 +115,19 @@ def test_registry_inputs_equal_every_api_v2_signature() -> None:
     assert set(signatures) == set(BY_NAME), set(signatures) ^ set(BY_NAME)
     for name, inputs in signatures.items():
         assert BY_NAME[name].inputs == inputs, name
+
+
+def test_registry_output_equals_every_api_v2_signature() -> None:
+    """The declared return type and the wired one agree: `purge_working` returns `PurgeReceipt`, not a bare `Receipt`.
+
+    This is what caught the one divergence a reader could not see: an operation whose documentation said `Receipt`
+    while the handler returned a richer, content-free result. A new output type in the contract must appear in §2 and
+    on the signature, in the same change.
+    """
+    outputs = api_outputs()
+    assert set(outputs) == set(BY_NAME), set(outputs) ^ set(BY_NAME)
+    for name, declared in outputs.items():
+        assert BY_NAME[name].output == declared, (name, BY_NAME[name].output, declared)
 
 
 def test_retract_does_not_exist_and_retract_own_does() -> None:

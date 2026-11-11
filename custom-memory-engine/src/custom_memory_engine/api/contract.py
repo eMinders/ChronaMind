@@ -142,7 +142,7 @@ OPERATIONS: tuple[Operation, ...] = (
         ("targets_readable",), transitions=frozenset({("contested", "asserted"), ("contested", "retired")})),
     _op("dissent", "Adjudicate", "C", ("artifact_id", "note"), "Receipt", ("precondition_failed",),
         ("targets_readable",), transitions=frozenset({("inferred", "retired")})),
-    _op("purge_working", "Maintain", "C", ("scope",), "Receipt", conditions=("scope_writable",), deletes=True,
+    _op("purge_working", "Maintain", "C", ("scope",), "PurgeReceipt", conditions=("scope_writable",), deletes=True,
         admin_only=True),
     _op("expire", "Maintain", "C", ("scope", "as_of"), "Receipt", conditions=("scope_writable",), deletes=True,
         admin_only=True),

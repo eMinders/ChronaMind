@@ -36,11 +36,13 @@ from custom_memory_engine.api.contract import OPERATIONS
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
 from custom_memory_engine.api.infer_handlers import register_infer_handlers
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
+from custom_memory_engine.api.maintain_handlers import register_maintain_handlers
 from custom_memory_engine.api.read_handlers import Artifact, QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import Receipt
 from custom_memory_engine.engine.channels import Verification, channel_of
 from custom_memory_engine.engine.deletion import delete_memory
 from custom_memory_engine.engine.predicates import current_state, fetch_versions
+from custom_memory_engine.engine.purge import PurgeReceipt
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.model.axes import (
     FACETS,
@@ -372,6 +374,53 @@ async def test_four_of_the_six_types_are_a_profile_document_and_the_generic_engi
         ) == [expected]
 
 
+async def test_working_memory_is_purged_through_engine_call_and_its_durable_claim_survives(database) -> None:  # noqa: F811
+    """E-026 / ``V2-D10``: the retention floor's survivor test, through the entry point only.
+
+    A workspace reset purges the ``working`` episode; the ``durable`` claim grounded on the same source is still
+    returned and routed to ``facts``, and the purged episode answers like an unknown id.
+    """
+    async with world(database) as (conn, engine, _schema):
+        await add_turn(conn)
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        profile = profile_with(
+            "working-memory", kinds=["episode", "claim"], retention={"episode": "working", "claim": "durable"}
+        )
+        register_ingest_handlers(engine, runtime, profile)
+        register_read_handlers(engine, runtime)
+        register_maintain_handlers(engine, runtime)
+        working = await episode_through_the_api(conn, engine, key="w")
+        claim = await engine.call(
+            caller("alice"),
+            "assert",
+            {
+                "scope": "/u/alice/",
+                "kind": "claim",
+                "content": "alice is vegetarian",
+                "evidence": [
+                    {
+                        "type": "turn",
+                        "ref": "said",
+                        "span": "I am vegetarian",
+                        "content_hash": canonical_hash("I am vegetarian"),
+                    }
+                ],
+                "event_range": None,
+                "idempotency_key": "c",
+            },
+        )
+        assert isinstance(claim, Receipt) and claim.effect == "asserted"
+        purged = await engine.call(caller("alice", admin=True), "purge_working", {"scope": "/u/alice/"})
+        assert isinstance(purged, PurgeReceipt) and (purged.purged_episodes, purged.retained_as_evidence) == (1, 0)
+        got = await engine.call(caller("alice"), "get", {"artifact_id": claim.id})
+        assert isinstance(got, Artifact) and got.channel == "facts"
+        found = await engine.call(caller("alice"), "query", {"request": {"scope": "/u/alice/"}})
+        assert isinstance(found, QueryResult) and [a.artifact_id for a in found.facts] == [claim.id]
+        with pytest.raises(EntryError) as gone:
+            await engine.call(caller("alice"), "get", {"artifact_id": working.id})
+        assert gone.value.code == "forbidden"
+
+
 async def test_semantic_memory_is_a_claim_that_is_observed_or_asserted_and_comes_from_the_same_call(database) -> None:  # noqa: F811
     async with world(database) as (conn, engine, _schema):
         await add_turn(conn)
@@ -615,12 +664,15 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         register_ingest_handlers(engine, runtime)
         register_read_handlers(engine, runtime)
         register_infer_handlers(engine, runtime, tau_confidence=0.90, tau_coverage=0.60)  # V2-D30 suggested values
+        register_maintain_handlers(engine, runtime)
         unwired = set(engine.unwired_operations())
         assert {"delete", "export"} <= unwired  # W3+ owners: E-037, A-015
         # query/get (E-033 minimal) and infer (C-021 minimal) are wired under V2-D66 and tested through Engine.call
         assert not {"query", "get", "infer"} & unwired
         # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
         assert "create_scope" not in unwired
+        # `purge_working` left it when E-026 wired it; it is exercised above through Engine.call only.
+        assert "purge_working" not in unwired
         # E-024 wires `link_entity` (V2-D71); `test_link_entity_is_wired_through_engine_call_...` drives it here.
         assert "link_entity" not in unwired
         print(
