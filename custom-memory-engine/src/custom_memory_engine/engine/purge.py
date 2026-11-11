@@ -7,7 +7,7 @@ documents meet here and neither fixes what happens to an artifact whose evidence
   a scope event, **not a deletion of knowledge**", and working memory is "still evidence-bearing";
 * ``DELETION_ORDER.md`` / ``V2-D09``: a *deletion* removes or re-derives everything derived from what it deletes.
 
-Rule **PW-1** (chosen by E-026, recorded as finding ``E-026-F1`` on the W2 tracker), the one this module implements:
+Rule **PW-1** (recorded as ``V2-D72``; ``E-026-F1`` stays open on the bound), the one this module implements:
 
     A purge physically deletes every ``kind='episode'``, ``retention='working'`` row whose scope lies in the purged
     scope's subtree, **except** an episode that another surviving row cites as evidence (it is the source of a
