@@ -14,10 +14,12 @@ from psycopg import sql
 from psycopg.rows import tuple_row
 
 from custom_memory_engine.api import entry as entry_module
+from custom_memory_engine.api import read_handlers
 from custom_memory_engine.api import runtime as runtime_module
 from custom_memory_engine.api.contract import Tier
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
+from custom_memory_engine.api.read_handlers import QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Receipt, Runtime
 from custom_memory_engine.engine.transactions import (
     CandidateVersionInput,
@@ -91,6 +93,17 @@ async def _assert_claim(
     return result
 
 
+async def _query_ids(engine: Engine, user: str, scope_path: str) -> set[str]:
+    """What the public `query` operation returns for one scope, as a set of artifact ids."""
+    result = await engine.call(scoped_caller(user, "C", scope_path), "query", {"request": {"scope": scope_path}})
+    assert isinstance(result, QueryResult)
+    return {
+        artifact.artifact_id
+        for channel in (result.facts, result.hypotheses, result.procedures)
+        for artifact in channel
+    }
+
+
 async def _scope_memory_ids(runtime: Runtime, user: str, read_set: ReadSet) -> set[str]:
     predicate, parameters = access_module.read_predicate(read_set, "scope_path", "visibility")
     async with runtime.session(user) as connection, connection.cursor(row_factory=tuple_row) as cursor:
@@ -130,6 +143,7 @@ async def test_two_scopes_keep_claims_and_entities_private_while_explicit_link_i
     async with world(database) as (connection, engine, schema):
         runtime = cast(DbTargets, engine.resolver).runtime
         register_ingest_handlers(engine, runtime)
+        register_read_handlers(engine, runtime)  # `query`, through the entry point (E-033)
         await _seed_claim_turns(runtime)
 
         scope_specs = {
@@ -248,9 +262,13 @@ async def test_two_scopes_keep_claims_and_entities_private_while_explicit_link_i
 
         work_read_set = scoped_caller("alice", "C", work_scope).read_set
         personal_read_set = scoped_caller("alice", "C", personal_scope).read_set
+        # The claim in scope A is not readable from scope B's read set, asserted through the public `query`
+        # operation (rows 2 and 13) and, below it, against what the read predicate itself returns.
+        assert await _query_ids(engine, "alice", work_scope) == {work_claim.id}
+        assert await _query_ids(engine, "alice", personal_scope) == {personal_claim.id}
         assert await _scope_memory_ids(runtime, "alice", work_read_set) == {work_claim.id}
         assert await _scope_memory_ids(runtime, "alice", personal_read_set) == {personal_claim.id}
-        assert {"query", "provenance"} <= set(engine.unwired_operations())
+        assert "provenance" in set(engine.unwired_operations())  # E-039's remaining wiring; row 5 renders directly
         # A link is a row; a scope is its path, so nothing records the two scopes (V2-D65).
         links_cursor = await connection.execute(
             "SELECT entity_a, entity_b, relation FROM entity_link WHERE user_id = 'alice'"
@@ -400,6 +418,7 @@ async def test_scope_read_filter_control_breaks_the_isolation_assertion(
     async with world(database) as (connection, engine, _schema):
         runtime = cast(DbTargets, engine.resolver).runtime
         register_ingest_handlers(engine, runtime)
+        register_read_handlers(engine, runtime)  # `query`, through the entry point (E-033)
         await _seed_claim_turns(runtime)
         scope_a = await engine.call(
             caller("alice"),
@@ -418,6 +437,8 @@ async def test_scope_read_filter_control_breaks_the_isolation_assertion(
             engine, "alice", scope_b, "t-e024-home", "Ada is my running partner.", "iso-claim-b"
         )
         read_set_a = scoped_caller("alice", "C", scope_a).read_set
+        assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}
+        assert await _query_ids(engine, "alice", scope_b) == {claim_b.id}
         assert await _scope_memory_ids(runtime, "alice", read_set_a) == {claim_a.id}
 
         with monkeypatch.context() as patch:
@@ -426,6 +447,57 @@ async def test_scope_read_filter_control_breaks_the_isolation_assertion(
                 observed = await _scope_memory_ids(runtime, "alice", read_set_a)
                 assert observed == {claim_a.id}
             assert claim_b.id in await _scope_memory_ids(runtime, "alice", read_set_a)
+
+
+@pytest.mark.integration
+async def test_the_query_operation_control_breaks_the_scope_isolation_assertion(
+    database,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # noqa: F811
+    """Row 2's control at the entry point: make ``query``'s SQL predicate unfiltered and the isolation assertion fails.
+
+    The assertion under control is row 2's, through the public ``query`` operation. The guard is
+    ``scope.access.read_predicate`` as the read handler uses it, so that is what the control replaces; nothing in the
+    product path can be switched, and the monkeypatch lives only inside this test.
+    """
+    async with world(database) as (_connection, engine, _schema):
+        runtime = cast(DbTargets, engine.resolver).runtime
+        register_ingest_handlers(engine, runtime)
+        register_read_handlers(engine, runtime)  # `query`, through the entry point (E-033)
+        await _seed_claim_turns(runtime)
+        scope_a = await engine.call(
+            caller("alice"),
+            "create_scope",
+            {"parent": "/u/alice/", "segment": "iso-query-a", "kind": "project", "idempotency_key": "q-iso-a"},
+        )
+        scope_b = await engine.call(
+            caller("alice"),
+            "create_scope",
+            {"parent": "/u/alice/", "segment": "iso-query-b", "kind": "project", "idempotency_key": "q-iso-b"},
+        )
+        assert isinstance(scope_a, str) and isinstance(scope_b, str)
+        claim_a = await _assert_claim(engine, "alice", scope_a, "t-e024-work", "Ada is my coworker.", "q-claim-a")
+        claim_b = await _assert_claim(
+            engine, "alice", scope_b, "t-e024-home", "Ada is my running partner.", "q-claim-b"
+        )
+        assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}
+
+        # `query` enforces the read set twice: the SQL predicate, then `row_visible` on every row (V2-D45 defence in
+        # depth). Either alone keeps scope B out, so each is broken alone (B stays hidden) and then both (B leaks).
+        with monkeypatch.context() as patch:
+            patch.setattr(read_handlers, "read_predicate", lambda *_args: (sql.SQL("TRUE"), []))
+            assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}
+        with monkeypatch.context() as patch:
+            patch.setattr(read_handlers, "row_visible", lambda *_args: True)
+            assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}
+        with monkeypatch.context() as patch:
+            patch.setattr(read_handlers, "read_predicate", lambda *_args: (sql.SQL("TRUE"), []))
+            patch.setattr(read_handlers, "row_visible", lambda *_args: True)
+            with pytest.raises(AssertionError):  # the row-2 assertion now fails: the control is sensitive
+                assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}
+            assert claim_b.id in await _query_ids(engine, "alice", scope_a)
+
+        assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}  # restored
 
 
 def test_provenance_opacity_control_detects_a_bypassed_read_guard(monkeypatch: pytest.MonkeyPatch) -> None:
