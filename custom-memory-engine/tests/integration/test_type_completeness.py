@@ -33,7 +33,7 @@ from psycopg import AsyncConnection, sql
 from psycopg.errors import CheckViolation, RaiseException
 
 from custom_memory_engine.api.contract import OPERATIONS
-from custom_memory_engine.api.entry import Engine
+from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
 from custom_memory_engine.api.infer_handlers import register_infer_handlers
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.read_handlers import Artifact, QueryResult, register_read_handlers
@@ -56,6 +56,7 @@ from custom_memory_engine.model.axes import (
     validate_axes,
 )
 from custom_memory_engine.profile import Profile, conversational, parse_profile
+from custom_memory_engine.scope.access import Selector, resolve_read_set
 from custom_memory_engine.security import provision_runtime_role, tenant_scope
 from tests.integration.test_api_wiring_structure import (
     caller,
@@ -507,6 +508,64 @@ async def test_create_scope_creates_a_usable_scope_through_the_entry_point_only(
         assert await rows(conn, "SELECT scope_path FROM session WHERE id = 's-scope'") == [("/u/alice/repo/",)]
 
 
+async def test_link_entity_is_wired_through_engine_call_and_both_endpoints_must_be_readable(database) -> None:  # noqa: F811
+    """G1 / E-024 (#139 row 12): ``link_entity`` exercised only through ``Engine.call``, never against the table.
+
+    Two scopes, one entity in each, then an explicit link: idempotent in either order, refused for a caller whose read
+    set lacks one endpoint exactly as for an id that does not exist (T-09), and refused for another tenant's caller.
+    """
+    async with world(database) as (conn, engine, _schema):
+        del conn
+        scopes = [
+            await engine.call(
+                caller("alice"),
+                "create_scope",
+                {"parent": "/u/alice/", "segment": segment, "kind": "project", "idempotency_key": f"lk-{segment}"},
+            )
+            for segment in ("work", "home")
+        ]
+        entities = [
+            await engine.call(
+                caller("alice"),
+                "create_entity",
+                {"scope": scope, "entity_type": "person", "label": "Ada", "idempotency_key": f"lk-e-{scope}"},
+            )
+            for scope in scopes
+        ]
+        first, second = (str(entity) for entity in entities)
+        # V2 §5 rule 4: a `private` row matches only a selector equal to its own scope, so a caller reading both
+        # scopes names both exactly. The link needs both in its read set, which is what `targets_readable` checks.
+        both = CallerContext.from_credential(
+            Credential("alice", "C"),
+            write_scope="/u/alice/",
+            read_set=resolve_read_set("alice", [Selector.exact(str(scope)) for scope in scopes], []),
+        )
+        link = await engine.call(
+            both, "link_entity", {"entity_a": first, "entity_b": second, "relation": "same_person"}
+        )
+        assert isinstance(link, Receipt) and link.effect == "linked"
+        reverse = await engine.call(
+            both, "link_entity", {"entity_a": second, "entity_b": first, "relation": "same_person"}
+        )
+        assert isinstance(reverse, Receipt) and reverse.id == link.id  # one link, whichever way it is asked
+        one_scope = CallerContext.from_credential(
+            Credential("alice", "C"),
+            write_scope="/u/alice/",
+            read_set=resolve_read_set("alice", [Selector.exact(str(scopes[0]))], []),
+        )
+        answers = []
+        for other in (second, "ent_does_not_exist"):  # outside the read set, and absent: one answer
+            with pytest.raises(EntryError) as refused:
+                await engine.call(one_scope, "link_entity", {"entity_a": first, "entity_b": other, "relation": "x"})
+            answers.append((refused.value.code, refused.value.detail))
+        assert answers == [("forbidden", None), ("forbidden", None)]
+        with pytest.raises(EntryError) as foreign:
+            await engine.call(
+                caller("bob"), "link_entity", {"entity_a": first, "entity_b": second, "relation": "same_person"}
+            )
+        assert (foreign.value.code, foreign.value.detail) == ("forbidden", None)
+
+
 def test_no_profile_specific_code_path_in_the_generic_engine_api() -> None:
     """Requirement 6: the handlers read a profile's DATA (kinds, retention); they never branch on which profile it is."""
     root = Path(__file__).resolve().parents[2] / "src" / "custom_memory_engine"
@@ -562,6 +621,8 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         assert not {"query", "get", "infer"} & unwired
         # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
         assert "create_scope" not in unwired
+        # E-024 wires `link_entity` (V2-D71); `test_link_entity_is_wired_through_engine_call_...` drives it here.
+        assert "link_entity" not in unwired
         print(
             f"\nG1: {len(OPERATIONS) - len(unwired)} of {len(OPERATIONS)} operations wired; "
             f"unwired (not yet testable): {sorted(unwired)}"

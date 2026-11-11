@@ -24,6 +24,7 @@ GRANT SELECT, INSERT ON
   {{schema}}.app_user, {{schema}}.session, {{schema}}.turn, {{schema}}.memory_evidence,
   {{schema}}.audit_event, {{schema}}.deletion_request, {{schema}}.api_idempotency
   TO {{role}};
+GRANT SELECT, INSERT ON {{schema}}.entity_link TO {{role}};
 GRANT SELECT, INSERT, UPDATE ON
   {{schema}}.memory_embedding, {{schema}}.memory_conflict, {{schema}}.scope_grant,
   {{schema}}.entity, {{schema}}.abstraction_stats, {{schema}}.negative_constraint

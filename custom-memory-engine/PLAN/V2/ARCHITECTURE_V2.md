@@ -337,6 +337,13 @@ enumerate entity ids and infer the existence and attribute-count of another tena
 memories. That is the security issue the original V2 draft created by calling `ENTITY`
 "canonical referents" with no tenant scoping. `V2-D25` records the fix.
 
+**How the rule is applied (`E-024`).** An entity row lives in one scope of its principal (`entity.scope_path`), and
+its label follows that scope's read rules. The same real person referenced from two scopes is therefore two opaque
+ids, one per scope, joined only by an explicit `link_entity(a, b, relation)` row (migration 18's `entity_link`). The
+link merges nothing: neither id's claims or attributes become readable from the other scope, and it requires both
+scopes in the caller's read set. A claim names its entity through `assert`'s optional `subject_entity`, which must lie
+in the claim's own scope. `tests/integration/test_cross_domain_entity.py` pins all four bullets above.
+
 ---
 
 ## 6. Procedure memory (new; the smallest thing that works)

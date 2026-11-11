@@ -56,7 +56,20 @@ INTERNAL_ERROR = "internal_error"
 # `principal` - the grantee - so that name is validated like any other input instead.)
 RESERVED_ARGUMENTS = frozenset({"tier", "admin", "user_id", "caller", "ctx", "credential", "read_set"})
 #: Argument names that name an existing artifact, association, entity or result (single id each).
-SINGLE_TARGETS = ("artifact_id", "result_id", "association_id", "from", "to", "entity_a", "entity_b", "procedure_id")
+SINGLE_TARGETS = (
+    "artifact_id",
+    "result_id",
+    "association_id",
+    "from",
+    "to",
+    "entity_a",
+    "entity_b",
+    "subject_entity",
+    "procedure_id",
+)
+#: Target inputs a caller may omit: `assert`'s `subject_entity` names the entity a claim is about, and a claim about
+#: no entity is the v1 shape (`subject_key='self'`), so absence is legal and is not a `target_required` fault.
+OPTIONAL_TARGETS = frozenset({"subject_entity"})
 EVIDENCE_ARGUMENTS = ("evidence", "counter_evidence")
 
 type Origin = Literal["tier_b", "tier_c"]
@@ -276,6 +289,8 @@ def _target_ids(op: Operation, args: dict[str, object]) -> list[str]:
     ids: list[str] = []
     for name in SINGLE_TARGETS:
         if name in op.inputs:
+            if name in OPTIONAL_TARGETS and name not in args:
+                continue
             value = args.get(name)
             if not isinstance(value, str) or not value:
                 raise _fail(op, "validation_error", "target_required")

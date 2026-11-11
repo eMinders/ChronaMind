@@ -262,8 +262,22 @@ class IngestHandlers:
         except ForeignKeyViolation:
             raise EntryError("forbidden") from None
 
-    async def _assert(self, call: Call, content: str, evidence: object, event_range: object) -> Receipt | Rejected:
+    async def _assert(
+        self, call: Call, content: str, evidence: object, event_range: object, entity_id: object = None
+    ) -> Receipt | Rejected:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
+        # `subject_entity` (E-024): the entity this claim is about. Optional: absent keeps the v1 shape
+        # (`subject_key='self'`), and `targets_readable` has already proved the entity is in the caller's read set.
+        if entity_id is not None and (not isinstance(entity_id, str) or not entity_id.strip()):
+            raise EntryError("validation_error", "entity_id_invalid")
+        subject_key = "self"
+        if isinstance(entity_id, str):
+            # The claim must live in the entity's own scope: naming an entity of another scope would attach this
+            # scope's claim to it. Refused like an unknown entity, so the answer reveals nothing about either scope.
+            target = call.targets.get(entity_id)
+            if target is None or target.scope_path != _scope_path(call.arguments.get("scope"), user):
+                raise EntryError("forbidden")
+            subject_key = entity_id
         kind = call.arguments.get("kind")
         if kind not in _ASSERTABLE_KINDS:
             raise EntryError(
@@ -304,7 +318,7 @@ class IngestHandlers:
                 user_id=user,
                 scope_path=scope,
                 kind=str(kind) if kind == "procedure" else None,  # only supply when the trigger cannot infer it
-                subject_key="self",
+                subject_key=subject_key,
                 predicate_key="statement",
                 single_valued=False,
                 content=content,
@@ -333,6 +347,7 @@ class IngestHandlers:
         return await self._assert(
             call, _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT),
             call.arguments.get("evidence"), call.arguments.get("event_range"),
+            call.arguments.get("subject_entity"),
         )  # fmt: skip
 
     async def ingest_artifact(self, call: Call) -> Receipt | Rejected:
