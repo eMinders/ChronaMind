@@ -1,8 +1,15 @@
-"""Reproducibility, schema, and control verification tests for Own Suites G, I, D, and T (RL-022..024)."""
+"""Reproducibility, schema, and control verification tests for Own Suites G, I, D, T, and C (RL-022..024, E-022)."""
 
 import hashlib
 from pathlib import Path
 
+from research.benchmarks.own_C.generator import (
+    MANIFEST_PATH as MANIFEST_C,
+)
+from research.benchmarks.own_C.generator import (
+    generate_suite_c,
+    verify_suite_c,
+)
 from research.benchmarks.own_D.generator import (
     MANIFEST_PATH as MANIFEST_D,
 )
@@ -106,6 +113,29 @@ def test_suite_d_determinism_cardinality_and_controls() -> None:
     assert hashlib.sha256((dev_a.model_dump_json(indent=2) + "\n").encode()).hexdigest() == manifest["own_D_dev.json"]
     assert (
         hashlib.sha256((test_a.model_dump_json(indent=2) + "\n").encode()).hexdigest() == manifest["own_D_test.json"]
+    )
+
+
+def test_suite_c_determinism_family_balance_and_control_counts() -> None:
+    dev_a = generate_suite_c("dev")
+    dev_b = generate_suite_c("dev")
+    test_a = generate_suite_c("test")
+    assert dev_a.model_dump_json() == dev_b.model_dump_json()
+    assert dev_a.scenario_count == 20
+    assert test_a.scenario_count == 50
+    assert set(dev_a.family_scenario_counts.values()) == {4}
+    assert set(test_a.family_scenario_counts.values()) == {10}
+    assert dev_a.near_miss_control_probes == 4
+    assert test_a.near_miss_control_probes == 10
+    assert dev_a.expected_false_offers == 0
+    assert test_a.expected_false_offers == 0
+    verify_suite_c(dev_a)
+    verify_suite_c(test_a)
+
+    manifest = _read_manifest(MANIFEST_C)
+    assert hashlib.sha256((dev_a.model_dump_json(indent=2) + "\n").encode()).hexdigest() == manifest["own_C_dev.json"]
+    assert (
+        hashlib.sha256((test_a.model_dump_json(indent=2) + "\n").encode()).hexdigest() == manifest["own_C_test.json"]
     )
 
 

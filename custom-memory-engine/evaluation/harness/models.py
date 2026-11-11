@@ -6,7 +6,7 @@ from typing import Annotated, Literal, Protocol
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-type SuiteId = Literal["T", "G", "D", "I", "LongMemEval_oracle", "LongMemEval_S", "LongMemEval_M", "LoCoMo"]
+type SuiteId = Literal["T", "G", "D", "I", "C", "LongMemEval_oracle", "LongMemEval_S", "LongMemEval_M", "LoCoMo"]
 type Split = Literal["dev", "test"]
 type QueryMode = Literal["current", "as_of", "what_changed", "before_change", "stable"]
 type DeletionScope = Literal["memory", "topic", "all"]
