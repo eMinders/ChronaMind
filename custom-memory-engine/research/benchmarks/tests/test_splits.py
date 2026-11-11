@@ -36,7 +36,9 @@ def test_all_frozen_split_yaml_files_and_freeze_list_verify_cleanly() -> None:
         assert hashlib.sha256(path.read_bytes()).hexdigest() == sha256_hex
 
 
-def test_zero_cluster_overlap_across_all_six_suites() -> None:
+def test_zero_cluster_overlap_across_all_seven_suites() -> None:
+    # Renamed-for-coverage extension: `own_C` (E-022) is added to the exact
+    # six-suite mapping asserted in RL-026; the six historical rows are unchanged.
     splits = build_all_splits(seed=42)
     expected_keys = {
         "longmemeval": ("question_id", 100, 400, 500),
@@ -45,6 +47,7 @@ def test_zero_cluster_overlap_across_all_six_suites() -> None:
         "own_G": ("scenario_id", 20, 50, 70),
         "own_D": ("scenario_id", 20, 50, 70),
         "own_I": ("scenario_id", 20, 50, 70),
+        "own_C": ("scenario_id", 20, 50, 70),
     }
     for name, (cluster_key, dev_n, test_n, total_n) in expected_keys.items():
         doc = splits[name]
@@ -111,7 +114,7 @@ def test_locomo_conversation_level_split_and_category_totals() -> None:
         assert dev_s[f"category_{cat}"] + test_s[f"category_{cat}"] == total
 
 
-@pytest.mark.parametrize("suite_family", ["T", "G", "D", "I"])
+@pytest.mark.parametrize("suite_family", ["T", "G", "D", "I", "C"])
 def test_own_suites_scenario_sha256_assignment_and_disjointness(suite_family: str) -> None:
     doc = build_own_suite_split(suite_family, seed=42)  # type: ignore[arg-type]
     on_disk = load_split_yaml(SPLITS_DIR / f"own_{suite_family}.yaml")
@@ -154,6 +157,7 @@ def test_partition_scenarios_by_sha256_is_deterministic_and_disjoint() -> None:
         ("own_G.yaml", "G"),
         ("own_D.yaml", "D"),
         ("own_I.yaml", "I"),
+        ("own_C.yaml", "C"),
     ],
 )
 def test_to_benchmark_selection_materializes_valid_envelopes(yaml_name: str, suite_id: SuiteId) -> None:

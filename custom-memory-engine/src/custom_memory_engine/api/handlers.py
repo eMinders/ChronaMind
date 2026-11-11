@@ -5,10 +5,11 @@ already run. A handler still never trusts that: it operates under the caller's r
 (``Runtime.session``), so a row the caller may not write is simply not affected, and it answers with the entry
 point's static errors (``EntryError``) and no identifier, path, scope or content.
 
-Operations wired here: ``register_method``, ``create_entity``, ``link``, ``unlink``, ``adjudicate``, ``retract_own``,
-``grant_access``, ``revoke_access`` and ``create_scope``. ``create_scope`` was held back by ``E-011`` while every
-scope was the personal root; migration 15 admits a row anywhere inside its owner's namespace (``V2-D64``), so a
-created sub-scope now holds entities, associations and memories like any other (``E-040``).
+Operations wired here: ``register_method``, ``create_entity``, ``link_entity``, ``link``, ``unlink``, ``adjudicate``,
+``retract_own``, ``grant_access``, ``revoke_access`` and ``create_scope``. ``create_scope`` was held back by ``E-011``
+while every scope was the personal root; migration 15 admits a row anywhere inside its owner's namespace
+(``V2-D64``), so a created sub-scope now holds entities, associations and memories like any other (``E-040``).
+``link_entity`` records an explicit identity link between two of the caller's scope-local entities (``E-024``).
 """
 
 import re
@@ -27,6 +28,8 @@ from custom_memory_engine.security.audit_guard import content_free_details
 
 _HASH = re.compile(r"[a-f0-9]{64}")
 _CODE = re.compile(r"[a-z0-9_]{1,64}")
+#: A link relation is a declared word (``same_person``), never content: it is stored and compared, never rendered.
+_ENTITY_RELATION = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _ASSERTABLE_KINDS = frozenset({"claim", "procedure"})  # V2-D48: an abstraction or an episode can only be denied
 #: The scope kinds `create_scope` may mint (`API_V2.md` 4.10). `personal` is the `/u/<user>/` root, which is
 #: created with the user and cannot be minted by this operation.
@@ -125,6 +128,47 @@ class Handlers:
             assert row is not None
             await remember(self.runtime, connection, user, "create_entity", key, str(row[0]))
             return str(row[0])
+
+    async def link_entity(self, call: Call) -> Receipt:
+        """``link_entity(entity_a, entity_b, relation)`` -> ``Receipt`` (``API_V2.md`` 4.5, architecture 5.2).
+
+        ``targets_readable`` has already required **both** entities to be in the caller's read set, and answered an
+        unreadable one exactly like a missing one (T-09). The link joins two scope-local ids; it merges nothing, so
+        neither entity's claims or attributes become readable from the other scope. The pair is unordered and a
+        repeat returns the original link, so a replay never adds a second effect (``I9``).
+        """
+        relation = _text(call, "relation", limit=64)
+        if not _ENTITY_RELATION.fullmatch(relation):
+            raise EntryError("validation_error", "entity_relation_invalid")
+        entity_a, entity_b = _text(call, "entity_a"), _text(call, "entity_b")
+        if entity_a == entity_b:
+            raise EntryError("validation_error", "entity_link_requires_two_entities")
+        entity_a, entity_b = sorted((entity_a, entity_b))
+        user = call.ctx.principal
+        try:
+            async with self.runtime.session(user) as connection, connection.cursor(row_factory=tuple_row) as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {t} (id, user_id, entity_a, entity_b, relation) VALUES (%s, %s, %s, %s, %s) "
+                        "ON CONFLICT (user_id, entity_a, entity_b, relation) DO NOTHING RETURNING id, created_at"
+                    ).format(t=self.runtime.table("entity_link")),
+                    (new_id("elink"), user, entity_a, entity_b, relation),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    await cursor.execute(
+                        sql.SQL(
+                            "SELECT id, created_at FROM {t} "
+                            "WHERE user_id = %s AND entity_a = %s AND entity_b = %s AND relation = %s"
+                        ).format(t=self.runtime.table("entity_link")),
+                        (user, entity_a, entity_b, relation),
+                    )
+                    row = await cursor.fetchone()
+        except ForeignKeyViolation:  # an entity of another principal: the same answer as a missing one
+            raise EntryError("forbidden") from None
+        if row is None:
+            raise EntryError("forbidden")
+        return Receipt(str(row[0]), "linked", row[1])
 
     # -- ASSOCIATION -------------------------------------------------------------------------------------------
 
@@ -338,6 +382,7 @@ def register_structure_handlers(engine: Engine, runtime: Runtime) -> Handlers:
     table: Mapping[str, Handler] = {
         "register_method": handlers.register_method,
         "create_entity": handlers.create_entity,
+        "link_entity": handlers.link_entity,
         "create_scope": handlers.create_scope,
         "link": handlers.link,
         "unlink": handlers.unlink,

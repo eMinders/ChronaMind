@@ -1457,6 +1457,32 @@ Two controls each fail at least one test: a mutant that ignores the flag, and a 
 
 ---
 
+### V2-D71 — Cross-scope entity identity is an explicit link between scope-local ids; a claim names its entity through `assert`'s optional `subject_entity` (#139, E-024)
+
+**Context.**
+- `ARCHITECTURE_V2.md` §5.2 requires four things. Entity ids are opaque and created only through the API. An entity's attributes are never global. A cross-scope `link_entity(a, b)` needs authorisation on **both** scopes. There is no existence oracle.
+- The schema already places each entity in **one** scope of its principal (`entity.scope_path`, migration 10), and its label follows that scope's read rules.
+- Two things were missing. Nothing could persist a link, because `link_entity` was unwired with no table behind it. And no claim could say which entity it is about, because `assert` always wrote `subject_key='self'`.
+- The first E-024 branch also added a persisted `scope` table, and with it guards that refused writes into any sub-scope lacking a row. That reversed `V2-D65` ("a scope *is* its canonical path") without a record. It broke existing callers: four `test_retention_promotion_db.py` tests, plus four other suites that had to be patched to call `create_scope` first.
+
+**Decision.**
+1. **Two scopes, two ids, one explicit link.** The same person referenced from two scopes is two opaque entity ids. Migration 18 adds `entity_link` (forced RLS, `SELECT, INSERT` only, composite `(id, user_id)` foreign keys, one row per unordered pair and relation). `link_entity` writes it under `targets_readable`, so both endpoints must be in the caller's read set, and an unreadable endpoint answers exactly like a missing one (T-09). A link merges nothing.
+2. **`assert` gains one optional input, `subject_entity`.** When it is absent the call is unchanged (`subject_key='self'`). When present, the entity must be readable (`targets_readable`, now on `assert`) and must lie in the scope the claim is written to; otherwise the answer is `forbidden`, the same as for an unknown id. This is an additive contract change, recorded here and in `API_V2.md` §4.3.
+3. **`V2-D65` stands.** There is no scope table. `create_scope` stays validation plus an idempotency entry plus a content-free audit row, and a write into a valid sub-scope needs no prior row.
+
+**Rationale.** (1) satisfies every §5.2 bullet with the schema the plan already has, and adds no global identity index, which would be the cross-tenant side channel `V2-D25` exists to prevent. (2) is the smallest change that lets "a claim in scope A naming entity `e`" exist at all; making it optional keeps every existing caller byte-for-byte the same. (3) keeps one source of truth for where a row lives, its `scope_path`. A second one would need its own RLS, consistency checks against thirteen tables, and a revocation story (`V2-D65`).
+
+**Evidence.** `tests/integration/test_cross_domain_entity.py` runs under the restricted runtime role, through `Engine.call`, in both call orders:
+- claims stay readable only in their own scope;
+- the link is idempotent;
+- an unreadable entity and a missing one give identical `forbidden` answers;
+- cross-scope provenance renders only the `V2-D37` handle;
+- a `subject_entity` from another scope is refused.
+
+Mutation controls each fail at least one test: removing `targets_readable` from `link_entity`, and letting `subject_entity` cross scopes. The four `test_retention_promotion_db.py` tests pass unchanged.
+
+---
+
 ### V2-D72 — A working-scope purge deletes only episodes no surviving row cites as evidence (E-026, rule PW-1; closes `E-026-F1`)
 
 **Context.**

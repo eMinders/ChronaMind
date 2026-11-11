@@ -43,7 +43,7 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `link` | operation | `E-039`, `E-014` | `grounded_endpoint_protected` (`V2-D48`) |
 | `unlink` | operation | `E-039`, `E-014` | |
 | `create_entity` | operation | `E-039`, `E-014` | `V2-D46` |
-| `link_entity` | operation | `E-039`, `E-024` | unwired: `E-024` (#139) lands it through `Engine.call` (§4.1) |
+| `link_entity` | operation | `E-039`, `E-024` | wired by `E-024` (#139, `V2-D71`) through `Engine.call`; `entity_link` (migration 18) |
 | `record_outcome` | operation | `E-039`, `E-030` | unwired: `E-030` lands it through `Engine.call` (§4.1) |
 | `adjudicate` | operation | `E-039`, `E-016` | |
 | `dissent` | operation | `E-039`, `UM-012` | `V2-D46`; unwired: `UM-012` lands it through `Engine.call` (§4.1) |

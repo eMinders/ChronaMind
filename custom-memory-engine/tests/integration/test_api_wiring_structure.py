@@ -33,6 +33,7 @@ HASH = "c" * 64
 WIRED = {
     "register_method",
     "create_entity",
+    "link_entity",
     "create_scope",
     "link",
     "unlink",

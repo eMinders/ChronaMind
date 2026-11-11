@@ -114,8 +114,9 @@ OPERATIONS: tuple[Operation, ...] = (
     _op("refine", "Read", "BC", ("result_id", "instruction"), "QueryResult", conditions=("targets_readable",)),
     _op("get", "Read", "BC", ("artifact_id",), "Artifact", conditions=("targets_readable",)),
     _op("provenance", "Read", "BC", ("artifact_id", "depth"), "ProvenanceView", conditions=("targets_readable",)),
-    _op("assert", "Write (grounded)", "BC", ("scope", "kind", "content", "evidence", "event_range", "idempotency_key"),
-        "Receipt | rejected", ("rejected",), ("scope_writable", "evidence_required"),
+    _op("assert", "Write (grounded)", "BC",
+        ("scope", "kind", "content", "evidence", "event_range", "idempotency_key", "subject_entity"),
+        "Receipt | rejected", ("rejected",), ("scope_writable", "evidence_required", "targets_readable"),
         creates=frozenset({"asserted", "contested"})),
     _op("retract_own", "Write (grounded)", "BC", ("artifact_id", "reason"), "Receipt", ("precondition_failed",),
         ("own_lineage_only", "targets_readable"),
@@ -165,7 +166,18 @@ BY_NAME: dict[str, Operation] = {operation.name: operation for operation in OPER
 
 #: Inputs that name an existing artifact, association, entity or result.
 _TARGET_INPUTS = frozenset(
-    {"artifact_id", "result_id", "association_id", "from", "to", "entity_a", "entity_b", "procedure_id", "sources"}
+    {
+        "artifact_id",
+        "result_id",
+        "association_id",
+        "from",
+        "to",
+        "entity_a",
+        "entity_b",
+        "subject_entity",
+        "procedure_id",
+        "sources",
+    }
 )
 
 
