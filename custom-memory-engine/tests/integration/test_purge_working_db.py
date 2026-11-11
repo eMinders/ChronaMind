@@ -19,7 +19,6 @@ import json
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import fields
-from datetime import datetime
 
 import pytest
 from psycopg import AsyncConnection
@@ -33,7 +32,6 @@ from custom_memory_engine.api.read_handlers import Artifact, QueryResult, regist
 from custom_memory_engine.api.runtime import DbTargets, Receipt
 from custom_memory_engine.engine import purge
 from custom_memory_engine.engine.deletion import delete_memory
-from custom_memory_engine.engine.predicates import current_state, fetch_versions, historical_as_of
 from custom_memory_engine.engine.purge import PURGE_EVENT, PurgePlan, PurgeReceipt
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.profile import Profile, parse_profile
@@ -209,25 +207,25 @@ async def query(engine: Engine, scope: str) -> QueryResult:
     return result
 
 
-async def temporal_ids(conn: AsyncConnection, engine: Engine) -> tuple[set[str], set[str]]:
-    """The ids ``current_state`` and ``historical_as_of`` return to alice (``E-031`` has not wired them to query)."""
-    assert isinstance(engine.resolver, DbTargets)
-    runtime = engine.resolver.runtime
-    # belief time is the runtime role's transaction clock (the owner's `app.clock` pin does not reach it), so the
-    # reference instant is the database's own present; the event time asked about is the scenario's T0
-    now = (await rows(conn, "SELECT pg_catalog.statement_timestamp()"))[0][0]
-    assert isinstance(now, datetime)
-    async with tenant_scope(conn, "alice", role=runtime.role):
-        current = await fetch_versions(conn, current_state("alice", now), schema_name=runtime.schema_name)
-        as_of = await fetch_versions(conn, historical_as_of("alice", T0, now), schema_name=runtime.schema_name)
-    return {v.id for v in current.versions}, {v.id for v in as_of.versions}
+async def temporal_query(engine: Engine, mode: str, scope: str = REPO, **extra: object) -> set[str]:
+    """The ids one temporal mode returns to alice, **through the public entry point** (``E-031``).
+
+    This is the whole point of ``E-026`` §9 rows 5 and 13: answerability must hold for the operation a caller can
+    actually invoke, not only for a predicate called below the entry point. ``E-031`` wired the modes, so the
+    assertion no longer needs an in-process fallback.
+    """
+    request: dict[str, object] = {"scope": scope, "mode": mode, **extra}
+    result = await engine.call(ctx("alice"), "query", {"request": request})
+    assert isinstance(result, QueryResult), result
+    return {a.artifact_id for a in (*result.facts, *result.hypotheses, *result.procedures, *result.conflicts)}
 
 
 async def assert_answerable(conn: AsyncConnection, engine: Engine, w: Workspace) -> None:
     """``I10``: both durable artifacts are returned, routed to their channel, and carry their provenance record.
 
-    Through ``Engine.call``: ``query`` over the repository and ``get`` of each id. Below it: ``current_state`` and
-    ``historical_as_of``, and the evidence / derivation records the ``provenance`` operation will render.
+    Everything here goes through ``Engine.call``: ``query`` in each temporal mode, ``get`` of each id, and the
+    evidence / derivation records the ``provenance`` operation will render. Nothing is asserted below the entry
+    point, so a passing run proves what a caller can observe (``E-026`` §9 rows 5, 13).
     """
     result = await query(engine, REPO)
     assert w.claim in {a.artifact_id for a in result.facts}, "the grounded claim left `facts`"
@@ -235,9 +233,12 @@ async def assert_answerable(conn: AsyncConnection, engine: Engine, w: Workspace)
     for artifact_id, channel in ((w.claim, "facts"), (w.abstraction, "hypotheses")):
         artifact = await engine.call(ctx("alice"), "get", {"artifact_id": artifact_id})
         assert isinstance(artifact, Artifact) and artifact.channel == channel, f"{channel} artifact is not answerable"
-    current, as_of = await temporal_ids(conn, engine)
-    assert {w.claim, w.abstraction} <= current, "current_state lost a durable artifact"
-    assert {w.claim, w.abstraction} <= as_of, "historical_as_of lost a durable artifact"
+    assert {w.claim, w.abstraction} <= await temporal_query(engine, "current_state"), (
+        "current_state lost a durable artifact"
+    )
+    assert {w.claim, w.abstraction} <= await temporal_query(engine, "historical_as_of", target_time=T0.isoformat()), (
+        "historical_as_of lost a durable artifact"
+    )
     # provenance: the claim still cites the turn it was grounded on, the inference still derives from its episodes
     assert await rows(
         conn, "SELECT source_type, source_ref FROM memory_evidence WHERE version_id = %s", (w.claim,)
@@ -368,11 +369,14 @@ async def test_rule_pw1_a_purge_never_removes_answerability(database) -> None:  
 
 async def test_a_purged_episode_is_absent_not_a_tombstone_and_answers_like_an_unknown_id(database) -> None:  # noqa: F811
     async with workspace(database) as (conn, engine, w):
-        current, as_of = await temporal_ids(conn, engine)
-        assert w.fact_episode in current and w.fact_episode in as_of
+        # a private row is read through a selector equal to its own scope (V2 §5 rule 4), so ask at SESSION
+        before = await temporal_query(engine, "current_state", SESSION)
+        as_of_before = await temporal_query(engine, "historical_as_of", SESSION, target_time=T0.isoformat())
+        assert w.fact_episode in before and w.fact_episode in as_of_before
         await purge_scope(engine, SESSION)
-        current, as_of = await temporal_ids(conn, engine)
-        assert w.fact_episode not in current | as_of
+        after = await temporal_query(engine, "current_state", SESSION)
+        as_of_after = await temporal_query(engine, "historical_as_of", SESSION, target_time=T0.isoformat())
+        assert w.fact_episode not in after | as_of_after
         assert w.fact_episode not in {a.artifact_id for a in (await query(engine, SESSION)).facts}
         for unknown in (w.fact_episode, "v_never_existed"):
             with pytest.raises(EntryError) as refused:

@@ -286,7 +286,9 @@ class BudgetLedger:
                     try:
                         self._lock_path.mkdir(mode=0o700)
                     except FileExistsError:
-                        _safe_path(self._lock_path, "directory")
+                        # The holder may release between mkdir failing and this check. A vanished directory is a
+                        # *released* lock, not an unsafe one: validate only what is still there and retry.
+                        _safe_path(self._lock_path, "directory", missing=True)
                         raise
                     acquired = True
             yield
@@ -294,8 +296,12 @@ class BudgetLedger:
             raise ValueError("budget_lock_timeout") from None
         finally:
             if acquired:
-                _safe_path(self._lock_path, "directory")
-                self._lock_path.rmdir()
+                # Releasing must never raise: a failed release would leave the directory behind and wedge every
+                # later reserve() behind a lock nobody holds. The path was validated when it was created.
+                try:
+                    self._lock_path.rmdir()
+                except FileNotFoundError:  # already released (a re-entrant caller on the same ledger)
+                    pass
 
     def _read(self) -> _State:
         _safe_path(self._campaign, "directory")

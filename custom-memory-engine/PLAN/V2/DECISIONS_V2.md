@@ -1521,3 +1521,106 @@ other row changes, and a second purge purges nothing while the citation stands. 
 `tests/test_purge_rule.py` covers the rule as a pure function, including the fixpoint. Controls: a destructive plan (cascading to dependents) fails the answerability test, and a citation-blind plan is refused by the restrictive derivation key.
 
 **Status:** decided and implemented under the Project Owner's delegation (2026-11-11).
+
+---
+
+### V2-D73 — `query` reads time through the engine's own clock, and the reference instant is never caller-supplied (E-031; closes `E-026` rows 5 and 13)
+
+**Context.**
+- `API_V2.md` §4.2 declared `QueryRequest.mode` from the start, and `TECHNICAL_SPECIFICATION.md` §3.5 specified all
+  four predicates in SQL. `engine/predicates.py` implemented them (`compile_predicate`, `fetch_versions`) and
+  `engine/retrieval.py` consumed them for ranking, but the public `query` operation had no `mode` at all: it always
+  returned the current view. `E-026` §9 rows 5 and 13, `E-024`'s controls and any caller that asked "what did the
+  engine believe then" were blocked on this, and two tests fell back to calling `fetch_versions` in-process.
+- The obvious wiring (read `reference_time` from the request, default to the host clock) is wrong twice over:
+  - **`I4` says belief time is never caller-supplied.** A request that picks ρ can ask what the engine believed at an
+    instant it never observed, including a future one.
+  - **The host clock and the database clock are different clocks.** The v1 replay harness pins `app.clock`; production
+    does not. A defaulted reference instant therefore drifts from the `recorded_range` it is compared against, and
+    a row recorded microseconds earlier reads as "not yet current". This was not theoretical: the first draft of
+    this change defaulted to `datetime.now(UTC)` in Python and every temporal assertion in the new suite returned
+    nothing, because `recorded_range` had opened at the database's clock, later than the host's answer.
+
+**Decision.**
+1. **ρ is the engine's clock, read inside the caller's transaction.** `engine.predicates.reference_instant` returns
+   `transaction_timestamp()`, which is the clock `clock/allocation.py::allocate_clock` writes `recorded_range`
+   against. Using the writer's clock is what makes "current" mean the same thing on both sides.
+2. **`reference_time` is refused.** A request carrying one is `validation_error/reference_time_is_the_engine_clock`.
+   This is a *removal* of an input that never worked, not a behaviour change for a caller.
+3. **The temporal predicate and the caller's read predicate are one statement.** `engine.predicates.fetch_scoped_rows`
+   composes `compile_predicate` with `scope.access.read_predicate_named`. Applying the read set afterwards in Python
+   would make `limit` count rows the caller cannot read, so a caller could receive fewer than `limit` rows while more
+   readable ones existed. `read_predicate` and `read_predicate_named` share one clause builder for exactly the reason
+   they are security-critical: two copies would drift.
+4. **`audit_as_of` results go in `audit[]`, never in a channel.** `TECHNICAL_SPECIFICATION.md` §3.5 forbids using
+   them as answer context, and `channel_of` maps a retired artifact to `none` — so routing audit rows through the
+   channels would silently drop exactly the withdrawn rows an audit exists to show. `QueryResult.is_audit` marks the
+   result, and Tier B is refused before any row is read.
+5. **`change` stays unwired** (`validation_error/mode_change_not_wired`). It is a diff of two temporal views, which is
+   a rendering concern owned by `E-033`, not a predicate.
+
+**Consequences, recorded rather than hidden.**
+- `E-026` §9 rows 5 and 13 now hold *through the public entry point*: `test_purge_working_db.py::temporal_query`
+  calls `Engine.call` in both modes and the answerability assertion is made only on that result.
+- Two latent bugs surfaced and are fixed with the change, both pre-existing:
+  - `retract_own` closed `recorded_range` at `clock_now()` without allocating a clock tick, so it could invert the
+    range against the row's own opening bound and the `guard_update` trigger refused the withdrawal. It now allocates
+    a tick like every other writer (`R3`).
+  - `evaluation/harness/budget.py::_locked` treated a lock released by its holder between `mkdir` and the
+    re-validation as an *unsafe path* (`ValueError`), and its release path raised inside `finally`, leaving the lock
+    directory behind and wedging the ledger. Both are fixed, with a regression test per defect verified by mutation.
+- Channel **budgets**, **ranking**, the **cost** report and `refine` remain `E-033`'s, and temporal reads currently
+  order by `lower(recorded_range) DESC, id` rather than by relevance. A caller that wants relevance must wait for
+  `E-033`; nothing here pretends to rank.
+
+**Evidence.** `tests/integration/test_temporal_query_db.py` (20 tests, every mode plus its controls: a target before
+the scenario returns nothing, a supplied `reference_time` is refused, a withdrawn claim is invisible to
+`current_state` and visible to `audit_as_of`, no mode crosses a tenant boundary, and the read-set semantics are shown
+to be sensitive). `tests/integration/test_purge_working_db.py` now asserts answerability only through `Engine.call`.
+Controls: widening `current_state`'s event filter fails the PW-1 test; making `historical_as_of` ignore its target
+fails 3 tests.
+
+**Status:** decided and implemented under the Project Owner's delegation (2026-11-12).
+
+---
+
+### V2-D74 — An entity subject is a foreign key, not a string that looks like one (E-024 §10 row 10; supersedes the waiver)
+
+**Context.** `V2-D71` let `assert` name the entity a claim is about through an optional `subject_entity`, and stored
+that id in `memory_version.subject_key`. Two properties were enforced, correctly, only in the handler
+(`api/ingest_handlers.py::_assert`): the entity must exist in the caller's read set (`targets_readable`), and it must
+lie in the claim's own scope. The schema could not tell an entity id from the literal `'self'` every v1 claim
+carries: there was no foreign key, so a claim could cite a deleted entity, and the same-scope rule lived in exactly
+one Python function. `E-024` §10 row 10 recorded "no engine-source diff" as **not met, by authorisation** — the owner
+had authorized the substrate. That waiver is now re-examined rather than inherited: the substrate is legitimately
+`entity_link` (migration 18) plus this.
+
+**Decision.** Migration 19 makes both properties structural, and nothing is backfilled.
+1. `memory_version.subject_entity_id` is a typed column: `NULL` means the subject is `subject_key` itself
+   (`'self'` today); a value means the subject *is* that entity. `subject_key` keeps holding the same id, because it
+   is the column the `no_bitemporal_overlap` exclusion and the supersession rules compare.
+2. Existence, principal and scope are **one composite foreign key**:
+   `(subject_entity_id, user_id, scope_path) REFERENCES entity (id, user_id, scope_path) ON DELETE RESTRICT`. A claim
+   therefore cannot name another scope's entity, another principal's entity, or a missing one, and a cited entity
+   cannot be removed while the claim stands. A link (migration 18) cascades because a link *is* the relation; a
+   claim's subject is part of the claim, so it restricts.
+3. `CHECK (subject_entity_id IS NULL OR subject_entity_id = subject_key)` keeps the two spellings from disagreeing,
+   so a row cannot be excluded from supersession under one id while citing another.
+4. `guard_update` is replaced to treat the new column as belief content: re-pointing a claim would rewrite what the
+   claim is about. The replacement re-pins the function's `search_path`, which `CREATE OR REPLACE` resets — a
+   security property migration 4 establishes for every engine function.
+
+**Why the waiver is not preserved.** "No engine change" was a scope guard, and the owner's instruction on the issue
+superseded it. What survives from it is the *principle*: every engine change must be justified line by line, and this
+one is — `subject_entity_id` exists because a Python-only invariant is one that a replay harness, a backfill or an
+operator can break, and because `E-024`'s own §9 requires the cross-domain link to be explicit and authorized rather
+than an opaque id in a free-text column. The migration adds no table, deletes no data, and its rollback restores
+version 18's catalog fingerprint exactly.
+
+**Evidence.** `tests/integration/test_migration_m19.py` (9 tests): a same-scope entity is accepted; another scope,
+another principal and a missing entity are each refused by the foreign key; the two spellings cannot disagree; a
+cited entity cannot be deleted; the column is immutable in place; a v1 row is unchanged with a NULL entity; and the
+rollback restores version 18 exactly (fingerprint compared) and re-applies. The rollback restores `guard_update`
+byte-for-byte from the version-18 definition.
+
+**Status:** decided and implemented under the Project Owner's delegation (2026-11-12).

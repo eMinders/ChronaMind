@@ -82,6 +82,12 @@ async def test_a_link_is_removed_with_either_endpoint(database) -> None:  # noqa
 
 
 async def test_rollback_restores_version_17_exactly_and_reapply_works(database) -> None:  # noqa: F811
+    """Roll migration 18 back to 17, and everything above it first (an operator returns newest-first).
+
+    ``rollback_sql`` composes every script between the current version and the target, so this asserts 18's own
+    rollback restores 17 *given* that the later migrations have already been removed — which is the only order an
+    operator can run them in.
+    """
     config, schema = database
     runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
     async with connect(database) as conn:

@@ -337,3 +337,52 @@ def test_linked_budget_paths_are_rejected_without_touching_the_target(tmp_path: 
             link.rmdir()
         else:
             link.unlink()
+
+
+def test_a_lock_released_by_its_holder_between_attempts_is_retried_not_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: a released lock must not be reported as an unsafe path.
+
+    ``_locked`` re-validates the lock directory after ``mkdir`` reports it exists. When the holder releases inside
+    that window the directory is gone: a *released* lock, which must be retried. The unfixed code re-validated
+    without ``missing=True``, so ``_safe_path`` turned the vanished directory into ``ValueError("unsafe_budget_path")``
+    (observed once in CI under ``-n auto``).
+
+    Simulated by making the very first ``mkdir`` report ``FileExistsError`` while no directory exists -- exactly what
+    a holder releasing in that window looks like to the waiter.
+    """
+    ledger = BudgetLedger(tmp_path, config())
+    real_mkdir = Path.mkdir
+    attempts = {"n": 0}
+
+    def contended_once(self: Path, *args: object, **kwargs: object) -> None:
+        attempts["n"] += 1
+        if self.name == ledger._lock_path.name and attempts["n"] == 1:
+            raise FileExistsError(self)  # someone held it, and released before we looked
+        real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "mkdir", contended_once)
+    reservation = ledger.reserve(usage(inputs=1), "test")
+    assert reservation, "a released lock must be retried, not refused"
+    assert attempts["n"] >= 2, "the waiter must have retried"
+    monkeypatch.undo()
+    ledger.reconcile(reservation, usage(inputs=1))
+
+
+def test_release_never_raises_and_never_wedges_the_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: the release path in ``finally`` must not raise, or the lock directory is left behind forever."""
+    ledger = BudgetLedger(tmp_path, config())
+    real_rmdir = Path.rmdir
+
+    def already_gone(self: Path) -> None:
+        if self.name == ledger._lock_path.name:
+            real_rmdir(self)  # someone else removed it
+            raise FileNotFoundError(self)  # ... between our lstat and our rmdir
+        real_rmdir(self)
+
+    monkeypatch.setattr(Path, "rmdir", already_gone)
+    ledger.reserve(usage(inputs=1), "test")  # must not raise
+    monkeypatch.undo()
+    assert not ledger._lock_path.exists(), "a failed release must not leave the lock directory behind"
+    BudgetLedger(tmp_path, config()).reserve(usage(inputs=1), "test")  # the ledger is not wedged

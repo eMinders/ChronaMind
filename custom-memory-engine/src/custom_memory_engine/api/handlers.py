@@ -22,6 +22,7 @@ from psycopg.types.json import Jsonb
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Receipt, Runtime, new_id, now, remember, replayed
+from custom_memory_engine.clock import allocate_clock
 from custom_memory_engine.engine.transactions import archive_version, resolve_conflict_pending
 from custom_memory_engine.scope.paths import ScopeError, parse_scope, user_scope
 from custom_memory_engine.security.audit_guard import content_free_details
@@ -269,6 +270,10 @@ class Handlers:
             if lifecycle not in ("asserted", "observed", "inferred"):
                 raise EntryError("precondition_failed", "artifact_not_retractable")  # a contested one is adjudicated
             # V2-D59: a withdrawal IS the recorded-time close, which is branch (S) of I10; then it is archived.
+            # The close allocates a clock tick like every other writer (R3): `guard_update` requires the new upper
+            # bound to equal `clock_now()`, and `allocate_clock` sets `app.clock` to the allocated instant, so the
+            # close can never land before the row's own opening bound or behind the user's watermark.
+            tick = await allocate_clock(connection, user, schema_name=self.runtime.schema_name)
             async with connection.cursor() as cursor:
                 await cursor.execute(
                     sql.SQL(
@@ -278,7 +283,11 @@ class Handlers:
                     (artifact_id, user),
                 )
             await archive_version(
-                connection, user_id=user, version_id=artifact_id, schema_name=self.runtime.schema_name
+                connection,
+                user_id=user,
+                version_id=artifact_id,
+                schema_name=self.runtime.schema_name,
+                clock_tick=tick,
             )
             await _audit(self.runtime, connection, user, "lifecycle_retired", {"reason_code": reason})
             return Receipt(artifact_id, "retired", await now(connection))

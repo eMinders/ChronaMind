@@ -36,7 +36,7 @@ Two independent layers (§5 rule 4, ``V2-D45``):
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal, get_args
 
@@ -174,32 +174,93 @@ def row_visible(read_set: ReadSet, row_scope_path: object, row_visibility: objec
     return False
 
 
-def read_predicate(read_set: ReadSet, path_column: str, visibility_column: str) -> tuple[sql.Composed, list[object]]:
-    """SQL equivalent of :func:`row_visible`. An empty read set yields ``false``."""
+def _read_clauses(
+    read_set: ReadSet,
+    path_column: str,
+    visibility_column: str,
+    placeholder: Callable[[str], sql.Composable],
+    name: Callable[[int], str],
+) -> tuple[list[sql.Composable], dict[str, object]]:
+    """The selector clauses of :func:`row_visible`, with pluggable parameter placeholders.
+
+    One implementation serves both the positional form (:func:`read_predicate`) and the named form
+    (:func:`read_predicate_named`). The loop is not duplicated because this *is* the security predicate:
+    two copies would drift, and a drift here is a disclosure bug (V2 §5 rule 4, threat T-06).
+    """
     for column in (path_column, visibility_column):
         if not all(part.isidentifier() for part in column.split(".")) or column.count(".") > 1:
             raise ScopeError("untrusted_column_reference")
     path = sql.Identifier(*path_column.split("."))
     visibility = sql.Identifier(*visibility_column.split("."))
     clauses: list[sql.Composable] = []
-    params: list[object] = []
+    values: dict[str, object] = {}
+    pending: list[object] = []
+
+    def bind(value: object) -> sql.Composable:
+        pending.append(value)
+        return placeholder(name(len(pending) - 1))
+
     for entry in read_set.entries:
         if entry.mode == "exact":
-            clauses.append(sql.SQL("({} = %s AND {} = ANY(%s::text[]))").format(path, visibility))
-            params.extend([entry.path, sorted(entry.visibilities)])
+            clauses.append(
+                sql.SQL("({} = {} AND {} = ANY({}::text[]))").format(
+                    path, bind(entry.path), visibility, bind(sorted(entry.visibilities))
+                )
+            )
             continue
         if "private" in entry.visibilities:
-            clauses.append(sql.SQL("({} = %s AND {} = 'private')").format(path, visibility))
-            params.append(entry.path)
+            clauses.append(sql.SQL("({} = {} AND {} = 'private')").format(path, bind(entry.path), visibility))
         shared = sorted(v for v in entry.visibilities if v != "private")
         if shared:
             clauses.append(
-                sql.SQL("(pg_catalog.starts_with({}, %s) AND {} = ANY(%s::text[]))").format(path, visibility)
+                sql.SQL("(pg_catalog.starts_with({}, {}) AND {} = ANY({}::text[]))").format(
+                    path, bind(entry.path), visibility, bind(shared)
+                )
             )
-            params.extend([entry.path, shared])
+    for index, value in enumerate(pending):
+        values[name(index)] = value
+    return clauses, values
+
+
+def read_predicate(read_set: ReadSet, path_column: str, visibility_column: str) -> tuple[sql.Composed, list[object]]:
+    """SQL equivalent of :func:`row_visible`, bound positionally (``%s``). An empty read set yields ``false``."""
+    clauses, values = _read_clauses(read_set, path_column, visibility_column, lambda _key: sql.SQL("%s"), str)
     if not clauses:
         return sql.Composed([sql.SQL("false")]), []
-    return sql.SQL("({})").format(sql.SQL(" OR ").join(clauses)), params
+    # values are keyed in bind order, which is the order the %s placeholders appear in the clauses
+    return sql.SQL("({})").format(sql.SQL(" OR ").join(clauses)), list(values.values())
+
+
+def _placeholder(key: str) -> sql.SQL:
+    """The named placeholder ``%(read_<digits>)s`` for ``key``, refusing any other shape.
+
+    It is one literal rather than ``sql.SQL("%({})s").format(...)``: ``format`` would compose the name as a
+    separate part, and ``sql.Identifier`` would *quote* it (psycopg would then look for a parameter named
+    ``"read_0"``). ``key`` is a counter this module generates, so the digits alone decide it.
+    """
+    if not key.startswith("read_") or not key.removeprefix("read_").isdigit():
+        raise ScopeError("untrusted_parameter_name")
+    return sql.SQL(f"%({key})s")  # type: ignore[arg-type]  # only the validated digits reach the format
+
+
+def read_predicate_named(
+    read_set: ReadSet, path_column: str, visibility_column: str
+) -> tuple[sql.Composed, dict[str, object]]:
+    """The same predicate with named placeholders, so it can join a statement that already uses ``%(name)s``.
+
+    ``compile_predicate`` (the temporal filter) binds by name. Psycopg cannot mix named and positional
+    parameters in one statement, so a query that applies both must use this form.
+    """
+    clauses, values = _read_clauses(
+        read_set,
+        path_column,
+        visibility_column,
+        _placeholder,
+        lambda index: f"read_{index}",
+    )
+    if not clauses:
+        return sql.Composed([sql.SQL("false")]), {}
+    return sql.SQL("({})").format(sql.SQL(" OR ").join(clauses)), values
 
 
 def acl_readable(
@@ -324,6 +385,7 @@ __all__ = [
     "active_grant_paths",
     "authorize_write",
     "read_predicate",
+    "read_predicate_named",
     "resolve",
     "resolve_read_set",
     "rls_read_using",

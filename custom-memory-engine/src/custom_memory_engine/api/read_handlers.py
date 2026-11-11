@@ -1,35 +1,69 @@
-"""Read-path handlers: ``get`` and ``query`` (E-033 partial, wired by V2-D66 for E-021 AC4/AC5).
+"""Read-path handlers: ``get`` and ``query``
+(E-033 partial / V2-D66 / E-021 AC4-AC5; temporal modes E-031 / V2-D73).
 
 ``API_V2.md`` §4.2 defines ``get`` (one artifact by id) and ``query`` (staged retrieval returning the four channels
 of ``CHANNELS.md``). Both are owned by ``E-033``; that task is gated behind ``G2``, and the Project Owner authorized
 this minimal landing early under ``V2-D66`` so the six coding-profile fixtures can be stored **and read back** through
 the generic public API (issue #136 acceptance criteria 4 and 5).
 
+**Temporal modes (E-031, V2-D73).** ``query`` now accepts a ``mode`` in ``QueryRequest``:
+
+* ``current_state`` (default) — the view an observer has now;
+* ``historical_as_of`` — the view that existed at ``target_time``, as believed now;
+* ``historical_window`` — versions whose event range overlaps ``[window_start, window_end)``;
+* ``audit_as_of`` — the recorded-range slice at ``belief_time`` (Tier C only; never answer-context material;
+  ``TECHNICAL_SPECIFICATION.md`` 3.5).
+
+The reference instant ρ is the engine's own clock (``engine.predicates.reference_instant``), never the caller's: a
+request carrying ``reference_time`` is refused (``V2-D73``, ``I4``).
+
+``mode='change'`` is deferred to E-033's diff operator. Every temporal read routes through
+:func:`engine.predicates.fetch_scoped_rows`, which applies the temporal predicate and the caller's read predicate in
+**one** statement, then feeds the same channel-classification pipeline.
+
 **What is minimal here, and what stays with E-033.** Implemented: single-artifact retrieval with channel
-classification; scope-filtered retrieval grouped into the four channels. Not implemented here, and still ``E-033``'s
-obligation: channel **budgets** and ranking (``E-033``), the **cost** report (``E-036``), the temporal predicates
-(``E-031``'s planner), ``refine`` (``E-034``), and staleness computation (``E-037``/``E-038``, which need the closure
-hash that does not exist yet — this module passes ``never_stale``, the function ``channels.py`` documents for callers
-with no closure hash).
+classification; scope-filtered retrieval grouped into the four channels; the four temporal modes. Not implemented here,
+and still ``E-033``'s obligation: channel **budgets** and ranking (``E-033``), the **cost** report (``E-036``),
+the ``change`` mode (``E-033``), ``refine`` (``E-034``), and staleness computation (``E-037``/``E-038``, which need
+the closure hash that does not exist yet — this module passes ``never_stale``, the function ``channels.py`` documents
+for callers with no closure hash).
 
 **Why nothing below ``Engine.call`` skips authorisation.** The caller arrives already authorised for the *operation*;
 what decides which **rows** are visible is row-level security, bound to the authenticated principal by
-``Runtime.session``. :func:`scope.access.read_predicate` narrows further to the caller's resolved read set, so a
-selector the caller was denied cannot widen the result even where a grant exists.
+``Runtime.session``. ``scope.access.read_predicate_named`` narrows further to the caller's resolved read set, in the
+same statement as the temporal predicate, and ``row_visible`` re-checks every returned row as defence in depth
+(``V2-D45``). ``fetch_scoped_rows`` also verifies that ``app.user_id`` is the query's user before reading.
+
+**``audit_as_of`` Tier-C enforcement.** ``API_V2.md`` §4.2 says ``audit_as_of`` is Tier C only and never returns
+answer-context material. A Tier B caller therefore gets ``forbidden`` before any row is read, and the rows come back
+in ``QueryResult.audit`` with ``is_audit=True`` — never in an answer channel, because ``channel_of`` maps a retired
+artifact to ``none`` and would drop exactly the withdrawn rows an audit exists to show.
 """
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import cast
 
 import structlog
 from psycopg import AsyncConnection, sql
+from psycopg.errors import InsufficientPrivilege
 from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.engine.channels import Channel, ChannelError, Verification, channel_of
+from custom_memory_engine.engine.predicates import (
+    TemporalQuery,
+    TemporalQueryError,
+    audit_as_of,
+    current_state,
+    fetch_scoped_rows,
+    historical_as_of,
+    historical_window,
+    reference_instant,
+)
 from custom_memory_engine.model.axes import Kind, Lifecycle
-from custom_memory_engine.scope.access import ReadEntry, ReadSet, Visibility, read_predicate, row_visible
+from custom_memory_engine.scope.access import ReadEntry, ReadSet, Visibility, read_predicate_named, row_visible
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
 
 logger = structlog.get_logger(__name__)
@@ -38,6 +72,8 @@ logger = structlog.get_logger(__name__)
 MAX_SELECTORS = 16
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 1000
+#: ``API_V2.md`` §4.2 minus ``change``: E-031 wires the four temporal predicates; E-033 owns the diff.
+TEMPORAL_MODES = frozenset({"current_state", "historical_as_of", "historical_window", "audit_as_of"})
 _ALL_VISIBILITIES: frozenset[Visibility] = frozenset({"private", "project", "shared"})
 
 
@@ -89,9 +125,13 @@ class Artifact:
 
 
 class QueryResult:
-    """The four channels plus the artifacts refused as illegal tuples (``API_V2.md`` §4.2, minimal form)."""
+    """The four channels plus the artifacts refused as illegal tuples (``API_V2.md`` §4.2, minimal form).
 
-    __slots__ = ("conflicts", "facts", "hypotheses", "procedures", "refused")
+    ``is_audit`` is ``True`` only for ``audit_as_of`` queries; ``TECHNICAL_SPECIFICATION.md`` 3.5 forbids
+    using those results as answer context, so callers must check this flag before treating the result as one.
+    """
+
+    __slots__ = ("audit", "conflicts", "facts", "hypotheses", "is_audit", "procedures", "refused")
 
     def __init__(
         self,
@@ -101,12 +141,16 @@ class QueryResult:
         procedures: Sequence[Artifact] = (),
         conflicts: Sequence[Artifact] = (),
         refused: Sequence[tuple[str, str]] = (),
+        audit: Sequence[Artifact] = (),
+        is_audit: bool = False,
     ) -> None:
         self.facts = tuple(facts)
         self.hypotheses = tuple(hypotheses)
         self.procedures = tuple(procedures)
         self.conflicts = tuple(conflicts)
         self.refused = tuple(refused)
+        self.audit = tuple(audit)
+        self.is_audit = is_audit
 
     def channel(self, name: str) -> tuple[Artifact, ...]:
         """The items in one channel, by the ``CHANNELS.md`` name."""
@@ -117,18 +161,30 @@ class QueryResult:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, QueryResult):
             return NotImplemented
-        return (self.facts, self.hypotheses, self.procedures, self.conflicts, self.refused) == (
+        return (
+            self.facts,
+            self.hypotheses,
+            self.procedures,
+            self.conflicts,
+            self.refused,
+            self.audit,
+            self.is_audit,
+        ) == (
             other.facts,
             other.hypotheses,
             other.procedures,
             other.conflicts,
             other.refused,
+            other.audit,
+            other.is_audit,
         )
 
     def __repr__(self) -> str:
+        audited = f", audit={len(self.audit)}" if self.is_audit else ""
         return (
             f"QueryResult(facts={len(self.facts)}, hypotheses={len(self.hypotheses)}, "
-            f"procedures={len(self.procedures)}, conflicts={len(self.conflicts)}, refused={len(self.refused)})"
+            f"procedures={len(self.procedures)}, conflicts={len(self.conflicts)}, "
+            f"refused={len(self.refused)}{audited})"
         )
 
 
@@ -236,6 +292,141 @@ class ReadHandlers:
             verification=verification,
         )
 
+    # -- temporal modes (E-031, V2-D73) ------------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_instant(value: object, field: str) -> datetime:
+        """Parse a caller-supplied ISO-8601 instant or bare datetime; require a timezone."""
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                raise EntryError("validation_error", f"{field}_invalid") from None
+        else:
+            raise EntryError("validation_error", f"{field}_invalid")
+        if parsed.tzinfo is None:
+            raise EntryError("validation_error", f"{field}_must_carry_a_timezone")
+        return parsed.astimezone(UTC)
+
+    def _instant_or_none(self, request: Mapping[str, object], field: str) -> datetime | None:
+        raw = request.get(field)
+        return None if raw is None else self._parse_instant(raw, field)
+
+    def _build_temporal_query(
+        self, user: str, mode: str, request: Mapping[str, object], reference_time: datetime
+    ) -> TemporalQuery:
+        """Parse the fields ``mode`` needs into a :class:`TemporalQuery`.
+
+        ``reference_time`` is never taken from the caller: belief time is the database clock (``I4``), and a
+        caller-chosen reference would let a request read a belief the engine never held at that instant.
+        """
+        target = self._instant_or_none(request, "target_time")
+        belief = self._instant_or_none(request, "belief_time")
+        start = self._instant_or_none(request, "window_start")
+        end = self._instant_or_none(request, "window_end")
+        try:
+            if mode == "current_state":
+                return current_state(user, reference_time)
+            if mode == "historical_as_of":
+                if target is None:
+                    raise EntryError("validation_error", "target_time_required")
+                return historical_as_of(user, target, reference_time)
+            if mode == "historical_window":
+                if start is None:
+                    raise EntryError("validation_error", "window_start_required")
+                if end is None:
+                    raise EntryError("validation_error", "window_end_required")
+                return historical_window(user, start, end, reference_time)
+            if mode == "audit_as_of":
+                if target is None:
+                    raise EntryError("validation_error", "target_time_required")
+                if belief is None:
+                    raise EntryError("validation_error", "belief_time_required")
+                return audit_as_of(user, target, belief)
+        except TemporalQueryError as exc:
+            raise EntryError("validation_error", exc.code) from None
+        except ValueError:
+            # a TemporalQuery field validator rejected the combination; the code is a static literal
+            raise EntryError("validation_error", "temporal_parameter_mismatch") from None
+        raise EntryError("validation_error", "mode_not_supported")
+
+    async def _temporal_query(
+        self, call: Call, mode: str, request: Mapping[str, object], effective_read_set: ReadSet, limit: int
+    ) -> QueryResult:
+        """Run one temporal mode through the engine's predicate and route the rows into channels.
+
+        The temporal filter and the caller's read predicate are applied in a single statement, so ``limit`` counts
+        rows the caller may actually read. ``audit_as_of`` results are returned in ``audit`` and never in a channel:
+        ``TECHNICAL_SPECIFICATION.md`` 3.5 forbids using them as answer context, and ``channel_of`` maps a retired
+        artifact to ``none``, so a channel-routed audit would silently drop exactly the rows an audit wants.
+        """
+        user = call.ctx.principal
+        is_audit = mode == "audit_as_of"
+        if is_audit and call.ctx.tier != "C":
+            raise EntryError("forbidden")  # API_V2.md §4.2: audit_as_of is Tier C only
+        read_filter, read_parameters = read_predicate_named(effective_read_set, "m.scope_path", "m.visibility")
+        try:
+            async with self.runtime.session(user) as connection:
+                # the reference instant is the clock writes record against, read inside this transaction (I4)
+                reference_time = await reference_instant(connection)
+                tquery = self._build_temporal_query(user, mode, request, reference_time)
+                rows = await fetch_scoped_rows(
+                    connection,
+                    tquery,
+                    read_filter,
+                    read_parameters,
+                    limit=limit,
+                    schema_name=self.runtime.schema_name,
+                )
+                ids = [row.id for row in rows]
+                verifications = await self._verification_of(connection, user, ids)
+                contradicted = await self._contradicted_ids(connection, user, ids)
+        except InsufficientPrivilege as exc:
+            raise EntryError("forbidden") from exc
+        except TemporalQueryError as exc:
+            raise EntryError("validation_error", exc.code) from exc
+
+        buckets: dict[str, list[Artifact]] = {"facts": [], "hypotheses": [], "procedures": [], "conflicts": []}
+        audited: list[Artifact] = []
+        refused: list[tuple[str, str]] = []
+        for row in rows:
+            # Defence in depth (V2-D45): the reference semantics must agree with the SQL predicate. The statement
+            # above already filtered, so this drops nothing in a correct build -- which is exactly what a control
+            # breaks, and why the check stays.
+            if not row_visible(effective_read_set, row.scope_path, row.visibility):
+                continue
+            verification = verifications.get(row.id, "none")
+            channel = _channel_for(row.kind, row.lifecycle, verification, row.id in contradicted)
+            if channel is None:
+                refused.append((row.id, "illegal_artifact_tuple"))
+                continue
+            artifact = Artifact(
+                artifact_id=row.id,
+                kind=row.kind,
+                lifecycle=row.lifecycle,
+                content=row.content,
+                scope_path=row.scope_path,
+                channel=channel,
+                verification=verification,
+            )
+            if is_audit:
+                audited.append(artifact)
+                continue
+            if channel == "none":
+                continue
+            buckets[channel].append(artifact)
+        if is_audit:
+            return QueryResult(audit=audited, refused=refused, is_audit=True)
+        return QueryResult(
+            facts=buckets["facts"],
+            hypotheses=buckets["hypotheses"],
+            procedures=buckets["procedures"],
+            conflicts=buckets["conflicts"],
+            refused=refused,
+        )
+
     async def query(self, call: Call) -> QueryResult:
         request = call.arguments.get("request")
         if not isinstance(request, Mapping):
@@ -243,6 +434,13 @@ class ReadHandlers:
         limit = request.get("limit", DEFAULT_LIMIT)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIMIT:
             raise EntryError("validation_error", "limit_out_of_range")
+        mode = request.get("mode", "current_state")
+        if mode == "change":
+            raise EntryError("validation_error", "mode_change_not_wired")  # E-033's diff operator
+        if mode not in TEMPORAL_MODES:
+            raise EntryError("validation_error", "mode_invalid")
+        if "reference_time" in request:
+            raise EntryError("validation_error", "reference_time_is_the_engine_clock")  # I4
         scope = request.get("scope")
         if scope is not None:
             try:
@@ -256,74 +454,13 @@ class ReadHandlers:
                 raise EntryError("forbidden")
         else:
             effective_read_set = call.ctx.read_set
+        if mode == "audit_as_of" and call.ctx.tier != "C":
+            raise EntryError("forbidden")  # checked before the empty-read-set shortcut, so it never answers
         if effective_read_set.empty:
-            return QueryResult()
+            return QueryResult(is_audit=mode == "audit_as_of")
         if len(effective_read_set.entries) > MAX_SELECTORS:
             raise EntryError("resource_limit", "too_many_selectors")
-        user = call.ctx.principal
-        async with self.runtime.session(user) as connection:
-            rows = await self._rows(connection, effective_read_set, user, limit)
-            ids = [str(row[0]) for row in rows]
-            verifications = await self._verification_of(connection, user, ids)
-            contradicted = await self._contradicted_ids(connection, user, ids)
-        buckets: dict[str, list[Artifact]] = {"facts": [], "hypotheses": [], "procedures": [], "conflicts": []}
-        refused: list[tuple[str, str]] = []
-        for row in rows:
-            identifier, kind, lifecycle, content, scope_path, visibility = row
-            artifact_id = str(identifier)
-            # defence in depth: the reference semantics must agree with the SQL predicate (V2-D45)
-            if not row_visible(effective_read_set, scope_path, visibility):
-                continue
-            verification = verifications.get(artifact_id, "none")
-            channel = _channel_for(str(kind), str(lifecycle), verification, artifact_id in contradicted)
-            if channel is None:
-                refused.append((artifact_id, "illegal_artifact_tuple"))
-                continue
-            if channel == "none":
-                continue
-            buckets[channel].append(
-                Artifact(
-                    artifact_id=artifact_id,
-                    kind=str(kind),
-                    lifecycle=str(lifecycle),
-                    content=str(content),
-                    scope_path=str(scope_path),
-                    channel=channel,
-                    verification=verification,
-                )
-            )
-        return QueryResult(
-            facts=buckets["facts"],
-            hypotheses=buckets["hypotheses"],
-            procedures=buckets["procedures"],
-            conflicts=buckets["conflicts"],
-            refused=refused,
-        )
-
-    async def _rows(
-        self,
-        connection: AsyncConnection,
-        read_set: ReadSet,
-        user: str,
-        limit: int,
-    ) -> list[tuple[object, ...]]:
-        """Readable rows in ``read_set``, newest belief first, capped by ``limit``.
-
-        The predicate is :func:`read_predicate`, the SQL twin of :func:`row_visible`: a ``private`` row matches only
-        a selector whose path equals its scope (V2 §5 rule 4, threat T-06), so a root query does not surface a
-        private row stored in a sub-scope; that row is read by querying its own scope.
-        """
-        predicate, params = read_predicate(read_set, "scope_path", "visibility")
-        async with connection.cursor(row_factory=tuple_row) as cursor:
-            await cursor.execute(
-                sql.SQL(
-                    "SELECT id, kind, lifecycle, content, scope_path, visibility FROM {t} "
-                    "WHERE user_id = %s AND kind IS NOT NULL AND lifecycle IS NOT NULL AND {} "
-                    "ORDER BY lower(recorded_range) DESC NULLS LAST, id LIMIT %s"
-                ).format(predicate, t=self.runtime.table("memory_version")),
-                (user, *params, limit),
-            )
-            return list(await cursor.fetchall())
+        return await self._temporal_query(call, str(mode), request, effective_read_set, limit)
 
     @staticmethod
     def _granted_for(read_set: ReadSet, path: str) -> tuple[ReadEntry, ...]:

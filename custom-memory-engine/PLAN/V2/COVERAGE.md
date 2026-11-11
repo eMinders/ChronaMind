@@ -31,7 +31,7 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `conflicts` | channel | `E-017`, `E-033`, `E-035` | C-P4 (`V2-D48`) |
 | `ingest_episode` | operation | `E-039`, `E-013` | |
 | `ingest_artifact` | operation | `E-039`, `E-015` | |
-| `query` | operation | `E-039`, `E-031`, `E-033` | unwired: `E-033` lands it through `Engine.call` (§4.1) |
+| `query` | operation | `E-039`, `E-031`, `E-033` | wired; `E-031` added the four temporal modes (`V2-D73`), `E-033` still owns budgets, ranking, `change` and `refine` |
 | `refine` | operation | `E-039`, `E-034` | unwired: `E-034` lands it through `Engine.call` (§4.1) |
 | `get` | operation | `E-039`, `E-033` | unwired: `E-033` lands it through `Engine.call` (§4.1) |
 | `provenance` | operation | `E-039`, `E-033` | opaque handles (`V2-D37`); unwired: `E-033` lands it through `Engine.call` (§4.1) |

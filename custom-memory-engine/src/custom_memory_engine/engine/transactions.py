@@ -149,6 +149,10 @@ class CandidateVersionInput(_TransactionModel):
     kind: str | None = None  # set explicitly for kinds the layer cannot imply (e.g. 'procedure')
     method_id: str | None = None  # the registered METHOD of an inferred artifact (I3); fixed once set
     subject_key: str
+    #: When the subject *is* an entity, this names it (migration 19 / V2-D74). ``subject_key`` holds the same id,
+    #: because that is the column the supersession exclusion compares; the foreign key is what proves it exists
+    #: in the caller's own scope.
+    subject_entity_id: str | None = None
     predicate_key: str
     single_valued: bool = True
     content: str
@@ -415,7 +419,7 @@ _INSERT_COLUMNS = (
 )
 _INSERT_BASE_ARITY = 18
 #: Columns written only when the caller supplies them; absent, the axes/method triggers derive them.
-_OPTIONAL_COLUMNS = ("scope_path", "kind", "method_id")
+_OPTIONAL_COLUMNS = ("scope_path", "kind", "method_id", "subject_entity_id")
 
 
 async def _insert_version(
@@ -442,6 +446,7 @@ async def _insert_version(
     scope_path: str | None = None,
     kind: str | None = None,
     method_id: str | None = None,
+    subject_entity_id: str | None = None,
     archival_branch: str | None = None,
 ) -> None:
     """Single write path for memory_version rows; keeps the column list in one place."""
@@ -465,7 +470,12 @@ async def _insert_version(
         extractor_version,
         archival_branch,
     )
-    optional = {"scope_path": scope_path, "kind": kind, "method_id": method_id}
+    optional = {
+        "scope_path": scope_path,
+        "kind": kind,
+        "method_id": method_id,
+        "subject_entity_id": subject_entity_id,
+    }
     extra = [name for name in _OPTIONAL_COLUMNS if optional[name] is not None]
     columns = _INSERT_COLUMNS + "".join(f", {name}" for name in extra)
     placeholders = ", ".join(["%s"] * (_INSERT_BASE_ARITY + len(extra)))
@@ -659,6 +669,7 @@ async def stage_candidate(
                 extractor_version=candidate.extractor_version,
                 kind=candidate.kind,
                 method_id=candidate.method_id,
+                subject_entity_id=candidate.subject_entity_id,
             )
             await _insert_provenance(
                 cursor,
@@ -737,6 +748,7 @@ async def commit_initial_version(
                 extractor_version=candidate.extractor_version,
                 kind=candidate.kind,
                 method_id=candidate.method_id,
+                subject_entity_id=candidate.subject_entity_id,
             )
             await _insert_provenance(
                 cursor,

@@ -271,6 +271,7 @@ class IngestHandlers:
         if entity_id is not None and (not isinstance(entity_id, str) or not entity_id.strip()):
             raise EntryError("validation_error", "entity_id_invalid")
         subject_key = "self"
+        subject_entity_id: str | None = None
         if isinstance(entity_id, str):
             # The claim must live in the entity's own scope: naming an entity of another scope would attach this
             # scope's claim to it. Refused like an unknown entity, so the answer reveals nothing about either scope.
@@ -278,6 +279,9 @@ class IngestHandlers:
             if target is None or target.scope_path != _scope_path(call.arguments.get("scope"), user):
                 raise EntryError("forbidden")
             subject_key = entity_id
+            # the typed link (migration 19): `subject_key` carries the id for supersession, `subject_entity_id`
+            # carries it for the foreign key that proves it exists in this scope
+            subject_entity_id = entity_id
         kind = call.arguments.get("kind")
         if kind not in _ASSERTABLE_KINDS:
             raise EntryError(
@@ -319,6 +323,7 @@ class IngestHandlers:
                 scope_path=scope,
                 kind=str(kind) if kind == "procedure" else None,  # only supply when the trigger cannot infer it
                 subject_key=subject_key,
+                subject_entity_id=subject_entity_id,
                 predicate_key="statement",
                 single_valued=False,
                 content=content,
