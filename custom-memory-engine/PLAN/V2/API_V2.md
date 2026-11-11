@@ -208,7 +208,7 @@ as an association with `origin='tier_b'` and has **no** channel effect; a Tier B
 against its own inference uses `refute`. *Errors:* `forbidden`, `validation_error` (unknown type).
 
 **`create_entity(ctx, scope, entity_type, label, idempotency_key) → EntityId`** (`V2-D46`)
-Creates a scope-local, opaque entity (`ARCHITECTURE_V2.md` 5.2) in a persisted scope the caller may write.
+Creates a principal-scoped, opaque entity (`ARCHITECTURE_V2.md` 5.2, `V2-D25`) in a scope the caller may write.
 The `EntityId` is engine-generated; `label` is content and follows the scope's read rules. A replay with the same
 key returns the same id. *Errors:* `forbidden` (scope not writable), `validation_error`.
 
@@ -268,8 +268,7 @@ Scope administration is part of the engine API, because it decides every read se
 
 **`create_scope(ctx, parent, segment, kind, idempotency_key) → ScopePath`** — creates `parent + segment + '/'`
 with `kind ∈ {project, session, task, shared}` inside the caller's own namespace (`personal` scopes are the
-`/u/<user>/` roots, created with the user). Child scopes are persisted and can hold their own memories and entities;
-the root path remains implicit for backwards compatibility. The segment follows the `API_V2.md` §6 grammar. *Errors:*
+`/u/<user>/` roots, created with the user). The segment follows the `API_V2.md` §6 grammar. *Errors:*
 `validation_error` (grammar), `forbidden` (outside the caller's namespace).
 
 **`grant_access(ctx, scope, principal, idempotency_key) → GrantId`** — a `scope_grant` row (`V2-D36`): `principal`

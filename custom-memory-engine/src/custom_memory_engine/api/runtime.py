@@ -20,7 +20,6 @@ from psycopg.rows import tuple_row
 from custom_memory_engine.api.contract import Tier
 from custom_memory_engine.api.entry import CallerContext, TargetInfo
 from custom_memory_engine.model.axes import LIFECYCLES, Lifecycle
-from custom_memory_engine.scope.paths import user_scope
 from custom_memory_engine.security import tenant_scope
 
 
@@ -56,17 +55,6 @@ class Runtime:
 
     def table(self, name: str) -> sql.Identifier:
         return sql.Identifier(self.schema_name, name)
-
-    async def scope_exists(self, connection: AsyncConnection, principal: str, scope_path: str) -> bool:
-        """Check a persisted child scope; a principal's root is implicit and needs no row."""
-        if scope_path == user_scope(principal).text:
-            return True
-        async with connection.cursor(row_factory=tuple_row) as cursor:
-            await cursor.execute(
-                sql.SQL("SELECT 1 FROM {t} WHERE user_id = %s AND scope_path = %s").format(t=self.table("scope")),
-                (principal, scope_path),
-            )
-            return await cursor.fetchone() is not None
 
 
 def new_id(prefix: str) -> str:

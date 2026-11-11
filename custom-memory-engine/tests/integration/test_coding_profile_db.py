@@ -145,16 +145,6 @@ async def infer(engine: Engine, item: CodingArtifact) -> tuple[str, str]:
 
 
 async def scenario(conn: AsyncConnection, engine: Engine) -> Scenario:
-    await engine.call(
-        caller("alice"),
-        "create_scope",
-        {"parent": "/u/alice/", "segment": "p", "kind": "project", "idempotency_key": "coding-parent"},
-    )
-    await engine.call(
-        caller("alice"),
-        "create_scope",
-        {"parent": "/u/alice/p/", "segment": "chrona", "kind": "project", "idempotency_key": "coding-repository"},
-    )
     ids: dict[str, str] = {}
     observation = ""
     for sequence, item in enumerate(coding_artifacts(), start=2):

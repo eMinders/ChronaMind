@@ -5,11 +5,11 @@ already run. A handler still never trusts that: it operates under the caller's r
 (``Runtime.session``), so a row the caller may not write is simply not affected, and it answers with the entry
 point's static errors (``EntryError``) and no identifier, path, scope or content.
 
-Operations wired here: ``register_method``, ``create_entity``, ``link_entity``, ``create_scope``, ``link``, ``unlink``,
-``adjudicate``, ``retract_own``, ``grant_access`` and ``revoke_access``. ``create_scope`` was held back by ``E-011``
-while every scope was the personal root; migration 16 admits a row anywhere inside its owner's namespace
+Operations wired here: ``register_method``, ``create_entity``, ``link_entity``, ``link``, ``unlink``, ``adjudicate``,
+``retract_own``, ``grant_access``, ``revoke_access`` and ``create_scope``. ``create_scope`` was held back by ``E-011``
+while every scope was the personal root; migration 15 admits a row anywhere inside its owner's namespace
 (``V2-D64``), so a created sub-scope now holds entities, associations and memories like any other (``E-040``).
-``link_entity`` records a cross-scope entity link; both endpoints must be in the caller's read set (``E-024``).
+``link_entity`` records an explicit identity link between two of the caller's scope-local entities (``E-024``).
 """
 
 import re
@@ -28,9 +28,12 @@ from custom_memory_engine.security.audit_guard import content_free_details
 
 _HASH = re.compile(r"[a-f0-9]{64}")
 _CODE = re.compile(r"[a-z0-9_]{1,64}")
+#: A link relation is a declared word (``same_person``), never content: it is stored and compared, never rendered.
 _ENTITY_RELATION = re.compile(r"[a-z][a-z0-9_]{0,63}")
-_SCOPE_KINDS = frozenset({"project", "session", "task", "shared"})
 _ASSERTABLE_KINDS = frozenset({"claim", "procedure"})  # V2-D48: an abstraction or an episode can only be denied
+#: The scope kinds `create_scope` may mint (`API_V2.md` 4.10). `personal` is the `/u/<user>/` root, which is
+#: created with the user and cannot be minted by this operation.
+_CREATABLE_SCOPE_KINDS = frozenset({"project", "session", "task", "shared"})
 
 
 def _text(call: Call, name: str, *, limit: int = 256) -> str:
@@ -113,8 +116,6 @@ class Handlers:
         async with self.runtime.session(user) as connection:
             if (found := await replayed(self.runtime, connection, user, "create_entity", key)) is not None:
                 return found
-            if not await self.runtime.scope_exists(connection, user, scope):
-                raise EntryError("forbidden")
             async with connection.cursor(row_factory=tuple_row) as cursor:
                 await cursor.execute(
                     sql.SQL(
@@ -129,38 +130,41 @@ class Handlers:
             return str(row[0])
 
     async def link_entity(self, call: Call) -> Receipt:
-        entity_a = _text(call, "entity_a")
-        entity_b = _text(call, "entity_b")
+        """``link_entity(entity_a, entity_b, relation)`` -> ``Receipt`` (``API_V2.md`` 4.5, architecture 5.2).
+
+        ``targets_readable`` has already required **both** entities to be in the caller's read set, and answered an
+        unreadable one exactly like a missing one (T-09). The link joins two scope-local ids; it merges nothing, so
+        neither entity's claims or attributes become readable from the other scope. The pair is unordered and a
+        repeat returns the original link, so a replay never adds a second effect (``I9``).
+        """
         relation = _text(call, "relation", limit=64)
         if not _ENTITY_RELATION.fullmatch(relation):
             raise EntryError("validation_error", "entity_relation_invalid")
+        entity_a, entity_b = _text(call, "entity_a"), _text(call, "entity_b")
         if entity_a == entity_b:
             raise EntryError("validation_error", "entity_link_requires_two_entities")
         entity_a, entity_b = sorted((entity_a, entity_b))
         user = call.ctx.principal
         try:
-            async with self.runtime.session(user) as connection:
-                async with connection.cursor(row_factory=tuple_row) as cursor:
+            async with self.runtime.session(user) as connection, connection.cursor(row_factory=tuple_row) as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {t} (id, user_id, entity_a, entity_b, relation) VALUES (%s, %s, %s, %s, %s) "
+                        "ON CONFLICT (user_id, entity_a, entity_b, relation) DO NOTHING RETURNING id, created_at"
+                    ).format(t=self.runtime.table("entity_link")),
+                    (new_id("elink"), user, entity_a, entity_b, relation),
+                )
+                row = await cursor.fetchone()
+                if row is None:
                     await cursor.execute(
                         sql.SQL(
-                            "INSERT INTO {t} (id, user_id, entity_a, entity_b, relation) "
-                            "VALUES (%s, %s, %s, %s, %s) "
-                            "ON CONFLICT (user_id, entity_a, entity_b, relation) DO NOTHING "
-                            "RETURNING id, created_at"
+                            "SELECT id, created_at FROM {t} "
+                            "WHERE user_id = %s AND entity_a = %s AND entity_b = %s AND relation = %s"
                         ).format(t=self.runtime.table("entity_link")),
-                        (new_id("elink"), user, entity_a, entity_b, relation),
+                        (user, entity_a, entity_b, relation),
                     )
                     row = await cursor.fetchone()
-                    if row is None:
-                        await cursor.execute(
-                            sql.SQL(
-                                "SELECT id, created_at FROM {t} "
-                                "WHERE user_id = %s AND entity_a = %s AND entity_b = %s AND relation = %s"
-                            ).format(t=self.runtime.table("entity_link")),
-                            (user, entity_a, entity_b, relation),
-                        )
-                        row = await cursor.fetchone()
-        except ForeignKeyViolation:
+        except ForeignKeyViolation:  # an entity of another principal: the same answer as a missing one
             raise EntryError("forbidden") from None
         if row is None:
             raise EntryError("forbidden")
@@ -281,6 +285,33 @@ class Handlers:
 
     # -- SCOPE ACCESS ------------------------------------------------------------------------------------------
 
+    async def create_scope(self, call: Call) -> str:
+        """``create_scope(parent, segment, kind, idempotency_key)`` -> the canonical scope path (``API_V2.md`` 4.10).
+
+        A scope is identified by its path alone: no row records it, so creation is argument validation plus an
+        idempotency entry and a content-free audit row. ``namespace_owner_only`` has already refused a parent outside
+        the caller's namespace before this runs, and ``ScopePath.child`` re-checks the grammar, so a caller cannot
+        mint a path the database would later refuse. A replay returns the original path and creates nothing.
+        """
+        key, user = _key(call), call.ctx.principal
+        kind = call.arguments.get("kind")
+        if kind not in _CREATABLE_SCOPE_KINDS:
+            raise EntryError("validation_error", "scope_kind_invalid")
+        try:
+            child = parse_scope(call.arguments.get("parent")).child(_text(call, "segment", limit=128))
+        except ScopeError:
+            raise EntryError("validation_error", "scope_invalid") from None
+        if not child.is_within(user_scope(user)):  # defence in depth: the condition already refused this
+            raise EntryError("forbidden")
+        created = child.text
+        async with self.runtime.session(user) as connection:
+            if (found := await replayed(self.runtime, connection, user, "create_scope", key)) is not None:
+                return found
+            await remember(self.runtime, connection, user, "create_scope", key, created)
+            # Counts and a declared word only: a path names a user and a segment, so it is never audited (V2-D54).
+            await _audit(self.runtime, connection, user, "scope_created", {"scope_kind": kind, "depth": child.depth})
+        return created
+
     async def grant_access(self, call: Call) -> str:
         scope, key, user = _scope(call), _key(call), call.ctx.principal
         grantee = call.arguments.get("principal")
@@ -343,52 +374,6 @@ class Handlers:
         if row is not None and row[0]:
             raise EntryError("precondition_failed", "already_revoked")
         raise EntryError("forbidden")
-
-    async def create_scope(self, call: Call) -> str:
-        parent = _scope(call, "parent")
-        segment = _text(call, "segment", limit=128)
-        kind = _text(call, "kind", limit=32)
-        key, user = _key(call), call.ctx.principal
-        if kind not in _SCOPE_KINDS:
-            raise EntryError("validation_error", "scope_kind_invalid")
-        try:
-            scope_path = parse_scope(parent).child(segment).text
-        except ScopeError:
-            raise EntryError("validation_error", "scope_invalid") from None
-
-        async with self.runtime.session(user) as connection:
-            if (found := await replayed(self.runtime, connection, user, "create_scope", key)) is not None:
-                return found
-            if not await self.runtime.scope_exists(connection, user, parent):
-                raise EntryError("forbidden")
-            parent_path = None if parent == user_scope(user).text else parent
-            async with connection.cursor(row_factory=tuple_row) as cursor:
-                await cursor.execute(
-                    sql.SQL(
-                        "INSERT INTO {t} (scope_path, user_id, parent_path, segment, kind) "
-                        "VALUES (%s, %s, %s, %s, %s) "
-                        "ON CONFLICT (scope_path) DO NOTHING RETURNING scope_path, kind"
-                    ).format(t=self.runtime.table("scope")),
-                    (scope_path, user, parent_path, segment, kind),
-                )
-                row = await cursor.fetchone()
-                if row is None:
-                    await cursor.execute(
-                        sql.SQL("SELECT scope_path, kind FROM {t} WHERE user_id = %s AND scope_path = %s").format(
-                            t=self.runtime.table("scope")
-                        ),
-                        (user, scope_path),
-                    )
-                    row = await cursor.fetchone()
-            if row is None:
-                raise EntryError("forbidden")
-            if row[1] != kind:
-                raise EntryError("validation_error", "scope_already_exists")
-            # Counts and a declared word only: a path names a user and a segment, so it is never audited (V2-D54).
-            depth = scope_path.count("/") - 1  # /u/<user>/seg/ -> depth 3; /u/<user>/ -> depth 2
-            await _audit(self.runtime, connection, user, "scope_created", {"scope_kind": kind, "depth": depth})
-            await remember(self.runtime, connection, user, "create_scope", key, scope_path)
-            return scope_path
 
 
 def register_structure_handlers(engine: Engine, runtime: Runtime) -> Handlers:

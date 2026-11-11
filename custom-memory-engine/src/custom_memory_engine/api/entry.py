@@ -67,6 +67,9 @@ SINGLE_TARGETS = (
     "subject_entity",
     "procedure_id",
 )
+#: Target inputs a caller may omit: `assert`'s `subject_entity` names the entity a claim is about, and a claim about
+#: no entity is the v1 shape (`subject_key='self'`), so absence is legal and is not a `target_required` fault.
+OPTIONAL_TARGETS = frozenset({"subject_entity"})
 EVIDENCE_ARGUMENTS = ("evidence", "counter_evidence")
 
 type Origin = Literal["tier_b", "tier_c"]
@@ -286,7 +289,7 @@ def _target_ids(op: Operation, args: dict[str, object]) -> list[str]:
     ids: list[str] = []
     for name in SINGLE_TARGETS:
         if name in op.inputs:
-            if name == "subject_entity" and name not in args:
+            if name in OPTIONAL_TARGETS and name not in args:
                 continue
             value = args.get(name)
             if not isinstance(value, str) or not value:
@@ -306,8 +309,6 @@ async def _targets_readable(
     engine: Engine, ctx: CallerContext, op: Operation, args: dict[str, object], state: dict[str, object]
 ) -> None:
     ids = _target_ids(op, args)
-    if not ids:
-        return
     # An opaque provenance handle is never an identifier: answer exactly like an unknown id, with no lookup.
     if any(is_opaque_reference(i) for i in ids):
         raise _fail(op, "forbidden")

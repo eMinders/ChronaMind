@@ -48,7 +48,6 @@ DOMAIN_TABLES = frozenset(
         "verification",
         "negative_constraint",
         "api_idempotency",
-        "scope",
         "entity_link",
     }
 )

@@ -321,21 +321,28 @@ which is the correct behaviour for a memory engine whose batches should be scope
 
 ### 5.2 Entity opacity across scopes
 
-Entities are **scope-local** opaque ids. A person represented in two scopes has two ids;
-an explicit `link_entity(a, b, relation)` row may relate them, but never replaces them
-with a global canonical id:
+`ENTITY` is global to a *principal*, not to the database, and this is a deliberate
+restriction:
 
 - Entity ids are opaque and `CREATE`d only through the public API;
-- Attributes and claims stay in their own scope; a claim naming a local entity in scope A
-  does not make that entity's claims in scope B readable;
-- Cross-scope linking requires an explicit call with the caller authorized on **both**
-  entity scopes; otherwise it is rejected;
+- An entity's **attributes are never global** — a claim in scope A naming entity `e`
+  does not make `e`'s claims in scope B readable;
+- Cross-scope linking requires an explicit `link_entity(a, b)` call with the caller
+  authorized on **both** scopes; otherwise it is rejected;
 - Entity existence is not queryable outside the caller's read set (no "does entity e
-  exist" oracle across scopes or tenants).
+  exist" oracle across tenants).
 
-Keeping ids local avoids a global identity index that could become a cross-scope side
-channel. `link_entity` records only the requested relationship and preserves independent
-scope-level authorization for each endpoint.
+Without this, a shared `ENTITY` table is a cross-tenant side channel: an attacker could
+enumerate entity ids and infer the existence and attribute-count of another tenant's
+memories. That is the security issue the original V2 draft created by calling `ENTITY`
+"canonical referents" with no tenant scoping. `V2-D25` records the fix.
+
+**How the rule is applied (`E-024`).** An entity row lives in one scope of its principal (`entity.scope_path`), and
+its label follows that scope's read rules. The same real person referenced from two scopes is therefore two opaque
+ids, one per scope, joined only by an explicit `link_entity(a, b, relation)` row (migration 18's `entity_link`). The
+link merges nothing: neither id's claims or attributes become readable from the other scope, and it requires both
+scopes in the caller's read set. A claim names its entity through `assert`'s optional `subject_entity`, which must lie
+in the claim's own scope. `tests/integration/test_cross_domain_entity.py` pins all four bullets above.
 
 ---
 

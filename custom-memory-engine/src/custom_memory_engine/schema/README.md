@@ -21,7 +21,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` Â
 | `015_subscopes.sql` | Migration 15 (`E-011`, `V2-D64`): sub-scopes inside the owner's namespace; per-scope exclusion key (`I5`); per-scope belief watermark (`I4`) |
 | `016_source_types.sql` | Migration 16 (`E-021`, `V2-D66`): admits declared tool, file, and event evidence source types |
 | `017_declared_source_types.sql` | Migration 17 (`E-021`, `V2-D66`): stores tool, file, and event evidence under the declared type |
-| `018_scope_entity_links.sql` | Migration 18 (`E-024`): persisted child scopes and authorized links between scope-local entities |
+| `018_scope_entity_links.sql` | Migration 18 (`E-024`): `entity_link`, the authorized links between scope-local entities (no scope table, `V2-D65`) |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
@@ -200,7 +200,7 @@ tables is composite on `(id, user_id)` and every function is pinned to the engin
 | Table | What the database guarantees |
 |---|---|
 | `association` | Ten closed types, same-tenant endpoints, no self-loop, weight in `[0,1]`, the degree cap of 32 (`V2-D13`, migration 3's function), and an `origin` (`tier_b` edges have no channel effect, `V2-D48`). Deleting an endpoint deletes the row and **never** cascades to the other endpoint. |
-| `entity` | Opaque random ids (`ent_` + 32 hex), scoped inside the creator's `/u/<id>/` namespace, invisible to every other user and indistinguishable from a missing id. Cross-scope identity is represented only by an explicitly authorized `entity_link`. |
+| `entity` | Opaque random ids (`ent_` + 32 hex), principal-scoped (`scope_path` inside the creator's `/u/<id>/`), invisible to every other user, indistinguishable from a missing id. Cross-scope identity is only an explicit `entity_link` (migration 18). |
 | `method` | Shared registry, **append-only**: `UPDATE`, `DELETE` and `TRUNCATE` are refused; `(name, version)` is unique. Seeded with the v1 operators. The runtime role may read and append, nothing else. |
 | `abstraction_stats` | The stored ledger: `o = s + k + u`, counts `>= 0`, `coverage` generated as `(s+k)/o`, **no `stale` column** (`V2-D24`); only an abstraction may have one; a `verified`/`refuted` status needs a `verification` record. |
 | `verification` | Append-only held-out record with the support and held-out windows and context keys (`windows_disjoint` is derived) for `I11`. Append-only includes removal: `UPDATE`, `DELETE` and `TRUNCATE` are refused, so a `refuted` record cannot be deleted out from under the status that cites it. Only the `memory_version` cascade may remove a row. |
@@ -249,9 +249,9 @@ Rollback: `rollback/010_structural_tables.sql` restores version 9 exactly. Teste
 ## Migration 11: scope hierarchy and path-based RLS (`011_scope.sql`, `E-011`, M2 + M9)
 
 Every scoped row gains `scope_path` and `visibility` (`private | project | shared`); existing rows are backfilled to
-`/u/<user_id>/` and `private`. **`user_id` stays stored** (`V2-D49` D11) and a `CHECK` ties the path to it, so
-a v1 writer that names only `user_id` still works (a `BEFORE INSERT` trigger fills the personal root) and an inconsistent dual-write is
-refused. 15 tables are scoped: the ten of the plan, the three new association/ledger/verification tables, and `entity` and `negative_constraint`
+`/u/<user_id>/` and `private`. **`user_id` stays stored** (`V2-D49` D11) and a `CHECK` ties the path to it - the personal-root
+equality here, relaxed to *inside* the owner's namespace by migration 15 - so a v1 writer that names only `user_id` still works (a
+`BEFORE INSERT` trigger fills the personal root) and an inconsistent dual-write is refused. 15 tables are scoped: the ten of the plan, the three new association/ledger/verification tables, and `entity` and `negative_constraint`
 (which already had a path and gain `visibility`). `app_user` is the principal table and `scope_grant` keeps its own policy.
 
 * **Read policy** `<table>_scope_read` (`SELECT` only, `V2-D45`): own namespace, plus `project`/`shared` rows inside a scope an **active**
@@ -287,9 +287,11 @@ Rollback: `rollback/011_scope.sql` restores version 10 exactly (it refuses if tw
   but never rewrite. It stores the engine-generated result id, never a request.
 
 `api/runtime.py` and `api/handlers.py` wire ten operations through `Engine.call`: `register_method`, `create_entity`,
-`link_entity`, `create_scope`, `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access` and `revoke_access`.
-Every lookup and write runs as the caller under the restricted role, so an id the caller may not read is absent to
-the engine itself. `create_scope` persists child scopes (migration 18); the user's root remains implicit.
+`link_entity`, `create_scope`, `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access` and `revoke_access`. Every lookup and write
+runs as the caller under the restricted role, so an id the caller may not read is absent to the engine itself.
+`create_scope` (`E-040`) creates no row: a scope is its canonical path, and migrating 15 lets a scoped row lie anywhere
+inside its owner's namespace, so the created path is immediately usable. `scope_grant` records read membership.
+`link_entity` (`E-024`) writes migration 18's `entity_link`.
 
 Rollback: `rollback/012_api_runtime.sql` restores version 11 exactly. Tested by `tests/integration/test_migration_m12.py`
 and `tests/integration/test_api_wiring_structure.py`.
@@ -302,6 +304,13 @@ Multi-valued means two of them never supersede or conflict; a caller that wants 
 (the optional predicate, M5, is deferred past W1, `V2-D43`). An existing row under either key that defines it differently
 refuses the migration (fail closed; `tests/integration/test_migration_m13.py`). Rollback: `rollback/013_generic_predicates.sql` (refuses while
 any artifact uses them).
+
+`api/ingest_handlers.py` wires `ingest_episode`, `assert` and `ingest_artifact`. An episode is recorded `observed` from a declared
+source with no gate. A claim goes through the v1 validation gate (`engine.ingest.apply_candidate`) and is answered `asserted`,
+`contested` or a `Rejected` result with the gate's static reason code. The answer is read back from what was recorded (the
+first gate decision and the stored belief time), so a replayed key gets exactly the original answer. Only `turn` evidence can be grounded: an `external`
+reference carries a hash, not the captured text, so asserting from external evidence alone is a `validation_error`.
+Tested by `tests/integration/test_api_wiring_ingest.py`.
 
 ## Migration 14: the records of entry into the lifecycle (`014_entry_records.sql`, `E-016`, `V2-D61`)
 
@@ -374,30 +383,29 @@ exclusion index's legacy `valid_range` attribute, which a table rename does not 
 lies in a sub-scope, because version 14 cannot represent one and flattening it into the owner's root would merge two
 scopes' beliefs. Tested by `tests/integration/test_migration_m15.py`.
 
-## Migration 16: additional evidence source types (`016_source_types.sql`, `E-021`, `V2-D66`)
+## Migration 18: scope-local entity links (`018_scope_entity_links.sql`, `E-024`)
 
-Admits `tool`, `file` and `event` in `memory_evidence_source_type_check`, alongside `turn` and `external`. The source
-shape and trigger are completed by migration 17; this migration is append-only and its rollback refuses to remove
-source types that are still in use.
+One table, `entity_link`: an explicit, authorized relationship between two of one principal's entities, which may lie
+in different scopes. Entities stay scope-local and opaque (`ARCHITECTURE_V2.md` 5.2); a link records that two ids
+denote the same referent and **merges nothing**, so neither entity's claims or attributes become readable from the
+other scope. Both endpoint keys are composite foreign keys on `(id, user_id)`, so a link can never cite another
+principal's entity; the pair is stored in one orientation (`entity_a < entity_b`) under a unique relation, so a replay
+is the same row. Forced RLS, and the least-privilege `SELECT, INSERT` grant of `security/rls.sql` (`RL-072`).
 
-## Migration 17: preserve declared evidence source types (`017_declared_source_types.sql`, `E-021`, `V2-D66`)
+**No scope table is added.** A scope *is* its canonical path (`V2-D65`): `scope_grant` records read membership and
+every scoped row carries its own `scope_path`, so a `scope` table would duplicate that path, need its own RLS and
+consistency checks against thirteen tables, and need a cascade story for revocation. Migration 15 already admits a
+scoped row anywhere inside its owner's namespace, so a created sub-scope holds entities, associations and memories
+with no row of its own, and `create_scope` stays validation plus an idempotency entry plus a content-free audit row
+(`E-040`).
 
-Completes the shape rule and source trigger for `tool`, `file` and `event`, so API writes preserve the declared type
-instead of recording every non-turn source as `external`. Historical rows are not rewritten because their original
-declared type was not stored.
+`link_entity` is the operation this migration unblocks (`api/handlers.py`): `targets_readable` requires both endpoints
+in the caller's read set, and an unreadable endpoint answers exactly like an absent one (`forbidden`, T-09). The
+optional `subject_entity` input of `assert` (`E-024`) records which entity a claim is about; when present it must
+belong to the scope the claim is written in.
 
-## Migration 18: persisted child scopes and entity links (`018_scope_entity_links.sql`, `E-024`)
-
-`scope` stores child paths under one principal's namespace; the root remains implicit and every child has a persisted
-parent. Entities remain scope-local, with opaque ids and attributes that are not merged across scopes. An explicit
-`entity_link` represents a relationship between two entities only when the caller can read both endpoint scopes;
-an unreadable endpoint and an absent entity both return `forbidden`. Both new tables use forced RLS and least-privilege
-runtime grants.
-
-The migration admits descendant scope paths throughout each user's namespace and replaces `fill_scope_path()` so
-evidence, derivation, conflict, association, statistics, verification and audit rows inherit the owning memory's scope.
-Repeated memory keys retain their original scope unless a writer supplies the path explicitly. The restricted-role
-scenario and its negative controls are covered by `tests/integration/test_cross_domain_entity.py`.
+Rollback: `rollback/018_scope_entity_links.sql` restores version 17 exactly and **refuses** while any link exists,
+because removing it would destroy cross-scope identity. Tested by `tests/integration/test_cross_domain_entity.py`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner

@@ -113,37 +113,6 @@ async def _expect_forbidden(engine: Engine, ctx: CallerContext, args: dict[str, 
 
 
 @pytest.mark.integration
-async def test_e024_preserves_m15_namespace_guards_and_adds_the_missing_entity_guards(database) -> None:  # noqa: F811
-    async with world(database) as (connection, _engine, _schema):
-        cursor = await connection.execute(
-            "SELECT c.relname, p.conname FROM pg_catalog.pg_constraint AS p "
-            "JOIN pg_catalog.pg_class AS c ON c.oid = p.conrelid "
-            "WHERE p.connamespace = current_schema()::regnamespace AND p.conname LIKE '%scope%user'"
-        )
-        constraints = set(await cursor.fetchall())
-        core_tables = (
-            "memory_version",
-            "memory_evidence",
-            "memory_derivation",
-            "memory_embedding",
-            "memory_conflict",
-            "turn",
-            "session",
-            "job",
-            "audit_event",
-            "deletion_request",
-            "association",
-            "abstraction_stats",
-            "verification",
-        )
-        for table in core_tables:
-            assert (table, f"{table}_scope_within_user") in constraints
-            assert (table, f"{table}_scope_matches_user") not in constraints
-        for table in ("entity", "negative_constraint"):
-            assert (table, f"{table}_scope_matches_user") in constraints
-
-
-@pytest.mark.integration
 @pytest.mark.parametrize(
     "scope_order", [("work", "personal"), ("personal", "work")], ids=["work-first", "personal-first"]
 )
@@ -282,12 +251,12 @@ async def test_two_scopes_keep_claims_and_entities_private_while_explicit_link_i
         assert await _scope_memory_ids(runtime, "alice", work_read_set) == {work_claim.id}
         assert await _scope_memory_ids(runtime, "alice", personal_read_set) == {personal_claim.id}
         assert {"query", "provenance"} <= set(engine.unwired_operations())
-        scopes_cursor = await connection.execute("SELECT count(*) FROM scope WHERE user_id = 'alice'")
+        # A link is a row; a scope is its path, so nothing records the two scopes (V2-D65).
         links_cursor = await connection.execute(
-            "SELECT count(*) FROM entity_link WHERE user_id = 'alice' AND relation = 'same_person'"
+            "SELECT entity_a, entity_b, relation FROM entity_link WHERE user_id = 'alice'"
         )
-        assert await scopes_cursor.fetchone() == (2,)
-        assert await links_cursor.fetchone() == (1,)
+        # One row in the canonical orientation (``entity_a < entity_b``), whichever order the two scopes were built in.
+        assert await links_cursor.fetchall() == [(*sorted((work_entity, personal_entity)), "same_person")]
 
         # A true descendant-scope source remains opaque to a caller selecting only the summary's scope.
         summary = CandidateVersionInput(

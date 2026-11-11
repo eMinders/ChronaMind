@@ -66,7 +66,6 @@ TABLES = (
     "verification",
     "negative_constraint",
     "api_idempotency",
-    "scope",
     "entity_link",
 )
 FUNCTIONS = (

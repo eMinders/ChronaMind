@@ -36,8 +36,7 @@ USER_TABLES = (
     "verification",
     "negative_constraint",
     "api_idempotency",  # migration 12 (E-039)
-    "scope",  # migration 18 (E-024 child-scope substrate)
-    "entity_link",  # migration 18 (E-024 cross-scope opaque links)
+    "entity_link",  # migration 18 (E-024): explicit links between two scope-local entity ids
 )
 
 
@@ -71,7 +70,6 @@ TABLE_GRANTS: dict[str, frozenset[str]] = {
     "verification": _APPEND,
     "negative_constraint": _MUTABLE,
     "api_idempotency": _APPEND,  # append-only: a recorded replay answer is never rewritten
-    "scope": _APPEND,
     "entity_link": _APPEND,
     # the method registry is shared and append-only: anyone may read it, `register_method` appends, nobody changes it
     "method": _APPEND,

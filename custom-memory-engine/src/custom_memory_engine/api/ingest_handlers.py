@@ -50,13 +50,6 @@ def _text(value: object, field: str, *, limit: int = 512) -> str:
     return value
 
 
-def _scope(call: Call) -> str:
-    try:
-        return parse_scope(call.arguments.get("scope")).text
-    except ScopeError:
-        raise EntryError("validation_error", "scope_invalid") from None
-
-
 def _when(value: object, field: str) -> datetime | None:
     if value is None:
         return None
@@ -222,7 +215,6 @@ class IngestHandlers:
 
     async def ingest_episode(self, call: Call) -> Receipt:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
-        scope_path = _scope(call)
         content = _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT)
         source = _source(call.arguments.get("source"))
         self._require_source_type(source["type"])
@@ -236,8 +228,6 @@ class IngestHandlers:
                     answer = await _original_answer(self.runtime, connection, user, found, "observed")
                     assert isinstance(answer, Receipt)  # an episode is never gated, so never rejected
                     return answer
-                if not await self.runtime.scope_exists(connection, user, scope_path):
-                    raise EntryError("forbidden")
                 if source["type"] == "turn":
                     turn_id = str(source["ref"])
                     turns = await _turns(self.runtime, connection, user, [turn_id])
@@ -276,13 +266,16 @@ class IngestHandlers:
         self, call: Call, content: str, evidence: object, event_range: object, entity_id: object = None
     ) -> Receipt | Rejected:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
-        scope_path = _scope(call)
+        # `subject_entity` (E-024): the entity this claim is about. Optional: absent keeps the v1 shape
+        # (`subject_key='self'`), and `targets_readable` has already proved the entity is in the caller's read set.
         if entity_id is not None and (not isinstance(entity_id, str) or not entity_id.strip()):
             raise EntryError("validation_error", "entity_id_invalid")
         subject_key = "self"
         if isinstance(entity_id, str):
+            # The claim must live in the entity's own scope: naming an entity of another scope would attach this
+            # scope's claim to it. Refused like an unknown entity, so the answer reveals nothing about either scope.
             target = call.targets.get(entity_id)
-            if target is None or target.scope_path != scope_path:
+            if target is None or target.scope_path != _scope_path(call.arguments.get("scope"), user):
                 raise EntryError("forbidden")
             subject_key = entity_id
         kind = call.arguments.get("kind")
@@ -309,8 +302,6 @@ class IngestHandlers:
         async with self.runtime.session(user) as connection:
             if (found := await replayed(self.runtime, connection, user, "assert", key)) is not None:
                 return await _original_answer(self.runtime, connection, user, found, "asserted")
-            if not await self.runtime.scope_exists(connection, user, scope_path):
-                raise EntryError("forbidden")
             turn_ids = [str(source["ref"]) for source in sources]
             turns = await _turns(self.runtime, connection, user, turn_ids)
             if any(turn_id not in turns for turn_id in turn_ids):
