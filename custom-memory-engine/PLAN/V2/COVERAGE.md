@@ -47,7 +47,7 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `record_outcome` | operation | `E-039`, `E-030` | unwired: `E-030` lands it through `Engine.call` (§4.1) |
 | `adjudicate` | operation | `E-039`, `E-016` | |
 | `dissent` | operation | `E-039`, `UM-012` | `V2-D46`; unwired: `UM-012` lands it through `Engine.call` (§4.1) |
-| `purge_working` | operation | `E-039`, `E-026` | admin-only (`V2-D47`); wired by `E-026` through `Engine.call` (`api/maintain_handlers.py`); purged-evidence rule PW-1 in `engine/purge.py` (finding `E-026-F1`) |
+| `purge_working` | operation | `E-039`, `E-026` | admin-only (`V2-D47`); wired by `E-026` through `Engine.call` (`api/maintain_handlers.py`); purged-evidence rule PW-1 in `engine/purge.py` = `V2-D72` (bound open as `E-026-F1`) |
 | `expire` | operation | `E-039`, `A-014` | admin-only; unwired: `A-014` lands it through `Engine.call` (§4.1) |
 | `rebuild_index` | operation | `E-039`, `A-014` | admin-only; unwired: `A-014` lands it through `Engine.call` (§4.1) |
 | `register_method` | operation | `E-039`, `E-014` | admin-only; `V2-D46` |
