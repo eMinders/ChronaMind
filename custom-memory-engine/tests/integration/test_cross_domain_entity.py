@@ -5,10 +5,12 @@ provenance for an unreadable source renders only the caller-specific opaque hand
 not require E-021's optional coding profile.
 """
 
+import re
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
+import psycopg
 import pytest
 from psycopg import sql
 from psycopg.rows import tuple_row
@@ -18,6 +20,7 @@ from custom_memory_engine.api import read_handlers
 from custom_memory_engine.api import runtime as runtime_module
 from custom_memory_engine.api.contract import Tier
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
+from custom_memory_engine.api.handlers import Handlers
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.read_handlers import QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Receipt, Runtime
@@ -498,6 +501,75 @@ async def test_the_query_operation_control_breaks_the_scope_isolation_assertion(
             assert claim_b.id in await _query_ids(engine, "alice", scope_a)
 
         assert await _query_ids(engine, "alice", scope_a) == {claim_a.id}  # restored
+
+
+@pytest.mark.integration
+async def test_a_refused_link_does_the_same_work_for_an_unreadable_and_an_absent_entity(
+    database,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # noqa: F811
+    """Row 3/4, timing shape: the refusal must not merely look the same, it must *do* the same work.
+
+    Wall-clock timing is not an assertion a test can hold; the work behind it is. Both refusals run the same number of
+    SQL statements, in the same order, and neither reaches the handler, so no branch can be inferred from how much the
+    call did. A handler-side check instead of ``targets_readable`` would break this (the handler runs one statement
+    more, inside a transaction of its own).
+    """
+    async with world(database) as (_connection, engine, _schema):
+        scope = await engine.call(
+            caller("alice"),
+            "create_scope",
+            {"parent": "/u/alice/", "segment": "timing", "kind": "project", "idempotency_key": "timing-scope"},
+        )
+        own = await engine.call(
+            caller("alice"),
+            "create_entity",
+            {"scope": scope, "entity_type": "person", "label": "Ada", "idempotency_key": "timing-own"},
+        )
+        other_scope = await engine.call(
+            caller("alice"),
+            "create_scope",
+            {"parent": "/u/alice/", "segment": "elsewhere", "kind": "project", "idempotency_key": "timing-other"},
+        )
+        unreadable = await engine.call(
+            caller("alice"),
+            "create_entity",
+            {"scope": other_scope, "entity_type": "person", "label": "Ada", "idempotency_key": "timing-other-e"},
+        )
+        assert isinstance(scope, str) and isinstance(other_scope, str)
+        assert isinstance(own, str) and isinstance(unreadable, str)
+        # the caller's read set holds the first scope only, so the second entity exists but is not readable
+        one_scope = scoped_caller("alice", "C", scope)
+
+        statements: list[str] = []
+        original_execute = psycopg.AsyncCursor.execute
+
+        async def recording_execute(self: psycopg.AsyncCursor[Any], query: object, *args: object, **kwargs: object):
+            statements.append(str(query))
+            return await original_execute(self, query, *args, **kwargs)  # type: ignore[arg-type]
+
+        reached_handler: list[str] = []
+        original_link = Handlers.link_entity
+
+        async def recording_link(self: Handlers, call: object) -> Receipt:
+            reached_handler.append("link_entity")
+            return await original_link(self, call)  # type: ignore[arg-type]
+
+        with monkeypatch.context() as patch:
+            patch.setattr(psycopg.AsyncCursor, "execute", recording_execute)
+            patch.setattr(Handlers, "link_entity", recording_link)
+            shapes: list[list[str]] = []
+            for target in (unreadable, "ent_never_existed"):
+                statements.clear()
+                with pytest.raises(EntryError) as refused:
+                    await engine.call(
+                        one_scope, "link_entity", {"entity_a": own, "entity_b": target, "relation": "same_person"}
+                    )
+                assert (refused.value.code, refused.value.detail) == ("forbidden", None)
+                shapes.append([re.sub(r"\s+", " ", statement) for statement in statements])
+        # same statements, same order, same count, and the handler never ran for either
+        assert shapes[0] == shapes[1] and len(shapes[0]) > 0
+        assert reached_handler == []
 
 
 def test_provenance_opacity_control_detects_a_bypassed_read_guard(monkeypatch: pytest.MonkeyPatch) -> None:
