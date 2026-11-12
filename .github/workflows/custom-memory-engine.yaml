@@ -79,6 +79,8 @@ jobs:
         run: uv run --no-sync ruff format --check src tests research/benchmarks evaluation scripts
       - name: pyright
         run: uv run --no-sync pyright
+      - name: Engine source identity
+        run: uv run --no-sync python -m tests.engine_source_identity
       - name: Research reference consistency
         run: |
           md5sum -c validation/document_hashes.txt

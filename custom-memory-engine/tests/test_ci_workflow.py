@@ -18,6 +18,7 @@ STATIC_GATES = (
     "ruff check src tests research/benchmarks evaluation scripts",
     "ruff format --check src tests research/benchmarks evaluation scripts",
     "pyright",
+    "python -m tests.engine_source_identity",
     "md5sum -c validation/document_hashes.txt",
     "validation/mechanical_checks.py",
     "diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt",
@@ -48,6 +49,25 @@ def test_the_three_engine_jobs_exist(engine: str) -> None:
 @pytest.mark.parametrize("gate", STATIC_GATES)
 def test_static_job_runs_every_gate(engine: str, gate: str) -> None:
     assert gate in _job(engine, "static")
+
+
+def test_source_identity_gate_runs_directly_and_propagates_failure(engine: str) -> None:
+    """A comment, echoed command, or shell failure suppression must not satisfy the gate."""
+    static = _job(engine, "static")
+    steps = re.findall(r"(?ms)^      - name: Engine source identity\n(.*?)(?=^      - |\Z)", static)
+    assert len(steps) == 1, "exactly one source identity step is required"
+    assert re.search(r"(?m)^        run: uv run --no-sync python -m tests\.engine_source_identity[ \t]*$", steps[0])
+    assert not re.search(r"(?m)^        (?:if|continue-on-error):", steps[0]), "the gate must not be suppressed"
+
+
+@pytest.mark.parametrize("suppression", ["if: false", "continue-on-error: true"])
+def test_source_identity_gate_rejects_suppressed_step(engine: str, suppression: str) -> None:
+    mutated = engine.replace(
+        "      - name: Engine source identity\n", f"      - name: Engine source identity\n        {suppression}\n"
+    )
+    assert mutated != engine
+    with pytest.raises(AssertionError):
+        test_source_identity_gate_runs_directly_and_propagates_failure(mutated)
 
 
 def test_verify_runs_the_full_suite_on_pinned_postgres_and_falkordb(engine: str) -> None:
