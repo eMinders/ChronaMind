@@ -124,13 +124,13 @@ mechanical guarantee that the plan stays consistent as it is edited.
 | `E-018` | **Conformance suite**: enumerate `(kind × retention × lifecycle × facet)` legal tuples; assert storable, queryable, deletable, correctly channelled; assert `claim`/`abstraction` cannot take `working` | This is what makes "type-completeness" real | M |
 | `E-019` | **Profile schema**: kinds, extractors, operators, retention defaults, scope root, render conventions, facet vocabulary | Config only; no code branches on profile name | M |
 | `E-020` | M8: `um_facet` tag + index; retention floor `CHECK` | Needed before `C-024`, not before | S |
-| `E-039` | **Public API entry point** (r9, found by `MA-017`): one callable per `API_V2.md` operation; tier and admin role from the authenticated credential; `api.contract.authorize` on every call; every condition code enforced; static error contract (§1.1). Each operation is wired as its owning task lands; it never adds an operation outside `API_V2.md` | Without it no task owns the dispatch layer, authorization or the error contract; `E-018`'s conformance suite drives the engine through it. **Open (#97) on criterion 5 only**: the suite must drive the engine only through this entry point, which completes as the 18 unwired operations land (§4.1, `V2-D63`) | M |
+| `E-039` | **Public API entry point** (r9, found by `MA-017`): one callable per `API_V2.md` operation; tier and admin role from the authenticated credential; `api.contract.authorize` on every call; every condition code enforced; static error contract (§1.1). Each operation is wired as its owning task lands; it never adds an operation outside `API_V2.md` | Without it no task owns the dispatch layer, authorization or the error contract; `E-018`'s conformance suite drives the engine through it. **Open (#97) on criterion 5 only**: the suite must drive the engine only through this entry point, which completes as the 11 unwired operations land (§4.1, `V2-D63`) | M |
 | `E-040` | **`create_scope`** (r13, `V2-D63`): the operation `API_V2.md` §3 defines and `E-011`'s `SCOPE` table was migrated for, which `E-011` (#62) deliberately left unwired while every scope is personal | Split out of `E-011` at its closure so no operation is owned by a closed task; `E-011` keeps the M2+M9 migration, this task owns the behaviour. Wired through `Engine.call` under `namespace_owner_only`, then driven by `E-018`'s suite (§4.1) | S |
 
 **W1 progress (r13).** Eleven of the thirteen W1 tasks are complete on `main`: `E-010` (migration 5), `E-011`
 (migrations 11 and 15, #131 and #150), `E-012` (migration 9, closing `T-28`), `E-013` (migration 8), `E-014` (migration 10,
 #130), `E-015`, `E-016` (migrations 7 and 14), `E-017`, `E-018` (`V2-D62`), `E-019` and `E-020` (migration 6). The two
-remaining are `E-039` (#97), open on criterion 5 only, which completes as the 17 unwired operations land (§4.1,
+remaining are `E-039` (#97), open on criterion 5 only, which completes as the 11 unwired operations land (§4.1,
 `V2-D63`), and `E-040` (#148), the `create_scope` behaviour split out of `E-011` at its closure (`V2-D63`). The r11
 note counted `E-014`, `E-011` and `E-018` as outstanding; all three have since closed. This paragraph replaces the r11
 one (it contradicted `E-016`'s completion and `E-011`/`E-014`/`E-018`'s closures); the r11 text remains in this file's
@@ -175,12 +175,14 @@ When these three W3 operations land, the conformance suite's corresponding asser
 as "not yet testable", never as passes. `E-018` (#69) is closed with this record; the W3 tasks carry the
 outstanding criterion (`V2-D62`).
 
-### 4.1 `E-039` deferral register — the 17 unwired operations (r13, `V2-D63`)
+### 4.1 `E-039` deferral register — the 11 unwired operations (r14, `V2-D63`)
 
-`Engine.call` dispatches to registered handlers and nothing else. **12 of 29** operations are wired
-(`register_method`, `create_entity`, `create_scope`, `link`, `unlink`, `adjudicate`, `retract_own`, `grant_access`,
-`revoke_access` via `api/handlers.py`; `ingest_episode`, `assert`, `ingest_artifact` via `api/ingest_handlers.py`).
-The remaining **17** answer `forbidden` (`operation_not_wired`) before any statement runs, so `E-039`'s criterion 5 — *"`E-018`'s
+`Engine.call` dispatches to registered handlers and nothing else. **18 of 29** operations are wired
+(`register_method`, `create_entity`, `create_scope`, `link`, `unlink`, `link_entity`, `adjudicate`, `retract_own`,
+`grant_access`, `revoke_access` via `api/handlers.py`; `ingest_episode`, `assert`, `ingest_artifact` via
+`api/ingest_handlers.py`; `get`, `query` via `api/read_handlers.py`; `infer` via `api/infer_handlers.py`;
+`record_outcome` via `api/outcome_handlers.py`; `purge_working` via `api/maintain_handlers.py`).
+The remaining **11** answer `forbidden` (`operation_not_wired`) before any statement runs, so `E-039`'s criterion 5 — *"`E-018`'s
 conformance suite drives the engine only through this entry point"* — cannot be satisfied yet, and `E-039` (#97)
 stays open until it is.
 
@@ -212,10 +214,10 @@ criteria in its own task:
 | 5 | `infer` | `C-021` | W5 tracker #75 (child not yet created) | wires `infer`; suite's **procedural** property runs through `Engine.call` |
 | 6 | `verify` | `C-021` | W5 tracker #75 (child not yet created) | wires `verify`; `I11`/`I15` ledger properties asserted through `Engine.call` |
 | 7 | `refute` | `C-026` | W5 tracker #75 (child not yet created) | wires `refute`; recovery-or-retirement asserted through `Engine.call` |
-| 8 | `link_entity` | `E-024` | #139 | wires `link_entity`; `ENTITY` opacity asserted through `Engine.call` |
-| 9 | `record_outcome` | `E-030` | W3 tracker #73 (child not yet created) | wires `record_outcome`; suite's **procedural** property runs through `Engine.call` |
+| 8 | ~~`link_entity`~~ | ~~`E-024`~~ | **wired** (#145/#190) | `link_entity` is wired with dual-scope authorization and asserted through `Engine.call` (`tests/integration/test_cross_domain_entity.py`); it leaves this register |
+| 9 | ~~`record_outcome`~~ | ~~`E-027`~~ | **wired** (#194) | `record_outcome` is wired with the three error cases (`API_V2.md` 4.5) and asserted through `Engine.call` (`tests/integration/test_record_outcome_db.py`); `E-030` owns `preconditions`/`steps` and extends the `outcome_stats` side table it left; it leaves this register |
 | 10 | `dissent` | `UM-012` | W5 tracker #75 (child not yet created) | wires `dissent`; sticky dissent (`I16`) asserted through `Engine.call` |
-| 11 | `purge_working` | `E-026` | #141 | wires `purge_working`; the retention-floor survivor test runs through `Engine.call` |
+| 11 | ~~`purge_working`~~ | ~~`E-026`~~ | **wired** (#189) | `purge_working` is wired admin-only and asserted through `Engine.call` (`tests/integration/test_purge_working_db.py`); the retention-floor survivor test runs through the entry point; it leaves this register |
 | 12 | `expire` | `A-014` | W7 tracker #79 (child not yet created) | wires `expire`; `I9` idempotency asserted through `Engine.call` |
 | 13 | `rebuild_index` | `A-014` | W7 tracker #79 (child not yet created) | wires `rebuild_index`; admin-only refusal asserted through `Engine.call` |
 | 14 | `delete` | `E-037` | W3 tracker #73 (child not yet created) | wires `delete`; suite's **deletable** property runs through `Engine.call` |
@@ -264,7 +266,7 @@ domains and record why tool-grounded memory needs a different substrate.
 
 | ID | Task | Notes | Effort |
 |---|---|---|---|
-| `E-030` | **Procedure storage** + preconditions matching + `record_outcome` | No execution engine | M |
+| `E-030` | **Procedure storage**: `preconditions`, `steps`, preconditions matching. Extends the `outcome_stats` side table wired in W2 by `E-027` (`V2-D75`, migration 20). `record_outcome` is already wired; `E-030` adds the procedure shape it needs | No execution engine | M |
 | `E-031` | **Retrieval planner**: intent → index selection → filters → expansion plan. Rule-based first (replayable), model-assisted later | **Temporal modes landed (`V2-D73`):** `query` runs `current_state`, `historical_as_of`, `historical_window` and `audit_as_of` through `compile_predicate`, with the read set applied in the same statement and ρ taken from the engine clock (never the caller). `change` stays with `E-033`, as do budgets, ranking and `refine`. | L |
 | `E-032` | **Graph expansion**: association traversal with hop budget + provenance retention | Must not violate the temporal filter | L |
 | `E-033` | **Assembly**: four channels, per-channel budgets, provenance bundle, cost + coverage report | Supersedes v1 `render.py` behaviour with a superset | L |
