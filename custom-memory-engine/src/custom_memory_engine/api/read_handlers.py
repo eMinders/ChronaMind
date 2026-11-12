@@ -52,6 +52,7 @@ from psycopg.rows import tuple_row
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.engine.channels import Channel, ChannelError, Verification, channel_of
+from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
 from custom_memory_engine.engine.predicates import (
     TemporalQuery,
     TemporalQueryError,
@@ -62,6 +63,7 @@ from custom_memory_engine.engine.predicates import (
     historical_window,
     reference_instant,
 )
+from custom_memory_engine.engine.procedure_ranking import order_procedures
 from custom_memory_engine.model.axes import Kind, Lifecycle
 from custom_memory_engine.scope.access import ReadEntry, ReadSet, Visibility, read_predicate_named, row_visible
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
@@ -383,6 +385,15 @@ class ReadHandlers:
                 ids = [row.id for row in rows]
                 verifications = await self._verification_of(connection, user, ids)
                 contradicted = await self._contradicted_ids(connection, user, ids)
+                # E-027: outcome counters for the procedure rows, fetched in one statement beside the other
+                # per-row metadata. Only procedures have them, so asking for every id is a wasted round trip at
+                # best; asking only for procedure ids keeps the read proportional to what is ranked.
+                stats = await outcome_stats_for(
+                    connection,
+                    user_id=user,
+                    procedure_ids=[row.id for row in rows if row.kind == "procedure"],
+                    schema_name=self.runtime.schema_name,
+                )
         except InsufficientPrivilege as exc:
             raise EntryError("forbidden") from exc
         except TemporalQueryError as exc:
@@ -419,6 +430,13 @@ class ReadHandlers:
             buckets[channel].append(artifact)
         if is_audit:
             return QueryResult(audit=audited, refused=refused, is_audit=True)
+        # E-027 (V2-D75): procedures are ordered by recorded outcome, then recency, then id. This runs **after**
+        # channel routing, so it cannot move an item between channels (`CHANNELS.md`, `I1'`): a contested or retired
+        # procedure never reached this bucket, so no statistic can promote it. Other kinds keep the temporal read's
+        # own order untouched.
+        if buckets["procedures"]:
+            by_id = {artifact.artifact_id: artifact for artifact in buckets["procedures"]}
+            buckets["procedures"] = [by_id[procedure_id] for procedure_id in order_procedures(by_id, stats)]
         return QueryResult(
             facts=buckets["facts"],
             hypotheses=buckets["hypotheses"],

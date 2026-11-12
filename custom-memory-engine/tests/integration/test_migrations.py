@@ -49,6 +49,7 @@ DOMAIN_TABLES = frozenset(
         "negative_constraint",
         "api_idempotency",
         "entity_link",
+        "outcome_stats",
     }
 )
 HISTORY_TABLE = "_cme_schema_migrations"

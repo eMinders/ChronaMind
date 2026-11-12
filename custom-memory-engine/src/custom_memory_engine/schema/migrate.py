@@ -41,6 +41,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (17, "017_declared_source_types.sql"),
     (18, "018_scope_entity_links.sql"),
     (19, "019_subject_entity.sql"),
+    (20, "020_outcome_stats.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -68,6 +69,7 @@ TABLES = (
     "negative_constraint",
     "api_idempotency",
     "entity_link",
+    "outcome_stats",  # migration 20 (E-027): the minimal procedure-stats substrate E-030 extends
 )
 FUNCTIONS = (
     "clock_now",
@@ -94,6 +96,7 @@ FUNCTIONS = (
     "fill_scope_path",
     "guard_creator_fixed",
     "enforce_entry_records",
+    "guard_outcome_stats",  # migration 20 (E-027)
 )
 logger = structlog.get_logger(__name__)
 

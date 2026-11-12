@@ -1624,3 +1624,63 @@ rollback restores version 18 exactly (fingerprint compared) and re-applies. The 
 byte-for-byte from the version-18 definition.
 
 **Status:** decided and implemented under the Project Owner's delegation (2026-11-12).
+
+---
+
+### V2-D75 — A procedure's ranking is its recorded outcome rate, ordered within the `procedures` channel and never across channels (E-027)
+
+**Context.** `ARCHITECTURE_V2.md` §6 gives a procedure `outcome_stats` and says `record_outcome` updates it, but no
+decision record says *what the statistics do*. `V2-D11` fixes the five retrieval stages and keeps RRF as the fusion
+operator inside candidate generation; `CHANNELS.md` §1 makes channel membership a pure function of
+`(kind, lifecycle, verification, stale, open_contradiction)` and puts ranking explicitly outside `E-017`. So the
+question "may statistics reorder a channel, and by what formula?" was open. `E-027` could not be implemented without
+answering it, and inventing an answer without recording it would have been the worse option.
+
+Three constraints shaped the answer, and none is negotiable:
+
+- the temporal predicate is a **filter, never a score term** (`ARCHITECTURE_V2.md` §9.3);
+- membership is pure, so ranking may not move an artifact between channels (`I1'`, `CHANNELS.md` §1);
+- v1 behaviour for non-procedure kinds is not altered (`rank_versions`, RRF k=60, untouched).
+
+**Decision.** The `procedures` channel is ordered by
+
+```
+rank(procedure) = ( -smoothed_success_rate, -last_used_at, procedure_id )
+smoothed_success_rate = (successes + 1) / (successes + failures + 2)
+```
+
+1. **Laplace smoothing, not a raw ratio.** A raw `successes / (successes + failures)` is undefined at 0/0, and both
+   obvious repairs are wrong: scoring an unseen procedure `0` ranks it below one that has demonstrably failed, and
+   scoring it `1` ranks it above one that has demonstrably worked. `(s+1)/(n+2)` puts an unseen procedure at exactly
+   `0.5` — between the two — and keeps the function monotone in both counters. The property is pinned directly rather
+   than only through retrieval (`tests/test_procedure_ranking.py`).
+2. **Recency, then id.** An equal rate is broken by `last_used_at` descending (never-used last), then by id ascending.
+   Ids are unique, so the order is **total**: no query can depend on DB row order, and the same rows always produce the
+   same sequence.
+3. **Applied after routing, never before.** `api.read_handlers` orders `buckets["procedures"]` after `channel_of` has
+   decided membership. A `contested` or `retired` procedure therefore cannot be promoted by a perfect record: it never
+   reached the bucket. This is asserted per item, not argued.
+4. **Cost is recorded, not ranked.** `mean_cost` is persisted and returned because §6 asks for it, but it does not
+   order procedures. Cost against success rate has no agreed trade-off here; inventing a weight would make the order
+   depend on a number nobody chose. `E-033` owns budgets and may consume it.
+
+**Consequences, recorded rather than hidden.**
+- `E-027` needed a substrate that did not exist: migration 20 adds one `outcome_stats` side table, the shape
+  `abstraction_stats` established. It is the **minimum E-030 extends** — `E-030` owns procedure storage and adds
+  `preconditions`/`steps` as columns on that table. Recorded as `E-027-F1` on #72 because it means a W2 task consumes a
+  W3 substrate, and the roadmap owner should decide whether to move the task or the substrate.
+- `record_outcome` is **not idempotent by design** — it takes no `idempotency_key` in `API_V2.md` §4.5, and an
+  increment has no identity to deduplicate on. Replaying it records a second outcome, which is asserted.
+- The counters are monotone in the **schema** (`guard_outcome_stats`), not only in the handler: rewriting a recorded
+  outcome would rewrite history (`I3`).
+- `mean_cost` is stored as sum + count and exposed as their quotient. A stored running mean would make the persisted
+  value depend on arrival order, so two identical histories could disagree.
+
+**Evidence.** `tests/test_procedure_ranking.py` (18 property tests: Laplace bounds and monotonicity, unseen-procedure
+placement, all four tie-break rules, totality, cost irrelevance). `tests/integration/test_record_outcome_db.py`
+(16 tests through `Engine.call`: the three error cases, the persisted counters, replay counting twice, the order
+changing and being stable, the non-promotion of a retired procedure, channel invariance per item, and the
+coding-profile recipe case). Control: removing the ordering term from `read_handlers` fails exactly the two ordering
+tests and nothing else.
+
+**Status:** decided and implemented under the Project Owner's delegation (2026-11-12).

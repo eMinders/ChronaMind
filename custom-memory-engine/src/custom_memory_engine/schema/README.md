@@ -23,6 +23,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 | `017_declared_source_types.sql` | Migration 17 (`E-021`, `V2-D66`): stores tool, file, and event evidence under the declared type |
 | `018_scope_entity_links.sql` | Migration 18 (`E-024`): `entity_link`, the authorized links between scope-local entities (no scope table, `V2-D65`) |
 | `019_subject_entity.sql` | Migration 19 (`V2-D74`): `memory_version.subject_entity_id`, making an entity subject a composite foreign key (exists, same principal, same scope) |
+| `020_outcome_stats.sql` | Migration 20 (`E-027`, `V2-D75`): `outcome_stats`, the procedure outcome counters `record_outcome` maintains. The minimal substrate `E-030` extends |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
@@ -424,6 +425,34 @@ re-pointed at another entity in place.
 Nothing is backfilled: no row written before this migration recorded an entity subject, and inferring one from
 `subject_key` would fabricate a link the caller never made. The rollback restores version 18's catalog fingerprint
 exactly, with `guard_update` restored byte-for-byte and its pinned `search_path` re-applied.
+
+## Migration 20: procedure outcome counters (`020_outcome_stats.sql`, `E-027`, `V2-D75`)
+
+`ARCHITECTURE_V2.md` §6 gives a procedure four fields. Only `outcome_stats` has a reader today — the ranking term in
+`engine/procedure_ranking.py` — so only it is built. `preconditions` and `steps` are **`E-030`'s** and are deliberately
+absent rather than sketched, because a half-built procedure shape is what `E-030` would have to rewrite.
+
+A **side table**, not columns on `memory_version`, following `abstraction_stats`: counters move at a different rate,
+under different rules, than belief content. It also leaves the `EXCLUDE`-constrained bitemporal core untouched.
+
+| Column | Meaning |
+|---|---|
+| `successes`, `failures` | counters, `>= 0`; the rate is derived at read time, never stored (`V2-D75`) |
+| `last_used_at` | the `clock_now()` of the most recent recorded outcome |
+| `cost_count`, `cost_sum` | the cost ledger; `mean_cost` is generated as `cost_sum / cost_count`, `NULL` when count is 0 |
+
+`mean_cost` is sum-over-count rather than a stored running mean so the persisted value cannot depend on the order
+outcomes arrived in. A recorded cost of `0.0` is a real mean and there is deliberately **no** constraint pairing count
+with sum, because `count=1, sum=0` is a legitimate row.
+
+`guard_outcome_stats` enforces two rules the schema should own rather than one handler: the target must be
+`kind='procedure'` (mirroring `guard_abstraction_stats`), and the counters are **monotone** — an outcome is a recorded
+event, so rewriting one would rewrite history (`I3`). Forced RLS with read/insert/update policies; the function's
+`search_path` is pinned after creation (`RL-072`).
+
+Rollback: `rollback/020_outcome_stats.sql` restores version 19 exactly and drops every recorded outcome, which version
+19 has nowhere to keep. It also drops `guard_outcome_stats` explicitly (not table-owned) and deletes the version-20
+history row, so `status()` still sees a gap-free prefix and reports `pending` rather than `drifted`.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
