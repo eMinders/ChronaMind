@@ -59,6 +59,7 @@ QueryResult    { facts[], hypotheses[], procedures[], conflicts[], audit[], refu
                  provenance_bundle, cost, coverage }   # CHANNELS.md
 Receipt        { id, effect, recorded_at }     # content-free
 PurgeReceipt   { purged_episodes, retained_as_evidence, recorded_at }   # content-free: counts and the clock only
+OutcomeStats   { procedure_id, successes, failures, last_used_at, mean_cost }   # content-free: counters, clock, cost
 ```
 
 ## 3. Operations and tiers (the tier matrix, `MA-015`)
@@ -244,6 +245,23 @@ merge their ids or move either entity's attributes.
 **`record_outcome(ctx, procedure_id, outcome: success|failure, cost?, episode_ref?) → OutcomeStats`**
 Retrospective only; updates `outcome_stats`. There is no execution. *Errors:* `precondition_failed` (not a
 procedure), `forbidden`.
+
+**There is no `idempotency_key`, and that is deliberate** (`V2-D75`): the operation increments a counter, which has no
+identity to deduplicate on, so replaying the same call records a second outcome. Making it idempotent would need a key
+the signature does not have, and would silently swallow a legitimate second attempt.
+
+`cost` is an opaque non-negative real: `API_V2.md` declares no currency or unit, so the engine stores a **sum and a
+count** and reports `mean_cost = sum / count`. A running mean would make the persisted value depend on the order the
+outcomes arrived in. `mean_cost` is `null` until a cost is recorded; a recorded cost of `0.0` is a real mean, not the
+absence of one. `episode_ref` is accepted and recorded as a content-free audit flag (`episode_referenced`), never as a
+locator: linking an outcome to the episode that demonstrated it is `E-030`'s, together with `preconditions` and
+`steps`.
+
+**The counters only grow.** Migration 20's `guard_outcome_stats` refuses a decrement, so "an outcome is a recorded
+event" is a property of the schema rather than of one handler's care. The `procedures` channel is then ordered by
+`(successes + 1) / (successes + failures + 2)` descending, `last_used_at` descending, id ascending
+(`engine/procedure_ranking.py`, `V2-D75`); ranking reorders **within** the channel and never moves an item between
+channels.
 
 ### 4.6 Adjudicate — Tier C only
 

@@ -37,6 +37,7 @@ from custom_memory_engine.api.entry import CallerContext, Credential, Engine, En
 from custom_memory_engine.api.infer_handlers import register_infer_handlers
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.maintain_handlers import register_maintain_handlers
+from custom_memory_engine.api.outcome_handlers import register_outcome_handlers
 from custom_memory_engine.api.read_handlers import Artifact, QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import Receipt
 from custom_memory_engine.engine.channels import Verification, channel_of
@@ -665,6 +666,7 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         register_read_handlers(engine, runtime)
         register_infer_handlers(engine, runtime, tau_confidence=0.90, tau_coverage=0.60)  # V2-D30 suggested values
         register_maintain_handlers(engine, runtime)
+        register_outcome_handlers(engine, runtime)
         unwired = set(engine.unwired_operations())
         assert {"delete", "export"} <= unwired  # W3+ owners: E-037, A-015
         # query/get (E-033 minimal) and infer (C-021 minimal) are wired under V2-D66 and tested through Engine.call
@@ -675,6 +677,8 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         assert "purge_working" not in unwired
         # E-024 wires `link_entity` (V2-D71); `test_link_entity_is_wired_through_engine_call_...` drives it here.
         assert "link_entity" not in unwired
+        # E-027 wires `record_outcome` (V2-D75); `test_record_outcome_db.py` drives the whole feedback loop here.
+        assert "record_outcome" not in unwired
         print(
             f"\nG1: {len(OPERATIONS) - len(unwired)} of {len(OPERATIONS)} operations wired; "
             f"unwired (not yet testable): {sorted(unwired)}"

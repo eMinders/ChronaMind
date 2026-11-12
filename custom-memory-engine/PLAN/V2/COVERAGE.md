@@ -44,7 +44,7 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `unlink` | operation | `E-039`, `E-014` | |
 | `create_entity` | operation | `E-039`, `E-014` | `V2-D46` |
 | `link_entity` | operation | `E-039`, `E-024` | wired by `E-024` (#139, `V2-D71`) through `Engine.call`; `entity_link` (migration 18) |
-| `record_outcome` | operation | `E-039`, `E-030` | unwired: `E-030` lands it through `Engine.call` (§4.1) |
+| `record_outcome` | operation | `E-039`, `E-030` | wired by `E-027` (`V2-D75`) through `Engine.call`; `E-030` owns the procedure shape it extends |
 | `adjudicate` | operation | `E-039`, `E-016` | |
 | `dissent` | operation | `E-039`, `UM-012` | `V2-D46`; unwired: `UM-012` lands it through `Engine.call` (§4.1) |
 | `purge_working` | operation | `E-039`, `E-026` | admin-only (`V2-D47`); wired by `E-026` through `Engine.call` (`api/maintain_handlers.py`); purged-evidence rule PW-1 in `engine/purge.py` = `V2-D72` (bound open as `E-026-F1`) |

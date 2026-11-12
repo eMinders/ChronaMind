@@ -76,6 +76,8 @@ AUDIT_DETAIL_KEYS = frozenset(
         "verification_reasons",
         # lifecycle retirements through the API (E-039): a static reason code, never free text
         "reason_code",
+        # procedure outcome feedback (E-027): a boolean that an episode was cited, never the episode's id (a locator)
+        "episode_referenced",
         # cross-scope reads (E-011): counts only, never a path or a principal
         "selector_count",
         "cross_scope_count",

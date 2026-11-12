@@ -27,7 +27,8 @@ GRANT SELECT, INSERT ON
 GRANT SELECT, INSERT ON {{schema}}.entity_link TO {{role}};
 GRANT SELECT, INSERT, UPDATE ON
   {{schema}}.memory_embedding, {{schema}}.memory_conflict, {{schema}}.scope_grant,
-  {{schema}}.entity, {{schema}}.abstraction_stats, {{schema}}.negative_constraint
+  {{schema}}.entity, {{schema}}.abstraction_stats, {{schema}}.negative_constraint,
+  {{schema}}.outcome_stats
   TO {{role}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   {{schema}}.memory_version, {{schema}}.memory_derivation, {{schema}}.job, {{schema}}.association

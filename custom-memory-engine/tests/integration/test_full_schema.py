@@ -226,6 +226,7 @@ async def test_full_schema_creates_twelve_tables_and_named_constraints(
             "negative_constraint",
             "api_idempotency",
             "entity_link",
+            "outcome_stats",
         }
         cursor = await conn.execute(
             """
