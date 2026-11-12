@@ -159,6 +159,96 @@ def test_exclusive_direct_config_key_branch_with_valid_profiles(tmp_path: Path) 
     assert any("control.py:1: exclusive-key:" in item for item in audit_engine(root).findings)
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        (
+            "def run(profile):\n"
+            '    if "procedure" in profile.retention.defaults:\n'
+            '        return profile.retention.defaults["procedure"]\n'
+        ),
+        (
+            "def run(profile):\n"
+            '    if "procedure" not in profile.retention.defaults:\n'
+            "        return None\n"
+            "    else:\n"
+            '        return profile.retention.defaults["procedure"]\n'
+        ),
+    ],
+    ids=["if-in", "if-not-in-else"],
+)
+def test_guarded_exclusive_key_read_with_valid_profiles_is_allowed(tmp_path: Path, code: str) -> None:
+    root, profiles = copy_real_profiles(tmp_path)
+    assert all(load_profile(path) for path in sorted(profiles.glob("*.json")))
+    (root / "control.py").write_text(code, encoding="utf-8")
+    assert not audit_engine(root).findings
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        (
+            "def run(profile):\n"
+            '    if "claim" in profile.retention.defaults:\n'
+            '        return profile.retention.defaults["procedure"]\n'
+        ),
+        (
+            "def run(profile):\n"
+            '    if "procedure" in profile.render.channel_budget_share:\n'
+            '        return profile.retention.defaults["procedure"]\n'
+        ),
+        (
+            "def run():\n"
+            '    if "procedure" in choose().profile.retention.defaults:\n'
+            '        return choose().profile.retention.defaults["procedure"]\n'
+        ),
+        (
+            "def run(profile):\n"
+            '    if "procedure" in profile.retention.defaults:\n'
+            '        profile.retention.defaults.pop("procedure")\n'
+            '        return profile.retention.defaults["procedure"]\n'
+        ),
+        (
+            "def run(profile):\n"
+            '    if "procedure" in profile.retention.defaults:\n'
+            "        mutate(profile)\n"
+            '        return profile.retention.defaults["procedure"]\n'
+        ),
+        (
+            "def run(profile, replacement):\n"
+            '    if "procedure" in profile.retention.defaults:\n'
+            "        profile = replacement\n"
+            '        return profile.retention.defaults["procedure"]\n'
+        ),
+        (
+            "def run(profile):\n"
+            '    if "procedure" in profile.retention.defaults or profile.retention.defaults["procedure"]:\n'
+            "        return True\n"
+        ),
+        (
+            "def run(profile):\n"
+            '    if "procedure" not in profile.retention.defaults and profile.retention.defaults["procedure"]:\n'
+            "        return True\n"
+        ),
+    ],
+    ids=[
+        "different-key",
+        "different-map",
+        "unstable-mapping",
+        "mutation",
+        "unknown-call",
+        "rebind",
+        "unsafe-or",
+        "unsafe-and",
+    ],
+)
+def test_unproved_exclusive_key_read_is_still_reported(tmp_path: Path, code: str) -> None:
+    root, profiles = copy_real_profiles(tmp_path)
+    assert all(load_profile(path) for path in sorted(profiles.glob("*.json")))
+    (root / "control.py").write_text(code, encoding="utf-8")
+    assert any("control.py:" in item and "exclusive-key:" in item for item in audit_engine(root).findings)
+
+
 def test_exclusive_key_return_with_valid_profiles(tmp_path: Path) -> None:
     root, profiles = copy_real_profiles(tmp_path)
     assert all(load_profile(path) for path in sorted(profiles.glob("*.json")))

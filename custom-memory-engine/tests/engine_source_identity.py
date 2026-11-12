@@ -4,8 +4,10 @@ Limitations: aliases, computed names, getattr/importlib, dynamic dispatch and
 semantic equivalence are not resolved. A structural exclusive-field finding is
 syntactic, not proof a profile passes the strict schema. Schema-declared fields,
 including defaults, are allowed, as are ordinary configuration values. Direct
-subscripting of a profile-exclusive map key is flagged even if guarded; .get()
-reads are allowed, so branching via .get() can evade this check. Schema traversal
+subscripting of a profile-exclusive map key is flagged unless an immediate
+matching membership guard on a `profile` attribute directly returns the index,
+assuming a stable mapping. Other safe guards, including `self.profile` and aliases,
+may be flagged; .get() branches may evade this check. Schema traversal
 only resolves directly named model annotations and declared mapping annotations.
 Profiles/*.json are input data; tests, caches and bytecode are excluded. Other
 engine Python and source assets (including SQL) are included. The existing
@@ -100,28 +102,26 @@ def _schema_fields(root: Path) -> tuple[set[tuple[str, ...]], set[tuple[str, ...
     return fields, maps
 
 
+def _nonuniversal_paths(documents: list[dict[str, object]]) -> set[tuple[str, ...]]:
+    """Collect paths present in some, but not all, profile documents."""
+    paths = [_fields(document) for document in documents]
+    return set.union(*paths) - set.intersection(*paths)
+
+
 def _exclusive_fields(
-    documents: list[dict[str, object]], schema_fields: set[tuple[str, ...]], map_paths: set[tuple[str, ...]]
+    candidates: set[tuple[str, ...]], schema_fields: set[tuple[str, ...]], map_paths: set[tuple[str, ...]]
 ) -> set[tuple[str, ...]]:
     """Find exclusive raw paths, excluding qualified schema fields and dynamic-map keys."""
-    paths = [_fields(doc) for doc in documents]
     return {
         path
-        for path in set.union(*paths)
-        if 0 < sum(path in item for item in paths) < len(paths)
-        and path not in schema_fields
-        and not any(path[: len(mapping)] == mapping for mapping in map_paths)
+        for path in candidates
+        if path not in schema_fields and not any(path[: len(mapping)] == mapping for mapping in map_paths)
     }
 
 
-def _exclusive_map_keys(documents: list[dict[str, object]], map_paths: set[tuple[str, ...]]) -> set[tuple[str, ...]]:
+def _exclusive_map_keys(candidates: set[tuple[str, ...]], map_paths: set[tuple[str, ...]]) -> set[tuple[str, ...]]:
     """Find keys absent from at least one profile's declared dynamic map."""
-    paths = [_fields(doc) for doc in documents]
-    return {
-        path
-        for path in set.union(*paths)
-        if path[:-1] in map_paths and 0 < sum(path in item for item in paths) < len(paths)
-    }
+    return {path for path in candidates if path[:-1] in map_paths}
 
 
 def _attribute_path(node: ast.AST) -> tuple[str, ...] | None:
@@ -213,12 +213,53 @@ def _exclusive_field_findings(tree: ast.Module, display: str, exclusive: set[tup
     return findings
 
 
+def _immediately_guarded_indices(tree: ast.Module) -> set[int]:
+    """Allow a direct return guarded by membership of the same key and mapping.
+
+    Restrict to profile-rooted attribute paths and a single immediate return;
+    this assumes the mapping remains stable between its two evaluations. Other
+    safe patterns remain conservative findings rather than inferred safety.
+    """
+    guarded: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+            continue
+        test = node.test
+        if len(test.ops) != 1 or len(test.comparators) != 1:
+            continue
+        if not isinstance(test.left, ast.Constant) or not isinstance(test.left.value, str):
+            continue
+        if isinstance(test.ops[0], ast.In):
+            branch = node.body
+        elif isinstance(test.ops[0], ast.NotIn):
+            branch = node.orelse
+        else:
+            continue
+        if len(branch) != 1 or not isinstance(branch[0], ast.Return):
+            continue
+        value = branch[0].value
+        if not isinstance(value, ast.Subscript) or not isinstance(value.slice, ast.Constant):
+            continue
+        base = value.value
+        while isinstance(base, ast.Attribute):
+            base = base.value
+        if not isinstance(base, ast.Name) or base.id != "profile":
+            continue
+        if value.slice.value == test.left.value and ast.dump(value.value, include_attributes=False) == ast.dump(
+            test.comparators[0], include_attributes=False
+        ):
+            guarded.add(id(value))
+    return guarded
+
+
 def _exclusive_key_findings(tree: ast.Module, display: str, exclusive_keys: set[tuple[str, ...]]) -> set[str]:
     """Find direct index accesses to profile-specific map keys."""
     findings: set[str] = set()
+    guarded = _immediately_guarded_indices(tree)
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Subscript)
+            and id(node) not in guarded
             and isinstance(node.slice, ast.Constant)
             and isinstance(node.slice.value, str)
         ):
@@ -256,8 +297,9 @@ def audit_engine(root: Path = ROOT) -> Audit:
     documents = _documents(root)
     names = {str(doc["name"]) for doc in documents}
     schema_fields, map_paths = _schema_fields(root)
-    exclusive = _exclusive_fields(documents, schema_fields, map_paths)
-    exclusive_keys = _exclusive_map_keys(documents, map_paths)
+    candidates = _nonuniversal_paths(documents)
+    exclusive = _exclusive_fields(candidates, schema_fields, map_paths)
+    exclusive_keys = _exclusive_map_keys(candidates, map_paths)
     findings: set[str] = set()
     for path in sorted(root.rglob("*")):
         if not path.is_file() or "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
