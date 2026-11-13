@@ -13,6 +13,8 @@ Two entry points:
   clone is a byte-for-byte copy of what the runner built (history and catalog hashes included, so ``status()`` reports
   ``applied``) and costs about 0.03 s instead of the runner's 0.9 s. Nothing is shared between tests: each clone is
   dropped afterwards, and ``CME_TEST_DATABASE_URL`` names the clone while the test runs.
+  A job that migrates the configured database itself sets ``CME_TEST_PREMIGRATED_DATABASE`` (E-023): the template is
+  then a copy of that database and no second migration runs, so the job log keeps one migration invocation.
 * :func:`apply_migrations` - raw DDL into the current schema, for tests that need a *partial* chain
   (``through=``) or exercise the migration bodies themselves. The caller's ``search_path`` must already name the
   target schema first.
@@ -30,12 +32,17 @@ import psycopg
 import pytest
 from psycopg import AsyncConnection, sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.errors import ObjectInUse
 from pydantic import SecretStr
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from custom_memory_engine.config import TestDatabaseConfig
 from custom_memory_engine.schema.migrate import MigrationConfig, MigrationRunner, migration_scripts
 
 URL = "CME_TEST_DATABASE_URL"
+#: Set by a job that already ran ``schema.migrate apply`` on the configured database (E-023). The template then
+#: becomes a byte copy of that database instead of a second migration, so the job log carries one invocation.
+PREMIGRATED = "CME_TEST_PREMIGRATED_DATABASE"
 #: The schema every clone carries, built by the production runner in the template.
 ENGINE_SCHEMA = "cme_engine"
 _EXTENSIONS = Path(__file__).parents[1] / "init_extensions.sql"
@@ -76,6 +83,44 @@ async def _admin(base_url: str) -> AsyncConnection:
     return await AsyncConnection.connect(base_url, autocommit=True, connect_timeout=10)
 
 
+async def _maintenance(base_url: str) -> AsyncConnection:
+    """A connection to ``postgres``: a database cannot be copied while any session is connected to it.
+
+    ``postgres`` is the one connection target exempt from :class:`~custom_memory_engine.config.TestDatabaseConfig`:
+    the source and every database this module drops or copies are still named by the validated base URL, and the
+    copy needs a session that is attached to neither side of it.
+    """
+    return await AsyncConnection.connect(
+        make_conninfo(base_url, dbname="postgres"), autocommit=True, connect_timeout=10
+    )
+
+
+async def _require_applied(url: str) -> None:
+    """The copy must carry the full, verified migration set before any test clones it."""
+    status = await MigrationRunner(MigrationConfig(database_url=SecretStr(url), schema_name=ENGINE_SCHEMA)).status()
+    if status.state != "applied":
+        raise RuntimeError(f"premigrated_database_not_applied:{status.state}")
+
+
+@retry(
+    retry=retry_if_exception_type(ObjectInUse),
+    stop=stop_after_attempt(8),
+    wait=wait_exponential(multiplier=0.25, min=0.25, max=2),
+    reraise=True,
+)
+async def _copy_database(base_url: str, name: str) -> None:
+    """Make ``name`` a copy of the configured database (retried while a stray session still holds it).
+
+    The premigrated job's healthcheck probes ``postgres``, never this source, so the recurring case is gone; the
+    budget still covers a slow service handshake or another session attached when the copy starts.
+    """
+    async with await _maintenance(base_url) as admin:
+        await admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
+        await admin.execute(
+            sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(sql.Identifier(name), sql.Identifier(_dbname(base_url)))
+        )
+
+
 async def _template(base_url: str) -> str:
     """Migrate ``<base>_tpl`` with the production runner, once per process."""
     built = _built.get(base_url)
@@ -84,12 +129,21 @@ async def _template(base_url: str) -> str:
     name = f"{_dbname(base_url)}_tpl"
     url = make_conninfo(base_url, dbname=name)
     TestDatabaseConfig(database_url=SecretStr(url))
-    async with await _admin(base_url) as admin:
-        await admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
-        await admin.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(sql.Identifier(name)))
-    async with await AsyncConnection.connect(url, autocommit=True, connect_timeout=10) as conn:
-        await conn.execute(cast(LiteralString, _EXTENSIONS.read_text(encoding="utf-8")))  # a repository file
-    await MigrationRunner(MigrationConfig(database_url=SecretStr(url), schema_name=ENGINE_SCHEMA)).apply()
+    if os.environ.get(PREMIGRATED) == "1":
+        # E-023: the job migrated the configured database once through the runner; this template is a copy, so the
+        # migration stays singular while every test keeps its private clone. Workers would copy an unmigrated
+        # per-worker database, so a premigrated run is deliberately single-process.
+        if os.environ.get("PYTEST_XDIST_WORKER"):
+            raise RuntimeError("premigrated_database_requires_a_single_process")
+        await _copy_database(base_url, name)
+        await _require_applied(url)
+    else:
+        async with await _admin(base_url) as admin:
+            await admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
+            await admin.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(sql.Identifier(name)))
+        async with await AsyncConnection.connect(url, autocommit=True, connect_timeout=10) as conn:
+            await conn.execute(cast(LiteralString, _EXTENSIONS.read_text(encoding="utf-8")))  # a repository file
+        await MigrationRunner(MigrationConfig(database_url=SecretStr(url), schema_name=ENGINE_SCHEMA)).apply()
     _built[base_url] = name
     return name
 
