@@ -247,15 +247,41 @@ for `G6`. The register records an obligation, not a start signal.
 |---|---|---|---|
 | `E-021` | **Coding-agent profile**: episodes from tool calls/diffs/test runs; repo claims; build/CI procedures; scope `/u/<id>/p/<repo>/` | **Closed (#136, PR #143, `11ea247`).** Six fixtures stored, queried and routed through `Engine.call`. The engine work landed early under `V2-D66` (#159–#162), and profile binding is decided by `V2-D67`. Follow-ups done: promotion (`V2-D70`, #163) and extractor enforcement (`V2-D69`, #164). Deferred: full `C-021` in W5 (#75). | L |
 | `E-022` | **Coding-agent benchmark**: script-first, planted CI-failure patterns, "what did we try before", procedure reuse | **Closed (#137, PR #177, `10ef7bb`).** Own Suite `C`: five families, dev 20 / test 50, frozen split registered (`G-TS` exit 0), byte-identical regeneration, no engine change. | L |
-| `E-023` | **Dual-profile CI job**: migrate once, run conversational + coding suites in one database, assert isolation + parity | Proves `I7` and domain-independence together | M |
+| `E-023` | **Dual-profile CI job**: migrate once, run conversational + coding suites in one database, assert isolation + parity | **Closed (#138, PR #197, `d569eed`).** Job `dual-profile` on `main`: one migration invocation in the whole job (`schema.migrate apply`, applied state gated by `jq -e`), then both profile suites on that one database plus `tests/integration/test_dual_profile_db.py` (parity, `forbidden` both ways, RLS-indistinguishable with an own-row positive control, both orders) and the Suite I bound. Exposure 0, `cp_upper_97_5=0.168433`; 38 s wall-clock. The job is **advisory**, not a required check (§1.2 unchanged). | M |
 | `E-024` | **Cross-domain entity resolution**: one entity as colleague and running partner, referenced from two scopes | **Closed (#139; PRs #145 `816654e`, #190 `436066f`).** Rule `V2-D71`: one opaque id per scope, joined only by explicit `link_entity` (`entity_link`, migration 18); `assert` gains optional `subject_entity`, made structural by **migration 19 / `V2-D74`** (composite FK: exists, same principal, same scope; `ON DELETE RESTRICT`). §10 row 10's waiver re-examined and retired: the engine diff is the minimum the rule needs. | M |
 | `E-025` | **Fork audit**: engine source diff between profiles must be empty | Mechanically checked in CI | S |
 | `E-026` | **Transient working memory**: coding profile uses `retention='working'` episodes; automatic session purge; **asserts a purged working episode's durable claims survive** | **Closed (#141; PR #189 `00a82bb` + `V2-D73`).** `purge_working` wired, rule PW-1 = `V2-D72`; answerability now proven **through `Engine.call` in every temporal mode** (`E-031`), so §9 rows 5 and 13 hold at the public entry point. Direct test of the retention floor (V2-D10) | M |
 | `E-027` | **Procedure feedback loop**: does `record_outcome` update `outcome_stats` and change procedure ranking? | **Closed (#142).** `record_outcome` wired (`API_V2.md` 4.5, three error cases), migration 20's `outcome_stats` side table, and rule `V2-D75`: the `procedures` channel is ordered by Laplace-smoothed success rate, then recency, then id, applied **after** channel routing so no statistic can promote a contested or retired procedure. The minimal substrate `E-030` extends (sequencing finding `E-027-F1`). | M |
 
-**G2 (zero-fork dual-profile).** Both profiles pass their suites on one database;
-`git diff` of `src/` for profile-specific changes is empty; cross-tenant exposure = 0;
-`E-026` proves retention demotion never removes answerability.
+**W2 progress (r15, 2026-11-16).** All seven W2 tasks are complete on `main`: `E-021` (#136), `E-022` (#137), `E-023`
+(#138), `E-024` (#139), `E-025` (#140), `E-026` (#141) and `E-027` (#142). `G2` is met — the four criteria and their
+evidence are in the table below. What W2 proved, in one sentence: one engine built from one source serves a
+conversationally-shaped and a tool-shaped application on one database, with the profile document as the only
+difference and no tenant able to observe another.
+
+Three findings were recorded rather than patched away, all on #72:
+`E-026-F1` (PW-1 retains cited working episodes, so working memory is not strictly bounded — `V2-D72`),
+`E-027-F1` (a W2 task consumed a substrate sequenced for W3 — `outcome_stats` was absent from `main`; **Option (a)**
+taken: a minimal side table, with `E-030` named as the owner that extends it), and
+`E-027-F2` (no decision record governed whether statistics may reorder within a channel — resolved as `V2-D75`).
+
+Two limitations are stated, not hidden: `dual-profile` is **advisory**, not a required check (§1.2 is unchanged; making
+it required is a branch-protection change outside `E-023`'s scope), and its cross-profile Clopper–Pearson bound is
+`0.841886` over two probe directions — honest, but weak on its own; the Suite I bound over 20 scenarios is the
+stronger evidence. The generality claim therefore rests on the paired observation, not on the narrow bound alone.
+
+**W2 is closed.** Work moves to W3 (§6); `E-039` (#97) remains open on criterion 5 until the 11 unwired operations land.
+
+**G2 (zero-fork dual-profile) — MET (2026-11-16).** All four criteria hold on `main` at `d569eed`, each verified independently of the PR that delivered it:
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Both profiles pass their suites on one database | **met** | `dual-profile` job: 8 conversational + 5 coding + 6 cross-profile + 10 restricted-role passed against one migrated schema, one migration invocation |
+| `git diff` of `src/` for profile-specific changes is empty | **met** | `python -m tests.engine_source_identity` → `PASS (2 profiles: coding, conversational)`; `git diff b6ce974...d569eed -- src/` empty |
+| Cross-tenant exposure = 0 | **met** | `Suite I dev: probes=60 cross_user_exposures=0 exposed_scenarios=0/20 cp_upper_97_5=0.168433`; cross-profile module `cross_profile_exposures=0` in both orders |
+| `E-026` proves retention demotion never removes answerability | **met** | `test_rule_pw1_a_purge_never_removes_answerability` through `Engine.call` in every temporal mode; all 12 purge tests green |
+
+**The honest-boundary clause was never needed:** G2 did not fail, so the generality claim stands at full scope rather than narrowed to text-grounded domains. Two limitations are recorded rather than hidden — `dual-profile` is advisory (adding it to branch protection is a separate change), and the cross-profile CP bound is `0.841886` over only two probe directions, which is honest but weak evidence on its own; the Suite I bound is the stronger one.
 
 **If G2 fails** — and it might — narrow the generality claim honestly to text-grounded
 domains and record why tool-grounded memory needs a different substrate.

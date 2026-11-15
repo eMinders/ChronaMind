@@ -97,7 +97,7 @@ The configuration is:
 
 | Setting | Value | Why |
 |---|---|---|
-| Required status checks | `changes`, `static`, `verify`, `default-install` (from `custom-memory-engine.yaml`) and `checks`, `workflows` (from `ci.yaml`) | These are the gates the Definition of Done already names. A PR is not "CI green" on `verify` alone |
+| Required status checks | `changes`, `static`, `verify`, `default-install` (from `custom-memory-engine.yaml`) and `checks`, `workflows` (from `ci.yaml`) | These are the gates the Definition of Done already names. A PR is not "CI green" on `verify` alone. The `dual-profile` job (`E-023`, #138) is **deliberately advisory and not on this list**: it proves `G2` on every run, but promoting a check to required is a protection change that issue scoped out. A job skipped by a job-level `if:` reports success, so `dual-profile` cannot leave a PR pending the way a `paths:`-filtered workflow would |
 | Require branches to be up to date | **on** (`strict: true`) | The r11 review found merge-order regressions (a ledger silently reverted across four branches, #123) that per-PR green CI cannot catch. Strict mode makes a PR's checks run against current `main` before it merges |
 | Required approving reviews | **none** | `V2-D57`: AI review is the gate. A required GitHub approval would block every merge or invite an approval that did not happen |
 | Require conversation resolution | **on** | A review finding is a comment; this makes "resolve or record it" binding |
