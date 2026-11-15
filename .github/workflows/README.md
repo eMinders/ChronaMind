@@ -2,7 +2,7 @@
 
 | Workflow | Trigger | Jobs (check names) | Purpose |
 |---|---|---|---|
-| `custom-memory-engine.yaml` | Every PR (a `changes` job skips the gates when neither `custom-memory-engine/` nor `.github/` changed, so required checks still report; `.github/` counts because the engine suite tests the CI configuration); pushes to `main` touching those paths; manual | `changes`, then `static`, `verify`, `default-install` (parallel) | Engine quality gates (below) |
+| `custom-memory-engine.yaml` | Every PR (a `changes` job skips the gates when neither `custom-memory-engine/` nor `.github/` changed, so required checks still report; `.github/` counts because the engine suite tests the CI configuration); pushes to `main` touching those paths; manual | `changes`, then `static`, `verify`, `default-install` (parallel), plus advisory `dual-profile` | Engine quality gates (below) |
 | `ci.yaml` | Every PR; pushes to `main`; manual | `checks`, `workflows` | `checks`: root application lint, format, type check and tests (`tests/`, no services). The engine is excluded from the root Ruff config and verified only by its own workflow. `workflows`: actionlint over every workflow, pinned by digest |
 | `claude-code-review.yml` | Same-repository, non-draft PRs | `claude-review` | Advisory automated review: a second pair of eyes, not the review gate. The gate is the AI review on the Project Owner's behalf (`V2-D57`, `PLAN/CONTRIBUTING.md` §1.1); no human peer review is a prerequisite |
 | `claude.yml` | `@claude` mentions by an owner, member or collaborator | `claude` | On-demand assistant |
@@ -16,8 +16,9 @@
 | `static` | `ruff check`, `ruff format --check`, `pyright` (including `scripts/`); frozen research record (`md5sum -c validation/document_hashes.txt`), mechanical checks, Clopper–Pearson bounds, `scripts/check_statistics.py`, G-TS split gate (`scripts/check_test_split_gate.py`), plan references (`check_plan_refs.py`), status registry (`audit_status.py --check`), architecture ownership (`plan_coverage.py --check`) |
 | `verify` | Full CI-scope `pytest -n auto` with work stealing: one disposable database per xdist worker (`conftest.py`, #167) and a private clone of a runner-migrated template per database test (`tests/integration/schema.py`), on a PostgreSQL service with durability switched off (throwaway data) plus FalkorDB and prepared model assets: PostgreSQL integration, restricted-role RLS, cross-tenant, migration, bitemporal, deletion and API-contract tests; `validation/bitemporal_checks.sql` |
 | `default-install` | `pytest` on the default install with no optional extras |
+| `dual-profile` | One PostgreSQL service, migrated **once** through `schema.migrate` with the applied state gated, then both profiles on that one database: the conversational adapter suite, the coding-profile suite, the cross-profile parity and isolation module (`tests/integration/test_dual_profile_db.py`: forbidden both ways, RLS-indistinguishable, both orders, exposure 0 with its one-sided 97.5% Clopper–Pearson bound) and the restricted-role Suite I bound. Each suite clones the migrated database (`CME_TEST_PREMIGRATED_DATABASE`), so one migration invocation appears in the log |
 
-All three must be green (or skipped by `changes` when no engine path changed). A PR is not "CI green" because `verify` alone passed.
+All three required gates must be green (or skipped by `changes` when no engine path changed). `dual-profile` is advisory: it reports but does not block a merge until it is added to the required checks (`custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2). A PR is not "CI green" because `verify` alone passed.
 
 `main` is **protected** (applied and verified 2026-11-05): six required checks bound to GitHub Actions, up-to-date branches, conversation resolution, no force pushes or deletions. Details and the verification are in `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2, including why no required check can leave a PR pending forever.
 

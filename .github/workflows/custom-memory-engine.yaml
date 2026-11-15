@@ -4,8 +4,10 @@ name: Custom Memory Engine verification
 #   static          lint, format, type check, frozen research records (no services; fast feedback)
 #   verify          full CI-scope pytest + bitemporal SQL against PostgreSQL/pgvector and FalkorDB
 #   default-install pytest on the default install (no optional extras): proves extras stay optional
+#   dual-profile    both profiles on ONE migrated database: parity, cross-profile isolation, order independence
 #   changes         decides whether a PR touches engine paths (see below)
-# The three gating jobs are independent and run in parallel.
+# The four required jobs (`changes`, `static`, `verify`, `default-install`) and the advisory `dual-profile` job are
+# independent and run in parallel; `dual-profile` is not a required check (`PLAN/CONTRIBUTING.md` 1.2).
 #
 # Required checks (PLAN/CONTRIBUTING.md 1.2): a workflow skipped by a trigger-level `paths:` filter never reports, so a
 # required check would stay pending forever on a root-only PR. Pull requests therefore always run this workflow; the
@@ -163,3 +165,71 @@ jobs:
       - uses: ./.github/actions/setup-cme
       - name: pytest on the default install (no optional vendor/model packages)
         run: uv run --no-sync pytest -q -n auto
+
+  dual-profile:
+    # E-023 (G2): migrate once, then run the conversational and coding profiles on that one database. The job is the
+    # joint runtime proof of domain-independence (V2-D08) and isolation (I7, V2-D45); source identity is E-025's
+    # separate check in `static`. A skipped job reports success, so a root-only PR is not blocked (CONTRIBUTING 1.2).
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg16-bookworm@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+        env:
+          POSTGRES_USER: cme_test
+          POSTGRES_PASSWORD: isolated_ci_only  # pragma: allowlist secret (disposable service container)
+          POSTGRES_DB: cme_compatibility
+        ports: ["5433:5432"]
+        # Probe `postgres`, never the database the suites copy as a template: the healthcheck runs for the whole job,
+        # and a probe session attached to a template source fails `CREATE DATABASE ... TEMPLATE` with SQLSTATE 55006.
+        options: >-
+          --health-cmd "pg_isready -U cme_test -d postgres"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      CME_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility  # pragma: allowlist secret
+      # The suite copies this already-migrated database instead of migrating a template again, so the job's log
+      # carries exactly one migration invocation while every test keeps its private clone.
+      CME_TEST_PREMIGRATED_DATABASE: "1"
+      PGPASSWORD: isolated_ci_only  # pragma: allowlist secret
+    defaults:
+      run:
+        working-directory: custom-memory-engine
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-cme
+      - name: Prepare disposable database (extensions; durability off)
+        # Same throwaway-service preparation as `verify`: the data is disposable, so durability settings are off.
+        run: |
+          psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 -f tests/init_extensions.sql
+          psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET fsync = off" -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" -c "SELECT pg_reload_conf()"
+      - name: Migrate once through the production runner
+        # The only migration in this job: `apply` builds the schema, `status` prints the version both profiles run on.
+        # `status` exits 0 for every state it can report, so the step gates on the state itself; redirecting instead of
+        # piping keeps the command's own exit status as the step's. The version both profiles run on is asserted
+        # against the runner's `VERSION` in `test_dual_profile_db.py`.
+        env:
+          RL_DATABASE_URL: ${{ env.CME_TEST_DATABASE_URL }}
+        run: |
+          uv run --no-sync python -m custom_memory_engine.schema.migrate apply --schema cme_engine
+          uv run --no-sync python -m custom_memory_engine.schema.migrate status --schema cme_engine > /tmp/migrate-status.json
+          cat /tmp/migrate-status.json
+          jq -e '.state == "applied"' /tmp/migrate-status.json
+      - name: Both profiles on one schema (parity, isolation, order independence)
+        # -rP prints the parity line and the cross-profile exposure count from the passing tests.
+        run: uv run --no-sync pytest -q -rP tests/integration/test_dual_profile_db.py
+      # The two profile suites are separate processes on private clones of the one migrated schema, so their order
+      # cannot matter (they share the migration set, never a row). Where order could matter — interleaved tenancy in
+      # one schema — the module above runs both orders.
+      - name: Conversational suite (System P adapter)
+        run: uv run --no-sync pytest -q tests/integration/test_engine_adapter_db.py
+      - name: Coding suite (six fixtures through Engine.call)
+        run: uv run --no-sync pytest -q tests/integration/test_coding_profile_db.py
+      - name: Restricted-role isolation and Suite I exposure bound
+        # -rP prints the Suite I line: 0 exposures and its one-sided 97.5% Clopper-Pearson upper bound.
+        run: uv run --no-sync pytest -q -rP tests/integration/test_rls_isolation.py

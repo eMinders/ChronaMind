@@ -41,8 +41,8 @@ def engine() -> str:
     return ENGINE.read_text(encoding="utf-8")
 
 
-def test_the_three_engine_jobs_exist(engine: str) -> None:
-    for job in ("static", "verify", "default-install"):
+def test_the_engine_jobs_exist(engine: str) -> None:
+    for job in ("static", "verify", "default-install", "dual-profile"):
         _job(engine, job)
 
 
@@ -82,6 +82,33 @@ def test_verify_runs_the_full_suite_on_pinned_postgres_and_falkordb(engine: str)
 def test_default_install_job_syncs_no_extras(engine: str) -> None:
     job = _job(engine, "default-install")
     assert "uses: ./.github/actions/setup-cme" in job and "extras:" not in job
+
+
+def test_dual_profile_job_runs_both_profiles_on_one_migrated_database(engine: str) -> None:
+    """E-023: one migration invocation, one database, both profile suites, and the isolation module that proves it."""
+    job = _job(engine, "dual-profile")
+    assert "needs: changes" in job and "if: needs.changes.outputs.engine == 'true'" in job
+    assert re.search(r"pgvector/pgvector:0\.8\.7-pg16-bookworm@sha256:[0-9a-f]{64}", job)
+    assert "falkordb" not in job, "no suite in this job needs FalkorDB; do not carry the service for symmetry"
+    assert job.count("python -m custom_memory_engine.schema.migrate apply") == 1
+    assert "python -m custom_memory_engine.schema.migrate status" in job
+    # `migrate status` exits 0 whatever it reports, so the job must gate on the state it prints.
+    assert '.state == "applied"' in job
+    assert 'CME_TEST_PREMIGRATED_DATABASE: "1"' in job
+    # The suites skip when the URL is unset, so the step that would fail first must be wired to it.
+    assert "RL_DATABASE_URL: ${{ env.CME_TEST_DATABASE_URL }}" in job
+    # A job that only names the variable can still run every suite as a skip; the value must be a real URL.
+    assert "CME_TEST_DATABASE_URL: postgresql://" in job
+    for suite in (
+        "tests/integration/test_dual_profile_db.py",
+        "tests/integration/test_engine_adapter_db.py",
+        "tests/integration/test_coding_profile_db.py",
+        "tests/integration/test_rls_isolation.py",
+    ):
+        assert suite in job, suite
+    # A premigrated run copies the configured database, so an xdist worker would copy an unmigrated one.
+    assert not re.search(r"pytest[^\n]*\s-n\b", job)
+    assert not re.search(r"(?m)^        (?:if|continue-on-error):", job), "the job's steps must not be suppressed"
 
 
 def test_every_external_action_is_pinned_to_a_commit_sha() -> None:
