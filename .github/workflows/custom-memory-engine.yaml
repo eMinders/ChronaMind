@@ -142,6 +142,13 @@ jobs:
           psql -h localhost -p 5433 -U cme_test -d cme_compatibility -v ON_ERROR_STOP=1 \
             -c "ALTER SYSTEM SET fsync = off" -c "ALTER SYSTEM SET synchronous_commit = off" \
             -c "ALTER SYSTEM SET full_page_writes = off" -c "SELECT pg_reload_conf()"
+      - name: Channel-integrity fuzz (E-035 gate)
+        # The four-channel contract's adversary: enumerates the whole tuple space, fuzzes it from fixed seeds and
+        # asserts five named invariants on every assembly. Pure (assemble takes views plus an injected staleness
+        # callable), so it needs no database and runs before the suite that follows. A failing case prints its seed
+        # and is re-runnable with CME_FUZZ_SEED. Timeout is a hang guard, not a budget: the run takes about a second.
+        timeout-minutes: 2
+        run: uv run --no-sync pytest -q tests/test_channel_integrity.py --durations=5
       - name: pytest (full CI scope, PostgreSQL integration and RLS)
         # One xdist worker per core, each with its own copy of the disposable database (conftest.py, #167). Each DB
         # test gets a private clone of a template the production migration runner built once per worker

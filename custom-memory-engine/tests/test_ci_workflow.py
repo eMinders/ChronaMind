@@ -79,6 +79,50 @@ def test_verify_runs_the_full_suite_on_pinned_postgres_and_falkordb(engine: str)
     assert "CME_TEST_DATABASE_URL" in verify and "--extra" not in verify  # extras come from setup-cme
 
 
+def test_channel_integrity_fuzz_runs_as_a_gate_before_the_suite(engine: str) -> None:
+    """E-035 (205-A): the channel-integrity fuzz is a gate, not an optional extra, and runs before the suite.
+
+    It is pure and needs no database, so a step in ``verify`` keeps it cheap. The assertions that matter are that it
+    exists, that it runs the module directly (no ``-k`` filter that could silently select nothing), and that it
+    cannot be suppressed or made non-fatal.
+    """
+    verify = _job(engine, "verify")
+    steps = re.findall(r"(?ms)^      - name: Channel-integrity fuzz \(E-035 gate\)\n(.*?)(?=^      - |\Z)", verify)
+    assert len(steps) == 1, "exactly one channel-integrity gate step is required"
+    step = steps[0]
+    assert re.search(r"(?m)^        run: uv run --no-sync pytest -q tests/test_channel_integrity\.py(?:\s|$)", step), (
+        "the gate must run the module itself, not a filtered selection"
+    )
+    # `-k`/`--ignore`/`--deselect` could empty the gate while looking green.
+    for evasion in ("-k ", "--ignore", "--deselect", "-m "):
+        assert evasion not in step, evasion
+    assert not re.search(r"(?m)^        (?:if|continue-on-error):", step), "the gate must not be suppressed"
+    # It must precede the full suite, so a contract violation fails fast rather than after ~2 minutes of DB work.
+    assert verify.index("Channel-integrity fuzz (E-035 gate)") < verify.index("pytest (full CI scope")
+
+
+@pytest.mark.parametrize("suppression", ["if: false", "continue-on-error: true"])
+def test_channel_integrity_gate_rejects_a_suppressed_step(engine: str, suppression: str) -> None:
+    mutated = engine.replace(
+        "      - name: Channel-integrity fuzz (E-035 gate)\n",
+        f"      - name: Channel-integrity fuzz (E-035 gate)\n        {suppression}\n",
+    )
+    assert mutated != engine
+    with pytest.raises(AssertionError):
+        test_channel_integrity_fuzz_runs_as_a_gate_before_the_suite(mutated)
+
+
+def test_channel_integrity_gate_rejects_a_filtered_selection(engine: str) -> None:
+    """A `-k` filter that matches nothing would let the gate pass while observing nothing."""
+    mutated = engine.replace(
+        "run: uv run --no-sync pytest -q tests/test_channel_integrity.py --durations=5",
+        "run: uv run --no-sync pytest -q tests/test_channel_integrity.py -k nothing_matches",
+    )
+    assert mutated != engine
+    with pytest.raises(AssertionError):
+        test_channel_integrity_fuzz_runs_as_a_gate_before_the_suite(mutated)
+
+
 def test_default_install_job_syncs_no_extras(engine: str) -> None:
     job = _job(engine, "default-install")
     assert "uses: ./.github/actions/setup-cme" in job and "extras:" not in job
