@@ -207,10 +207,10 @@ criteria in its own task:
 
 | # | Operation | Owner | Issue | Entry-point criterion (a)(b)(c) |
 |---|---|---|---|---|
-| 1 | `query` | `E-033` | W3 tracker #73 (child not yet created) | wires `query`; suite's **queryable** property runs through `Engine.call` |
-| 2 | `get` | `E-033` | W3 tracker #73 (child not yet created) | wires `get`; suite's **queryable** property runs through `Engine.call` |
-| 3 | `provenance` | `E-033` | W3 tracker #73 (child not yet created) | wires `provenance`; suite's **queryable** property runs through `Engine.call`, opaque handles intact (`V2-D37`) |
-| 4 | `refine` | `E-034` | W3 tracker #73 (child not yet created) | wires `refine`; suite's **queryable** property runs through `Engine.call` |
+| 1 | `query` | `E-033` | W3 tracker #73 → **#203** | wires `query`; suite's **queryable** property runs through `Engine.call` |
+| 2 | `get` | `E-033` | W3 tracker #73 → **#203** | wires `get`; suite's **queryable** property runs through `Engine.call` |
+| 3 | `provenance` | `E-033` | W3 tracker #73 → **#203** | wires `provenance`; suite's **queryable** property runs through `Engine.call`, opaque handles intact (`V2-D37`) |
+| 4 | `refine` | `E-034` | W3 tracker #73 → **#204** | wires `refine`; suite's **queryable** property runs through `Engine.call` |
 | 5 | `infer` | `C-021` | W5 tracker #75 (child not yet created) | wires `infer`; suite's **procedural** property runs through `Engine.call` |
 | 6 | `verify` | `C-021` | W5 tracker #75 (child not yet created) | wires `verify`; `I11`/`I15` ledger properties asserted through `Engine.call` |
 | 7 | `refute` | `C-026` | W5 tracker #75 (child not yet created) | wires `refute`; recovery-or-retirement asserted through `Engine.call` |
@@ -220,11 +220,11 @@ criteria in its own task:
 | 11 | ~~`purge_working`~~ | ~~`E-026`~~ | **wired** (#189) | `purge_working` is wired admin-only and asserted through `Engine.call` (`tests/integration/test_purge_working_db.py`); the retention-floor survivor test runs through the entry point; it leaves this register |
 | 12 | `expire` | `A-014` | W7 tracker #79 (child not yet created) | wires `expire`; `I9` idempotency asserted through `Engine.call` |
 | 13 | `rebuild_index` | `A-014` | W7 tracker #79 (child not yet created) | wires `rebuild_index`; admin-only refusal asserted through `Engine.call` |
-| 14 | `delete` | `E-037` | W3 tracker #73 (child not yet created) | wires `delete`; suite's **deletable** property runs through `Engine.call` |
+| 14 | `delete` | `E-037` | W3 tracker #73 → **#207** | wires `delete`; suite's **deletable** property runs through `Engine.call` |
 | 15 | `export` | `A-015` | W7 tracker #79 (child not yet created) | wires `export`; export selector set asserted through `Engine.call` |
 | 16 | ~~`create_scope`~~ | ~~`E-040`~~ | **wired** (#151) | `create_scope` is wired under `namespace_owner_only` and asserted through `Engine.call` (`tests/integration/test_create_scope.py`); it leaves this register |
 | 17 | `stats` | `C-010` | W4 tracker #74 (child not yet created) | wires `stats`; `ABSTRACTION_STATS` read asserted through `Engine.call` |
-| 18 | `cost` | `E-036` | W3 tracker #73 (child not yet created) | wires `cost`; per-stage cost report asserted through `Engine.call` |
+| 18 | `cost` | `E-036` | W3 tracker #73 → **#206** | wires `cost`; per-stage cost report asserted through `Engine.call` |
 
 **Closure conditions for `E-039` (#97).** Criterion 5 is satisfied when, and only when:
 
@@ -292,15 +292,43 @@ domains and record why tool-grounded memory needs a different substrate.
 
 | ID | Task | Notes | Effort |
 |---|---|---|---|
-| `E-030` | **Procedure storage**: `preconditions`, `steps`, preconditions matching. Extends the `outcome_stats` side table wired in W2 by `E-027` (`V2-D75`, migration 20). `record_outcome` is already wired; `E-030` adds the procedure shape it needs | No execution engine | M |
-| `E-031` | **Retrieval planner**: intent → index selection → filters → expansion plan. Rule-based first (replayable), model-assisted later | **Temporal modes landed (`V2-D73`):** `query` runs `current_state`, `historical_as_of`, `historical_window` and `audit_as_of` through `compile_predicate`, with the read set applied in the same statement and ρ taken from the engine clock (never the caller). `change` stays with `E-033`, as do budgets, ranking and `refine`. | L |
-| `E-032` | **Graph expansion**: association traversal with hop budget + provenance retention | Must not violate the temporal filter | L |
-| `E-033` | **Assembly**: four channels, per-channel budgets, provenance bundle, cost + coverage report | Supersedes v1 `render.py` behaviour with a superset | L |
-| `E-034` | **Iterative refine** | Needed for coding-agent drill-down | M |
-| `E-035` | **Channel-integrity fuzz + red-team**: no path renders an inferred artifact as fact; no path renders an abstraction without its bound | Must run in CI from the first W3 commit | M |
-| `E-036` | **Cost instrumentation**: per-stage latency, candidate counts, tokens into `Usage` | Reuse `harness/models.py::Usage` | M |
-| `E-037` | **Deletion-through-cognition, implemented now** *(moved from `R-014`/W6)*: unbounded closure with cycle detection, deepest-first dependent resolution, `stale` via closure hash, retirement when support < threshold, **11 channels** | Must exist before W5 writes any abstraction, or W5 is built on an undeletable substrate | L |
-| `E-038` | **Staleness derivation** (§9.2): `stale` computed from closure hash, never stored as a flag; `verified ∧ stale` legal and rendered in `hypotheses`. Includes a closure-hash cache with an invalidation path, since recomputing it per query is the obvious performance trap. | Closes the disagreement hole; `V2-D24` | M |
+| `E-030` | **Procedure storage**: `preconditions`, `steps`, preconditions matching. Extends the `outcome_stats` side table wired in W2 by `E-027` (`V2-D75`, migration 20). `record_outcome` is already wired; `E-030` adds the procedure shape it needs | No execution engine. Child issue **#201** | M |
+| `E-031` | **Retrieval planner**: intent → index selection → filters → expansion plan. Rule-based first (replayable), model-assisted later | **Temporal modes landed (`V2-D73`):** `query` runs `current_state`, `historical_as_of`, `historical_window` and `audit_as_of` through `compile_predicate`, with the read set applied in the same statement and ρ taken from the engine clock (never the caller). `change` stays with `E-033`, as do budgets, ranking and `refine`. Child issue **#200** | L |
+| `E-032` | **Graph expansion**: association traversal with hop budget + provenance retention | Must not violate the temporal filter. Child issue **#202** | L |
+| `E-033` | **Assembly**: four channels, per-channel budgets, provenance bundle, cost + coverage report | Supersedes v1 `render.py` behaviour with a superset. Child issue **#203** | L |
+| `E-034` | **Iterative refine** | Needed for coding-agent drill-down. Child issue **#204** | M |
+| `E-035` | **Channel-integrity fuzz + red-team**: no path renders an inferred artifact as fact; no path renders an abstraction without its bound | Must run in CI from the first W3 commit. Child issue **#205** | M |
+| `E-036` | **Cost instrumentation**: per-stage latency, candidate counts, tokens into `Usage` | Reuse `harness/models.py::Usage`. Child issue **#206** | M |
+| `E-037` | **Deletion-through-cognition, implemented now** *(moved from `R-014`/W6)*: unbounded closure with cycle detection, deepest-first dependent resolution, `stale` via closure hash, retirement when support < threshold, **11 channels** | Must exist before W5 writes any abstraction, or W5 is built on an undeletable substrate. Child issue **#207** | L |
+| `E-038` | **Staleness derivation** (§9.2): `stale` computed from closure hash, never stored as a flag; `verified ∧ stale` legal and rendered in `hypotheses`. Includes a closure-hash cache with an invalidation path, since recomputing it per query is the obvious performance trap. | Closes the disagreement hole; `V2-D24`. Child issue **#199** | M |
+
+**W3 child issues created (r16, 2026-11-16).** All nine are open with full specifications, each carrying the W2 issue
+format plus the W3 additions: an explicit **execution order** position, a **ground-truth** section that makes the
+author establish the current state with file and line before writing code, and a **dependency table**. Execution order
+is derived from what each task consumes, not from row order: `E-038` (#199) → `E-031` (#200) → `E-030` (#201) and
+`E-032` (#202) in parallel → `E-033` (#203) → `E-034` (#204) and `E-036` (#206) in parallel → `E-035` (#205) →
+`E-037` (#207). The full DAG is in tracker #73 §9.
+
+Two ordering facts the roadmap previously left implicit and the child issues now state explicitly:
+
+1. **`E-035`'s harness precedes its task.** The roadmap says it "must run in CI from the first W3 commit"; #205 closes
+   last because its assertions target the finished assembler, but its fuzz harness and CI job should merge before
+   `E-031`. Merging the harness early costs nothing and catches a defect in #200–#203 while it is cheap.
+2. **`RL-070` (#46) genuinely gates `E-037`.** `ARCHITECTURE_V2.md` §10.4 extends a 7-channel scan to 11. If channels
+   3 and 5–7 are still partly unmeasured, an 11-channel "zero" has a denominator nobody knows. #207 §4.4 requires #46's
+   state to be established before any code is written.
+
+**Improvements over the W2 issue format**, applied to all nine:
+- A **"Ground truth you must establish first"** section (`§4`), separate from the open questions: named files and the
+  specific facts to confirm before coding. `E-027` in W2 discovered mid-flight that `outcome_stats` did not exist;
+  requiring that discovery *before* the first commit is the direct lesson.
+- An explicit **execution order position** in the header (`3 of 9 — after E-031`), so a contributor never has to
+  reconstruct the DAG.
+- A **dependency table** with `Requires` / `Blocks` / `Carries` / `Must not disturb` rows, issue numbers included.
+- **`W9`** on #199 for the one task whose performance is a correctness input (the closure-hash cache), because the
+  roadmap names "recomputing it per query" as the obvious trap.
+- Each acceptance criterion names the **`DELETION_ORDER.md` test ID** (`F1`–`F13`) where one exists, instead of
+  inventing a parallel name — those names are requirements, not suggestions.
 
 **r10 (`THREAT_MODEL.md` T-29, S-08), binding on `E-037`:** deletion receipts store `target_ref` as a keyed digest
 (HMAC-SHA256, deployment key), not plaintext; deleting a memory can also delete its **exclusive** evidence sources in
