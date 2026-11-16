@@ -222,3 +222,15 @@ version sharing the `memory_key` (`R6`), walks `MEMORY_DERIVATION` upward to a
 bounded depth, re-derives dependents that retain an independent source, purges
 queued work for the deleted turns, and writes one content-free audit event. The
 7-channel leak scanner is harness-side and not part of this module.
+
+## `staleness.py` (`E-038`, `V2-D24`)
+
+`stale` is derived, never stored. `staleness_inputs(connection, user_id, artifact_id, cache=...)` builds the five causes of
+`CHANNELS.md` 2.3 (closure hash differs from the sealed `closed_over_hash`; the evidence ledger no longer passes the
+`STATISTICS.md` 4.2 support clauses; any transitive source retired; a later method version registered; `expires_at`
+reached) and `derive_staleness(...)` returns the `Staleness` function `channels.assemble` takes. It is the only place in
+`src/` that constructs `StalenessInputs`. `closure_hash` is a SHA-256 over the id and canonical content digest of every
+transitive source (unbounded depth, cycle-safe, order-independent); the module docstring lists what it deliberately
+excludes. A `ClosureCache` (bounded, process-local) is keyed `(schema, user, artifact, deletion_epoch)`, so a deletion
+invalidates it inside its own transaction (`DELETION_ORDER.md` F6). The verification writer (`C-021`) must seal
+`closed_over_hash` with the same `ClosureCache.closure_of(...).digest`. Tests: `tests/integration/test_staleness_db.py`.
