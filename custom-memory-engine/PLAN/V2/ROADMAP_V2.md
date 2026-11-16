@@ -297,9 +297,9 @@ domains and record why tool-grounded memory needs a different substrate.
 | `E-032` | **Graph expansion**: association traversal with hop budget + provenance retention | Must not violate the temporal filter. Child issue **#202** | L |
 | `E-033` | **Assembly**: four channels, per-channel budgets, provenance bundle, cost + coverage report | Supersedes v1 `render.py` behaviour with a superset. Child issue **#203** | L |
 | `E-034` | **Iterative refine** | Needed for coding-agent drill-down. Child issue **#204** | M |
-| `E-035` | **Channel-integrity fuzz + red-team**: no path renders an inferred artifact as fact; no path renders an abstraction without its bound | Must run in CI from the first W3 commit. Child issue **#205** | M |
+| `E-035` | **Channel-integrity fuzz + red-team**: no path renders an inferred artifact as fact; no path renders an abstraction without its bound | Runs in CI from the first W3 commit. Ships as **205-A** (harness + invariants + CI job, merges before `E-038`) then **205-B** (budget/coverage on the new surface, after `E-033`). Child issue **#205** | M |
 | `E-036` | **Cost instrumentation**: per-stage latency, candidate counts, tokens into `Usage` | Reuse `harness/models.py::Usage`. Child issue **#206** | M |
-| `E-037` | **Deletion-through-cognition, implemented now** *(moved from `R-014`/W6)*: unbounded closure with cycle detection, deepest-first dependent resolution, `stale` via closure hash, retirement when support < threshold, **11 channels** | Must exist before W5 writes any abstraction, or W5 is built on an undeletable substrate. Child issue **#207** | L |
+| `E-037` | **Deletion-through-cognition, implemented now** *(moved from `R-014`/W6)*: unbounded closure with cycle detection, deepest-first dependent resolution, `stale` via closure hash, retirement when support < threshold, **11 channels** | Must exist before W5 writes any abstraction, or W5 is built on an undeletable substrate. Owns the channel-7 base shift and the keyed-digest receipt (`T-29`). Child issue **#207** | L |
 | `E-038` | **Staleness derivation** (§9.2): `stale` computed from closure hash, never stored as a flag; `verified ∧ stale` legal and rendered in `hypotheses`. Includes a closure-hash cache with an invalidation path, since recomputing it per query is the obvious performance trap. | Closes the disagreement hole; `V2-D24`. Child issue **#199** | M |
 
 **W3 child issues created (r16, 2026-11-16).** All nine are open with full specifications, each carrying the W2 issue
@@ -311,18 +311,26 @@ is derived from what each task consumes, not from row order: `E-038` (#199) → 
 
 Two ordering facts the roadmap previously left implicit and the child issues now state explicitly:
 
-1. **`E-035`'s harness precedes its task.** The roadmap says it "must run in CI from the first W3 commit"; #205 closes
-   last because its assertions target the finished assembler, but its fuzz harness and CI job should merge before
-   `E-031`. Merging the harness early costs nothing and catches a defect in #200–#203 while it is cheap.
-2. **`RL-070` (#46) genuinely gates `E-037`.** `ARCHITECTURE_V2.md` §10.4 extends a 7-channel scan to 11. If channels
-   3 and 5–7 are still partly unmeasured, an 11-channel "zero" has a denominator nobody knows. #207 §4.4 requires #46's
-   state to be established before any code is written.
+1. **`E-035`'s harness precedes its task, as a separate PR.** The roadmap says it "must run in CI from the first W3
+   commit". #205 therefore ships in two PRs: **205-A** (the fuzz enumerator, the four channel invariants as property
+   tests, positive controls, and the CI job) needs nothing from #203 because the invariants already hold or fail against
+   today's `assemble` (#68, merged); **205-B** (budget and coverage assertions on the new surface) lands after #203. The
+   header still lists #205 at position 7 because its *completion* needs #203 — that is not a reason to delay 205-A. If
+   205-A is not split out, #199–#203 merge before the integrity checks exist and any violation they introduce is found
+   when the offending code is already in `main`.
+2. **`RL-070` (#46) is MET, not a gate.** #46 closed 2026-10-31 with all seven channels measured and complete
+   (`reports/deletion/suite_d_dev_P.json`: `0 incomplete / 0 leaking`) and the `A8` control firing on six of seven.
+   **One hole carries forward and #207 owns it:** channel 7 (application logs) records zero even under `A8`, so its
+   probe is measured but unproven. #207 §4.4 and requirement 14 require either a channel-7 positive control or an
+   explicit `measured-but-control-absent` qualification — a measured-but-unproven channel must not be cited as an
+   11-channel zero. `ARCHITECTURE_V2.md` §10.4 still extends 7 channels to 11; that is unchanged.
 
 **Improvements over the W2 issue format**, applied to all nine:
 - A **"Ground truth you must establish first"** section (`§4`), separate from the open questions: named files and the
   specific facts to confirm before coding. `E-027` in W2 discovered mid-flight that `outcome_stats` did not exist;
   requiring that discovery *before* the first commit is the direct lesson.
-- An explicit **execution order position** in the header (`3 of 9 — after E-031`), so a contributor never has to
+- An explicit **execution order position** in the header (`3 of 9 — starts in parallel with E-031, merges after`), so a
+  contributor never has to
   reconstruct the DAG.
 - A **dependency table** with `Requires` / `Blocks` / `Carries` / `Must not disturb` rows, issue numbers included.
 - **`W9`** on #199 for the one task whose performance is a correctness input (the closure-hash cache), because the
