@@ -6,6 +6,7 @@ all values, and never changes tenant or clock context.
 
 | Module | Responsibility | Plan item |
 |---|---|---|
+| `planning.py` | Pure retrieval planner: intent → `Plan`; the seam a model plugs into later | `E-031` |
 | `predicates.py` | Four temporal read modes, compiled SQL, async executor | `RL-043` |
 | `transactions.py` | R1–R5/R7 writes, ablations `A1`/`A2`/`A2b`, archival `(S)∨(C)` | `RL-042` |
 | `retrieval.py` | Dense + lexical channels fused by RRF (`k = 60`) | `RL-050` |
@@ -16,6 +17,27 @@ all values, and never changes tenant or clock context.
 | `purge.py` | `purge_working`: rule PW-1 (an evidence-bearing working episode is retained), scope event | `E-026` |
 | `procedure_shape.py` | A procedure's `preconditions`/`steps`: the grammar's parser (twin of migration 21's guard), store, read | `E-030` |
 | `procedure_matching.py` | `matches(preconditions, request, artifacts) → bool`: applicability only, a filter, never executes | `E-030` |
+
+---
+
+# Retrieval planning (`E-031`)
+
+[`planning.py`](planning.py) makes `ARCHITECTURE_V2.md` §9's staged retrieval explicit. `plan(intent, …) -> Plan` is a
+pure function: no connection, no clock, no SQL execution, so the same intent yields a byte-identical plan. The executor
+is [`ReadHandlers.execute_plan`](../api/read_handlers.py): it runs the plan's filters in one statement, then routes rows
+into channels, then applies the `V2-D75` procedure ordering.
+
+| Stage | What it does today |
+|---|---|
+| `plan` | choose the index, the ordered filters, the expansion intent and the route |
+| `candidate_generation` | the temporal predicate + typed-artifact guard + read predicate, before `LIMIT` |
+| `expansion` | nothing yet — `E-032` owns traversal; the boundary exists so `E-036` can measure it |
+| `filter_rerank` | the `V2-D45` re-check and the per-row facts routing needs; no score |
+| `assemble` | `channel_of` routing, then the recorded-outcome ordering inside `procedures` |
+
+The planner decides **no** channel membership, ranking or row limit: those stay with `channel_of`, `V2-D75` and the
+request, which is what keeps the temporal predicate a filter rather than a score term (§9.3). `E-036` measures the stage
+names above; `Plan.stages` and that table are the same list.
 
 The engine makes no provider calls. Model-backed work (extraction, conflict
 classification, tokenization) is injected by the caller so `P` and its ablations
