@@ -21,6 +21,13 @@ request carrying ``reference_time`` is refused (``V2-D73``, ``I4``).
 :func:`engine.predicates.fetch_scoped_rows`, which applies the temporal predicate and the caller's read predicate in
 **one** statement, then feeds the same channel-classification pipeline.
 
+**Staged retrieval (E-031, ``V2-D11``).** ``query`` now splits into the two halves ``ARCHITECTURE_V2.md`` §9 draws:
+:func:`~.engine.planning.plan_retrieval` is a **pure** function producing a
+:class:`~.engine.planning.Plan`, and :meth:`ReadHandlers.execute_plan` runs it. The plan names the index, the ordered
+filters, the expansion intent, the route (``channels`` or ``audit``) and the five stage names ``E-036`` measures; it
+names **no** channel membership, ranking or row limit. The split is a refactor, not a new retrieval algorithm: the SQL,
+the filters, the ordering and every error code are what they were, and this module's own tests are unmodified.
+
 **What is minimal here, and what stays with E-033.** Implemented: single-artifact retrieval with channel
 classification; scope-filtered retrieval grouped into the four channels; the four temporal modes. Not implemented here,
 and still ``E-033``'s obligation: channel **budgets** and ranking (``E-033``), the **cost** report (``E-036``),
@@ -53,7 +60,20 @@ from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.engine.channels import Channel, ChannelError, Verification, channel_of
 from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
+from custom_memory_engine.engine.planning import (
+    Intent,
+    Plan,
+    Planner,
+    PlanningError,
+    PlanRecorder,
+    RuleBasedPlanner,
+    StageObserver,
+    observe_nothing,
+    plan_retrieval,
+    record_nothing,
+)
 from custom_memory_engine.engine.predicates import (
+    QueryMode,
     TemporalQuery,
     TemporalQueryError,
     audit_as_of,
@@ -65,7 +85,14 @@ from custom_memory_engine.engine.predicates import (
 )
 from custom_memory_engine.engine.procedure_ranking import order_procedures
 from custom_memory_engine.model.axes import Kind, Lifecycle
-from custom_memory_engine.scope.access import ReadEntry, ReadSet, Visibility, read_predicate_named, row_visible
+from custom_memory_engine.scope.access import (
+    ReadEntry,
+    ReadSet,
+    SelectorMode,
+    Visibility,
+    read_predicate_named,
+    row_visible,
+)
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
 
 logger = structlog.get_logger(__name__)
@@ -207,8 +234,21 @@ def _channel_for(kind: str, lifecycle: str, verification: str, open_contradictio
 class ReadHandlers:
     """``get`` and ``query``, bound to one :class:`Runtime`."""
 
-    def __init__(self, runtime: Runtime) -> None:
+    def __init__(
+        self,
+        runtime: Runtime,
+        *,
+        planner: Planner | None = None,
+        recorder: PlanRecorder | None = None,
+        observer: StageObserver | None = None,
+    ) -> None:
         self.runtime = runtime
+        # E-031: the model seam, defaulted to the rule-based planner and therefore unused (criterion 9). The recorder
+        # and observer are the two things E-036 attaches to; both default to a no-op, so production behaviour is
+        # unchanged unless something opts in.
+        self.planner: Planner = planner if planner is not None else RuleBasedPlanner()
+        self.recorder: PlanRecorder = recorder if recorder is not None else record_nothing
+        self.observer: StageObserver = observer if observer is not None else observe_nothing
 
     # -- shared reads ------------------------------------------------------------------------------------------
 
@@ -316,134 +356,202 @@ class ReadHandlers:
         raw = request.get(field)
         return None if raw is None else self._parse_instant(raw, field)
 
-    def _build_temporal_query(
-        self, user: str, mode: str, request: Mapping[str, object], reference_time: datetime
-    ) -> TemporalQuery:
-        """Parse the fields ``mode`` needs into a :class:`TemporalQuery`.
+    def _intent_for(self, mode: str, request: Mapping[str, object], limit: int) -> Intent:
+        """Derive the planner's :class:`Intent` from the request's own fields (``E-031`` §5.1: no second vocabulary).
 
-        ``reference_time`` is never taken from the caller: belief time is the database clock (``I4``), and a
-        caller-chosen reference would let a request read a belief the engine never held at that instant.
+        The four instants are parsed first and the mode's required ones checked after, in the order and with the codes
+        ``query`` has always used, so no caller sees a different error. Only shape is checked here; the relations
+        between instants and ρ (a target after the reference, an empty window) need the engine clock and are checked
+        at execution, inside the read transaction, exactly as before.
         """
         target = self._instant_or_none(request, "target_time")
         belief = self._instant_or_none(request, "belief_time")
         start = self._instant_or_none(request, "window_start")
         end = self._instant_or_none(request, "window_end")
+        if mode in ("historical_as_of", "audit_as_of") and target is None:
+            raise EntryError("validation_error", "target_time_required")
+        if mode == "historical_window":
+            if start is None:
+                raise EntryError("validation_error", "window_start_required")
+            if end is None:
+                raise EntryError("validation_error", "window_end_required")
+        if mode == "audit_as_of" and belief is None:
+            raise EntryError("validation_error", "belief_time_required")
         try:
-            if mode == "current_state":
+            return Intent(
+                mode=cast(QueryMode, mode),
+                limit=limit,
+                target_time=target,
+                belief_time=belief,
+                window_start=start,
+                window_end=end,
+            )
+        except PlanningError as exc:
+            raise EntryError("validation_error", exc.code) from None
+
+    @staticmethod
+    def _temporal_query_for(plan: Plan, user: str, reference_time: datetime) -> TemporalQuery:
+        """The plan's temporal filter as a :class:`TemporalQuery`, with ρ read by the executor (``V2-D73``).
+
+        ρ is never in a plan: it is the clock writes record against, read inside this transaction, so a replay asks the
+        recorded question of the engine's *present* rather than of a caller-chosen instant.
+        """
+        try:
+            if plan.mode == "current_state":
                 return current_state(user, reference_time)
-            if mode == "historical_as_of":
-                if target is None:
-                    raise EntryError("validation_error", "target_time_required")
+            if plan.mode == "historical_as_of":
+                target = plan.instant("target_time")
+                assert target is not None  # the plan's own invariant: historical_as_of carries target_time
                 return historical_as_of(user, target, reference_time)
-            if mode == "historical_window":
-                if start is None:
-                    raise EntryError("validation_error", "window_start_required")
-                if end is None:
-                    raise EntryError("validation_error", "window_end_required")
+            if plan.mode == "historical_window":
+                start, end = plan.instant("window_start"), plan.instant("window_end")
+                assert start is not None and end is not None
                 return historical_window(user, start, end, reference_time)
-            if mode == "audit_as_of":
-                if target is None:
-                    raise EntryError("validation_error", "target_time_required")
-                if belief is None:
-                    raise EntryError("validation_error", "belief_time_required")
-                return audit_as_of(user, target, belief)
+            target, belief = plan.instant("target_time"), plan.instant("belief_time")
+            assert target is not None and belief is not None
+            return audit_as_of(user, target, belief)
         except TemporalQueryError as exc:
             raise EntryError("validation_error", exc.code) from None
         except ValueError:
             # a TemporalQuery field validator rejected the combination; the code is a static literal
             raise EntryError("validation_error", "temporal_parameter_mismatch") from None
-        raise EntryError("validation_error", "mode_not_supported")
 
-    async def _temporal_query(
-        self, call: Call, mode: str, request: Mapping[str, object], effective_read_set: ReadSet, limit: int
-    ) -> QueryResult:
-        """Run one temporal mode through the engine's predicate and route the rows into channels.
+    @staticmethod
+    def _within(plan: Plan, read_set: ReadSet) -> ReadSet:
+        """The plan's read scopes as a :class:`ReadSet`, **refusing** any scope the caller does not hold (``I7``).
 
-        The temporal filter and the caller's read predicate are applied in a single statement, so ``limit`` counts
-        rows the caller may actually read. ``audit_as_of`` results are returned in ``audit`` and never in a channel:
-        ``TECHNICAL_SPECIFICATION.md`` 3.5 forbids using them as answer context, and ``channel_of`` maps a retired
-        artifact to ``none``, so a channel-routed audit would silently drop exactly the rows an audit wants.
+        The planner builds its scopes from the caller's own read set, so in the ``query`` path this never refuses. It
+        exists for replay: a recorded plan is data, and data must not be able to widen what a caller reads. A scope is
+        held when one of the caller's entries covers its path *and* every visibility it names, under the same rule
+        ``_granted_for`` re-anchors by.
+        """
+        entries: list[ReadEntry] = []
+        for scope in plan.scopes:
+            wanted = frozenset(scope.visibilities)
+            if not wanted <= _ALL_VISIBILITIES:
+                raise EntryError("forbidden")
+            held = any(
+                wanted <= entry.visibilities
+                and (scope.path == entry.path or (entry.mode == "subtree" and scope.path.startswith(entry.path)))
+                and (scope.mode == "exact" or entry.mode == "subtree")
+                for entry in read_set.entries
+            )
+            if not held:
+                raise EntryError("forbidden")
+            entries.append(ReadEntry(scope.path, cast(frozenset[Visibility], wanted), cast(SelectorMode, scope.mode)))
+        return ReadSet(tuple(entries), ())
+
+    async def execute_plan(self, call: Call, plan: Plan) -> QueryResult:
+        """Run ``plan`` for ``call``: the execution half of ``query``, separate from planning (``E-031`` W2).
+
+        Stages, in plan order, each inside the observer's boundary (``E-036`` measures these):
+
+        * ``candidate_generation`` -- in: the plan's filters and row limit; out: ``ScopedRow``s. The temporal
+          predicate, the typed-artifact guard and the read predicate run in **one** statement before ``LIMIT``, so the
+          limit counts rows the caller may read (``V2-D73``).
+        * ``expansion`` -- in and out: the same rows. The plan's expansion is ``none``; traversal is ``E-032``'s.
+        * ``filter_rerank`` -- in: rows; out: rows that pass the ``V2-D45`` re-check, with the per-row facts routing
+          needs (verification, open contradictions, outcome counters). No score is computed here.
+        * ``assemble`` -- in: rows and facts; out: :class:`QueryResult`. Channel routing by ``channel_of``; then, and
+          only then, the ``V2-D75`` procedure ordering, so no statistic can move an item between channels.
+
+        The temporal filter enters the first stage and **no later one**: ``assemble`` sees a row's
+        ``(kind, lifecycle, verification, contradiction)`` and never the mode, which is what makes the temporal
+        predicate a filter rather than a score term (``ARCHITECTURE_V2.md`` §9.3, criterion 5).
+
+        ``audit_as_of`` takes the same path but its plan's route is ``audit``: its rows come back in ``audit`` with
+        ``is_audit=True`` and never touch a channel bucket, because ``channel_of`` maps a retired artifact to ``none``
+        and would drop exactly the rows an audit exists to show.
         """
         user = call.ctx.principal
-        is_audit = mode == "audit_as_of"
+        is_audit = plan.route == "audit"
         if is_audit and call.ctx.tier != "C":
             raise EntryError("forbidden")  # API_V2.md §4.2: audit_as_of is Tier C only
+        effective_read_set = self._within(plan, call.ctx.read_set)
+        if effective_read_set.empty:
+            return QueryResult(is_audit=is_audit)
         read_filter, read_parameters = read_predicate_named(effective_read_set, "m.scope_path", "m.visibility")
         try:
             async with self.runtime.session(user) as connection:
-                # the reference instant is the clock writes record against, read inside this transaction (I4)
-                reference_time = await reference_instant(connection)
-                tquery = self._build_temporal_query(user, mode, request, reference_time)
-                rows = await fetch_scoped_rows(
-                    connection,
-                    tquery,
-                    read_filter,
-                    read_parameters,
-                    limit=limit,
-                    schema_name=self.runtime.schema_name,
-                )
-                ids = [row.id for row in rows]
-                verifications = await self._verification_of(connection, user, ids)
-                contradicted = await self._contradicted_ids(connection, user, ids)
-                # E-027: outcome counters for the procedure rows, fetched in one statement beside the other
-                # per-row metadata. Only procedures have them, so asking for every id is a wasted round trip at
-                # best; asking only for procedure ids keeps the read proportional to what is ranked.
-                stats = await outcome_stats_for(
-                    connection,
-                    user_id=user,
-                    procedure_ids=[row.id for row in rows if row.kind == "procedure"],
-                    schema_name=self.runtime.schema_name,
-                )
+                with self.observer("candidate_generation"):
+                    # the reference instant is the clock writes record against, read inside this transaction (I4)
+                    reference_time = await reference_instant(connection)
+                    tquery = self._temporal_query_for(plan, user, reference_time)
+                    rows = await fetch_scoped_rows(
+                        connection,
+                        tquery,
+                        read_filter,
+                        read_parameters,
+                        limit=plan.rows,
+                        schema_name=self.runtime.schema_name,
+                    )
+                with self.observer("expansion"):
+                    pass  # plan.expansion == "none": E-032 owns traversal; the stage boundary exists for E-036
+                with self.observer("filter_rerank"):
+                    ids = [row.id for row in rows]
+                    verifications = await self._verification_of(connection, user, ids)
+                    contradicted = await self._contradicted_ids(connection, user, ids)
+                    # E-027: outcome counters for the procedure rows, fetched in one statement beside the other
+                    # per-row metadata. Only procedures have them, so asking for every id is a wasted round trip at
+                    # best; asking only for procedure ids keeps the read proportional to what is ranked.
+                    stats = await outcome_stats_for(
+                        connection,
+                        user_id=user,
+                        procedure_ids=[row.id for row in rows if row.kind == "procedure"],
+                        schema_name=self.runtime.schema_name,
+                    )
+                    # Defence in depth (V2-D45): the reference semantics must agree with the SQL predicate. The
+                    # statement above already filtered, so this drops nothing in a correct build -- which is exactly
+                    # what a control breaks, and why the check stays.
+                    rows = tuple(
+                        row for row in rows if row_visible(effective_read_set, row.scope_path, row.visibility)
+                    )
         except InsufficientPrivilege as exc:
             raise EntryError("forbidden") from exc
         except TemporalQueryError as exc:
             raise EntryError("validation_error", exc.code) from exc
 
-        buckets: dict[str, list[Artifact]] = {"facts": [], "hypotheses": [], "procedures": [], "conflicts": []}
-        audited: list[Artifact] = []
-        refused: list[tuple[str, str]] = []
-        for row in rows:
-            # Defence in depth (V2-D45): the reference semantics must agree with the SQL predicate. The statement
-            # above already filtered, so this drops nothing in a correct build -- which is exactly what a control
-            # breaks, and why the check stays.
-            if not row_visible(effective_read_set, row.scope_path, row.visibility):
-                continue
-            verification = verifications.get(row.id, "none")
-            channel = _channel_for(row.kind, row.lifecycle, verification, row.id in contradicted)
-            if channel is None:
-                refused.append((row.id, "illegal_artifact_tuple"))
-                continue
-            artifact = Artifact(
-                artifact_id=row.id,
-                kind=row.kind,
-                lifecycle=row.lifecycle,
-                content=row.content,
-                scope_path=row.scope_path,
-                channel=channel,
-                verification=verification,
-            )
+        with self.observer("assemble"):
+            buckets: dict[str, list[Artifact]] = {"facts": [], "hypotheses": [], "procedures": [], "conflicts": []}
+            audited: list[Artifact] = []
+            refused: list[tuple[str, str]] = []
+            for row in rows:
+                verification = verifications.get(row.id, "none")
+                channel = _channel_for(row.kind, row.lifecycle, verification, row.id in contradicted)
+                if channel is None:
+                    refused.append((row.id, "illegal_artifact_tuple"))
+                    continue
+                artifact = Artifact(
+                    artifact_id=row.id,
+                    kind=row.kind,
+                    lifecycle=row.lifecycle,
+                    content=row.content,
+                    scope_path=row.scope_path,
+                    channel=channel,
+                    verification=verification,
+                )
+                if is_audit:
+                    audited.append(artifact)
+                    continue
+                if channel == "none":
+                    continue
+                buckets[channel].append(artifact)
             if is_audit:
-                audited.append(artifact)
-                continue
-            if channel == "none":
-                continue
-            buckets[channel].append(artifact)
-        if is_audit:
-            return QueryResult(audit=audited, refused=refused, is_audit=True)
-        # E-027 (V2-D75): procedures are ordered by recorded outcome, then recency, then id. This runs **after**
-        # channel routing, so it cannot move an item between channels (`CHANNELS.md`, `I1'`): a contested or retired
-        # procedure never reached this bucket, so no statistic can promote it. Other kinds keep the temporal read's
-        # own order untouched.
-        if buckets["procedures"]:
-            by_id = {artifact.artifact_id: artifact for artifact in buckets["procedures"]}
-            buckets["procedures"] = [by_id[procedure_id] for procedure_id in order_procedures(by_id, stats)]
-        return QueryResult(
-            facts=buckets["facts"],
-            hypotheses=buckets["hypotheses"],
-            procedures=buckets["procedures"],
-            conflicts=buckets["conflicts"],
-            refused=refused,
-        )
+                return QueryResult(audit=audited, refused=refused, is_audit=True)
+            # E-027 (V2-D75): procedures are ordered by recorded outcome, then recency, then id. This runs **after**
+            # channel routing, so it cannot move an item between channels (`CHANNELS.md`, `I1'`): a contested or
+            # retired procedure never reached this bucket, so no statistic can promote it. Other kinds keep the
+            # temporal read's own order untouched.
+            if buckets["procedures"]:
+                by_id = {artifact.artifact_id: artifact for artifact in buckets["procedures"]}
+                buckets["procedures"] = [by_id[procedure_id] for procedure_id in order_procedures(by_id, stats)]
+            return QueryResult(
+                facts=buckets["facts"],
+                hypotheses=buckets["hypotheses"],
+                procedures=buckets["procedures"],
+                conflicts=buckets["conflicts"],
+                refused=refused,
+            )
 
     async def query(self, call: Call) -> QueryResult:
         request = call.arguments.get("request")
@@ -478,7 +586,14 @@ class ReadHandlers:
             return QueryResult(is_audit=mode == "audit_as_of")
         if len(effective_read_set.entries) > MAX_SELECTORS:
             raise EntryError("resource_limit", "too_many_selectors")
-        return await self._temporal_query(call, str(mode), request, effective_read_set, limit)
+        intent = self._intent_for(str(mode), request, limit)
+        with self.observer("plan"):
+            try:
+                plan = plan_retrieval(intent, effective_read_set, planner=self.planner)
+            except PlanningError as exc:
+                raise EntryError("validation_error", exc.code) from None
+        self.recorder(plan)
+        return await self.execute_plan(call, plan)
 
     @staticmethod
     def _granted_for(read_set: ReadSet, path: str) -> tuple[ReadEntry, ...]:
@@ -497,9 +612,20 @@ class ReadHandlers:
         return tuple(ReadEntry(path, entry.visibilities, entry.mode) for entry in matching)
 
 
-def register_read_handlers(engine: Engine, runtime: Runtime) -> ReadHandlers:
-    """Wire ``get`` and ``query`` onto ``engine``."""
-    handlers = ReadHandlers(runtime)
+def register_read_handlers(
+    engine: Engine,
+    runtime: Runtime,
+    *,
+    planner: Planner | None = None,
+    recorder: PlanRecorder | None = None,
+    observer: StageObserver | None = None,
+) -> ReadHandlers:
+    """Wire ``get`` and ``query`` onto ``engine``.
+
+    The three keyword arguments are ``E-031``'s seams and are all optional, so the production wiring in
+    ``api/wiring.py`` is unchanged: the rule-based planner, no recording, no measurement.
+    """
+    handlers = ReadHandlers(runtime, planner=planner, recorder=recorder, observer=observer)
     table: Mapping[str, Handler] = {
         "get": handlers.get,
         "query": handlers.query,
