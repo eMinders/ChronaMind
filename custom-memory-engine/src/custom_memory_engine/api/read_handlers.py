@@ -24,9 +24,9 @@ request carrying ``reference_time`` is refused (``V2-D73``, ``I4``).
 **What is minimal here, and what stays with E-033.** Implemented: single-artifact retrieval with channel
 classification; scope-filtered retrieval grouped into the four channels; the four temporal modes. Not implemented here,
 and still ``E-033``'s obligation: channel **budgets** and ranking (``E-033``), the **cost** report (``E-036``),
-the ``change`` mode (``E-033``), ``refine`` (``E-034``), and staleness computation (``E-037``/``E-038``, which need
-the closure hash that does not exist yet — this module passes ``never_stale``, the function ``channels.py`` documents
-for callers with no closure hash).
+the ``change`` mode (``E-033``), ``refine`` (``E-034``), and **_consuming_ the derived staleness** (``E-038`` supplies
+it in ``engine/staleness.py``; passing it into this read path is ``E-033``'s rendering change — this module still
+passes ``never_stale``, the function ``channels.py`` documents for callers not yet wired to the derivation).
 
 **Why nothing below ``Engine.call`` skips authorisation.** The caller arrives already authorised for the *operation*;
 what decides which **rows** are visible is row-level security, bound to the authenticated principal by
