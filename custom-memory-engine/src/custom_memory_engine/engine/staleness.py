@@ -20,14 +20,23 @@ an edge. Belief content is immutable in place (``guard_update``), so the content
 row is replaced or removed.
 
 **Cache and invalidation contract (``DELETION_ORDER.md`` 5 row F6).** Computing the hash walks the whole ancestry, so
-it is cached, keyed ``(schema, user_id, artifact_id, deletion_epoch)``. The epoch is the existing per-user
-``deletion_epoch``, read in the **same transaction as the read** (``engine.deletion.deletion_epoch``).
+it is cached, keyed ``(schema, user_id, artifact_id, deletion_token)``. The token is ``epoch:request_id`` for the
+user's most recent ``deletion_request``, read in the **same transaction as the read**.
 ``delete_memory`` allocates the next epoch inside its own transaction, so the effect of a deletion is visible to the
-very next read on that connection, and a cache in another process simply never reads the old-epoch entry. The
-contract this relies on: *every path that removes or rewrites an ancestor must go through ``delete_memory`` (which
-bumps the epoch)*. ``purge_working`` removes rows without bumping it and is safe only because it never removes a row
-that is cited as a source (finding ``E-038-F2``). The cache is process-local, bounded (least recently used out) and
-eviction only forces a recomputation, never a different answer.
+very next read on that connection, and a cache in another process simply never reads the old-token entry.
+
+The ``request_id`` is part of the key because the epoch integer alone is **not** unique over time. It is allocated as
+``MAX(deletion_epoch) + 1``, so a deleted-and-rolled-back request puts its number back in the pool and the next real
+deletion reuses it; keying on the number alone would then serve an entry written during the rolled-back request to a
+later, unrelated deletion -- a deleted ancestor reading as fresh, which is the exact ``V2-D24`` failure this module
+exists to prevent. A ``deletion_request.id`` is a ``uuid4`` and is never reused, so a recycled epoch cannot produce a
+recycled token.
+
+The contract this relies on: *every path that removes or rewrites an ancestor must go through ``delete_memory`` (which
+moves the token)*. ``purge_working`` removes rows without moving it and is safe only because it never removes a row
+that is cited as a source (finding ``E-038-F2``). A row replaced under a *new* request id also moves the token, so a
+rewrite this module does not know about is caught by the same mechanism rather than trusted. The cache is
+process-local, bounded (least recently used out) and eviction only forces a recomputation, never a different answer.
 
 Only the hash and the ancestor ids are cached. The other causes move without a deletion (a retirement, a new method
 version, the clock) so they are re-read on every call, each in one non-recursive statement over the cached ids.
@@ -46,7 +55,6 @@ from psycopg.errors import InsufficientPrivilege
 from psycopg.rows import tuple_row
 
 from custom_memory_engine.engine.channels import ArtifactView, Staleness, StalenessInputs, stale_of
-from custom_memory_engine.engine.deletion import deletion_epoch
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.soundness.admission import (
     DEFAULT_TAU_CONFIDENCE,
@@ -65,7 +73,7 @@ SUPPORT_CLAUSES = frozenset(
     {"confidence_lower_below_threshold", "coverage_below_threshold", "zero_counter_opportunity_too_small"}
 )
 
-type CacheKey = tuple[str, str, str, int]
+type CacheKey = tuple[str, str, str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,10 +138,10 @@ class ClosureCache:
     async def closure_of(
         self, connection: AsyncConnection, user_id: str, artifact_id: str, *, schema_name: str = "cme_engine"
     ) -> Closure:
-        """The artifact's closure, cached while the user's deletion epoch has not moved since it was computed."""
+        """The artifact's closure, cached while the user's deletion token has not moved since it was computed."""
         await _require_context(connection, user_id)
-        epoch = await deletion_epoch(connection, user_id, schema_name=schema_name)
-        key: CacheKey = (schema_name, user_id, artifact_id, epoch)
+        token = await _deletion_token(connection, user_id, schema_name=schema_name)
+        key: CacheKey = (schema_name, user_id, artifact_id, token)
         hit = self._entries.get(key)
         if hit is not None:
             self._entries.move_to_end(key)
@@ -145,6 +153,28 @@ class ClosureCache:
             while len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
         return closure
+
+
+async def _deletion_token(connection: AsyncConnection, user_id: str, *, schema_name: str = "cme_engine") -> str:
+    """``epoch:request_id`` of the user's latest deletion, or ``0:`` when there is none.
+
+    The epoch alone is not a safe cache key: it is ``MAX(deletion_epoch) + 1``, so a rolled-back request returns its
+    number to the pool and a later deletion reuses it. The request id is a ``uuid4`` and is never reused, so the pair
+    identifies one committed deletion rather than a number that can be handed out twice.
+    """
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL(
+                "SELECT COALESCE(MAX(deletion_epoch), 0), "
+                " (SELECT id FROM {r} WHERE user_id = %s ORDER BY deletion_epoch DESC, requested_at DESC, id DESC "
+                "  LIMIT 1) "
+                "FROM {r} WHERE user_id = %s"
+            ).format(r=sql.Identifier(schema_name, "deletion_request")),
+            (user_id, user_id),
+        )
+        row = await cursor.fetchone()
+    epoch, request_id = (0, None) if row is None else (row[0], row[1])
+    return f"{epoch}:{request_id or ''}"
 
 
 async def _require_context(connection: AsyncConnection, user_id: str) -> None:

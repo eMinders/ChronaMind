@@ -389,9 +389,41 @@ async def test_eviction_does_not_change_the_answer_and_the_cache_is_bounded(data
         assert small.computations == 3  # the eviction cost a recomputation, not a different value
 
 
-async def test_the_cache_is_keyed_by_schema_user_artifact_and_epoch(database) -> None:  # noqa: F811
+async def test_the_cache_is_keyed_by_schema_user_artifact_and_deletion_token(database) -> None:  # noqa: F811
     async with connect(database) as conn:
         _, schema = database
         cache = await verified_world(conn, schema)
         await inputs(conn, schema, cache)
-        assert cache.keys() == [(schema, "u1", "abs1", 0)]
+        assert cache.keys() == [(schema, "u1", "abs1", "0:")]  # no deletion yet: epoch 0, no request id
+
+
+async def test_a_reused_deletion_epoch_does_not_serve_a_stale_cache_entry(database) -> None:  # noqa: F811
+    """The epoch is ``MAX + 1``, so a rollback returns it to the pool and a later deletion reuses it.
+
+    Keying on the epoch alone then serves the entry written during the rolled-back request to a real, unrelated
+    deletion: the source is gone but ``closure_changed`` reads ``False``. The ``uuid4`` request id in the token is
+    what makes a recycled epoch harmless (``E-038`` review finding).
+    """
+    async with connect(database) as conn:
+        _, schema = database
+        cache = await verified_world(conn, schema)
+        await insert_version(conn, "other", "claim", "asserted")  # NOT an ancestor of abs1
+        assert not (await inputs(conn, schema, cache)).closure_changed
+
+        # T1: a deletion of an unrelated artifact that ROLLS BACK. It allocates epoch 1 and warms the cache at it.
+        async with conn.transaction(force_rollback=True):
+            await delete_memory(conn, "u1", scope="memory", target_ref="other", schema_name=schema)
+            assert not (await inputs(conn, schema, cache)).closure_changed  # abs1 is untouched by this deletion
+            rolled_back_keys = [key for key in cache.keys() if key[3].startswith("1:")]
+            assert rolled_back_keys, "the rolled-back request should have warmed an epoch-1 entry"
+
+        # T2: the real deletion of abs1's ancestor. MAX(epoch) is back to 0, so this is epoch 1 *again*.
+        async with conn.transaction():
+            await delete_memory(conn, "u1", scope="memory", target_ref="mid", schema_name=schema)
+            during = await inputs(conn, schema, cache)
+        assert during.closure_changed, "a real deletion must never read as fresh"
+        assert stale_of(during)
+        # The rolled-back entry is still in the cache and simply never matches again: its request id differs.
+        assert [key for key in cache.keys() if key[3].startswith("1:")] != rolled_back_keys
+        live = await compute_closure(conn, "u1", "abs1", schema_name=schema)
+        assert live.sources == ("src",), "mid is gone, so the live closure is narrower than the sealed one"
