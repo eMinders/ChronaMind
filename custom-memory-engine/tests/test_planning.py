@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -353,3 +354,36 @@ def test_the_read_scopes_come_from_the_caller_read_set() -> None:
     """``I7``: the plan's scopes are the caller's own, so a plan cannot widen what it reads."""
     plan = plan_retrieval(_intent(), ALICE)
     assert {scope.path for scope in plan.scopes} == {entry.path for entry in ALICE.entries}
+
+
+# ──────────────────────────────────────────────── V2-D76: the diagram and the plan agree ──
+
+
+def _section_9_diagram() -> str:
+    text = (Path(__file__).resolve().parents[1] / "PLAN" / "V2" / "ARCHITECTURE_V2.md").read_text(encoding="utf-8")
+    start = text.index("## 9. Retrieval")
+    block = text[start:]
+    block = block[block.index("```mermaid") :]
+    return block[: block.index("```", len("```mermaid"))]
+
+
+def test_the_architecture_diagram_agrees_with_the_planned_stages() -> None:
+    """``V2-D76`` (closes ``E-031-F1``): §9's diagram and ``STAGES`` describe the same pipeline.
+
+    Three facts, each a way the two drifted before: the diagram draws exactly the planned stages in order; the temporal
+    predicate is attributed to candidate generation (stage 2) and **not** to filter & re-rank (stage 4), because it
+    runs in stage 2's statement before ``LIMIT`` (``V2-D73``); and usage ordering is in assembly (stage 5), because it
+    runs after routing (``V2-D75``).
+    """
+    diagram = _section_9_diagram()
+    nodes = re.findall(r'\["(\d) ([^"<]*?)<br/>([^"]*)"\]', diagram)
+    labels = [(int(number), name.strip(), body) for number, name, body in nodes]
+    assert [number for number, _, _ in labels] == [1, 2, 3, 4, 5], labels
+    words = {"PLAN": "plan", "CANDIDATE GEN": "candidate_generation", "EXPAND": "expansion",
+             "FILTER & RE-RANK": "filter_rerank", "ASSEMBLE": "assemble"}  # fmt: skip
+    assert tuple(words[name] for _, name, _ in labels) == STAGES
+    body = {number: text.lower() for number, _, text in labels}
+    assert "temporal" in body[2], "the temporal predicate must be drawn where it runs: candidate generation"
+    assert "temporal" not in body[4], "stage 4 must not claim the temporal predicate (V2-D76, V2-D73)"
+    assert "recency" not in body[4] and "usage" not in body[4], "usage ordering is after routing (V2-D75)"
+    assert "usage" in body[5]

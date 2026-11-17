@@ -1667,7 +1667,8 @@ smoothed_success_rate = (successes + 1) / (successes + failures + 2)
 **Consequences, recorded rather than hidden.**
 - `E-027` needed a substrate that did not exist: migration 20 adds one `outcome_stats` side table, the shape
   `abstraction_stats` established. It is the **minimum E-030 extends** — `E-030` owns procedure storage and adds
-  `preconditions`/`steps` as columns on that table. Recorded as `E-027-F1` on #72 because it means a W2 task consumes a
+  `preconditions`/`steps` as columns on that table. **Superseded by `V2-D77`:** they live in their own side table,
+  `procedure_shape` (migration 21), for the reasons recorded there. Recorded as `E-027-F1` on #72 because it means a W2 task consumes a
   W3 substrate, and the roadmap owner should decide whether to move the task or the substrate.
 - `record_outcome` is **not idempotent by design** — it takes no `idempotency_key` in `API_V2.md` §4.5, and an
   increment has no identity to deduplicate on. Replaying it records a second outcome, which is asserted.
@@ -1684,3 +1685,95 @@ coding-profile recipe case). Control: removing the ordering term from `read_hand
 tests and nothing else.
 
 **Status:** decided and implemented under the Project Owner's delegation (2026-11-12).
+
+---
+
+### V2-D76 — The temporal predicate runs in candidate generation, and usage ordering runs in assembly: §9's diagram is corrected, not the code (E-031-F1; amends the §9 diagram, keeps `V2-D11`'s five stages)
+
+**Context.** `ARCHITECTURE_V2.md` §9's flowchart named **"temporal"** as a candidate-generation channel **and**
+**"temporal predicate"** under stage 4 (filter & re-rank), and **"recency/usage"** under stage 4 as well. The shipped
+code puts the temporal clauses in stage 2's statement (`engine/predicates.py::fetch_scoped_rows`) and applies the
+procedure order after routing (`V2-D75` decision 3, stage 5). `E-031` (#200) raised this as `E-031-F1` rather than pick
+a side silently, because a diagram and a plan that disagree would let `E-036` (#206) measure a stage boundary that does
+not exist.
+
+**Which artifact is authoritative.** The **guarantee**, not the picture. Three records constrain the answer and none is
+negotiable:
+
+1. `V2-D11` fixes the five stages and nothing about where inside them a predicate is applied.
+2. `V2-D73` decision 3 makes the temporal predicate and the caller's read predicate **one statement**, because applying
+   the read set afterwards in Python would make `limit` count rows the caller cannot read. The same argument applies to
+   the temporal predicate for the same reason: filtering after `LIMIT` returns fewer rows than exist.
+3. `V2-D75` decision 3 puts the outcome ordering **after** routing, which is stage 5.
+
+So the code implements the approved guarantees, and the §9 diagram is the artifact that is wrong. That is also the only
+correction that does not weaken anything: moving the predicate into stage 4 would break `V2-D73`, and moving the order
+into stage 4 would break `V2-D75` and `I1'`.
+
+**Decision.**
+
+1. **The temporal predicate is a stage-2 filter.** It is applied in the same SQL statement as the read predicate and the
+   typed-artifact guard, before `LIMIT`. §9's diagram no longer names it under stage 4.
+2. **Usage/recency ordering is stage 5.** It orders items **within** a channel after `channel_of` has decided
+   membership, so no statistic can move an artifact between channels.
+3. **What stage 4 still does**: the `V2-D45` defence-in-depth `row_visible` re-check, and (`E-030`) the procedure
+   applicability filter — both of which only *remove* or *verify*, never rank.
+4. **`E-036`'s stage list is unchanged**: `plan`, `candidate_generation`, `expansion`, `filter_rerank`, `assemble`
+   (`engine/planning.py::STAGES`). Only which stage a stage-2 filter runs in is corrected.
+
+**Consequences, recorded rather than hidden.**
+- `E-031-F1` is closed by this record plus the §9 amendment. The code is unchanged: no test moved, no behaviour moved.
+- A reader of §9 alone would previously have expected two temporal applications. There is exactly one, and it runs
+  first; a second application would be dead work, since the statement has already excluded what the predicate rejects.
+- `E-032` (expansion) must apply the same predicate to rows it reaches, in its own traversal, for the reason in
+  `V2-D73`: an expanded row that the caller's temporal mode excludes must never be returned. §9's stage 3 is where that
+  check lands, and this record is what makes "the predicate is a filter applied at the earliest stage that sees a row"
+  a rule rather than a placement coincidence.
+
+**Evidence.** `tests/test_planning.py::test_the_stages_are_named_for_e036` (the stage list is one declaration);
+`tests/integration/test_planning_db.py` (all four modes execute through the plan path, with the stage boundaries entered
+in order); `tests/integration/test_planning_db.py::test_the_temporal_predicate_cannot_move_a_row_between_channels`;
+`tests/test_planning.py::test_the_architecture_diagram_agrees_with_the_planned_stages` (a static check run by CI: §9's
+diagram draws exactly the five planned stages in order, attributes the temporal predicate to stage 2 and not stage 4,
+and places usage ordering in stage 5). Control: restoring "temporal predicate" to the stage-4 node fails it.
+
+**Status:** decided under the Project Owner's delegation (2026-11-17). Amends the §9 diagram only.
+
+---
+
+### V2-D77 — A procedure's `preconditions` and `steps` live in their own side table, `procedure_shape`, not on `outcome_stats` (E-030-F1; supersedes the storage note in `V2-D75`'s consequences)
+
+**Context.** `V2-D75`'s consequences and migration 20's header both said `E-030` would add `preconditions` and `steps`
+as **columns on `outcome_stats`**. `E-030` (#201) found that home wrong once both fields were real, and raised it as
+`E-030-F1`. Migration 21 shipped a third side table. Until now no decision record said the earlier note was
+superseded, so `V2-D75`, migration 20's header, `ROADMAP_V2.md`'s `E-030` row and `schema/README.md` all still described
+a design that does not exist.
+
+**Decision.** `preconditions` and `steps` live in **`procedure_shape`** (migration 21), one row per procedure:
+append-only (every `UPDATE` refused), procedure-only in the writer's tenant, composite tenant FK
+`(version_id, user_id) → memory_version ON DELETE CASCADE`, forced RLS, runtime grant `SELECT, INSERT`, the precondition
+grammar enforced in SQL by `guard_procedure_shape` and mirrored by `engine/procedure_shape.py`.
+
+**Why not `outcome_stats`.** Three reasons, each sufficient:
+1. **Two mutability rules in one row.** `outcome_stats` counters move on every `record_outcome`; a shape is asserted
+   content, written once. Migration 20 chose a side table precisely to keep different mutability rules apart.
+2. **Two lifetimes.** An `outcome_stats` row is created lazily by the first `record_outcome`. A shape exists from the
+   moment the procedure is asserted. Putting it there would make `assert` create the counters row, changing
+   `record_outcome`'s first-insert path, which `E-030` W6 forbids.
+3. **No gain.** Nothing reads the two together: matching reads the shape before routing, ranking reads the counters
+   after it.
+
+**Consequences, recorded rather than hidden.**
+- `V2-D75`'s sentence "`E-030` ... adds `preconditions`/`steps` as columns on that table" is **superseded** by this
+  record; `V2-D75`'s ranking decision is unaffected.
+- Migration 20's header carries the old note and **cannot be edited**: migration sources are checksum-bound
+  (`schema/migrate.py`, `MA-016` X1), so editing it would be reported as drift on every deployed database. The
+  correction lives here and in `schema/README.md`'s migration-20 entry, which now points to this record.
+- Rollback of migration 21 drops every stored shape (`E-030-F3`); the procedures remain and read as "no preconditions",
+  i.e. always applicable. That is now asserted by a test with data, not only stated in the rollback header.
+
+**Evidence.** `schema/021_procedure_shape.sql`; `tests/integration/test_migration_m21.py` (guards, the 48-entry
+Python/SQL agreement corpus, vocabulary agreement, the fingerprint-exact rollback, and the rollback-with-data test);
+`tests/integration/test_procedure_shape_db.py`.
+
+**Status:** decided under the Project Owner's delegation (2026-11-17). Supersedes one storage sentence of `V2-D75`.

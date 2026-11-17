@@ -469,11 +469,19 @@ flowchart LR
     Q["Query + scope selectors + intent + budget"] --> P["1 PLAN<br/>classify intent; pick indexes, filters, expansions"]
     P --> CG["2 CANDIDATE GEN<br/>lexical · dense · temporal · graph-neighbourhood · key-lookup"]
     CG --> EX["3 EXPAND<br/>abstraction↔instances · contradictions · provenance drill-down"]
-    EX --> FL["4 FILTER & RE-RANK<br/>temporal predicate · trust tier · corroboration · recency/usage"]
-    FL --> AS["5 ASSEMBLE<br/>four channels, token-budgeted"]
+    EX --> FL["4 FILTER & RE-RANK<br/>trust tier · corroboration · row re-check"]
+    FL --> AS["5 ASSEMBLE<br/>four channels, token-budgeted; recency/usage order within a channel"]
     AS --> OUT["Result + provenance bundle + cost + channel coverage"]
     OUT -.->|usage feedback| USG[("usage · reinforcement")]
 ```
+
+> **r17 (`V2-D76`).** The temporal predicate belongs to **stage 2**, not stage 4, and usage ordering belongs to
+> **stage 5**. Both are corrections of this diagram, not of `V2-D11`'s five stages, which are unchanged. The diagram
+> previously named "temporal" under stage 2 *and* "temporal predicate" under stage 4, and "recency/usage" under
+> stage 4. The approved guarantee — §9.3's *"temporal predicate is a filter, not a score term"* — is what decides the
+> placement, and it is satisfied by applying the predicate **earliest**, in the same statement as the read predicate
+> and before `LIMIT` (`V2-D73` decision 3). "Recency/usage" cannot live in stage 4 either: `V2-D75` decision 3 places
+> it after routing, which is stage 5.
 
 ### 9.1 The four channels (resolves the overlap between lifecycle and channel)
 

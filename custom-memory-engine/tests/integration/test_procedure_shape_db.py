@@ -487,3 +487,28 @@ async def test_a_predicate_condition_holds_through_query(database) -> None:  # n
         selected = await selection(engine)
         assert holds in selected, "a predicate condition that holds was not satisfied through query"
         assert fails not in selected, "absent(predicate) held although the claim carries that predicate"
+
+
+async def test_a_facet_condition_holds_when_the_row_carries_a_facet(database) -> None:  # noqa: F811
+    """``E-030-F2``: a ``facet`` condition is read from ``um_facet`` and can hold, and can fail.
+
+    No operation writes ``um_facet`` yet — it is a column the user-model view will classify into, not something a
+    caller sends — so the row is given one directly, which is the only way to reach the field through ``query`` today.
+    Both directions are asserted: a procedure whose ``exists(facet)`` holds is selected, and one whose
+    ``absent(facet)`` is contradicted is excluded, so the condition is shown to be read rather than ignored.
+    """
+    async with world(database) as (conn, engine, _schema):
+        wire(engine)
+        claim = await store(engine, conn, "c1", "The user is vegetarian", sequence=2, kind="claim")
+        await conn.execute("UPDATE memory_version SET um_facet = 'preference' WHERE id = %s", (claim,))
+        needs = await store(
+            engine, conn, "p-needs", "Suggest a vegetarian recipe", sequence=3,
+            shape={"preconditions": [{"op": "exists", "match": {"facet": "preference"}}]},
+        )  # fmt: skip
+        ruled_out = await store(
+            engine, conn, "p-out", "Suggest a steak recipe", sequence=4,
+            shape={"preconditions": [{"op": "exists", "match": {"facet": "constraint"}}]},
+        )  # fmt: skip
+        selected = await selection(engine)
+        assert needs in selected, "a facet condition that holds was not met through query"
+        assert ruled_out not in selected, "a facet condition naming an unused facet was met anyway"

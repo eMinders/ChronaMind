@@ -23,7 +23,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 | `017_declared_source_types.sql` | Migration 17 (`E-021`, `V2-D66`): stores tool, file, and event evidence under the declared type |
 | `018_scope_entity_links.sql` | Migration 18 (`E-024`): `entity_link`, the authorized links between scope-local entities (no scope table, `V2-D65`) |
 | `019_subject_entity.sql` | Migration 19 (`V2-D74`): `memory_version.subject_entity_id`, making an entity subject a composite foreign key (exists, same principal, same scope) |
-| `020_outcome_stats.sql` | Migration 20 (`E-027`, `V2-D75`): `outcome_stats`, the procedure outcome counters `record_outcome` maintains. The minimal substrate `E-030` extends |
+| `020_outcome_stats.sql` | Migration 20 (`E-027`, `V2-D75`): `outcome_stats`, the procedure outcome counters `record_outcome` maintains. `E-030` did **not** extend it: the procedure shape has its own table (migration 21, `V2-D77`) |
 | `021_procedure_shape.sql` | Migration 21 (`E-030`): `procedure_shape`, a procedure's `preconditions` and `steps`, written once with it; the precondition grammar is enforced in SQL |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
@@ -432,6 +432,11 @@ exactly, with `guard_update` restored byte-for-byte and its pinned `search_path`
 `ARCHITECTURE_V2.md` §6 gives a procedure four fields. Only `outcome_stats` has a reader today — the ranking term in
 `engine/procedure_ranking.py` — so only it is built. `preconditions` and `steps` are **`E-030`'s** and are deliberately
 absent rather than sketched, because a half-built procedure shape is what `E-030` would have to rewrite.
+
+> **Superseded note (`V2-D77`).** This migration's header says `E-030` will add `preconditions` and `steps` as
+> additive columns on `outcome_stats`. `E-030` put them in their own side table instead (migration 21, finding
+> `E-030-F1`), and `V2-D77` records why. The header itself is left as shipped: migration sources are checksum-bound, so
+> editing it would be reported as drift.
 
 A **side table**, not columns on `memory_version`, following `abstraction_stats`: counters move at a different rate,
 under different rules, than belief content. It also leaves the `EXCLUDE`-constrained bitemporal core untouched.

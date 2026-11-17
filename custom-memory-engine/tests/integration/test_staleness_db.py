@@ -8,13 +8,18 @@ transaction (``DELETION_ORDER.md`` 5 row F6), and the hash is shown to be neithe
 """
 
 import ast
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, sql
 from psycopg.errors import InsufficientPrivilege
 
+from custom_memory_engine.api.contract import OPERATIONS
+from custom_memory_engine.api.entry import Call, CallerContext, Credential
+from custom_memory_engine.api.read_handlers import ReadHandlers
+from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.engine import staleness as staleness_module
 from custom_memory_engine.engine.channels import ArtifactView, StalenessInputs, assemble, stale_of
 from custom_memory_engine.engine.deletion import delete_memory
@@ -26,6 +31,7 @@ from custom_memory_engine.engine.staleness import (
     staleness_inputs,
     support_below_threshold,
 )
+from custom_memory_engine.scope.access import Selector, resolve_read_set
 from custom_memory_engine.security import provision_runtime_role, tenant_scope
 from tests.integration.test_lifecycle_transitions import insert_version, seed_source
 from tests.integration.test_migration_m1 import (
@@ -427,3 +433,82 @@ async def test_a_reused_deletion_epoch_does_not_serve_a_stale_cache_entry(databa
         assert [key for key in cache.keys() if key[3].startswith("1:")] != rolled_back_keys
         live = await compute_closure(conn, "u1", "abs1", schema_name=schema)
         assert live.sources == ("src",), "mid is gone, so the live closure is narrower than the sealed one"
+
+
+# ------------------------------------------------------------------------------ E-038-F5: consumed by the read path
+
+OP = {operation.name: operation for operation in OPERATIONS}
+
+
+async def read_handlers_for(database, conn: AsyncConnection) -> tuple[ReadHandlers, CallerContext, str]:  # noqa: F811
+    """``ReadHandlers`` bound to the synthetic tenant ``u1`` under a restricted runtime role, as production does."""
+    _, schema = database
+    role = "cme_rt_" + uuid4().hex[:12]
+    await provision_runtime_role(conn, schema, role)
+    read_set = resolve_read_set("u1", [Selector.of("/u/u1/")], [])
+    ctx = CallerContext.from_credential(Credential("u1", "C", False), write_scope="/u/u1/", read_set=read_set)
+    return ReadHandlers(Runtime(conn, role, schema)), ctx, role
+
+
+async def drop_role(conn: AsyncConnection, role: str) -> None:
+    await conn.execute("RESET ROLE")
+    await conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+
+
+async def test_the_read_path_renders_a_stale_verified_abstraction_in_hypotheses(database) -> None:  # noqa: F811
+    """``E-038-F5``/``C-P3``: ``get`` and ``query`` consume the derivation, so a stale verified abstraction is a
+    hypothesis on the public read path and not only through ``assemble``.
+
+    Before this test the read path passed ``stale=False`` unconditionally: a withdrawn source left the abstraction
+    rendering as a **fact** through both ``get`` and ``query``, which is exactly the ``V2-D24`` hole staleness exists
+    to close. The fresh case is asserted first, so the stale case cannot pass by the path refusing everything.
+    """
+    async with connect(database) as conn:
+        _, schema = database
+        await verified_world(conn, schema)
+        handlers, ctx, role = await read_handlers_for(database, conn)
+        try:
+            fresh = await handlers.get(Call(ctx=ctx, operation=OP["get"], arguments={"artifact_id": "abs1"}))
+            assert fresh.channel == "facts", "a fresh verified abstraction must still render as a fact"
+            await retire(conn, "mid")  # a transitive source is withdrawn: abs1 is now stale (C-P3)
+            stale = await handlers.get(Call(ctx=ctx, operation=OP["get"], arguments={"artifact_id": "abs1"}))
+            assert stale.channel == "hypotheses", "a stale verified abstraction rendered as a fact through get"
+            assert stale.verification == "verified", "stale and verified is a legal pair, not a downgrade"
+            result = await handlers.query(Call(ctx=ctx, operation=OP["query"], arguments={"request": {}}))
+            assert [item.artifact_id for item in result.hypotheses] == ["abs1"]
+            assert "abs1" not in {item.artifact_id for item in result.facts}
+        finally:
+            await drop_role(conn, role)
+
+
+async def test_the_read_path_does_not_consult_staleness_for_an_audit(database, monkeypatch) -> None:  # noqa: F811
+    """``E-038-F3``: ``audit_as_of`` never derives present staleness — asserted by making the derivation explode.
+
+    Derived staleness decides a *channel*, and an audit row reaches ``audit[]`` whatever its channel is, so asserting
+    the audit's contents cannot distinguish "did not ask" from "asked and it did not matter". The claim that matters is
+    that the derivation is **not consulted at all**, so this replaces it with a function that raises: an audit that
+    completes proves the path never reached it. A ``current_state`` query in the same world proves the replacement was
+    armed, so the audit's success is not vacuous.
+    """
+
+    async def refuse(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("staleness was derived for an audit query (E-038-F3)")
+
+    async with connect(database) as conn:
+        _, schema = database
+        await verified_world(conn, schema)
+        handlers, ctx, role = await read_handlers_for(database, conn)
+        try:
+            ((belief,),) = await rows(conn, "SELECT pg_catalog.transaction_timestamp()")
+            assert isinstance(belief, datetime)
+            await retire(conn, "mid")
+            request = {"mode": "audit_as_of", "target_time": belief.isoformat(), "belief_time": belief.isoformat()}
+            monkeypatch.setattr(type(handlers), "_stale_ids", refuse)
+            result = await handlers.query(Call(ctx=ctx, operation=OP["query"], arguments={"request": request}))
+            assert result.is_audit and "abs1" in {item.artifact_id for item in result.audit}
+            # the same world, an answer route: this one must reach the (armed) derivation
+            with pytest.raises(AssertionError, match="derived for an audit"):
+                await handlers.query(Call(ctx=ctx, operation=OP["query"], arguments={"request": {}}))
+            monkeypatch.undo()
+        finally:
+            await drop_role(conn, role)

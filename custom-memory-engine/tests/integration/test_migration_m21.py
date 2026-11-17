@@ -14,7 +14,8 @@ from psycopg import AsyncConnection
 from psycopg.errors import RaiseException
 from psycopg.types.json import Jsonb
 
-from custom_memory_engine.engine.procedure_shape import ProcedureShapeError, parse_shape
+from custom_memory_engine.engine.procedure_matching import ApplicabilityRequest, matches
+from custom_memory_engine.engine.procedure_shape import NO_SHAPE, ProcedureShapeError, parse_shape
 from custom_memory_engine.model.axes import FACETS, KINDS, LIFECYCLES
 from custom_memory_engine.schema import migrate
 from tests.integration.rollbacks import rollback_sql
@@ -245,3 +246,41 @@ async def test_rollback_restores_version_20_exactly_and_reapply_works(database) 
     assert (await runner.status()).version == M21 - 1
     assert (await runner.apply()).action == "applied"
     assert (await runner.status()).version == M21
+
+
+async def test_rolling_back_with_stored_shapes_loses_them_but_not_the_procedures(database) -> None:  # noqa: F811
+    """``E-030-F3``: the data loss the rollback header states, asserted with data rather than described.
+
+    A rollback must be safe to *run*, not only correct on an empty table. The shape is dropped (version 20 has nowhere
+    to keep it); the procedure, its evidence and its counters survive and read as "no preconditions", which
+    ``procedure_matching`` documents as always applicable. Those are the two claims that decide whether an operator
+    may roll back at all, so both are asserted.
+    """
+    config, schema = database
+    runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
+    async with connect(database) as conn:
+        await version(conn, "p1", active=False)  # a status a test may delete/mutate (see migration 20's test)
+        await shape(conn, "p1", VALID_PRECONDITIONS, ["Rerun the focused suite."])
+        await conn.execute(
+            "INSERT INTO outcome_stats (version_id, user_id) VALUES ('p1', 'u1') ON CONFLICT DO NOTHING"
+        )
+        await conn.execute(
+            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=M21 - 1)), prepare=False
+        )
+        # 1. the shape is gone, and so is its guard function
+        assert not await rows(
+            conn,
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() "
+            "AND table_name = 'procedure_shape'",
+        )
+        # 2. the procedure itself survives, with its kind intact
+        assert await rows(conn, "SELECT kind FROM memory_version WHERE id = 'p1' AND user_id = 'u1'") == [
+            ("procedure",)
+        ]
+        # 3. so do its counters: the rollback of 21 does not touch migration 20
+        assert await rows(conn, "SELECT count(*) FROM outcome_stats WHERE version_id = 'p1'") == [(1,)]
+    # 4. reapply works, and the surviving procedure simply has no shape -- which the matcher reads as always applicable
+    assert (await runner.apply()).action == "applied"
+    async with connect(database) as conn:
+        assert await rows(conn, "SELECT count(*) FROM procedure_shape WHERE version_id = 'p1'") == [(0,)]
+    assert matches(NO_SHAPE.preconditions, ApplicabilityRequest(), []) is True
