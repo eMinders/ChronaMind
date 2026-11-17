@@ -655,7 +655,14 @@ post-tag additive changes, which the additivity rule requires. `cme-` avoids imp
 monorepo.
 **Implementation.** `BASELINE.md` §7.1; `INVARIANT_LEDGER.md` (criterion note); tag on `origin`.
 **Verification.** `git rev-parse 'cme-v1.0.0^{commit}'`; `tests/test_invariants_declared_and_enforced.py`
-(`test_gaps_closed_in_r7_are_enforced_with_tests`, `test_known_v1_gaps_are_reported_not_silently_passed`).
+(`test_gaps_closed_in_r7_are_enforced_with_tests`, and for the reporting behaviour
+`test_an_unenforced_row_must_say_what_is_missing_and_who_owns_it`).
+
+> **Correction (2026-11-17, W3 integrity pass).** This line previously cited
+> `test_known_v1_gaps_are_reported_not_silently_passed`, which `bae2988` (`V2-D55`) deleted **because the gaps it
+> reported were closed** — so the citation outlived the thing it pointed at. The behaviour it was cited for is still
+> enforced, by `validate`'s `gap_required`/`owner_required` rules and the test above. Found by
+> `scripts/check_evidence.py`.
 **Status:** decided and verified.
 
 ### V2-D45 — Scope isolation design frozen; RLS enforces the ACL, not the selectors (resolves #54 / MA-011; amends §5.1)
