@@ -288,7 +288,10 @@ async def test_the_plan_carries_the_mode_but_the_channel_does_not(database) -> N
 
     signature = inspect.signature(_channel_for)
     assert "mode" not in signature.parameters
-    assert set(signature.parameters) == {"kind", "lifecycle", "verification", "open_contradiction"}
+    # `stale` is a required argument (E-038-F5), so no call site can default it to fresh; the temporal mode is still
+    # not among the inputs, which is what keeps the predicate a filter rather than a score term.
+    assert set(signature.parameters) == {"kind", "lifecycle", "verification", "open_contradiction", "stale"}
+    assert signature.parameters["stale"].default is inspect.Parameter.empty
 
 
 # ──────────────────────────────────────────────────────────── criterion 6: audit isolation ──

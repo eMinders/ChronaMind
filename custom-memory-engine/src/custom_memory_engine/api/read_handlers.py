@@ -58,7 +58,7 @@ from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Runtime
-from custom_memory_engine.engine.channels import Channel, ChannelError, Verification, channel_of
+from custom_memory_engine.engine.channels import Channel, ChannelError, Verification, channel_of, stale_of
 from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
 from custom_memory_engine.engine.planning import (
     PROCEDURE_APPLICABILITY,
@@ -88,6 +88,7 @@ from custom_memory_engine.engine.predicates import (
 from custom_memory_engine.engine.procedure_matching import ApplicabilityRequest, ArtifactFacts, applicable
 from custom_memory_engine.engine.procedure_ranking import order_procedures
 from custom_memory_engine.engine.procedure_shape import NO_SHAPE, Precondition, ProcedureShape, shapes_for
+from custom_memory_engine.engine.staleness import ClosureCache, staleness_inputs
 from custom_memory_engine.model.axes import Kind, Lifecycle
 from custom_memory_engine.scope.access import (
     ReadEntry,
@@ -230,14 +231,21 @@ class QueryResult:
         )
 
 
-def _channel_for(kind: str, lifecycle: str, verification: str, open_contradiction: bool) -> Channel | None:
-    """The channel of one stored row, or ``None`` when the tuple is not legal (reported, never rendered)."""
+def _channel_for(
+    kind: str, lifecycle: str, verification: str, open_contradiction: bool, stale: bool
+) -> Channel | None:
+    """The channel of one stored row, or ``None`` when the tuple is not legal (reported, never rendered).
+
+    ``stale`` is **derived** (``V2-D24``, ``engine/staleness.py``), never read from a column and never defaulted to
+    fresh: a verified abstraction whose closure, ledger, sources, method or expiry no longer hold renders in
+    ``hypotheses`` (``CHANNELS.md`` C-P3). It is a required argument so no call site can forget it.
+    """
     try:
         return channel_of(
             cast(Kind, kind),
             cast(Lifecycle, lifecycle),
             cast(Verification, verification),
-            False,
+            stale,
             open_contradiction,
         )
     except ChannelError:
@@ -262,6 +270,9 @@ class ReadHandlers:
         self.planner: Planner = planner if planner is not None else RuleBasedPlanner()
         self.recorder: PlanRecorder = recorder if recorder is not None else record_nothing
         self.observer: StageObserver = observer if observer is not None else observe_nothing
+        # E-038 (V2-D24): the closure-hash cache the read path derives `stale` through. One per handler, so repeated
+        # reads of an unchanged abstraction hash its closure once; the deletion token invalidates it (F6).
+        self.closure_cache = ClosureCache()
 
     # -- shared reads ------------------------------------------------------------------------------------------
 
@@ -305,6 +316,29 @@ class ReadHandlers:
                 for identifier, facet, predicate in await cursor.fetchall()
             }
         return tuple(ArtifactFacts(row.kind, row.lifecycle, *extra.get(row.id, (None, None))) for row in rows)
+
+    async def _stale_ids(self, connection: AsyncConnection, user: str, verifications: Mapping[str, str]) -> set[str]:
+        """The ids among ``verifications`` that are derived stale now (``V2-D24``; closes ``E-038-F5``).
+
+        Only a ``verified`` artifact can be stale (``CHANNELS.md`` 2.3: an unverified one is already a hypothesis), so
+        the derivation runs for those alone and a read with no verified abstraction costs nothing extra. A verified
+        artifact with no sealed ``closed_over_hash`` fails closed to stale (``staleness_inputs``), which is the right
+        answer: it cannot prove it is fresh.
+
+        **Current state only** (``E-038-F3``). The answer routes use it, including the historical modes, because those
+        are answer context *now*: an abstraction the engine now knows to be stale must not be presented as a fact.
+        ``audit_as_of`` never calls it — an audit shows a past belief as it was held.
+        """
+        stale: set[str] = set()
+        for artifact_id, verification in sorted(verifications.items()):
+            if verification != "verified":
+                continue
+            inputs = await staleness_inputs(
+                connection, user, artifact_id, cache=self.closure_cache, schema_name=self.runtime.schema_name
+            )
+            if stale_of(inputs):
+                stale.add(artifact_id)
+        return stale
 
     async def _contradicted_ids(self, connection: AsyncConnection, user: str, ids: Sequence[str]) -> set[str]:
         """Which of ``ids`` is an endpoint of an open ``contradicts`` edge (``V2-D48`` C-P4).
@@ -358,13 +392,14 @@ class ReadHandlers:
                 str(identifier), "none"
             )
             contradicted = str(identifier) in await self._contradicted_ids(connection, user, [str(identifier)])
+            stale = str(identifier) in await self._stale_ids(connection, user, {str(identifier): verification})
             shape: ProcedureShape | None = None
             if kind == "procedure":
                 shapes = await shapes_for(
                     connection, user_id=user, procedure_ids=[str(identifier)], schema_name=self.runtime.schema_name
                 )
                 shape = shapes.get(str(identifier), NO_SHAPE)
-        channel = _channel_for(str(kind), str(lifecycle), verification, contradicted)
+        channel = _channel_for(str(kind), str(lifecycle), verification, contradicted, stale)
         if channel is None or channel == "none":
             raise EntryError("forbidden")  # a retired or illegal tuple is not rendered
         return Artifact(
@@ -562,6 +597,8 @@ class ReadHandlers:
                     ids = [row.id for row in rows]
                     verifications = await self._verification_of(connection, user, ids)
                     contradicted = await self._contradicted_ids(connection, user, ids)
+                    # E-038-F5: derived staleness on every answer route; never on an audit (E-038-F3)
+                    stale = set() if is_audit else await self._stale_ids(connection, user, verifications)
                     # E-027: outcome counters for the procedure rows, fetched in one statement beside the other
                     # per-row metadata. Only procedures have them, so asking for every id is a wasted round trip at
                     # best; asking only for procedure ids keeps the read proportional to what is ranked.
@@ -595,7 +632,7 @@ class ReadHandlers:
             refused: list[tuple[str, str]] = []
             for row in rows:
                 verification = verifications.get(row.id, "none")
-                channel = _channel_for(row.kind, row.lifecycle, verification, row.id in contradicted)
+                channel = _channel_for(row.kind, row.lifecycle, verification, row.id in contradicted, row.id in stale)
                 if channel is None:
                     refused.append((row.id, "illegal_artifact_tuple"))
                     continue

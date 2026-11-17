@@ -93,6 +93,11 @@ jobs:
           python3 scripts/check_plan_refs.py
           python3 scripts/audit_status.py --check
           uv run --no-sync python scripts/plan_coverage.py --check
+      - name: Closure evidence references (advisory)
+        # PLAN/V2/CLOSURE_PROTOCOL.md: a record's test-name claims must point at code that exists. Advisory because a
+        # PLAN document also names tests that are specified but not yet written (DELETION_ORDER F5/F7/F8/F9/F10).
+        continue-on-error: true
+        run: uv run --no-sync python scripts/check_evidence.py --plan-document PLAN/V2/*.md
 
   verify:
     needs: changes
