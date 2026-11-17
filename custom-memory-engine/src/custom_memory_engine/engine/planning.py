@@ -78,14 +78,16 @@ class PlanningError(ValueError):
 class Intent:
     """What the caller asked for, **derived from the request's own fields** (no parallel vocabulary, §5.1).
 
-    ``mode``, ``limit`` and the instants the mode needs come from ``QueryRequest``. The request's ``scope`` is not
-    repeated here: ``query`` has already re-anchored it inside the caller's read set, and the planner receives that
-    read set, so a second copy could only disagree with it. No ``reference_time``: ρ is the engine clock and stays
-    refused (``V2-D73``), so it is never part of an intent and the planner never sees one.
+    ``mode``, ``limit`` and the instants the mode needs come from ``QueryRequest``. ``scope`` is the **canonical**
+    path the request named, or ``None``: it is not an authorization input (``query`` has already re-anchored it inside
+    the caller's read set, and the planner receives that read set), it is what procedure applicability is matched
+    against (``E-030``'s ``scope_within``). No ``reference_time``: ρ is the engine clock and stays refused
+    (``V2-D73``), so it is never part of an intent and the planner never sees one.
     """
 
     mode: QueryMode
     limit: int
+    scope: str | None = None
     target_time: datetime | None = None
     belief_time: datetime | None = None
     window_start: datetime | None = None
@@ -153,6 +155,9 @@ class Plan:
     belief_time: str | None = None
     window_start: str | None = None
     window_end: str | None = None
+    # The request's canonical scope, which procedure applicability is matched against (E-030). Not an authorization
+    # input: what may be read is `scopes`, and `execute_plan` refuses any scope the caller does not hold.
+    scope: str | None = None
     stages: tuple[str, ...] = STAGES
 
     def __post_init__(self) -> None:
@@ -192,6 +197,7 @@ class Plan:
             "belief_time": self.belief_time,
             "window_start": self.window_start,
             "window_end": self.window_end,
+            "scope": self.scope,
             "stages": list(self.stages),
         }
 
@@ -240,6 +246,9 @@ class Plan:
                 if canonical != raw:  # only the planner's own rendering replays; a reinterpretation does not
                     raise PlanningError(PLAN_INTENT_REFUSED)
             instants[name] = raw if isinstance(raw, str) else None
+        request_scope = payload.get("scope")
+        if request_scope is not None and not isinstance(request_scope, str):
+            raise PlanningError(PLAN_INTENT_REFUSED)
         rebuilt: list[ReadScope] = []
         for scope in scopes:
             if not isinstance(scope, Mapping):
@@ -267,6 +276,7 @@ class Plan:
                 belief_time=instants["belief_time"],
                 window_start=instants["window_start"],
                 window_end=instants["window_end"],
+                scope=request_scope,
             )
         except PlanningError:
             raise
@@ -290,10 +300,19 @@ _INSTANTS: Mapping[str, frozenset[str]] = {
 #: clauses differ per mode (``compile_predicate``), but which clauses is the mode's business, already in the plan.
 _FILTERS: tuple[str, ...] = ("temporal_predicate", "typed_artifact", "read_predicate", "row_visible_recheck")
 
+#: ``E-030``: a non-applicable procedure is removed in ``filter_rerank``, **before** routing (``V2-D75`` puts ranking
+#: after routing; a filter belongs before it). It only removes, so it cannot move an item between channels.
+PROCEDURE_APPLICABILITY = "procedure_applicability"
 
-def _filters_for(_mode: str) -> tuple[str, ...]:
-    """The ordered filter list for a mode; the same for all four today, by design (see :data:`_FILTERS`)."""
-    return _FILTERS
+
+def _filters_for(mode: str) -> tuple[str, ...]:
+    """The ordered filter list for a mode.
+
+    Answer routes add procedure applicability. ``audit_as_of`` does not: an audit shows what the engine *believed*,
+    and a procedure's applicability to the present request says nothing about whether it was believed then. Filtering
+    it would hide an audit row for a reason that is not about belief.
+    """
+    return _FILTERS if mode == "audit_as_of" else (*_FILTERS, PROCEDURE_APPLICABILITY)
 
 
 def _canonical_instant(value: str | datetime) -> str:
@@ -342,6 +361,7 @@ class RuleBasedPlanner:
             belief_time=kept("belief_time", intent.belief_time),
             window_start=kept("window_start", intent.window_start),
             window_end=kept("window_end", intent.window_end),
+            scope=intent.scope,
         )
 
 
@@ -379,6 +399,7 @@ def observe_nothing(_stage: str) -> AbstractContextManager[None]:
 __all__ = [
     "MODES",
     "PLAN_INTENT_REFUSED",
+    "PROCEDURE_APPLICABILITY",
     "STAGES",
     "TEMPORAL_INDEX",
     "Intent",

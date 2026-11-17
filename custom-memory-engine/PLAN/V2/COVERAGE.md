@@ -16,7 +16,7 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 |---|---|---|---|
 | `EPISODE` | kind | `E-010`, `E-013` | `kind` column (M1); raw-source evidence (M4) |
 | `CLAIM` | kind | `E-010`, `E-015` | grounded or inferred through the two admission policies |
-| `PROCEDURE` | kind | `E-010`, `E-030` | preconditions, outcome stats |
+| `PROCEDURE` | kind | `E-010`, `E-030` | preconditions, outcome stats; `preconditions`/`steps` stored by `E-030` (migration 21, `procedure_shape`) |
 | `ABSTRACTION` | kind | `E-010`, `C-010` | the abstraction artifact and its ledger |
 | `SCOPE` | table | `E-011` | M2 + M9 (`V2-D45`, `V2-D49`) |
 | `ASSOCIATION` | table | `E-014` | M6; degree cap `V2-D13` |

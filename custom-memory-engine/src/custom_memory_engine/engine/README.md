@@ -15,6 +15,8 @@ all values, and never changes tenant or clock context.
 | `ingest.py` | Turn persistence, gate routing, embedding storage | `RL-060` wiring |
 | `deletion.py` | R6 lineage closure, re-derivation, deletion epoch | `RL-070` |
 | `purge.py` | `purge_working`: rule PW-1 (an evidence-bearing working episode is retained), scope event | `E-026` |
+| `procedure_shape.py` | A procedure's `preconditions`/`steps`: the grammar's parser (twin of migration 21's guard), store, read | `E-030` |
+| `procedure_matching.py` | `matches(preconditions, request, artifacts) → bool`: applicability only, a filter, never executes | `E-030` |
 
 ---
 
@@ -30,7 +32,7 @@ into channels, then applies the `V2-D75` procedure ordering.
 | `plan` | choose the index, the ordered filters, the expansion intent and the route |
 | `candidate_generation` | the temporal predicate + typed-artifact guard + read predicate, before `LIMIT` |
 | `expansion` | nothing yet — `E-032` owns traversal; the boundary exists so `E-036` can measure it |
-| `filter_rerank` | the `V2-D45` re-check and the per-row facts routing needs; no score |
+| `filter_rerank` | the `V2-D45` re-check; on answer routes, `E-030` procedure applicability (removes only); the per-row facts routing needs; no score |
 | `assemble` | `channel_of` routing, then the recorded-outcome ordering inside `procedures` |
 
 The planner decides **no** channel membership, ranking or row limit: those stay with `channel_of`, `V2-D75` and the

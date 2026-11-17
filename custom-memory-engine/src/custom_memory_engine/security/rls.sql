@@ -25,6 +25,8 @@ GRANT SELECT, INSERT ON
   {{schema}}.audit_event, {{schema}}.deletion_request, {{schema}}.api_idempotency
   TO {{role}};
 GRANT SELECT, INSERT ON {{schema}}.entity_link TO {{role}};
+-- migration 21 (E-030): a procedure's shape is asserted content, appended once and never updated.
+GRANT SELECT, INSERT ON {{schema}}.procedure_shape TO {{role}};
 GRANT SELECT, INSERT, UPDATE ON
   {{schema}}.memory_embedding, {{schema}}.memory_conflict, {{schema}}.scope_grant,
   {{schema}}.entity, {{schema}}.abstraction_stats, {{schema}}.negative_constraint,

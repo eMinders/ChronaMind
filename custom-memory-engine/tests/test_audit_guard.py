@@ -17,7 +17,14 @@ from custom_memory_engine.security.audit_guard import (
 SRC = Path(__file__).resolve().parents[1] / "src" / "custom_memory_engine"
 # Jsonb payloads that are not audit details: the job queue stores the caller's job payload, which
 # deletion purges (``engine/deletion.py``) and Channel 1 scans.
-NON_AUDIT_JSONB = {("queue/worker.py", "job.payload"), ("queue/worker.py", "pinned.payload")}
+NON_AUDIT_JSONB = {
+    ("queue/worker.py", "job.payload"),
+    ("queue/worker.py", "pinned.payload"),
+    # E-030: a procedure's preconditions and steps are asserted content, stored in `procedure_shape`, never in an
+    # audit row; the content guard therefore does not apply to them.
+    ("engine/procedure_shape.py", "preconditions_json"),
+    ("engine/procedure_shape.py", "steps_json"),
+}
 
 # The detail shape of every engine audit event, as written today.
 ENGINE_DETAILS = [
