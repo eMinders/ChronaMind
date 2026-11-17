@@ -129,6 +129,8 @@ VALUES: dict[str, object] = {
     "entity_a": "e1",
     "entity_b": "e2",
     "subject_entity": "e1",
+    "preconditions": [],  # E-030: a procedure's shape, both optional on `assert`
+    "steps": [],
     "relation": "x",
     "procedure_id": "p1",
     "outcome": "success",

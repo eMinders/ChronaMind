@@ -227,6 +227,7 @@ async def test_full_schema_creates_twelve_tables_and_named_constraints(
             "api_idempotency",
             "entity_link",
             "outcome_stats",
+            "procedure_shape",  # migration 21 (E-030)
         }
         cursor = await conn.execute(
             """

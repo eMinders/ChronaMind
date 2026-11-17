@@ -24,6 +24,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 | `018_scope_entity_links.sql` | Migration 18 (`E-024`): `entity_link`, the authorized links between scope-local entities (no scope table, `V2-D65`) |
 | `019_subject_entity.sql` | Migration 19 (`V2-D74`): `memory_version.subject_entity_id`, making an entity subject a composite foreign key (exists, same principal, same scope) |
 | `020_outcome_stats.sql` | Migration 20 (`E-027`, `V2-D75`): `outcome_stats`, the procedure outcome counters `record_outcome` maintains. The minimal substrate `E-030` extends |
+| `021_procedure_shape.sql` | Migration 21 (`E-030`): `procedure_shape`, a procedure's `preconditions` and `steps`, written once with it; the precondition grammar is enforced in SQL |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
 
@@ -453,6 +454,31 @@ event, so rewriting one would rewrite history (`I3`). Forced RLS with read/inser
 Rollback: `rollback/020_outcome_stats.sql` restores version 19 exactly and drops every recorded outcome, which version
 19 has nowhere to keep. It also drops `guard_outcome_stats` explicitly (not table-owned) and deletes the version-20
 history row, so `status()` still sees a gap-free prefix and reports `pending` rather than `drifted`.
+
+## Migration 21: procedure storage (`021_procedure_shape.sql`, `E-030`)
+
+The other two fields of `ARCHITECTURE_V2.md` §6. **A third side table, not columns on `outcome_stats`** (finding
+`E-030-F1`): migration 20's header expected additive columns there, but `outcome_stats` holds counters that
+`record_outcome` moves and creates lazily at the first outcome, while a shape is asserted content written once with the
+procedure. Putting it there would make `assert` create the counters row (changing `record_outcome`'s first-insert path)
+and mix two mutability rules in one row, which is migration 20's own reason for a side table.
+
+| Column | Meaning |
+|---|---|
+| `preconditions` | JSON array (≤ 32), a conjunction of `scope_within{scope}` / `exists{match}` / `absent{match}`; `[]` = always applicable |
+| `steps` | JSON array (≤ 64) of ordered, non-blank free-text strings (≤ 2000 characters); never executed |
+
+`guard_procedure_shape` (one zero-argument trigger function, like every engine function) refuses a shape on anything
+but a procedure of the writer's own tenant, refuses every `UPDATE` (identity and content are fixed), and enforces the
+grammar at write time: an unknown operator, key or value, a non-canonical scope or a blank step is
+`procedure_preconditions_malformed` / `procedure_steps_malformed`. `engine/procedure_shape.py` is its Python twin, and
+`tests/integration/test_migration_m21.py` pins that the two accept exactly the same shapes (whitespace included: the
+guard trims exactly `str.isspace()`'s characters). Composite tenant foreign key cascading with the procedure; forced
+RLS with read/insert policies; the runtime role holds `SELECT, INSERT` only.
+
+Rollback: `rollback/021_procedure_shape.sql` restores version 20 exactly. **Data loss, stated:** every stored
+`preconditions`/`steps` blob is dropped (version 20 has nowhere to keep it). The procedures themselves are untouched
+and read as "no preconditions", which is "always applicable"; nothing is backfilled on reapply.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner

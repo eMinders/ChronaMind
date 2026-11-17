@@ -64,6 +64,7 @@ from custom_memory_engine.engine.predicates import (
     reference_instant,
 )
 from custom_memory_engine.engine.procedure_ranking import order_procedures
+from custom_memory_engine.engine.procedure_shape import NO_SHAPE, Precondition, ProcedureShape, shapes_for
 from custom_memory_engine.model.axes import Kind, Lifecycle
 from custom_memory_engine.scope.access import ReadEntry, ReadSet, Visibility, read_predicate_named, row_visible
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
@@ -82,7 +83,10 @@ _ALL_VISIBILITIES: frozenset[Visibility] = frozenset({"private", "project", "sha
 class Artifact:
     """One stored artifact as ``get`` returns it (``API_V2.md`` §4.2 ``Artifact``)."""
 
-    __slots__ = ("artifact_id", "channel", "content", "kind", "lifecycle", "scope_path", "verification")
+    __slots__ = (
+        "artifact_id", "channel", "content", "kind", "lifecycle",
+        "preconditions", "scope_path", "steps", "verification",
+    )  # fmt: skip
 
     def __init__(
         self,
@@ -94,6 +98,7 @@ class Artifact:
         scope_path: str,
         channel: Channel,
         verification: str,
+        shape: ProcedureShape | None = None,
     ) -> None:
         self.artifact_id = artifact_id
         self.kind = kind
@@ -102,6 +107,9 @@ class Artifact:
         self.scope_path = scope_path
         self.channel = channel
         self.verification = verification
+        # E-030: a procedure's preconditions and steps (empty when stored without them); None on every other kind
+        self.preconditions: tuple[Precondition, ...] | None = None if shape is None else shape.preconditions
+        self.steps: tuple[str, ...] | None = None if shape is None else shape.steps
 
     def _key(self) -> tuple[object, ...]:
         return (
@@ -112,6 +120,8 @@ class Artifact:
             self.scope_path,
             self.channel,
             self.verification,
+            self.preconditions,
+            self.steps,
         )
 
     def __eq__(self, other: object) -> bool:
@@ -281,6 +291,12 @@ class ReadHandlers:
                 str(identifier), "none"
             )
             contradicted = str(identifier) in await self._contradicted_ids(connection, user, [str(identifier)])
+            shape: ProcedureShape | None = None
+            if kind == "procedure":
+                shapes = await shapes_for(
+                    connection, user_id=user, procedure_ids=[str(identifier)], schema_name=self.runtime.schema_name
+                )
+                shape = shapes.get(str(identifier), NO_SHAPE)
         channel = _channel_for(str(kind), str(lifecycle), verification, contradicted)
         if channel is None or channel == "none":
             raise EntryError("forbidden")  # a retired or illegal tuple is not rendered
@@ -292,6 +308,7 @@ class ReadHandlers:
             scope_path=str(scope_path),
             channel=channel,
             verification=verification,
+            shape=shape,
         )
 
     # -- temporal modes (E-031, V2-D73) ------------------------------------------------------------------------
@@ -388,11 +405,13 @@ class ReadHandlers:
                 # E-027: outcome counters for the procedure rows, fetched in one statement beside the other
                 # per-row metadata. Only procedures have them, so asking for every id is a wasted round trip at
                 # best; asking only for procedure ids keeps the read proportional to what is ranked.
+                procedure_ids = [row.id for row in rows if row.kind == "procedure"]
                 stats = await outcome_stats_for(
-                    connection,
-                    user_id=user,
-                    procedure_ids=[row.id for row in rows if row.kind == "procedure"],
-                    schema_name=self.runtime.schema_name,
+                    connection, user_id=user, procedure_ids=procedure_ids, schema_name=self.runtime.schema_name
+                )
+                # E-030: each procedure's preconditions and steps, in one statement beside its counters
+                shapes = await shapes_for(
+                    connection, user_id=user, procedure_ids=procedure_ids, schema_name=self.runtime.schema_name
                 )
         except InsufficientPrivilege as exc:
             raise EntryError("forbidden") from exc
@@ -421,6 +440,7 @@ class ReadHandlers:
                 scope_path=row.scope_path,
                 channel=channel,
                 verification=verification,
+                shape=shapes.get(row.id, NO_SHAPE) if row.kind == "procedure" else None,
             )
             if is_audit:
                 audited.append(artifact)

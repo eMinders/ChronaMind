@@ -37,7 +37,8 @@ USER_TABLES = (
     "negative_constraint",
     "api_idempotency",  # migration 12 (E-039)
     "entity_link",  # migration 18 (E-024): explicit links between two scope-local entity ids
-    "outcome_stats",  # migration 20 (E-027): procedure outcome counters, E-030 owns the rest
+    "outcome_stats",  # migration 20 (E-027): procedure outcome counters
+    "procedure_shape",  # migration 21 (E-030): preconditions and steps, written once with the procedure
 )
 
 
@@ -73,6 +74,7 @@ TABLE_GRANTS: dict[str, frozenset[str]] = {
     "api_idempotency": _APPEND,  # append-only: a recorded replay answer is never rewritten
     "entity_link": _APPEND,
     "outcome_stats": _MUTABLE,  # counters move; a row goes with its version by cascade (owner-run)
+    "procedure_shape": _APPEND,  # asserted content: read and appended, never updated (guard_procedure_shape)
     # the method registry is shared and append-only: anyone may read it, `register_method` appends, nobody changes it
     "method": _APPEND,
 }

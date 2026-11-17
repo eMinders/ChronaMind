@@ -60,6 +60,9 @@ QueryResult    { facts[], hypotheses[], procedures[], conflicts[], audit[], refu
 Receipt        { id, effect, recorded_at }     # content-free
 PurgeReceipt   { purged_episodes, retained_as_evidence, recorded_at }   # content-free: counts and the clock only
 OutcomeStats   { procedure_id, successes, failures, last_used_at, mean_cost }   # content-free: counters, clock, cost
+Precondition   { op: 'scope_within', scope: str }                      # the request's scope lies in this subtree
+             | { op: 'exists'|'absent', match: { kind?, lifecycle?, facet?, predicate? } }   # 1-4 keys; E-030
+                                                 # a procedure's preconditions are a conjunction; [] = always applicable
 ```
 
 ## 3. Operations and tiers (the tier matrix, `MA-015`)
@@ -192,11 +195,17 @@ only (`CHANNELS.md` R6, `THREAT_MODEL.md` T-10). *Errors:* `forbidden` for absen
 
 ### 4.3 Write (grounded)
 
-**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key, subject_entity?) → Receipt | rejected`**
+**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key, subject_entity?, preconditions?: Precondition[], steps?: str[]) → Receipt | rejected`**
 A grounded statement through the grounding policy. **`evidence` must be non-empty for Tier B and Tier C
 alike** (TB3). An optional `subject_entity` names an entity in the same scope as the claim; the claim's subject and
 entity remain scope-local. Result lifecycle: `asserted` or `contested`. *Errors:* `validation_error` (no evidence, bad
 range), `rejected` (instruction screen, assertion mode, conflict), `forbidden` (unreadable or different-scope entity).
+**Procedure shape (`E-030`, migration 21).** For `kind='procedure'`, the optional `preconditions` and `steps` are
+stored with the procedure, once, and never updated (`ARCHITECTURE_V2.md` §6); `ingest_artifact` takes the same two
+fields inside `candidate`. Passing either for any other kind is `validation_error`
+(`procedure_shape_requires_a_procedure`), and a malformed one is `validation_error` with the parser's code; neither is
+`forbidden`, and the error contract above is otherwise unchanged. `get` and `query` return both on a procedure
+artifact. The engine never executes a step; `engine/procedure_matching.py` answers applicability only.
 
 **`retract_own(ctx, artifact_id, reason) → Receipt`**
 Moves an artifact to `retired` (recorded-time close). Tier B: only artifacts **its own method produced**. Tier C:

@@ -11,8 +11,10 @@ the restricted role, static errors only.
 * ``assert`` / ``ingest_artifact`` send a claim or procedure through the **v1 validation gate**
   (``engine.ingest.apply_candidate``) and answer ``asserted``, ``contested`` or a ``Rejected`` result; the
   decision is recorded either way. ``kind='procedure'`` is now accepted in addition to ``kind='claim'``
-  (V2-D66, issue #157). Only ``turn`` evidence can be grounded through the gate; ``external``/``tool``/``file``/
-  ``event`` evidence carries a hash, not captured text. The ``scope`` argument is propagated as above.
+  (V2-D66, issue #157); a procedure may carry ``preconditions`` and ``steps`` (E-030, migration 21), stored once with
+  it and refused on any other kind. Only ``turn`` evidence can be grounded through the gate;
+  ``external``/``tool``/``file``/``event`` evidence carries a hash, not captured text. The ``scope`` argument is
+  propagated as above.
 
 Under a bound profile, a source or evidence type that no extractor of the profile declares is refused
 (``validation_error/source_type_not_enabled_by_profile``, ``V2-D69``); without one, the declared types above apply.
@@ -31,6 +33,7 @@ from psycopg.rows import tuple_row
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Receipt, Rejected, Runtime, new_id, now, remember, replayed
 from custom_memory_engine.engine.ingest import apply_candidate
+from custom_memory_engine.engine.procedure_shape import ProcedureShape, ProcedureShapeError, parse_shape, record_shape
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, commit_initial_version
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.model.axes import Kind, Retention
@@ -119,6 +122,32 @@ def _evidence_for_source(source: Mapping[str, object], span: str) -> EvidenceInp
         content_hash=content_hash,
         evidence_span=span,
     )
+
+
+def _procedure_shape(kind: object, preconditions: object, steps: object) -> ProcedureShape | None:
+    """The validated shape of a procedure write, or ``None`` when the caller gave neither field (E-030).
+
+    Validated once, here, before any statement runs. A shape on any other kind is refused rather than dropped: a caller
+    who sent preconditions believes they were stored. Both refusals are ``validation_error`` (``API_V2.md`` 4.3).
+    """
+    if preconditions is None and steps is None:
+        return None
+    if kind != "procedure":
+        raise EntryError("validation_error", "procedure_shape_requires_a_procedure")
+    try:
+        return parse_shape(preconditions, steps)
+    except ProcedureShapeError as error:
+        raise EntryError("validation_error", error.code) from None
+
+
+async def _stored(runtime: Runtime, connection: AsyncConnection, user: str, version_id: str) -> bool:
+    """Whether the gate stored a row for ``version_id`` (it does not when it reinforces a duplicate)."""
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL("SELECT 1 FROM {t} WHERE id = %s AND user_id = %s").format(t=runtime.table("memory_version")),
+            (version_id, user),
+        )
+        return await cursor.fetchone() is not None
 
 
 async def _turns(
@@ -263,7 +292,13 @@ class IngestHandlers:
             raise EntryError("forbidden") from None
 
     async def _assert(
-        self, call: Call, content: str, evidence: object, event_range: object, entity_id: object = None
+        self,
+        call: Call,
+        content: str,
+        evidence: object,
+        event_range: object,
+        entity_id: object = None,
+        shape_fields: tuple[object, object] = (None, None),
     ) -> Receipt | Rejected:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
         # `subject_entity` (E-024): the entity this claim is about. Optional: absent keeps the v1 shape
@@ -288,6 +323,7 @@ class IngestHandlers:
                 "validation_error", "kind_not_supported"
             )  # abstractions come from `infer` (C-021); episodes are never asserted
         self._require_kind(kind)  # type: ignore[arg-type]
+        shape = _procedure_shape(kind, *shape_fields)
         if not isinstance(evidence, Sequence) or isinstance(evidence, str | bytes) or not evidence:
             raise EntryError("validation_error", "evidence_required")
         sources = [_source(item) for item in evidence]
@@ -342,6 +378,13 @@ class IngestHandlers:
                 evidence_turns=[turns[turn_id] for turn_id in dict.fromkeys(turn_ids)],
                 schema_name=self.runtime.schema_name,
             )
+            if shape is not None and await _stored(self.runtime, connection, user, version_id):
+                # E-030: the procedure's preconditions and steps, in the same transaction as the procedure itself. The
+                # gate may store no row for this candidate (it reinforces an identical existing version instead);
+                # then there is no procedure to attach a shape to, and the existing version keeps its own.
+                await record_shape(
+                    connection, user_id=user, version_id=version_id, shape=shape, schema_name=self.runtime.schema_name
+                )
             await _stamp_creator(self.runtime, connection, call, version_id)
             await self._apply_retention(connection, user, version_id, kind)  # type: ignore[arg-type]
             await remember(self.runtime, connection, user, "assert", key, version_id)
@@ -353,6 +396,7 @@ class IngestHandlers:
             call, _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT),
             call.arguments.get("evidence"), call.arguments.get("event_range"),
             call.arguments.get("subject_entity"),
+            (call.arguments.get("preconditions"), call.arguments.get("steps")),
         )  # fmt: skip
 
     async def ingest_artifact(self, call: Call) -> Receipt | Rejected:
@@ -362,6 +406,7 @@ class IngestHandlers:
         return await self._assert(
             call, _text(candidate.get("content"), "content", limit=_CONTENT_LIMIT),
             call.arguments.get("evidence"), candidate.get("event_range"),
+            shape_fields=(candidate.get("preconditions"), candidate.get("steps")),
         )  # fmt: skip
 
 
