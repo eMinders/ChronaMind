@@ -9,18 +9,19 @@ procedure, and two controls show the assertions fail when the exclusion or the k
 Criterion 8 (the ``E-031`` planner consumes the matcher) is not here: the planner does not exist on ``main`` yet.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
+from datetime import datetime
 
 import pytest
 
-from custom_memory_engine.api import ingest_handlers
+from custom_memory_engine.api import ingest_handlers, read_handlers
 from custom_memory_engine.api.entry import Engine, EntryError
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.outcome_handlers import register_outcome_handlers
 from custom_memory_engine.api.read_handlers import Artifact, QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Receipt
 from custom_memory_engine.engine import procedure_matching, procedure_shape
-from custom_memory_engine.engine.procedure_matching import ApplicabilityRequest, ArtifactFacts, applicable
+from custom_memory_engine.engine.planning import PROCEDURE_APPLICABILITY, Plan
 from custom_memory_engine.engine.procedure_ranking import OutcomeStats
 from custom_memory_engine.engine.procedure_shape import ProcedureShape, ProcedureShapeError, parse_shape
 from custom_memory_engine.grounding.sources import canonical_hash
@@ -119,6 +120,7 @@ async def test_preconditions_and_steps_round_trip_through_the_entry_point(databa
         expected = parse_shape(FIX_CI, STEPS)
         got = await get(engine, procedure)
         assert (got.preconditions, got.steps) == (expected.preconditions, expected.steps)
+        await ci_episode(engine)  # FIX_CI is exists(episode, observed): give it one, so query lists the procedure
         (listed,) = (await query(engine)).procedures
         assert (listed.artifact_id, listed.preconditions, listed.steps) == (procedure, *_shape(expected))
         # stored once, in the side table, exactly as sent
@@ -201,19 +203,31 @@ async def test_a_malformed_shape_is_rejected_at_write_time_and_nothing_is_stored
 # ---------------------------------------------------------------------------------------------- criteria 6, 7, 9
 
 
-async def selection(engine: Engine) -> tuple[tuple[str, ...], Sequence[str]]:
-    """Select applicable procedures as a reader would: everything ``query`` returned, matched by the pure function."""
-    result = await query(engine)
-    artifacts = [
-        ArtifactFacts(kind=a.kind, lifecycle=a.lifecycle)
-        for channel in ("facts", "hypotheses", "procedures", "conflicts")
-        for a in result.channel(channel)
-    ]
-    procedures = [a.artifact_id for a in result.procedures]
-    shapes = {
-        a.artifact_id: ProcedureShape(a.preconditions or (), a.steps or ()) for a in result.procedures
-    }  # fmt: skip
-    return applicable(procedures, shapes, ApplicabilityRequest(ROOT), artifacts), procedures
+async def selection(engine: Engine) -> tuple[str, ...]:
+    """The procedures ``query`` selected. Since ``E-031`` landed, the planner applies the matcher (criterion 8), so
+    this is the engine's own answer through ``Engine.call`` -- not a reader re-running the pure function."""
+    return tuple(a.artifact_id for a in (await query(engine)).procedures)
+
+
+async def ci_episode(engine: Engine, key: str = "ep") -> str:
+    """An observed episode, so ``FIX_CI``'s ``exists(episode, observed)`` holds for the request."""
+    episode = await engine.call(
+        caller("alice"),
+        "ingest_episode",
+        {
+            "scope": ROOT,
+            "source": {
+                "type": "external",
+                "ref": f"ci://run/{key}",
+                "span": "log",
+                "content_hash": canonical_hash("log"),
+            },
+            "content": "CI run 42 failed: NameError",
+            "idempotency_key": key,
+        },
+    )
+    assert isinstance(episode, Receipt)
+    return episode.id
 
 
 async def a_ci_session(engine: Engine, conn) -> tuple[str, str, str]:
@@ -225,23 +239,15 @@ async def a_ci_session(engine: Engine, conn) -> tuple[str, str, str]:
         engine, conn, "sum", "Summarise the abstraction", sequence=3, shape={"preconditions": NEEDS_AN_ABSTRACTION}
     )
     anywhere = await store(engine, conn, "any", "Ask before a destructive command", sequence=4)  # no shape at all
-    episode = await engine.call(
-        caller("alice"),
-        "ingest_episode",
-        {
-            "scope": ROOT,
-            "source": {"type": "external", "ref": "ci://run/42", "span": "log", "content_hash": canonical_hash("log")},
-            "content": "CI run 42 failed: NameError",
-            "idempotency_key": "ep",
-        },
-    )
-    assert isinstance(episode, Receipt)
+    await ci_episode(engine)
     return fix_ci, summarise, anywhere
 
 
 async def assert_selection_and_exclusion(engine: Engine, fix_ci: str, summarise: str, anywhere: str) -> None:
-    selected, procedures = await selection(engine)
-    assert set(procedures) == {fix_ci, summarise, anywhere}  # all three are stored and routed to `procedures`
+    selected = await selection(engine)
+    # all three are stored and readable: the exclusion below is the planner's filter, not a lost write
+    for procedure in (fix_ci, summarise, anywhere):
+        assert (await get(engine, procedure)).channel == "procedures"
     assert fix_ci in selected, "the applicable procedure was not selected"  # criterion 6
     assert summarise not in selected, "the non-applicable procedure was not excluded"  # criterion 7
     assert anywhere in selected  # criterion 9: no preconditions, always applicable
@@ -261,8 +267,7 @@ async def test_a_procedure_without_preconditions_reads_back_empty_and_is_always_
         got = await get(engine, plain)
         assert (got.preconditions, got.steps) == ((), ())
         assert await rows(conn, "SELECT count(*) FROM procedure_shape") == [(0,)]  # nothing invented for it
-        selected, _ = await selection(engine)
-        assert selected == (plain,)
+        assert await selection(engine) == (plain,)
 
 
 async def test_a_shape_changes_no_channel_and_no_other_kind_carries_one(database) -> None:  # noqa: F811
@@ -272,10 +277,11 @@ async def test_a_shape_changes_no_channel_and_no_other_kind_carries_one(database
         shaped = await store(engine, conn, "p1", "Fix a failing CI run", sequence=2, shape={"preconditions": FIX_CI})
         plain = await store(engine, conn, "p2", "Ask before a destructive command", sequence=3)
         claim = await store(engine, conn, "c1", "The user is vegetarian", sequence=4, kind="claim")
+        episode = await ci_episode(engine)  # makes the shaped procedure applicable, so both are listed
         result = await query(engine)
         assert {a.artifact_id for a in result.procedures} == {shaped, plain}
-        assert [a.artifact_id for a in result.facts] == [claim]
-        assert (result.facts[0].preconditions, result.facts[0].steps) == (None, None)
+        assert {a.artifact_id for a in result.facts} == {claim, episode}
+        assert all((a.preconditions, a.steps) == (None, None) for a in result.facts)
 
 
 async def test_record_outcome_works_unchanged_on_a_procedure_with_a_shape(database) -> None:  # noqa: F811
@@ -374,3 +380,110 @@ async def test_control_dropping_the_kind_guard_fails_criterion_3(
         print("\ncontrol (kind guard dropped) -> " + " | ".join(str(broken.value).splitlines()[:2]))
         assert "internal_error" in str(broken.value)
         assert await rows(conn, "SELECT count(*) FROM procedure_shape") == [(0,)]  # the schema's guard still held
+
+
+# --------------------------------------------------------------------------- criterion 8: the planner consumes it
+
+
+async def test_the_planner_consumes_matching_without_changing_channel_membership(database, monkeypatch) -> None:  # noqa: F811
+    """Criterion 8: the *planner* applies the filter, and it changes no channel membership.
+
+    "Without changing membership" is measured, not argued: the same query runs twice, once as planned and once with the
+    matcher forced to keep everything (the control). The planned result must equal the control **minus** the
+    non-applicable procedure — every survivor in the same channel, nothing added, nothing moved.
+    """
+    async with world(database) as (conn, engine, _schema):
+        wire(engine)
+        fix_ci, summarise, anywhere = await a_ci_session(engine, conn)
+        recorded: list[Plan] = []
+        assert isinstance(engine.resolver, DbTargets)
+        register_read_handlers(engine, engine.resolver.runtime, recorder=recorded.append)
+
+        planned = await query(engine)
+        # 1. the plan names the filter, so applying it is planned rather than incidental
+        assert PROCEDURE_APPLICABILITY in recorded[-1].filters
+        assert recorded[-1].scope == ROOT, "the request's scope must reach the matcher through the plan"
+
+        # control: the same query with the matcher keeping every procedure
+        monkeypatch.setattr(read_handlers, "applicable", lambda ids, *_args: tuple(ids))
+        unfiltered = await query(engine)
+        monkeypatch.undo()
+
+        def placement(result: QueryResult) -> dict[str, str]:
+            return {
+                a.artifact_id: channel
+                for channel in ("facts", "hypotheses", "procedures", "conflicts")
+                for a in result.channel(channel)
+            }
+
+        expected = {k: v for k, v in placement(unfiltered).items() if k != summarise}
+        assert summarise in placement(unfiltered), "the control did not reach the procedure, so nothing is tested"
+        assert placement(planned) == expected, "the filter changed more than the non-applicable procedure's presence"
+        assert {fix_ci, anywhere} <= set(placement(planned))
+        assert (await get(engine, summarise)).channel == "procedures"  # excluded from the answer, still stored
+
+
+async def test_an_audit_is_not_filtered_by_present_applicability(database) -> None:  # noqa: F811
+    """``audit_as_of`` shows what the engine believed. Whether a procedure applies to *this* request is not a fact
+    about belief, so its plan carries no applicability filter and the non-applicable procedure is still audited."""
+    async with world(database) as (conn, engine, _schema):
+        wire(engine)
+        _fix_ci, summarise, _anywhere = await a_ci_session(engine, conn)
+        recorded: list[Plan] = []
+        assert isinstance(engine.resolver, DbTargets)
+        register_read_handlers(engine, engine.resolver.runtime, recorder=recorded.append)
+        ((instant,),) = await rows(conn, "SELECT pg_catalog.transaction_timestamp()")
+        assert isinstance(instant, datetime)
+        result = await engine.call(
+            caller("alice"),
+            "query",
+            {
+                "request": {
+                    "scope": ROOT,
+                    "mode": "audit_as_of",
+                    "target_time": instant.isoformat(),
+                    "belief_time": instant.isoformat(),
+                }
+            },
+        )
+        assert isinstance(result, QueryResult) and result.is_audit
+        assert PROCEDURE_APPLICABILITY not in recorded[-1].filters
+        assert summarise in {a.artifact_id for a in result.audit}, "an audit row was hidden by present applicability"
+
+
+async def test_a_request_without_a_scope_does_not_satisfy_scope_within(database) -> None:  # noqa: F811
+    """Missing information never includes: with no request scope a ``scope_within`` procedure is excluded."""
+    async with world(database) as (conn, engine, _schema):
+        wire(engine)
+        scoped = await store(
+            engine, conn, "sw", "Run the repo linters", sequence=2,
+            shape={"preconditions": [{"op": "scope_within", "scope": ROOT}]},
+        )  # fmt: skip
+        without = await engine.call(caller("alice"), "query", {"request": {}})
+        assert isinstance(without, QueryResult)
+        assert scoped not in {a.artifact_id for a in without.procedures}
+        assert scoped in await selection(engine), "with the scope named, the same procedure applies"
+
+
+async def test_a_predicate_condition_holds_through_query(database) -> None:  # noqa: F811
+    """``E-030-F2``: ``exists``/``absent`` may name ``predicate``, and the executor now reads it so it can hold.
+
+    Before the planner consumed matching, ``Artifact`` exposed neither ``facet`` nor ``predicate``, so a condition
+    naming one could never hold through ``Engine.call``. The predicate is read from the stored claim rather than
+    assumed, so the test does not depend on what the write path names it.
+    """
+    async with world(database) as (conn, engine, _schema):
+        wire(engine)
+        claim = await store(engine, conn, "c1", "The user is vegetarian", sequence=2, kind="claim")
+        ((predicate,),) = await rows(conn, "SELECT predicate_key FROM memory_version WHERE id = %s", (claim,))
+        holds = await store(
+            engine, conn, "p-holds", "Suggest a vegetarian recipe", sequence=3,
+            shape={"preconditions": [{"op": "exists", "match": {"kind": "claim", "predicate": predicate}}]},
+        )  # fmt: skip
+        fails = await store(
+            engine, conn, "p-fails", "Suggest a steak recipe", sequence=4,
+            shape={"preconditions": [{"op": "absent", "match": {"kind": "claim", "predicate": predicate}}]},
+        )  # fmt: skip
+        selected = await selection(engine)
+        assert holds in selected, "a predicate condition that holds was not satisfied through query"
+        assert fails not in selected, "absent(predicate) held although the claim carries that predicate"

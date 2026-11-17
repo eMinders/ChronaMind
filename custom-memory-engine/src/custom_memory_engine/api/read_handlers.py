@@ -61,6 +61,7 @@ from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.engine.channels import Channel, ChannelError, Verification, channel_of
 from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
 from custom_memory_engine.engine.planning import (
+    PROCEDURE_APPLICABILITY,
     Intent,
     Plan,
     Planner,
@@ -74,6 +75,7 @@ from custom_memory_engine.engine.planning import (
 )
 from custom_memory_engine.engine.predicates import (
     QueryMode,
+    ScopedRow,
     TemporalQuery,
     TemporalQueryError,
     audit_as_of,
@@ -83,6 +85,7 @@ from custom_memory_engine.engine.predicates import (
     historical_window,
     reference_instant,
 )
+from custom_memory_engine.engine.procedure_matching import ApplicabilityRequest, ArtifactFacts, applicable
 from custom_memory_engine.engine.procedure_ranking import order_procedures
 from custom_memory_engine.engine.procedure_shape import NO_SHAPE, Precondition, ProcedureShape, shapes_for
 from custom_memory_engine.model.axes import Kind, Lifecycle
@@ -279,6 +282,30 @@ class ReadHandlers:
             )
             return {str(row[0]): str(row[1]) for row in await cursor.fetchall()}
 
+    async def _facts_of(
+        self, connection: AsyncConnection, user: str, rows: Sequence[ScopedRow]
+    ) -> tuple[ArtifactFacts, ...]:
+        """The retrieved rows as the applicability matcher sees them: kind, lifecycle, facet and predicate.
+
+        ``facet`` (``um_facet``) and ``predicate`` (``predicate_key``) are not on :class:`ScopedRow`, so they are read
+        here in one statement, under the same session and RLS as every other per-row fact. Without them an
+        ``exists``/``absent`` condition naming either field could never hold through ``query`` (``E-030-F2``).
+        """
+        if not rows:
+            return ()
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL("SELECT id, um_facet, predicate_key FROM {t} WHERE user_id = %s AND id = ANY(%s)").format(
+                    t=self.runtime.table("memory_version")
+                ),
+                (user, [row.id for row in rows]),
+            )
+            extra: dict[str, tuple[str | None, str | None]] = {
+                str(identifier): (None if facet is None else str(facet), None if predicate is None else str(predicate))
+                for identifier, facet, predicate in await cursor.fetchall()
+            }
+        return tuple(ArtifactFacts(row.kind, row.lifecycle, *extra.get(row.id, (None, None))) for row in rows)
+
     async def _contradicted_ids(self, connection: AsyncConnection, user: str, ids: Sequence[str]) -> set[str]:
         """Which of ``ids`` is an endpoint of an open ``contradicts`` edge (``V2-D48`` C-P4).
 
@@ -373,7 +400,7 @@ class ReadHandlers:
         raw = request.get(field)
         return None if raw is None else self._parse_instant(raw, field)
 
-    def _intent_for(self, mode: str, request: Mapping[str, object], limit: int) -> Intent:
+    def _intent_for(self, mode: str, request: Mapping[str, object], limit: int, scope: str | None) -> Intent:
         """Derive the planner's :class:`Intent` from the request's own fields (``E-031`` §5.1: no second vocabulary).
 
         The four instants are parsed first and the mode's required ones checked after, in the order and with the codes
@@ -402,6 +429,7 @@ class ReadHandlers:
                 belief_time=belief,
                 window_start=start,
                 window_end=end,
+                scope=scope,
             )
         except PlanningError as exc:
             raise EntryError("validation_error", exc.code) from None
@@ -432,6 +460,31 @@ class ReadHandlers:
         except ValueError:
             # a TemporalQuery field validator rejected the combination; the code is a static literal
             raise EntryError("validation_error", "temporal_parameter_mismatch") from None
+
+    async def _applicable_rows(
+        self,
+        connection: AsyncConnection,
+        user: str,
+        plan: Plan,
+        rows: tuple[ScopedRow, ...],
+        shapes: Mapping[str, ProcedureShape],
+    ) -> tuple[ScopedRow, ...]:
+        """``rows`` minus every procedure whose preconditions do not hold for this request over these rows.
+
+        The artifact set the conditions see is every row the request retrieved (after the read re-check), procedures
+        included, in retrieval order. The facet/predicate read is skipped when no procedure carries a condition, so a
+        query with no shaped procedure costs exactly what it did before ``E-030``.
+        """
+        procedure_ids = [row.id for row in rows if row.kind == "procedure"]
+        if not any(shapes.get(procedure_id, NO_SHAPE).preconditions for procedure_id in procedure_ids):
+            return rows
+        try:
+            request = ApplicabilityRequest(scope=plan.scope)
+        except ScopeError:
+            raise EntryError("validation_error", "scope_invalid") from None
+        artifacts = await self._facts_of(connection, user, rows)
+        kept = set(applicable(procedure_ids, shapes, request, artifacts))
+        return tuple(row for row in rows if row.kind != "procedure" or row.id in kept)
 
     @staticmethod
     def _within(plan: Plan, read_set: ReadSet) -> ReadSet:
@@ -467,8 +520,9 @@ class ReadHandlers:
           predicate, the typed-artifact guard and the read predicate run in **one** statement before ``LIMIT``, so the
           limit counts rows the caller may read (``V2-D73``).
         * ``expansion`` -- in and out: the same rows. The plan's expansion is ``none``; traversal is ``E-032``'s.
-        * ``filter_rerank`` -- in: rows; out: rows that pass the ``V2-D45`` re-check, with the per-row facts routing
-          needs (verification, open contradictions, outcome counters). No score is computed here.
+        * ``filter_rerank`` -- in: rows; out: rows that pass the ``V2-D45`` re-check and, on an answer route, the
+          ``E-030`` applicability filter (a non-applicable procedure is removed), with the per-row facts routing needs
+          (verification, open contradictions, outcome counters, procedure shapes). No score is computed here.
         * ``assemble`` -- in: rows and facts; out: :class:`QueryResult`. Channel routing by ``channel_of``; then, and
           only then, the ``V2-D75`` procedure ordering, so no statistic can move an item between channels.
 
@@ -525,6 +579,11 @@ class ReadHandlers:
                     rows = tuple(
                         row for row in rows if row_visible(effective_read_set, row.scope_path, row.visibility)
                     )
+                    # E-030 (criterion 8): the plan's applicability filter, **before** routing. It only removes a
+                    # non-applicable procedure; every survivor reaches `channel_of` unchanged, so membership cannot
+                    # move. A procedure stored without preconditions is always applicable (the empty conjunction).
+                    if PROCEDURE_APPLICABILITY in plan.filters:
+                        rows = await self._applicable_rows(connection, user, plan, rows, shapes)
         except InsufficientPrivilege as exc:
             raise EntryError("forbidden") from exc
         except TemporalQueryError as exc:
@@ -588,6 +647,7 @@ class ReadHandlers:
         if "reference_time" in request:
             raise EntryError("validation_error", "reference_time_is_the_engine_clock")  # I4
         scope = request.get("scope")
+        requested_path: str | None = None
         if scope is not None:
             try:
                 requested_path = parse_scope(scope).text
@@ -606,7 +666,7 @@ class ReadHandlers:
             return QueryResult(is_audit=mode == "audit_as_of")
         if len(effective_read_set.entries) > MAX_SELECTORS:
             raise EntryError("resource_limit", "too_many_selectors")
-        intent = self._intent_for(str(mode), request, limit)
+        intent = self._intent_for(str(mode), request, limit, requested_path)
         with self.observer("plan"):
             try:
                 plan = plan_retrieval(intent, effective_read_set, planner=self.planner)
