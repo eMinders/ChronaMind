@@ -302,12 +302,27 @@ domains and record why tool-grounded memory needs a different substrate.
 | `E-037` | **Deletion-through-cognition, implemented now** *(moved from `R-014`/W6)*: unbounded closure with cycle detection, deepest-first dependent resolution, `stale` via closure hash, retirement when support < threshold, **11 channels** | Must exist before W5 writes any abstraction, or W5 is built on an undeletable substrate. Owns the channel-7 base shift and the keyed-digest receipt (`T-29`). Child issue **#207** | L |
 | `E-038` | **Staleness derivation** (§9.2): `stale` computed from closure hash, never stored as a flag; `verified ∧ stale` legal and rendered in `hypotheses`. Includes a closure-hash cache with an invalidation path, since recomputing it per query is the obvious performance trap. **Done** (#199, `d374e89`); consumed by `get`/`query` since the integrity pass (`E-038-F5` closed) | Closes the disagreement hole; `V2-D24`. Child issue **#199** | M |
 
-**W3 child issues created (r16, 2026-11-16).** All nine are open with full specifications, each carrying the W2 issue
+**W3 child issues created (r16, 2026-11-16).** All nine were specified up front, each carrying the W2 issue
 format plus the W3 additions: an explicit **execution order** position, a **ground-truth** section that makes the
 author establish the current state with file and line before writing code, and a **dependency table**. Execution order
 is derived from what each task consumes, not from row order: `E-038` (#199) → `E-031` (#200) → `E-030` (#201) and
 `E-032` (#202) in parallel → `E-033` (#203) → `E-034` (#204) and `E-036` (#206) in parallel → `E-035` (#205) →
 `E-037` (#207). The full DAG is in tracker #73 §9.
+
+**W3 progress (r17, 2026-11-17).** Three of nine tasks are complete on `main`, in the order the DAG requires:
+`E-038` (#199, `d374e89`), `E-031` (#200, `8c35512`), `E-030` (#201, `4583952`). `E-035`'s harness (205-A) merged
+before them (`71b7ea1`) as designed, so the channel-integrity gate has guarded every W3 `src/` change.
+
+The sequence was then checked as a whole (`#214`, `a5638a1`), which found one **live guarantee violation** and three
+defects of record. `E-038`'s derivation was never consumed by the storage read path, so a stale verified abstraction
+rendered as a **fact** through `get`/`query` (`E-038-F5`) — a `C-P3` violation that `assemble`-only tests could not
+see. That deferral, and the `C-021` gate it cited, were both wrong and are corrected. The §9 diagram's stage placement
+was wrong too (`V2-D76`), and `E-030`'s schema home had no record superseding migration 20's note (`V2-D77`).
+
+Two process facts now have teeth, both recorded in `CLOSURE_PROTOCOL.md`: a closure keeps its evidence only if the
+record is posted *and* read back (`gh issue close` silently ignores a body), and a deferral needs the same verification
+as a closure. `scripts/check_evidence.py` checks a record's test and file references; it found a stale citation in
+`V2-D55` on its first full run.
 
 Two ordering facts the roadmap previously left implicit and the child issues now state explicitly:
 
