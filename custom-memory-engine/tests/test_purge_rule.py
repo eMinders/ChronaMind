@@ -34,10 +34,16 @@ def test_citations_of_rows_that_are_not_candidates_are_ignored() -> None:
 
 
 def test_every_column_that_cites_a_version_as_evidence_is_consulted() -> None:
-    """Derivation sources, a lift's evidence and a gate comparison: the three references without a cascade."""
+    """Derivation sources, a lift's evidence, a dissent's target and a gate comparison: the four references.
+
+    ``E-038-F2``: ``dissented_version_id`` was omitted on the false premise that an episode is never inferred.
+    ``axes.LEGAL_LIFECYCLE`` permits ``episode/inferred`` and a working episode is purgeable, so a dissent could point
+    at exactly a row the purge then cleared.
+    """
     assert {(table, cited) for table, cited, _ in EVIDENCE_REFERENCES} == {
         ("memory_derivation", "source_version_id"),
         ("negative_constraint", "lift_evidence_version_id"),
+        ("negative_constraint", "dissented_version_id"),
         ("memory_conflict", "existing_version_id"),
     }
 
