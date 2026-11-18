@@ -7,6 +7,7 @@ all values, and never changes tenant or clock context.
 | Module | Responsibility | Plan item |
 |---|---|---|
 | `planning.py` | Pure retrieval planner: intent → `Plan`; the seam a model plugs into later | `E-031` |
+| `expansion.py` | Scoped association traversal with temporal filtering and minimum hop distance | `E-032` |
 | `predicates.py` | Four temporal read modes, compiled SQL, async executor | `RL-043` |
 | `transactions.py` | R1–R5/R7 writes, ablations `A1`/`A2`/`A2b`, archival `(S)∨(C)` | `RL-042` |
 | `retrieval.py` | Dense + lexical channels fused by RRF (`k = 60`) | `RL-050` |
@@ -24,14 +25,14 @@ all values, and never changes tenant or clock context.
 
 [`planning.py`](planning.py) makes `ARCHITECTURE_V2.md` §9's staged retrieval explicit. `plan(intent, …) -> Plan` is a
 pure function: no connection, no clock, no SQL execution, so the same intent yields a byte-identical plan. The executor
-is [`ReadHandlers.execute_plan`](../api/read_handlers.py): it runs the plan's filters in one statement, then routes rows
-into channels, then applies the `V2-D75` procedure ordering.
+is [`ReadHandlers.execute_plan`](../api/read_handlers.py). Candidate generation and expansion each apply the temporal
+and read-set predicates in their own statement. The executor then routes rows and applies `V2-D75` procedure ordering.
 
 | Stage | What it does today |
 |---|---|
 | `plan` | choose the index, the ordered filters, the expansion intent and the route |
 | `candidate_generation` | the temporal predicate + typed-artifact guard + read predicate, before `LIMIT` |
-| `expansion` | nothing yet — `E-032` owns traversal; the boundary exists so `E-036` can measure it |
+| `expansion` | one hop by default, through associations in the request's read set; reached artifacts pass the temporal and read predicates before they can continue |
 | `filter_rerank` | the `V2-D45` re-check; on answer routes, `E-030` procedure applicability (removes only); the per-row facts routing needs; no score |
 | `assemble` | `channel_of` routing, then the recorded-outcome ordering inside `procedures` |
 

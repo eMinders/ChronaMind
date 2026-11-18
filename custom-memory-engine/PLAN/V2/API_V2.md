@@ -181,7 +181,9 @@ sides of the comparison.
   temporal views and belongs to `E-033`.
 
 The read set and temporal predicate are applied together before the candidate limit. Association expansion starts
-from these candidates, applies the same predicates at each hop and may add supplemental rows beyond `limit`.
+from these candidates, applies the same predicates to newly reached artifacts and may add supplemental rows beyond
+`limit`. Each hop also requires the association's own scope and visibility to match the read set. An association
+stored as private at the personal root is eligible only when the request includes a selector for that root.
 The default budget is one hop. At the boundary, expansion returns the rows found so far. Each artifact carries a
 `hop_distance` (zero for a candidate, otherwise the shortest eligible association distance); reached artifacts
 enter the same channel-routing path as candidates. Audit applies the requested belief time to the artifact rows

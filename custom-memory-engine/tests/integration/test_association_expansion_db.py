@@ -7,12 +7,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from psycopg import AsyncConnection
 
-from custom_memory_engine.api.entry import Call, Engine
+from custom_memory_engine.api.entry import Call, CallerContext, Credential, Engine
 from custom_memory_engine.api.read_handlers import QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Runtime
 from custom_memory_engine.engine.expansion import expand_associations
 from custom_memory_engine.engine.planning import Plan
 from custom_memory_engine.engine.predicates import current_state, historical_as_of, reference_instant
+from custom_memory_engine.scope.access import ReadSet, Selector, resolve_read_set
 from tests.integration.test_api_wiring_structure import caller, make_version, world
 from tests.integration.test_lifecycle_transitions import insert_version, seed_source
 from tests.integration.test_migration_m1 import database, rows  # noqa: F401 (fixture)
@@ -67,13 +68,16 @@ async def link(
     edge_type: str = "related_to",
     *,
     user: str = "alice",
+    scope: str | None = None,
+    visibility: str = "private",
 ) -> None:
-    # Owner-seeded fixture edges permit putting a related artifact outside the request's read set.
+    # Keep the edge's scope independent of its endpoints' scopes.
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.user_id', %s, true)", (user,))
         await conn.execute(
-            "INSERT INTO association (id, user_id, from_id, to_id, type, created_by) VALUES (%s, %s, %s, %s, %s, %s)",
-            (f"{origin}:{endpoint}:{edge_type}", user, origin, endpoint, edge_type, user),
+            "INSERT INTO association (id, user_id, from_id, to_id, type, created_by, scope_path, visibility) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (f"{origin}:{endpoint}:{edge_type}", user, origin, endpoint, edge_type, user, scope, visibility),
         )
 
 
@@ -84,6 +88,7 @@ async def reach(
     *,
     user: str = "alice",
     at: datetime | None = None,
+    read_set: ReadSet | None = None,
 ) -> tuple[tuple[str, int], ...]:
     runtime = runtime_for(engine)
     async with runtime.session(user) as conn:
@@ -92,7 +97,7 @@ async def reach(
         expanded = await expand_associations(
             conn,
             query,
-            caller(user).read_set,
+            caller(user).read_set if read_set is None else read_set,
             seeds,
             database_clock=clock,
             hop_budget=budget,
@@ -307,10 +312,62 @@ async def test_expansion_cannot_widen_a_project_selector(database) -> None:  # n
         project = "/u/alice/p/first/"
         await claim(conn, "sibling", scope="/u/alice/p/second/", visibility="project")
         await claim(conn, "seed", scope=project, visibility="project", recorded=RECORDED + DAY)
-        await link(conn, "seed", "sibling")
+        await link(conn, "seed", "sibling", scope=project, visibility="project")
         ctx = caller("alice")
         narrow = await engine.call(ctx, "query", {"request": {"limit": 1, "scope": project}})
         broad = await engine.call(ctx, "query", {"request": {"limit": 1}})
         assert isinstance(narrow, QueryResult) and isinstance(broad, QueryResult)
         assert [(item.artifact_id, item.hop_distance) for item in narrow.facts] == [("seed", 0)]
         assert [(item.artifact_id, item.hop_distance) for item in broad.facts] == [("seed", 0), ("sibling", 1)]
+
+
+@pytest.mark.parametrize(
+    ("source", "target"), [("seed", "neighbor"), ("neighbor", "seed")], ids=["forward", "reverse"]
+)
+async def test_expansion_excludes_a_private_ancestor_link(database, source: str, target: str) -> None:  # noqa: F811
+    async with world(database) as (conn, engine, _):
+        register_read_handlers(engine, runtime_for(engine))
+        project = "/u/alice/p/first/"
+        await claim(conn, "neighbor", scope=project, visibility="project")
+        await claim(conn, "seed", scope=project, visibility="project", recorded=RECORDED + DAY)
+        read_set = resolve_read_set("alice", [Selector.exact(project)], [])
+        narrow = CallerContext.from_credential(Credential("alice", "C", False), write_scope=project, read_set=read_set)
+        broad = caller("alice")
+        request = {"request": {"limit": 1}}
+
+        absent = await engine.call(narrow, "query", request)
+        assert isinstance(absent, QueryResult)
+        assert [(item.artifact_id, item.hop_distance) for item in absent.facts] == [("seed", 0)]
+
+        root_link = await engine.call(broad, "link", {"from": source, "to": target, "type": "related_to"})
+        assert isinstance(root_link, str)
+        assert await rows(conn, "SELECT scope_path, visibility FROM association WHERE id = %s", (root_link,)) == [
+            ("/u/alice/", "private")
+        ]
+        assert await engine.call(narrow, "query", request) == absent
+        broad_result = await engine.call(broad, "query", request)
+        assert isinstance(broad_result, QueryResult)
+        assert [(item.artifact_id, item.hop_distance) for item in broad_result.facts] == [("seed", 0), ("neighbor", 1)]
+
+        await engine.call(broad, "unlink", {"association_id": root_link})
+        await link(conn, source, target, scope=project)
+        authorized = await engine.call(narrow, "query", request)
+        assert isinstance(authorized, QueryResult)
+        assert [(item.artifact_id, item.hop_distance) for item in authorized.facts] == [("seed", 0), ("neighbor", 1)]
+
+
+async def test_expansion_rechecks_the_association_scope_at_the_second_hop(database) -> None:  # noqa: F811
+    async with world(database) as (conn, engine, _):
+        project = "/u/alice/p/first/"
+        for artifact in ("seed", "bridge", "leaf"):
+            await claim(conn, artifact, scope=project, visibility="project")
+        read_set = resolve_read_set("alice", [Selector.exact(project)], [])
+        await link(conn, "seed", "bridge", "part_of", scope=project)
+        assert await reach(engine, ["seed"], 2, read_set=read_set) == (("bridge", 1),)
+
+        # This edge's endpoint is readable, but the edge is outside the selector.
+        await link(conn, "bridge", "leaf", "part_of")
+        assert await reach(engine, ["seed"], 2, read_set=read_set) == (("bridge", 1),)
+
+        await link(conn, "bridge", "leaf", "related_to", scope=project)
+        assert await reach(engine, ["seed"], 2, read_set=read_set) == (("bridge", 1), ("leaf", 2))

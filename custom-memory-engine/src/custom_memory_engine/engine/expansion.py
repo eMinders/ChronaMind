@@ -31,8 +31,9 @@ async def expand_associations(
     ``corroborated_by`` and ``supersedes``. Edge weight does not affect reach or order.
 
     The hop budget bounds supplemental retrieval. At the boundary, return what was found. A budget of
-    zero disables expansion. Every seed and hop must pass the same temporal and read predicates before
-    it can reach another row. Audit filters artifacts at the requested belief time using stored associations.
+    zero disables expansion. Every seed and reached artifact must pass the temporal and read predicates.
+    Each hop also requires an association in the read set. Audit filters artifacts at the requested belief
+    time using readable associations from the stored graph.
     """
     if isinstance(hop_budget, bool) or not isinstance(hop_budget, int) or hop_budget < 0:
         raise ValueError("nonnegative_hop_budget_required")
@@ -40,9 +41,9 @@ async def expand_associations(
         return ()
 
     temporal = compile_predicate(query, alias="m", database_clock=database_clock)
-    readable, read_parameters = read_predicate_named(read_set, "m.scope_path", "m.visibility")
-    # Inline eligible endpoints so PostgreSQL can use each reached ID to look up its row. Recursive UNION
-    # deduplicates (id, hop) at each depth, keeping alternate paths from multiplying the frontier.
+    # Both eligibility CTEs read one table, so the same unqualified selector predicate binds to each table's
+    # own scope and visibility. Inlining lets PostgreSQL combine it with the endpoint lookups.
+    readable, read_parameters = read_predicate_named(read_set, "scope_path", "visibility")
     statement = sql.SQL(
         """
         WITH RECURSIVE eligible AS NOT MATERIALIZED (
@@ -50,6 +51,10 @@ async def expand_associations(
             FROM {versions} AS m
             WHERE {temporal} AND {readable}
               AND m.kind IS NOT NULL AND m.lifecycle IS NOT NULL
+        ), readable_associations AS NOT MATERIALIZED (
+            SELECT from_id, to_id, type
+            FROM {associations}
+            WHERE user_id = %(user_id)s AND {readable}
         ), reached (id, hop) AS (
             SELECT id, 0::bigint FROM eligible
             WHERE id = ANY(%(seeds)s)
@@ -58,13 +63,13 @@ async def expand_associations(
             SELECT m.id, r.hop + 1
             FROM reached AS r
             CROSS JOIN LATERAL (
-                SELECT a.to_id AS id FROM {associations} AS a
-                WHERE a.user_id = %(user_id)s AND a.from_id = r.id
+                SELECT a.to_id AS id FROM readable_associations AS a
+                WHERE a.from_id = r.id
                   AND a.type IN ('related_to', 'contradicts', 'instance_of', 'refines',
                                  'specialises', 'caused_by', 'part_of', 'corroborated_by', 'supersedes')
                 UNION ALL
-                SELECT a.from_id AS id FROM {associations} AS a
-                WHERE a.user_id = %(user_id)s AND a.to_id = r.id
+                SELECT a.from_id AS id FROM readable_associations AS a
+                WHERE a.to_id = r.id
                   AND a.type IN ('related_to', 'contradicts', 'instance_of', 'precedes')
             ) AS endpoint
             JOIN eligible AS m ON m.id = endpoint.id
