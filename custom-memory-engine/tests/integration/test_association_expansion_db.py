@@ -281,7 +281,10 @@ async def test_expanded_stale_abstraction_stays_a_hypothesis(database) -> None: 
         query = {"request": {"limit": 1}}
         fresh = await engine.call(caller("u1"), "query", query)
         assert isinstance(fresh, QueryResult)
-        assert [(row.artifact_id, row.hop_distance) for row in fresh.facts] == [("seed", 0), ("abs1", 1)]
+        assert [(row.artifact_id, row.hop_distance) for row in fresh.facts] == [
+            ("seed", 0),
+            ("abs1", 1),
+        ], f"refused={fresh.refused}, coverage={fresh.coverage}, hypotheses={fresh.hypotheses}"
         assert fresh.hypotheses == ()
         await retire(conn, "mid")
         stale = await engine.call(caller("u1"), "query", query)
