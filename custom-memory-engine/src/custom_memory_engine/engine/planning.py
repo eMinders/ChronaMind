@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 # The five stages of ``ARCHITECTURE_V2.md`` §9, named with the words ``E-036`` (#206) measures, so the planned stages
 # and the measured stages are one list and cannot drift (requirement 5 of E-036, criterion 10 here).
 STAGES: tuple[str, ...] = ("plan", "candidate_generation", "expansion", "filter_rerank", "assemble")
+ASSOCIATION_EXPANSION = "association"
 
 #: Indexes the planner may select, each of which exists in the schema (see this issue's §4.4). A planner that named
 #: an index the database does not have would be a plan for a database that does not exist.
@@ -169,7 +170,11 @@ class Plan:
             raise PlanningError(PLAN_INTENT_REFUSED)
         if isinstance(self.rows, bool) or not isinstance(self.rows, int) or self.rows < 1:
             raise PlanningError(PLAN_INTENT_REFUSED)
-        if self.filters != _filters_for(self.mode) or self.index != TEMPORAL_INDEX or self.expansion != "none":
+        if (
+            self.filters != _filters_for(self.mode)
+            or self.index != TEMPORAL_INDEX
+            or self.expansion not in ("none", ASSOCIATION_EXPANSION)
+        ):
             # a recorded plan replays only what this engine can execute; anything else is refused, not reinterpreted
             raise PlanningError(PLAN_INTENT_REFUSED)
         present = {
@@ -353,8 +358,7 @@ class RuleBasedPlanner:
             route=route,
             index=TEMPORAL_INDEX,
             filters=_filters_for(intent.mode),
-            # E-032 owns traversal: the planner names the intent ("none" for now) and traverses nothing.
-            expansion="none",
+            expansion=ASSOCIATION_EXPANSION,
             rows=intent.limit,
             scopes=tuple(scopes),
             target_time=kept("target_time", intent.target_time),

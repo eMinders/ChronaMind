@@ -1784,3 +1784,44 @@ Python/SQL agreement corpus, vocabulary agreement, the fingerprint-exact rollbac
 `tests/integration/test_procedure_shape_db.py`.
 
 **Status:** decided under the Project Owner's delegation (2026-11-17). Supersedes one storage sentence of `V2-D75`.
+
+---
+
+### V2-D78 — `query` expands over associations by default; the candidate `limit` bounds seeds, not the response (E-032)
+
+**Context.** `E-031` recorded `expansion="none"` in every plan and traversed nothing, because `E-032` owned
+traversal. `E-032` (#202) implements the stage. Its planner now records `expansion="association"` for every intent,
+so **every `query` traverses** — a change in the default behaviour of a public operation, not only a new capability
+behind a flag. `API_V2.md` §4.2 was updated to describe it; until now no decision record said the default changed.
+
+**Decision.** Expansion runs on the answer and audit routes whenever the plan records it, and the planner records it
+for every intent. A recorded plan carrying `expansion="none"` still replays with expansion disabled, so plans written
+before this record keep their behaviour. The default hop budget is **1**.
+
+**Why the limit does not bound the response.** `limit` bounds *candidate generation* — the rows the temporal and read
+predicates admit before `ORDER BY … LIMIT`. Expansion then adds reached rows that are themselves independently
+eligible. Capping the response at `limit` would either drop reached rows the caller is entitled to read or force
+expansion to re-rank against candidates it cannot see, which is `E-033`'s job (`V2-D28`: expansion returns rows;
+channel membership and budgeting belong to the assembler).
+
+**Consequences, recorded rather than hidden.**
+- A response can exceed `limit`. The bound is `limit` seeds plus their reached rows: one hop is capped by migration
+  3's degree cap (32 incident edges per endpoint), so a one-hop response is bounded by `32 × limit`. At `MAX_LIMIT`
+  (1000) that is up to 32,000 rows for one request, with no `resource_limit` raised. `API_V2.md` §4.2 calls
+  `resource_limit` the code for "a declared bound was exceeded … never a silent truncation", and a page-size
+  overrun is one. This is logged as **`E-032-F2`**; the bound's shape and number belong with the cost work that
+  measures it (`E-036`), not with a guess here.
+- The hop budget is **not** in the plan record. `expand_associations` takes it as an argument defaulting to
+  `DEFAULT_HOP_BUDGET`, and the executor does not pass one, so a plan records that expansion happens but not how far.
+  A replay under a different default would traverse differently while reading as the same plan. Recorded as
+  **`E-032-F3`**; adding the field changes `Plan`'s frozen shape and belongs with `E-031`'s record, not this wave.
+- Audit applies the requested belief time to the **artifact** rows and uses the current stored association topology:
+  `association` carries no temporal range. An audit therefore shows what was reachable *now* among what was believed
+  *then*. Documented in `API_V2.md`; historical edge reconstruction is not claimed.
+
+**Evidence.** `engine/expansion.py`; `api/read_handlers.py::execute_plan`'s `expansion` stage;
+`tests/integration/test_association_expansion_db.py` (17 tests, including the three controls and the legacy-plan
+replay); `tests/test_planning.py::test_a_legacy_plan_replays_without_expansion`.
+
+**Status:** decided under the Project Owner's delegation (2026-11-18). Records a default-behaviour change `E-032`
+shipped without a record.
