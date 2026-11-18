@@ -593,7 +593,13 @@ def test_redteam_an_abstraction_in_facts_without_a_bound_is_refused() -> None:
 def test_redteam_an_empty_input_assembles_to_an_empty_result() -> None:
     """No views is not a licence to invent output."""
     assembly = run([])
-    assert assembly == Assembly((), (), (), (), (), 0)
+    assert not assembly.facts and not assembly.hypotheses and not assembly.procedures and not assembly.conflicts
+    assert not assembly.refused and assembly.excluded == 0
+    assert assembly.cost.candidates_considered == assembly.cost.items_rendered == 0
+    assert assembly.cost.tokens_considered == assembly.cost.tokens_rendered == 0
+    assert all(
+        assembly.coverage.channel(name).candidates == 0 for name in ("facts", "hypotheses", "procedures", "conflicts")
+    )
 
 
 def test_every_documented_refusal_reason_is_reachable() -> None:

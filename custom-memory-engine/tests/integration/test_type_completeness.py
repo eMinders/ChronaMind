@@ -669,8 +669,8 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         register_outcome_handlers(engine, runtime)
         unwired = set(engine.unwired_operations())
         assert {"delete", "export"} <= unwired  # W3+ owners: E-037, A-015
-        # query/get (E-033 minimal) and infer (C-021 minimal) are wired under V2-D66 and tested through Engine.call
-        assert not {"query", "get", "infer"} & unwired
+        # query/get/provenance (E-033) and infer (C-021) are wired and exercised through Engine.call
+        assert not {"query", "get", "provenance", "infer"} & unwired
         # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
         assert "create_scope" not in unwired
         # `purge_working` left it when E-026 wired it; it is exercised above through Engine.call only.

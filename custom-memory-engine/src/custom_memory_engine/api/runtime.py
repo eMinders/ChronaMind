@@ -9,8 +9,9 @@ not read is simply not returned, which is why "absent" and "unreadable" are the 
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from secrets import token_bytes
 from typing import Literal, LiteralString, cast
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from psycopg.rows import tuple_row
 from custom_memory_engine.api.contract import Tier
 from custom_memory_engine.api.entry import CallerContext, TargetInfo
 from custom_memory_engine.model.axes import LIFECYCLES, Lifecycle
+from custom_memory_engine.scope.provenance import ProvenanceKey
 from custom_memory_engine.security import tenant_scope
 
 
@@ -46,6 +48,7 @@ class Runtime:
     connection: AsyncConnection
     role: str
     schema_name: str = "cme_engine"
+    provenance_key: ProvenanceKey = field(default_factory=lambda: ProvenanceKey(token_bytes(32)), repr=False)
 
     @asynccontextmanager
     async def session(self, principal: str) -> AsyncIterator[AsyncConnection]:

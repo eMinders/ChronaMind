@@ -12,6 +12,7 @@ from custom_memory_engine.engine.channels import (
     ArtifactView,
     Bound,
     BoundedFact,
+    ChannelBudgets,
     ChannelError,
     ConflictItem,
     ConflictSide,
@@ -307,6 +308,60 @@ def test_an_item_whose_provenance_cannot_be_materialised_is_refused() -> None:
     result = run([view(sources=())])
     assert not result.facts
     assert [(r.artifact_id, r.reason) for r in result.refused] == [("a1", "provenance_unmaterialisable")]
+
+
+def test_channel_budget_reports_truncation_and_exact_hand_counted_coverage() -> None:
+    result = assemble(
+        [
+            view(artifact_id="f1", text="one"),
+            view(artifact_id="f2", text="two"),
+            view(artifact_id="f3", text="three"),
+            view(artifact_id="bad", sources=()),
+            view(lifecycle="retired", artifact_id="retired"),
+        ],
+        caller_user_id=CALLER,
+        read_set=READ_SET,
+        key=KEY,
+        staleness=never_stale,
+        budgets=ChannelBudgets.from_value({"facts": 1}),
+    )
+
+    coverage = result.coverage.channel("facts")
+    assert [item.artifact_id for item in result.facts] == ["f1"]
+    assert (
+        coverage.candidates,
+        coverage.returned,
+        coverage.truncated,
+        coverage.token_budget,
+        coverage.tokens_used,
+        coverage.tokens_truncated,
+    ) == (4, 1, 2, 1, 1, 2)
+    assert [(item.artifact_id, item.reason) for item in coverage.refused] == [("bad", "provenance_unmaterialisable")]
+    assert (result.cost.candidates_considered, result.cost.items_rendered) == (5, 1)
+
+
+def test_one_token_budget_returns_one_of_three_facts_and_reports_two_truncated() -> None:
+    result = assemble(
+        [view(artifact_id=f"f{index}", text="one") for index in range(3)],
+        caller_user_id=CALLER,
+        read_set=READ_SET,
+        key=KEY,
+        staleness=never_stale,
+        budgets=ChannelBudgets.from_value({"facts": 1}),
+    )
+
+    coverage = result.coverage.channel("facts")
+    assert [item.artifact_id for item in result.facts] == ["f0"]
+    assert (coverage.candidates, coverage.returned, coverage.truncated, coverage.tokens_truncated) == (3, 1, 2, 2)
+
+
+def test_channel_budget_validation_rejects_bad_fields_and_inconsistent_facts_floor() -> None:
+    with pytest.raises(ChannelError, match="channel_budget_field_unknown"):
+        ChannelBudgets.from_value({"fact": 1})
+    with pytest.raises(ChannelError, match="channel_budget_field_invalid"):
+        ChannelBudgets.from_value({"facts": True})
+    with pytest.raises(ChannelError, match="facts_floor_exceeds_total_budget"):
+        ChannelBudgets(facts=8, total_tokens=4, facts_floor_tokens=5)
 
 
 # --- other channels and fail-closed behaviour ---------------------------------------------------------

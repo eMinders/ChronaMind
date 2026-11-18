@@ -9,9 +9,11 @@ from datetime import UTC, datetime
 
 import pytest
 
+from custom_memory_engine.api.entry import EntryError
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.read_handlers import Artifact, QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Receipt
+from custom_memory_engine.engine.provenance import MAX_PROVENANCE_DEPTH, ProvenanceView
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.profile import parse_profile
 from tests.integration.test_api_wiring_structure import caller, database, forbidden, rows, world  # noqa: F401
@@ -84,6 +86,7 @@ async def test_get_returns_what_ingest_stored(database) -> None:  # noqa: F811
         assert artifact.content == "a CI run failed"
         assert artifact.channel == "facts"
         assert artifact.scope_path == "/u/alice/"
+        assert len(artifact.provenance) == 1
 
 
 async def test_get_refuses_another_users_artifact_exactly_like_a_missing_one(database) -> None:  # noqa: F811
@@ -97,6 +100,16 @@ async def test_get_refuses_another_users_artifact_exactly_like_a_missing_one(dat
         foreign = await forbidden(engine, caller("bob"), "get", {"artifact_id": receipt.id})
         missing = await forbidden(engine, caller("bob"), "get", {"artifact_id": "no-such-artifact"})
         assert (foreign.code, foreign.detail) == (missing.code, missing.detail) == ("forbidden", None)
+        foreign_provenance = await forbidden(engine, caller("bob"), "provenance", {"artifact_id": receipt.id})
+        missing_provenance = await forbidden(engine, caller("bob"), "provenance", {"artifact_id": "no-such-artifact"})
+        assert (
+            (foreign_provenance.code, foreign_provenance.detail)
+            == (
+                missing_provenance.code,
+                missing_provenance.detail,
+            )
+            == ("forbidden", None)
+        )
 
 
 async def test_query_groups_stored_episodes_into_the_facts_channel(database) -> None:  # noqa: F811
@@ -116,6 +129,61 @@ async def test_query_groups_stored_episodes_into_the_facts_channel(database) -> 
         assert {item.content for item in result.facts} == {f"observed event {i}" for i in range(3)}
         assert result.hypotheses == () and result.procedures == () and result.conflicts == ()
         assert all(item.channel == "facts" for item in result.facts)
+        assert all(item.provenance for item in result.facts)
+        assert len(result.provenance_bundle) == len(result.facts)
+
+
+async def test_query_reports_budget_truncation_and_exact_coverage(database) -> None:  # noqa: F811
+    async with world(database) as (conn, engine, _schema):
+        assert isinstance(engine.resolver, DbTargets)
+        runtime = engine.resolver.runtime
+        register_ingest_handlers(engine, runtime, CODING_PROFILE)
+        register_read_handlers(engine, runtime)
+        for index, content in enumerate(("a", "b", "c")):
+            await engine.call(caller("alice"), "ingest_episode", episode("/u/alice/", f"budget-{index}", content))
+
+        result = await engine.call(
+            caller("alice"),
+            "query",
+            {
+                "request": {
+                    "scope": "/u/alice/",
+                    "budget": {
+                        "facts": 1,
+                    },
+                }
+            },
+        )
+        assert isinstance(result, QueryResult)
+        coverage = result.coverage.channel("facts")
+        assert (len(result.facts), coverage.candidates, coverage.returned, coverage.truncated) == (1, 3, 1, 2)
+        assert (coverage.tokens_used, coverage.tokens_truncated) == (1, 2)
+        assert result.cost.candidates_considered == 3
+        assert result.cost.items_rendered == 1
+
+
+async def test_provenance_is_bounded_and_only_reachable_through_engine_call(database) -> None:  # noqa: F811
+    async with world(database) as (_, engine, _schema):
+        assert isinstance(engine.resolver, DbTargets)
+        runtime = engine.resolver.runtime
+        register_ingest_handlers(engine, runtime, CODING_PROFILE)
+        register_read_handlers(engine, runtime)
+        receipt = await engine.call(caller("alice"), "ingest_episode", episode("/u/alice/", "prov-1", "visible"))
+        assert isinstance(receipt, Receipt)
+
+        result = await engine.call(
+            caller("alice"), "provenance", {"artifact_id": receipt.id, "depth": MAX_PROVENANCE_DEPTH}
+        )
+        assert isinstance(result, ProvenanceView)
+        assert result.artifact_id == receipt.id
+        assert len(result.edges) == 1
+        with pytest.raises(EntryError) as excessive:
+            await engine.call(
+                caller("alice"),
+                "provenance",
+                {"artifact_id": receipt.id, "depth": MAX_PROVENANCE_DEPTH + 1},
+            )
+        assert getattr(excessive.value, "detail", None) == "depth_out_of_range"
 
 
 async def test_query_is_scoped_to_the_caller(database) -> None:  # noqa: F811
@@ -213,4 +281,4 @@ async def test_query_and_get_are_no_longer_unwired(database) -> None:  # noqa: F
         assert isinstance(engine.resolver, DbTargets)
         register_read_handlers(engine, engine.resolver.runtime)
         unwired = engine.unwired_operations()
-        assert "query" not in unwired and "get" not in unwired
+        assert not {"query", "get", "provenance"} & set(unwired)

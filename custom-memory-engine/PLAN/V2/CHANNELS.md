@@ -156,8 +156,14 @@ Membership decides *where*; these rules decide *what*. They are testable against
 | R4 | A `hypotheses` item carries its support summary and uncertainty and a visible label: `unverified`, or `verified, needs re-verification` when stale. | `I1′`, 9.2 |
 | R5 | A `conflicts` item shows **both sides** with ids and states; it never merges them or picks one. | 9.1, Invariant 6 |
 | R6 | Provenance to a scope the caller cannot read is opaque: a per-caller opaque handle with **no** content, scope path, scope kind or source type (**decided, `V2-D37`**; `scope.provenance.render_bundle`). | 9.3, `I17`, `V2-D37` |
-| R7 | Each channel has its own token budget; the result reports per-channel consumption (`coverage`) so a caller can see that `hypotheses` crowded out `facts`. A floor for `facts` is reserved before `hypotheses` is filled. | 9.3 |
+| R7 | Each channel has a whitespace-token budget, counted with `engine.render.default_token_counter`; the result reports candidates (after temporal/read/applicability filters), returned, refused-with-reason, truncated, tokens used and tokens omitted. A shared total budget reserves `facts_floor_tokens` before hypotheses, procedures and conflicts are filled, then fills remaining facts. Ordering within a channel is stable; truncation never edits an item's text. | 9.3, E-033 |
 | R8 | The temporal predicate is a **filter**, never a score term. | 9.3, v1 |
+
+The default per-channel ceiling is 2048 tokens, with a 256-token facts floor; an explicit smaller facts or total
+ceiling reduces the default floor accordingly. Token counts are a deterministic whitespace proxy, not a model
+tokenizer. Coverage is measured after the temporal predicate, read set, association expansion, and procedure
+applicability filter, before assembly budgets. Refusals remain visible as content-free `(artifact_id, reason)` records;
+budget omissions are reported separately and are never represented as refusals.
 
 ## 4. Property-test sketch
 

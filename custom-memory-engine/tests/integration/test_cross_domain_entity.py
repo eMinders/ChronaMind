@@ -24,6 +24,7 @@ from custom_memory_engine.api.handlers import Handlers
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.read_handlers import QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Receipt, Runtime
+from custom_memory_engine.engine.provenance import ProvenanceView
 from custom_memory_engine.engine.transactions import (
     CandidateVersionInput,
     DerivationInput,
@@ -271,7 +272,7 @@ async def test_two_scopes_keep_claims_and_entities_private_while_explicit_link_i
         assert await _query_ids(engine, "alice", personal_scope) == {personal_claim.id}
         assert await _scope_memory_ids(runtime, "alice", work_read_set) == {work_claim.id}
         assert await _scope_memory_ids(runtime, "alice", personal_read_set) == {personal_claim.id}
-        assert "provenance" in set(engine.unwired_operations())  # E-039's remaining wiring; row 5 renders directly
+        assert "provenance" not in set(engine.unwired_operations())
         # A link is a row; a scope is its path, so nothing records the two scopes (V2-D65).
         links_cursor = await connection.execute(
             "SELECT entity_a, entity_b, relation FROM entity_link WHERE user_id = 'alice'"
@@ -326,6 +327,13 @@ async def test_two_scopes_keep_claims_and_entities_private_while_explicit_link_i
         assert bundle[0].derivation_type == "summary"
         assert work_claim.id not in repr(bundle[0]) and work_scope not in repr(bundle[0])
         assert not hasattr(bundle[0], "source_type") and not hasattr(bundle[0], "scope_path")
+        rendered = await engine.call(
+            scoped_caller("alice", "C", personal_scope),
+            "provenance",
+            {"artifact_id": summary.version_id},
+        )
+        assert isinstance(rendered, ProvenanceView)
+        assert len(rendered.edges) == 1 and isinstance(rendered.edges[0].reference, OpaqueReference)
 
 
 @pytest.mark.integration

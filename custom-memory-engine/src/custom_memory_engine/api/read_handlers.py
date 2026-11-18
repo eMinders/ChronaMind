@@ -1,4 +1,4 @@
-"""Read-path handlers for ``get`` and ``query``, including temporal retrieval and association expansion.
+"""Read-path handlers for ``get``, ``query`` and ``provenance``.
 
 ``API_V2.md`` §4.2 defines ``get`` (one artifact by id) and ``query`` (staged retrieval returning the four channels
 of ``CHANNELS.md``). Both are owned by ``E-033``; that task is gated behind ``G2``, and the Project Owner authorized
@@ -27,10 +27,12 @@ filters, the expansion intent, the route (``channels`` or ``audit``) and the fiv
 names **no** channel membership or ranking. The request limit bounds candidate generation. E-032 follows associations
 from those candidates and filters each reached row as it enters expansion (``V2-D76``).
 
-**What is minimal here, and what stays with E-033.** Implemented: single-artifact retrieval with channel
-classification; scope-filtered retrieval grouped into the four channels; the four temporal modes. Not implemented here,
-and still ``E-033``'s obligation: channel **budgets** and ranking (``E-033``), the **cost** report (``E-036``),
-the ``change`` mode (``E-033``) and ``refine`` (``E-034``). Answer routes consume E-038's derived staleness.
+**Assembly (E-033).** Query results now pass through the pure four-channel assembler, with per-channel token budgets,
+reported refusals/truncation, coverage and assembly cost. Each returned artifact carries a provenance bundle.
+``get`` returns its bundle; ``provenance`` traverses readable lineage to a bounded depth and stops at opaque sources.
+``change`` remains deliberately unwired: the existing decision record does not define the diff key or its row
+outcomes, so the mode refusal remains until that contract gap is decided. Per-stage collection beyond assembly is
+``E-036``'s responsibility; ``refine`` remains ``E-034``'s.
 
 **Why nothing below ``Engine.call`` skips authorisation.** The caller arrives already authorised for the *operation*;
 what decides which **rows** are visible is row-level security, bound to the authenticated principal by
@@ -55,7 +57,22 @@ from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Runtime
-from custom_memory_engine.engine.channels import Channel, ChannelError, Verification, channel_of, stale_of
+from custom_memory_engine.engine.channels import (
+    ArtifactView,
+    AssemblyCost,
+    Bound,
+    BoundedFact,
+    Channel,
+    ChannelBudgets,
+    ChannelCoverage,
+    ChannelError,
+    ConflictSide,
+    CoverageReport,
+    Verification,
+    assemble,
+    channel_of,
+    stale_of,
+)
 from custom_memory_engine.engine.expansion import expand_associations
 from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
 from custom_memory_engine.engine.planning import (
@@ -87,6 +104,14 @@ from custom_memory_engine.engine.predicates import (
 from custom_memory_engine.engine.procedure_matching import ApplicabilityRequest, ArtifactFacts, applicable
 from custom_memory_engine.engine.procedure_ranking import order_procedures
 from custom_memory_engine.engine.procedure_shape import NO_SHAPE, Precondition, ProcedureShape, shapes_for
+from custom_memory_engine.engine.provenance import (
+    DEFAULT_PROVENANCE_DEPTH,
+    MAX_PROVENANCE_DEPTH,
+    ProvenanceView,
+    bundles_for_artifacts,
+    provenance_view,
+    sources_for_artifacts,
+)
 from custom_memory_engine.engine.staleness import ClosureCache, staleness_inputs
 from custom_memory_engine.model.axes import Kind, Lifecycle
 from custom_memory_engine.scope.access import (
@@ -98,6 +123,7 @@ from custom_memory_engine.scope.access import (
     row_visible,
 )
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
+from custom_memory_engine.scope.provenance import ProvenanceReference, ProvenanceSource
 
 logger = structlog.get_logger(__name__)
 
@@ -114,8 +140,8 @@ class Artifact:
     """One stored artifact returned by ``get`` or ``query``, with the query's association hop distance."""
 
     __slots__ = (
-        "artifact_id", "channel", "content", "hop_distance", "kind", "lifecycle",
-        "preconditions", "scope_path", "steps", "verification",
+        "artifact_id", "bound", "channel", "conflict_sides", "content", "hop_distance", "kind", "label",
+        "lifecycle", "preconditions", "provenance", "scope_path", "steps", "support_summary", "verification",
     )  # fmt: skip
 
     def __init__(
@@ -130,6 +156,11 @@ class Artifact:
         verification: str,
         shape: ProcedureShape | None = None,
         hop_distance: int = 0,
+        provenance: tuple[ProvenanceReference, ...] = (),
+        label: str | None = None,
+        support_summary: str = "",
+        bound: Bound | None = None,
+        conflict_sides: tuple[ConflictSide, ...] = (),
     ) -> None:
         self.artifact_id = artifact_id
         self.kind = kind
@@ -139,6 +170,11 @@ class Artifact:
         self.channel = channel
         self.verification = verification
         self.hop_distance = hop_distance
+        self.provenance = provenance
+        self.label = label
+        self.support_summary = support_summary
+        self.bound = bound
+        self.conflict_sides = conflict_sides
         # E-030: a procedure's preconditions and steps (empty when stored without them); None on every other kind
         self.preconditions: tuple[Precondition, ...] | None = None if shape is None else shape.preconditions
         self.steps: tuple[str, ...] | None = None if shape is None else shape.steps
@@ -155,6 +191,11 @@ class Artifact:
             self.preconditions,
             self.steps,
             self.hop_distance,
+            self.provenance,
+            self.label,
+            self.support_summary,
+            self.bound,
+            self.conflict_sides,
         )
 
     def __eq__(self, other: object) -> bool:
@@ -170,13 +211,15 @@ class Artifact:
 
 
 class QueryResult:
-    """The four channels plus the artifacts refused as illegal tuples (``API_V2.md`` §4.2, minimal form).
+    """The four channels, explicit per-channel coverage and assembly cost (``API_V2.md`` §4.2).
 
     ``is_audit`` is ``True`` only for ``audit_as_of`` queries; ``TECHNICAL_SPECIFICATION.md`` 3.5 forbids
     using those results as answer context, so callers must check this flag before treating the result as one.
     """
 
-    __slots__ = ("audit", "conflicts", "facts", "hypotheses", "is_audit", "procedures", "refused")
+    __slots__ = (
+        "audit", "conflicts", "coverage", "cost", "facts", "hypotheses", "is_audit", "procedures", "refused"
+    )  # fmt: skip
 
     def __init__(
         self,
@@ -188,6 +231,8 @@ class QueryResult:
         refused: Sequence[tuple[str, str]] = (),
         audit: Sequence[Artifact] = (),
         is_audit: bool = False,
+        coverage: CoverageReport | None = None,
+        cost: AssemblyCost | None = None,
     ) -> None:
         self.facts = tuple(facts)
         self.hypotheses = tuple(hypotheses)
@@ -196,12 +241,24 @@ class QueryResult:
         self.refused = tuple(refused)
         self.audit = tuple(audit)
         self.is_audit = is_audit
+        empty = ChannelCoverage(0, 0, (), 0, 0, 0, 0)
+        self.coverage = coverage or CoverageReport(empty, empty, empty, empty)
+        self.cost = cost or AssemblyCost(0, 0, 0, 0)
 
     def channel(self, name: str) -> tuple[Artifact, ...]:
         """The items in one channel, by the ``CHANNELS.md`` name."""
         if name not in {"facts", "hypotheses", "procedures", "conflicts"}:
             raise ValueError("unknown_channel")
         return cast(tuple[Artifact, ...], getattr(self, name))
+
+    @property
+    def provenance_bundle(self) -> tuple[tuple[str, tuple[ProvenanceReference, ...]], ...]:
+        """Per-artifact provenance in channel order; audit rows never enter answer-context provenance."""
+        return tuple(
+            (artifact.artifact_id, artifact.provenance)
+            for name in ("facts", "hypotheses", "procedures", "conflicts")
+            for artifact in self.channel(name)
+        )
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, QueryResult):
@@ -214,6 +271,8 @@ class QueryResult:
             self.refused,
             self.audit,
             self.is_audit,
+            self.coverage,
+            self.cost,
         ) == (
             other.facts,
             other.hypotheses,
@@ -222,6 +281,8 @@ class QueryResult:
             other.refused,
             other.audit,
             other.is_audit,
+            other.coverage,
+            other.cost,
         )
 
     def __repr__(self) -> str:
@@ -255,7 +316,7 @@ def _channel_for(
 
 
 class ReadHandlers:
-    """``get`` and ``query``, bound to one :class:`Runtime`."""
+    """Read operations bound to one :class:`Runtime`."""
 
     def __init__(
         self,
@@ -294,6 +355,67 @@ class ReadHandlers:
                 (user, list(ids)),
             )
             return {str(row[0]): str(row[1]) for row in await cursor.fetchall()}
+
+    async def _bounds_of(
+        self, connection: AsyncConnection, user: str, ids: Sequence[str]
+    ) -> tuple[dict[str, Bound], dict[str, str]]:
+        """Return complete verified-abstraction bounds and their content-free support summaries."""
+        if not ids:
+            return {}, {}
+        bounds: dict[str, Bound] = {}
+        summaries: dict[str, str] = {}
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT s.version_id, s.support_count, s.opportunity_count, s.confidence, "
+                    "s.coverage, s.confidence_method_id, m.version, s.expires_at, v.verified_on "
+                    "FROM {s} AS s "
+                    "LEFT JOIN {m} AS m ON m.id = s.confidence_method_id "
+                    "LEFT JOIN LATERAL ("
+                    "  SELECT verified_on FROM {v} "
+                    "  WHERE version_id = s.version_id AND user_id = s.user_id AND outcome = 'verified' "
+                    "  ORDER BY verified_on DESC LIMIT 1"
+                    ") AS v ON true "
+                    "WHERE s.user_id = %s AND s.version_id = ANY(%s)"
+                ).format(
+                    s=self.runtime.table("abstraction_stats"),
+                    m=self.runtime.table("method"),
+                    v=self.runtime.table("verification"),
+                ),
+                (user, list(ids)),
+            )
+            for (
+                artifact_id,
+                support,
+                opportunity,
+                confidence,
+                coverage,
+                method_id,
+                method_version,
+                expires,
+                verified,
+            ) in await cursor.fetchall():
+                identifier = str(artifact_id)
+                summaries[identifier] = f"{support} supporting observations of {opportunity} opportunities"
+                if (
+                    confidence is None
+                    or method_id is None
+                    or method_version is None
+                    or expires is None
+                    or verified is None
+                ):
+                    continue
+                bounds[identifier] = Bound(
+                    support_count=int(support),
+                    opportunity_count=int(opportunity),
+                    confidence_lower=float(confidence),
+                    coverage=float(coverage),
+                    method_id=str(method_id),
+                    method_version=str(method_version),
+                    verified_on=verified.isoformat(),
+                    expires_at=expires,
+                )
+        return bounds, summaries
 
     async def _facts_of(
         self, connection: AsyncConnection, user: str, rows: Sequence[ScopedRow]
@@ -401,6 +523,18 @@ class ReadHandlers:
                     connection, user_id=user, procedure_ids=[str(identifier)], schema_name=self.runtime.schema_name
                 )
                 shape = shapes.get(str(identifier), NO_SHAPE)
+            provenance = (
+                await bundles_for_artifacts(
+                    connection,
+                    user,
+                    [str(identifier)],
+                    read_set=call.ctx.read_set,
+                    key=self.runtime.provenance_key,
+                    schema_name=self.runtime.schema_name,
+                )
+            ).get(str(identifier), ())
+            if not provenance:
+                raise EntryError("internal_error")
         channel = _channel_for(str(kind), str(lifecycle), verification, contradicted, stale)
         if channel is None or channel == "none":
             raise EntryError("forbidden")  # a retired or illegal tuple is not rendered
@@ -413,7 +547,43 @@ class ReadHandlers:
             channel=channel,
             verification=verification,
             shape=shape,
+            provenance=provenance,
         )
+
+    async def provenance(self, call: Call) -> ProvenanceView:
+        """Return at most eight visible lineage levels; an unreadable source is an opaque leaf."""
+        artifact_id = call.arguments.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            raise EntryError("validation_error", "artifact_id_required")
+        depth = call.arguments.get("depth", DEFAULT_PROVENANCE_DEPTH)
+        if isinstance(depth, bool) or not isinstance(depth, int) or not 1 <= depth <= MAX_PROVENANCE_DEPTH:
+            raise EntryError("validation_error", "depth_out_of_range")
+        user = call.ctx.principal
+        try:
+            async with self.runtime.session(user) as connection, connection.cursor(row_factory=tuple_row) as cursor:
+                await cursor.execute(
+                    sql.SQL("SELECT scope_path, visibility FROM {v} WHERE id = %s AND user_id = %s").format(
+                        v=self.runtime.table("memory_version")
+                    ),
+                    (artifact_id, user),
+                )
+                row = await cursor.fetchone()
+                if row is None or not row_visible(call.ctx.read_set, row[0], row[1]):
+                    raise EntryError("forbidden")
+                view = await provenance_view(
+                    connection,
+                    user,
+                    artifact_id,
+                    depth=depth,
+                    read_set=call.ctx.read_set,
+                    key=self.runtime.provenance_key,
+                    schema_name=self.runtime.schema_name,
+                )
+                if not view.edges:
+                    raise EntryError("internal_error")
+                return view
+        except InsufficientPrivilege as exc:
+            raise EntryError("forbidden") from exc
 
     # -- temporal modes (E-031, V2-D73) ------------------------------------------------------------------------
 
@@ -548,7 +718,7 @@ class ReadHandlers:
             entries.append(ReadEntry(scope.path, cast(frozenset[Visibility], wanted), cast(SelectorMode, scope.mode)))
         return ReadSet(tuple(entries), ())
 
-    async def execute_plan(self, call: Call, plan: Plan) -> QueryResult:
+    async def execute_plan(self, call: Call, plan: Plan, *, budgets: ChannelBudgets | None = None) -> QueryResult:
         """Run ``plan`` for ``call``: the execution half of ``query``, separate from planning (``E-031`` W2).
 
         Stages, in plan order, each inside the observer's boundary (``E-036`` measures these):
@@ -579,7 +749,16 @@ class ReadHandlers:
         effective_read_set = self._within(plan, call.ctx.read_set)
         if effective_read_set.empty:
             return QueryResult(is_audit=is_audit)
+        if budgets is None:
+            request = call.arguments.get("request")
+            try:
+                budgets = ChannelBudgets.from_value(request.get("budget") if isinstance(request, Mapping) else None)
+            except ChannelError as exc:
+                raise EntryError("validation_error", exc.code) from None
         read_filter, read_parameters = read_predicate_named(effective_read_set, "m.scope_path", "m.visibility")
+        source_map: Mapping[str, tuple[ProvenanceSource, ...]] = {}
+        bounds: dict[str, Bound] = {}
+        support_summaries: dict[str, str] = {}
         try:
             async with self.runtime.session(user) as connection:
                 with self.observer("candidate_generation"):
@@ -632,59 +811,161 @@ class ReadHandlers:
                     # move. A procedure stored without preconditions is always applicable (the empty conjunction).
                     if PROCEDURE_APPLICABILITY in plan.filters:
                         rows = await self._applicable_rows(connection, user, plan, rows, shapes)
+                    if not is_audit:
+                        source_map = await sources_for_artifacts(
+                            connection, user, [row.id for row in rows], schema_name=self.runtime.schema_name
+                        )
+                        bounds, support_summaries = await self._bounds_of(
+                            connection, user, [row.id for row in rows if row.kind == "abstraction"]
+                        )
         except InsufficientPrivilege as exc:
             raise EntryError("forbidden") from exc
         except TemporalQueryError as exc:
             raise EntryError("validation_error", exc.code) from exc
 
         with self.observer("assemble"):
-            buckets: dict[str, list[Artifact]] = {"facts": [], "hypotheses": [], "procedures": [], "conflicts": []}
-            audited: list[Artifact] = []
-            refused: list[tuple[str, str]] = []
+            if is_audit:
+                audited: list[Artifact] = []
+                refused: list[tuple[str, str]] = []
+                for row in rows:
+                    verification = verifications.get(row.id, "none")
+                    channel = _channel_for(
+                        row.kind, row.lifecycle, verification, row.id in contradicted, row.id in stale
+                    )
+                    if channel is None:
+                        refused.append((row.id, "illegal_artifact_tuple"))
+                        continue
+                    audited.append(
+                        Artifact(
+                            artifact_id=row.id,
+                            kind=row.kind,
+                            lifecycle=row.lifecycle,
+                            content=row.content,
+                            scope_path=row.scope_path,
+                            channel=channel,
+                            verification=verification,
+                            shape=shapes.get(row.id, NO_SHAPE) if row.kind == "procedure" else None,
+                            hop_distance=row.hop_distance,
+                        )
+                    )
+                return QueryResult(audit=audited, refused=refused, is_audit=True)
+
+            rows_by_id = {row.id: row for row in rows}
+            views: list[ArtifactView] = []
             for row in rows:
-                verification = verifications.get(row.id, "none")
-                channel = _channel_for(row.kind, row.lifecycle, verification, row.id in contradicted, row.id in stale)
-                if channel is None:
-                    refused.append((row.id, "illegal_artifact_tuple"))
-                    continue
-                artifact = Artifact(
-                    artifact_id=row.id,
+                counterparts = tuple(
+                    ConflictSide(
+                        other_id,
+                        cast(Lifecycle, rows_by_id[other_id].lifecycle),
+                        rows_by_id[other_id].content,
+                    )
+                    for other_id in sorted(contradicted.intersection(rows_by_id) - {row.id})
+                )
+                views.append(
+                    ArtifactView(
+                        artifact_id=row.id,
+                        kind=cast(Kind, row.kind),
+                        lifecycle=cast(Lifecycle, row.lifecycle),
+                        verification=cast(Verification, verifications.get(row.id, "none")),
+                        text=row.content,
+                        sources=source_map.get(row.id, ()),
+                        open_contradiction=row.id in contradicted,
+                        bound=bounds.get(row.id),
+                        support_summary=support_summaries.get(row.id, ""),
+                        counterparts=counterparts,
+                    )
+                )
+            assembled = assemble(
+                views,
+                caller_user_id=user,
+                read_set=effective_read_set,
+                key=self.runtime.provenance_key,
+                staleness=lambda view: view.artifact_id in stale,
+                budgets=budgets,
+            )
+
+            def to_artifact(
+                artifact_id: str,
+                channel: Channel,
+                content: str,
+                provenance: tuple[ProvenanceReference, ...],
+                *,
+                label: str | None = None,
+                support_summary: str = "",
+                bound: Bound | None = None,
+                conflict_sides: tuple[ConflictSide, ...] = (),
+            ) -> Artifact:
+                row = rows_by_id[artifact_id]
+                return Artifact(
+                    artifact_id=artifact_id,
                     kind=row.kind,
                     lifecycle=row.lifecycle,
-                    content=row.content,
+                    content=content,
                     scope_path=row.scope_path,
                     channel=channel,
-                    verification=verification,
-                    shape=shapes.get(row.id, NO_SHAPE) if row.kind == "procedure" else None,
+                    verification=verifications.get(artifact_id, "none"),
+                    shape=shapes.get(artifact_id, NO_SHAPE) if row.kind == "procedure" else None,
                     hop_distance=row.hop_distance,
+                    provenance=provenance,
+                    label=label,
+                    support_summary=support_summary,
+                    bound=bound,
+                    conflict_sides=conflict_sides,
                 )
-                if is_audit:
-                    audited.append(artifact)
-                    continue
-                if channel == "none":
-                    continue
-                buckets[channel].append(artifact)
-            if is_audit:
-                return QueryResult(audit=audited, refused=refused, is_audit=True)
-            # E-027 (V2-D75): procedures are ordered by recorded outcome, then recency, then id. This runs **after**
-            # channel routing, so it cannot move an item between channels (`CHANNELS.md`, `I1'`): a contested or
-            # retired procedure never reached this bucket, so no statistic can promote it. Other kinds keep the
-            # temporal read's own order untouched.
-            if buckets["procedures"]:
-                by_id = {artifact.artifact_id: artifact for artifact in buckets["procedures"]}
-                buckets["procedures"] = [by_id[procedure_id] for procedure_id in order_procedures(by_id, stats)]
+
+            facts = []
+            for item in assembled.facts:
+                bound = item.bound if isinstance(item, BoundedFact) else None
+                facts.append(to_artifact(item.artifact_id, "facts", item.text, item.provenance, bound=bound))
+            hypotheses = [
+                to_artifact(
+                    item.artifact_id,
+                    "hypotheses",
+                    item.text,
+                    item.provenance,
+                    label=item.label,
+                    support_summary=item.support_summary,
+                    bound=item.bound,
+                )
+                for item in assembled.hypotheses
+            ]
+            procedure_items = {
+                item.artifact_id: to_artifact(item.artifact_id, "procedures", item.text, item.provenance)
+                for item in assembled.procedures
+            }
+            if procedure_items:
+                procedure_order = order_procedures(procedure_items, stats)
+                procedures = [procedure_items[artifact_id] for artifact_id in procedure_order]
+            else:
+                procedures = []
+            conflicts = [
+                to_artifact(
+                    item.artifact_id,
+                    "conflicts",
+                    rows_by_id[item.artifact_id].content,
+                    item.provenance,
+                    conflict_sides=item.sides,
+                )
+                for item in assembled.conflicts
+            ]
             return QueryResult(
-                facts=buckets["facts"],
-                hypotheses=buckets["hypotheses"],
-                procedures=buckets["procedures"],
-                conflicts=buckets["conflicts"],
-                refused=refused,
+                facts=facts,
+                hypotheses=hypotheses,
+                procedures=procedures,
+                conflicts=conflicts,
+                refused=[(item.artifact_id, item.reason) for item in assembled.refused],
+                coverage=assembled.coverage,
+                cost=assembled.cost,
             )
 
     async def query(self, call: Call) -> QueryResult:
         request = call.arguments.get("request")
         if not isinstance(request, Mapping):
             raise EntryError("validation_error", "request_required")
+        try:
+            budgets = ChannelBudgets.from_value(request.get("budget"))
+        except ChannelError as exc:
+            raise EntryError("validation_error", exc.code) from None
         limit = request.get("limit", DEFAULT_LIMIT)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIMIT:
             raise EntryError("validation_error", "limit_out_of_range")
@@ -722,7 +1003,7 @@ class ReadHandlers:
             except PlanningError as exc:
                 raise EntryError("validation_error", exc.code) from None
         self.recorder(plan)
-        return await self.execute_plan(call, plan)
+        return await self.execute_plan(call, plan, budgets=budgets)
 
     @staticmethod
     def _granted_for(read_set: ReadSet, path: str) -> tuple[ReadEntry, ...]:
@@ -749,7 +1030,7 @@ def register_read_handlers(
     recorder: PlanRecorder | None = None,
     observer: StageObserver | None = None,
 ) -> ReadHandlers:
-    """Wire ``get`` and ``query`` onto ``engine``.
+    """Wire ``get``, ``query`` and ``provenance`` onto ``engine``.
 
     The three keyword arguments are ``E-031``'s seams and are all optional, so the production wiring in
     ``api/wiring.py`` is unchanged: the rule-based planner, no recording, no measurement.
@@ -758,6 +1039,7 @@ def register_read_handlers(
     table: Mapping[str, Handler] = {
         "get": handlers.get,
         "query": handlers.query,
+        "provenance": handlers.provenance,
     }
     for name, handler in table.items():
         engine.register(name, handler)
