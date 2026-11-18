@@ -427,7 +427,12 @@ async def test_an_episode_that_opens_a_contradiction_is_retained_and_the_claim_s
             ctx("alice"), "link", {"from": w.fact_episode, "to": w.claim, "type": "related_to", "weight": 1}
         )
         assert isinstance(contradiction, str) and isinstance(related, str)
-        assert w.claim in {a.artifact_id for a in (await query(engine, REPO)).conflicts}
+        repo_view = await query(engine, REPO)
+        assert w.claim not in {a.artifact_id for a in repo_view.conflicts}
+        assert (w.claim, "conflict_counterpart_missing") in repo_view.refused
+        complete_view = await engine.call(ctx("alice"), "query", {"request": {}})
+        assert isinstance(complete_view, QueryResult)
+        assert w.claim in {a.artifact_id for a in complete_view.conflicts}
         before = await snapshot(conn)
         receipt = await purge_scope(engine, SESSION)
         assert (receipt.purged_episodes, receipt.retained_as_evidence) == (1, 3)
@@ -435,7 +440,12 @@ async def test_an_episode_that_opens_a_contradiction_is_retained_and_the_claim_s
         assert set(diff) == {"memory_version", "memory_evidence", "association", "audit_event"}, sorted(diff)
         assert [row["id"] for row in diff["memory_version"][0]] == [w.fact_episode]
         assert [row["id"] for row in diff["association"][0]] == [related] and diff["association"][1] == []
-        assert w.claim in {a.artifact_id for a in (await query(engine, REPO)).conflicts}
+        repo_view = await query(engine, REPO)
+        assert w.claim not in {a.artifact_id for a in repo_view.conflicts}
+        assert (w.claim, "conflict_counterpart_missing") in repo_view.refused
+        complete_view = await engine.call(ctx("alice"), "query", {"request": {}})
+        assert isinstance(complete_view, QueryResult)
+        assert w.claim in {a.artifact_id for a in complete_view.conflicts}
         got = await engine.call(ctx("alice"), "get", {"artifact_id": w.claim})
         assert isinstance(got, Artifact) and got.channel == "conflicts"
 
