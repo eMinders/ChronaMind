@@ -109,3 +109,20 @@ def test_plan_document_mode_respects_correction_sections() -> None:
     record = "**Correction.** This cited `test_deleted_last_year`; it is `test_a_real_one`."
     problems, _ = check_evidence._check_tests_only(record, "plan.md", KNOWN)
     assert problems == []
+
+
+def test_a_blockquoted_correction_skips_its_quoted_name() -> None:
+    """A correction is usually a blockquote; its quoted wrong name must not be reported (regression: `V2-D55`).
+
+    Regression: `V2-D55`'s correction is written as `> **Correction.** ... > `test_x``, and the heading scan did not
+    strip the `>` markers, so the deliberately-quoted deleted name was reported as missing.
+    """
+    record = (
+        "**Verification.** `test_a_real_one`.\n"
+        "\n"
+        "> **Correction (2026-11-17).** This line previously cited\n"
+        "> `test_deleted_last_year`, which was removed because the gap closed.\n"
+    )
+    problems, checked = check_evidence.check_text(record, "record.md", KNOWN)
+    assert problems == []
+    assert checked == 1  # the quoted name is excused and so is not counted as checked

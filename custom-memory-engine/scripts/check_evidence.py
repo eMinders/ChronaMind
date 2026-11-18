@@ -113,7 +113,8 @@ def _in_correction_section(before: str) -> bool:
     """Is the cursor in a section whose heading is a correction marker? Headings, not body text, decide it."""
     heading = ""
     for line in before.splitlines():
-        stripped = line.lstrip()
+        # strip blockquote markers first: a correction is often written as `> **Correction.** ...`
+        stripped = line.lstrip().lstrip(">").lstrip()
         # `#`/`##` headings and **bold** pseudo-headings both scope a section in these records
         if stripped.startswith("#") or stripped.startswith("**"):
             heading = stripped
