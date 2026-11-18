@@ -89,6 +89,47 @@ async def test_get_returns_what_ingest_stored(database) -> None:  # noqa: F811
         assert len(artifact.provenance) == 1
 
 
+async def test_a_retired_artifact_is_refused_exactly_like_a_missing_one(database) -> None:  # noqa: F811
+    """A row that exists but is not renderable answers ``forbidden``, never ``internal_error`` (``API_V2.md`` §1.1).
+
+    The reachable route is ``adjudicate(deny)``: a held candidate is staged with no evidence record
+    (``stage_candidate`` owes none for a non-believed status), and denying it retires it still without one. ``get``
+    fetched the
+    provenance bundle first, found it empty and answered ``internal_error`` -- which ``V2-D58`` reserves for a failure
+    of ``Engine.call`` itself, never an operation's own logic. That also made a retired artifact distinguishable from
+    an absent one, which ``T-11``/``T-18`` forbid: both must answer ``forbidden``.
+    """
+    async with world(database) as (conn, engine, _schema):
+        assert isinstance(engine.resolver, DbTargets)
+        register_read_handlers(engine, engine.resolver.runtime)
+        await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+        # a held candidate exactly as the gate stages one: conflict_pending, and no evidence row
+        await conn.execute(
+            "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
+            "single_valued, content, event_range, layer, kind, lifecycle, retention) "
+            "VALUES ('held','held','alice','conflict_pending','user','statement',false,'x',"
+            "tstzrange('2026-01-01', NULL),'semantic','claim','contested','durable')"
+        )
+        await conn.execute(
+            "INSERT INTO memory_conflict (id, candidate_version_id, user_id, relation, decision, reason_code, "
+            "decided_by, decided_at) VALUES ('mc-held','held','alice','unrelated','hold',"
+            "'uncertain_conflict','g', clock_now())"
+        )
+        held = await forbidden(engine, caller("alice"), "get", {"artifact_id": "held"})
+        # no bundle, so not renderable -- and never internal_error
+        assert (held.code, held.detail) == ("forbidden", None)
+        denied = await engine.call(caller("alice"), "adjudicate", {"artifact_id": "held", "decision": "deny"})
+        assert isinstance(denied, Receipt) and denied.effect == "retired"
+        after_retirement = await forbidden(engine, caller("alice"), "get", {"artifact_id": "held"})
+        missing = await forbidden(engine, caller("alice"), "get", {"artifact_id": "no-such-artifact"})
+        assert (
+            (after_retirement.code, after_retirement.detail) == (missing.code, missing.detail) == ("forbidden", None)
+        )
+        # provenance is still answerable and truthfully empty: a row with no source has no ancestors to show
+        view = await engine.call(caller("alice"), "provenance", {"artifact_id": "held"})
+        assert isinstance(view, ProvenanceView) and view.artifact_id == "held" and view.edges == ()
+
+
 async def test_get_refuses_another_users_artifact_exactly_like_a_missing_one(database) -> None:  # noqa: F811
     async with world(database) as (conn, engine, _schema):
         assert isinstance(engine.resolver, DbTargets)

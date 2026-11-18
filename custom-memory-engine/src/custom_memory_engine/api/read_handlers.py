@@ -580,6 +580,13 @@ class ReadHandlers:
                     connection, user_id=user, procedure_ids=[str(identifier)], schema_name=self.runtime.schema_name
                 )
                 shape = shapes.get(str(identifier), NO_SHAPE)
+            # Routing comes before provenance: a retired or illegal tuple is not rendered at all (`API_V2.md` §1.1's
+            # `forbidden` for a target that cannot be answered), so nothing is fetched for it. Checking provenance
+            # first made `get` answer `internal_error` for a retired row where it used to answer `forbidden`, which
+            # both broke the entry point's error contract and made a retired artifact distinguishable from absent.
+            channel = _channel_for(str(kind), str(lifecycle), verification, contradicted, stale)
+            if channel is None or channel == "none":
+                raise EntryError("forbidden")  # a retired or illegal tuple is not rendered
             provenance = (
                 await bundles_for_artifacts(
                     connection,
@@ -591,10 +598,10 @@ class ReadHandlers:
                 )
             ).get(str(identifier), ())
             if not provenance:
-                raise EntryError("internal_error")
-        channel = _channel_for(str(kind), str(lifecycle), verification, contradicted, stale)
-        if channel is None or channel == "none":
-            raise EntryError("forbidden")  # a retired or illegal tuple is not rendered
+                # Requirement 4: an answer item never renders without its provenance bundle. For the pure assembler the
+                # same view is refused as `provenance_unmaterialisable`, so on this route the target is simply not
+                # renderable -- `forbidden`, not `internal_error`, which `V2-D58` reserves for `Engine.call` itself.
+                raise EntryError("forbidden")
         own = ConflictSide(str(identifier), cast(Lifecycle, lifecycle), str(content))
         return Artifact(
             artifact_id=str(identifier),
@@ -639,8 +646,9 @@ class ReadHandlers:
                     key=self.runtime.provenance_key,
                     schema_name=self.runtime.schema_name,
                 )
-                if not view.edges:
-                    raise EntryError("internal_error")
+                # An empty ``edges`` tuple is a truthful answer, not a defect: an artifact whose lineage is only its
+                # own content (a staged row, or one admitted before any source was recorded) has no ancestors to
+                # show. Report the empty view; ``internal_error`` is never an operation's own logic (``V2-D58``).
                 return view
         except InsufficientPrivilege as exc:
             raise EntryError("forbidden") from exc
