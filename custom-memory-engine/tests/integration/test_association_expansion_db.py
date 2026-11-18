@@ -1,5 +1,6 @@
 """E-032 association expansion against the migrated schema and the restricted runtime role."""
 
+import inspect
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -89,6 +90,7 @@ async def reach(
     user: str = "alice",
     at: datetime | None = None,
     read_set: ReadSet | None = None,
+    row_budget: int = 1000,
 ) -> tuple[tuple[str, int], ...]:
     runtime = runtime_for(engine)
     async with runtime.session(user) as conn:
@@ -101,6 +103,7 @@ async def reach(
             seeds,
             database_clock=clock,
             hop_budget=budget,
+            row_budget=row_budget,
             schema_name=runtime.schema_name,
         )
     return tuple((row.id, row.hop_distance) for row in expanded)
@@ -301,7 +304,9 @@ async def test_replayed_legacy_plan_keeps_expansion_disabled(database) -> None: 
         original = await engine.call(ctx, "query", arguments)
         assert isinstance(original, QueryResult)
         assert [item.artifact_id for item in original.facts] == ["seed", "neighbor"]
-        legacy = Plan.from_dict(replace(recorder.last, expansion="none").to_dict())
+        # a genuine pre-E-032 record: the intent *and* its budget say no traversal (a `none` plan at a nonzero depth
+        # is unrepresentable, which `Plan.__post_init__` refuses)
+        legacy = Plan.from_dict(replace(recorder.last, expansion="none", hop_budget=0).to_dict())
         replay = await handler.execute_plan(Call(ctx=ctx, operation=QUERY, arguments=arguments), legacy)
         assert [(item.artifact_id, item.hop_distance) for item in replay.facts] == [("seed", 0)]
 
@@ -371,3 +376,121 @@ async def test_expansion_rechecks_the_association_scope_at_the_second_hop(databa
 
         await link(conn, "bridge", "leaf", "related_to", scope=project)
         assert await reach(engine, ["seed"], 2, read_set=read_set) == (("bridge", 1), ("leaf", 2))
+
+
+# ───────────────────────────────────────────── E-032-F2: a response carries a bounded page ──
+
+
+async def test_a_dense_seed_cannot_make_one_response_unbounded(database) -> None:  # noqa: F811
+    """``E-032-F2``: the response is bounded by the page size, not by the graph's out-degree.
+
+    Before the bound, one seed with 30 neighbours returned 30 reached rows for a caller who asked for one page, and the
+    one-hop ceiling is the degree cap (32) times ``MAX_LIMIT`` -- 32,000 rows -- which no page size promises.
+    """
+    async with world(database) as (conn, engine, _):
+        await make_version(conn, "seed")
+        # 30 is under migration 3's incident cap of 32, so this fan-out is one the schema permits in a single hop
+        for index in range(30):
+            await make_version(conn, f"leaf-{index:02d}")
+            await link(conn, "seed", f"leaf-{index:02d}", "related_to")
+        assert len(await reach(engine, ["seed"], 1)) == 30, "the control: the whole fan-out is reachable"
+        assert len(await reach(engine, ["seed"], 1, row_budget=1)) == 1
+        assert len(await reach(engine, ["seed"], 1, row_budget=7)) == 7
+
+
+async def test_a_truncated_page_is_the_nearest_hop_prefix_of_the_order(database) -> None:  # noqa: F811
+    """Truncation takes the order this function already guarantees, so a page is a prefix and not a subset."""
+    async with world(database) as (conn, engine, _):
+        for node in ("seed", "near-a", "near-b", "far-a"):
+            await make_version(conn, node)
+        await link(conn, "seed", "near-a", "related_to")
+        await link(conn, "seed", "near-b", "related_to")
+        await link(conn, "near-b", "far-a", "related_to")
+        full = await reach(engine, ["seed"], 2)
+        assert full == (("near-a", 1), ("near-b", 1), ("far-a", 2))
+        assert await reach(engine, ["seed"], 2, row_budget=2) == full[:2]
+        assert await reach(engine, ["seed"], 2, row_budget=1) == full[:1]
+
+
+async def test_the_row_budget_is_required_not_defaulted() -> None:
+    """A forgotten budget is the defect itself, so the parameter has no default to forget (``E-032-F2``)."""
+    assert inspect.signature(expand_associations).parameters["row_budget"].default is inspect.Parameter.empty
+
+
+async def test_a_zero_row_budget_reaches_nothing(database) -> None:  # noqa: F811
+    async with world(database) as (conn, engine, _):
+        await make_version(conn, "seed")
+        await make_version(conn, "leaf")
+        await link(conn, "seed", "leaf", "related_to")
+        assert await reach(engine, ["seed"], 1, row_budget=0) == ()
+
+
+@pytest.mark.parametrize("row_budget", [-1, True, 1.5])
+async def test_a_malformed_row_budget_is_refused(database, row_budget: object) -> None:  # noqa: F811
+    async with world(database) as (conn, engine, _):
+        await make_version(conn, "seed")
+        with pytest.raises(ValueError):
+            await reach(engine, ["seed"], 1, row_budget=row_budget)  # type: ignore[arg-type]
+
+
+async def test_query_bounded_the_way_the_plan_says(database) -> None:  # noqa: F811
+    """Through the public ``query``: a dense neighbour set cannot return more reached rows than the plan's page size.
+
+    The end-to-end form of the finding -- the plan's ``rows`` is the page size and the executor passes it as the
+    reached-row budget, so a whole response is at most twice ``limit``. Control: passing a large literal instead of
+    ``plan.rows`` returns the 30-row fan-out and fails here.
+    """
+    async with world(database) as (conn, engine, _):
+        for index in range(30):
+            await claim(conn, f"leaf-{index:02d}", recorded=RECORDED + index * DAY)
+        await claim(conn, "hub", recorded=RECORDED + 40 * DAY)  # the newest belief: the one candidate at limit 1
+        for index in range(30):
+            await link(conn, "hub", f"leaf-{index:02d}", "related_to")
+        recorder = Recorder()
+        register_read_handlers(engine, runtime_for(engine), recorder=recorder)
+        limited = await engine.call(caller("alice"), "query", {"request": {"limit": 1}})
+        assert isinstance(limited, QueryResult)
+        assert recorder.last.rows == 1
+        reached = [item for item in limited.facts if item.hop_distance > 0]
+        assert len(reached) <= 1, [item.artifact_id for item in reached]
+        total = sum(len(limited.channel(name)) for name in ("facts", "hypotheses", "procedures", "conflicts"))
+        assert total <= 2, total
+
+
+async def test_the_executor_traverses_the_depth_the_plan_recorded(database) -> None:  # noqa: F811
+    """``E-032-F3`` end to end: ``execute_plan`` runs *the plan's* budget, not whatever the default is.
+
+    The page is wide enough for the reached rows (``limit`` 2, so a budget of two admits both) that the response bound
+    cannot mask the depth: only ``plan.hop_budget`` decides two hops from one. Control: substituting a literal ``1`` at
+    the call site returns one hop and fails here.
+    """
+    async with world(database) as (conn, engine, _):
+        # Increasing recording order (the watermark is monotonic). The candidate page of two is then the hub and one
+        # unrelated artifact, so the whole chain must arrive by expansion.
+        await claim(conn, "deep", recorded=RECORDED + 1 * DAY)
+        await claim(conn, "middle", recorded=RECORDED + 2 * DAY)
+        await claim(conn, "unrelated", recorded=RECORDED + 3 * DAY)
+        await claim(conn, "hub", recorded=RECORDED + 4 * DAY)
+        await link(conn, "hub", "middle", "part_of")
+        await link(conn, "middle", "deep", "part_of")
+        recorder = Recorder()
+        handler = register_read_handlers(engine, runtime_for(engine), recorder=recorder)
+        ctx = caller("alice")
+        arguments = {"request": {"limit": 2}}
+        one_hop = await engine.call(ctx, "query", arguments)
+        assert isinstance(one_hop, QueryResult)
+        assert recorder.last.hop_budget == 1, "the planner records the default depth"
+        # candidates keep the temporal read's own order (newest belief first); reached rows follow in hop order
+        assert [(item.artifact_id, item.hop_distance) for item in one_hop.facts] == [
+            ("hub", 0),
+            ("unrelated", 0),
+            ("middle", 1),
+        ]
+        deeper = Plan.from_dict({**recorder.last.to_dict(), "hop_budget": 2})
+        replay = await handler.execute_plan(Call(ctx=ctx, operation=QUERY, arguments=arguments), deeper)
+        assert [(item.artifact_id, item.hop_distance) for item in replay.facts] == [
+            ("hub", 0),
+            ("unrelated", 0),
+            ("middle", 1),
+            ("deep", 2),
+        ]

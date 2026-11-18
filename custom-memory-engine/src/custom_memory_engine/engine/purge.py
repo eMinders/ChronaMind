@@ -56,7 +56,15 @@ PURGE_EVENT = "working_purged"
 #: lift, which would silently re-activate a user's rejection (``I16``). Both are changes to knowledge, so both retain.
 EVIDENCE_REFERENCES: tuple[tuple[str, str, str], ...] = (
     ("memory_derivation", "source_version_id", "derived_version_id"),
+    # A lift is grounded in the evidence that lifted it; clearing the reference withdraws the lift (the guard in
+    # migration 10), which re-activates a rejection the user had lifted (``I16``).
     ("negative_constraint", "lift_evidence_version_id", "id"),
+    # A dissent names the inferred artifact the user rejected. This column was excluded on the premise that "an episode
+    # is never inferred", which is false: ``axes.LEGAL_LIFECYCLE`` permits ``episode/inferred`` and
+    # ``SHORT_RETENTION_KINDS`` permits a working episode, so a dissent can point at exactly a purgeable row. Clearing
+    # the reference would silently lose the record of *what* was dissented while keeping the rejection -- a change to
+    # knowledge, so the evidence is retained like the other two.
+    ("negative_constraint", "dissented_version_id", "id"),
     ("memory_conflict", "existing_version_id", "candidate_version_id"),
 )
 

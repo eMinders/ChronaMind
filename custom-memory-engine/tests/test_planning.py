@@ -29,7 +29,10 @@ from typing import get_args
 
 import pytest
 
+from custom_memory_engine.engine.expansion import DEFAULT_HOP_BUDGET as EXPANSION_DEFAULT_HOP_BUDGET
 from custom_memory_engine.engine.planning import (
+    ASSOCIATION_EXPANSION,
+    DEFAULT_HOP_BUDGET,
     MODES,
     PLAN_INTENT_REFUSED,
     STAGES,
@@ -424,3 +427,61 @@ def test_the_architecture_diagram_agrees_with_the_planned_stages() -> None:
     assert "temporal" not in body[4], "stage 4 must not claim the temporal predicate (V2-D76, V2-D73)"
     assert "recency" not in body[4] and "usage" not in body[4], "usage ordering is after routing (V2-D75)"
     assert "usage" in body[5]
+
+
+# ──────────────────────────────────────────── E-032-F3: the plan records its hop budget ──
+
+
+def test_the_two_hop_budget_defaults_are_one_value() -> None:
+    """``engine.planning`` restates the budget so it stays I/O-free; this pins the restatement to the executor's."""
+    assert DEFAULT_HOP_BUDGET == EXPANSION_DEFAULT_HOP_BUDGET
+
+
+def test_a_plan_records_the_hop_budget_it_will_traverse() -> None:
+    """``E-032-F3``: an expanding plan records its depth, so a replay cannot silently traverse a different graph."""
+    plan = plan_retrieval(_intent(), ALICE)
+    assert plan.expansion == ASSOCIATION_EXPANSION
+    assert plan.hop_budget == DEFAULT_HOP_BUDGET
+    assert plan.to_dict()["hop_budget"] == DEFAULT_HOP_BUDGET
+    assert Plan.from_dict(json.loads(_bytes(plan))).hop_budget == DEFAULT_HOP_BUDGET
+
+
+def test_an_expanding_record_without_a_budget_is_refused_rather_than_replayed() -> None:
+    """The defect itself: the same bytes replayed under a different default traversed differently.
+
+    An expanding record that says nothing about depth is that ambiguity -- it is refused, never filled in from whatever
+    the current default happens to be.
+    """
+    payload = plan_retrieval(_intent(), ALICE).to_dict()
+    del payload["hop_budget"]
+    with pytest.raises(PlanningError) as caught:
+        Plan.from_dict(payload)
+    assert caught.value.code == PLAN_INTENT_REFUSED
+
+
+def test_a_no_expansion_record_needs_no_budget() -> None:
+    """A pre-``E-032`` record stays replayable: it traverses nothing, so it has no depth to record."""
+    payload = plan_retrieval(_intent(), ALICE).to_dict()
+    payload["expansion"] = "none"
+    del payload["hop_budget"]
+    replayed = Plan.from_dict(payload)
+    assert (replayed.expansion, replayed.hop_budget) == ("none", 0)
+    assert "hop_budget" not in replayed.to_dict()
+
+
+@pytest.mark.parametrize(
+    ("expansion", "hop_budget"),
+    [("none", 1), (ASSOCIATION_EXPANSION, 0), (ASSOCIATION_EXPANSION, -1)],
+)
+def test_a_contradictory_expansion_and_budget_is_unrepresentable(expansion: str, hop_budget: int) -> None:
+    """No expansion at a positive depth, and no expansion at zero depth: contradictions, not preferences."""
+    payload = {**plan_retrieval(_intent(), ALICE).to_dict(), "expansion": expansion, "hop_budget": hop_budget}
+    with pytest.raises(PlanningError):
+        Plan.from_dict(payload)
+
+
+@pytest.mark.parametrize("hop_budget", [True, "1", 1.0, None])
+def test_a_non_integer_budget_is_refused(hop_budget: object) -> None:
+    payload = {**plan_retrieval(_intent(), ALICE).to_dict(), "hop_budget": hop_budget}
+    with pytest.raises(PlanningError):
+        Plan.from_dict(payload)
