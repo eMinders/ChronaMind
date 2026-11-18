@@ -200,7 +200,12 @@ The read set and temporal predicate are applied together before the candidate li
 from these candidates, applies the same predicates to newly reached artifacts and may add supplemental rows beyond
 `limit`. Each hop also requires the association's own scope and visibility to match the read set. An association
 stored as private at the personal root is eligible only when the request includes a selector for that root.
-The default budget is one hop. At the boundary, expansion returns the rows found so far. Each artifact carries a
+The default budget is one hop, and the plan records the budget it ran (`V2-D79`). At the boundary, expansion returns
+the rows found so far. **Reached rows are themselves paged**: a response carries at most one page of them, so a whole
+response is at most twice `limit` — the candidates plus one page of reached rows — whatever the graph's out-degree.
+The page is the nearest-hop prefix of the union order (hop, then artifact id), so truncation is deterministic and is
+not an error (`V2-D79`; `resource_limit` stays reserved for a declared bound like the selector count). Each artifact
+carries a
 `hop_distance` (zero for a candidate, otherwise the shortest eligible association distance); reached artifacts
 enter the same channel-routing path as candidates. Audit applies the requested belief time to the artifact rows
 and uses the stored association topology. *Errors:* `validation_error` (missing or malformed parameter,

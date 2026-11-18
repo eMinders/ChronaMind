@@ -1825,3 +1825,63 @@ replay); `tests/test_planning.py::test_a_legacy_plan_replays_without_expansion`.
 
 **Status:** decided under the Project Owner's delegation (2026-11-18). Records a default-behaviour change `E-032`
 shipped without a record.
+
+## V2-D79 — Expansion is bounded by the page size, and the plan records its depth
+
+**Context.** `V2-D78` recorded two consequences of `E-032` as findings rather than fixes: `E-032-F2` (a response was
+bounded only by the degree cap times the page size — up to `32 × limit`, i.e. 32,000 rows at `MAX_LIMIT`, with no
+`resource_limit`) and `E-032-F3` (the plan recorded that expansion happens but not how far, so a replay under a
+different default traversed differently while reading as the same plan). Both are closed here at the root.
+
+**Decision 1 — `E-032-F2`: the response is bounded by one page.** `expand_associations` takes `row_budget`, and the
+executor passes the plan's own `rows`. A response is therefore at most **twice `limit`**: the candidate page, plus at
+most one page of reached rows. The parameter has **no default** — a forgotten budget is precisely the unbounded
+response the finding describes, so the type system refuses to let a caller forget it.
+
+**Why a page and not an error.** `API_V2.md` §4.2 calls `resource_limit` the code for a declared bound exceeded. A
+page-size overrun is not that: the caller asked for a page and gets a page. Raising `resource_limit` for an ordinary
+fan-out would turn a normal query into a failure, and the finding's own §10 row is about *documented* truncation, not
+refusal. Truncation therefore follows the order expansion already guarantees — nearest hop first, then artifact id —
+so a truncated page is a **deterministic prefix**, never an arbitrary subset. `V2-D78`'s warning that capping at
+`limit` would "drop reached rows the caller is entitled to read" is honoured in the sense that matters: the caller
+still receives a full additional page, and `E-033` remains the place where per-channel budgets and coverage are
+decided.
+
+**Decision 2 — `E-032-F3`: the plan records its hop budget.** `Plan` carries `hop_budget: int`, and the executor
+passes `plan.hop_budget` rather than letting the callee default it.
+- `expansion="none"` requires `hop_budget == 0`; `expansion="association"` requires `hop_budget >= 1`. A plan that
+  expands at zero depth, or declines to expand at a positive depth, is **unrepresentable** rather than merely unused.
+- `to_dict` emits the field only for an expanding plan: `"none"` already says it traverses nothing, so a pre-`E-032`
+  record stays byte-identical and keeps replaying.
+- `from_dict` **refuses** an expanding record with no budget. Filling it in from the current default is exactly the
+  defect; a record that does not say how far it went cannot be replayed faithfully.
+- `engine.planning.DEFAULT_HOP_BUDGET` restates `engine.expansion`'s constant, because `planning` must not import the
+  connection layer (it does no I/O). A test pins the two together so they cannot drift silently.
+
+**Consequences.**
+- `Plan`'s record shape changes, which `E-031` owns. This record amends it rather than deferring: a frozen record that
+  omits a value the executor takes from a mutable default is not replayable, and replayability is the property `E-031`
+  criterion 6 claims.
+- A caller who wants a wider reached page cannot ask for one yet. A `reached_limit` input is a contract change and
+  belongs with `E-033`'s per-channel budgets, which is where a caller-visible page size would be designed.
+
+**Decision 3 — `E-038-F2`: a dissent's target is evidence.** `negative_constraint.dissented_version_id` was the one
+non-cascading reference to `memory_version` left out of `purge.EVIDENCE_REFERENCES`, excused on the premise that "an
+episode is never inferred". That premise is false — `axes.LEGAL_LIFECYCLE` permits `episode/inferred` and
+`SHORT_RETENTION_KINDS` permits a working episode — so a dissent can name exactly a row a purge deletes. The column is
+`ON DELETE SET NULL`, so the purge did not fail: it silently cleared the record of *what* was rejected while keeping
+the rejection. It is now retained as evidence, like a lift's evidence, and the classification test compares the
+consulted set to the schema's own foreign keys with no hand-written exception.
+
+**Evidence.** `engine/expansion.py` (`row_budget`, no default); `engine/planning.py` (`hop_budget`, validation, replay);
+`api/read_handlers.py::execute_plan`; `engine/purge.py::EVIDENCE_REFERENCES`;
+`tests/integration/test_association_expansion_db.py` (`test_a_dense_seed_cannot_make_one_response_unbounded`,
+`test_a_truncated_page_is_the_nearest_hop_prefix_of_the_order`, `test_query_bounded_the_way_the_plan_says`,
+`test_the_executor_traverses_the_depth_the_plan_recorded`, `test_the_row_budget_is_required_not_defaulted`);
+`tests/test_planning.py` (`test_an_expanding_record_without_a_budget_is_refused_rather_than_replayed`,
+`test_a_contradictory_expansion_and_budget_is_unrepresentable`, `test_the_two_hop_budget_defaults_are_one_value`);
+`tests/test_purge_rule.py` and `tests/integration/test_purge_working_db.py`
+(`test_a_dissented_working_episode_is_retained_so_the_record_of_what_was_rejected_survives`, whose control — removing
+the citation — reports `assert [(None,)] == [('dissented-ep',)]`).
+
+**Status:** decided under the Project Owner's delegation (2026-11-18). Closes `E-032-F2`, `E-032-F3` and `E-038-F2`.

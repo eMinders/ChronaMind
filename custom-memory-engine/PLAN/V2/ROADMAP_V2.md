@@ -309,7 +309,35 @@ is derived from what each task consumes, not from row order: `E-038` (#199) → 
 `E-032` (#202) in parallel → `E-033` (#203) → `E-034` (#204) and `E-036` (#206) in parallel → `E-035` (#205) →
 `E-037` (#207). The full DAG is in tracker #73 §9.
 
-**W3 progress (r17, 2026-11-17).** Three of nine tasks are complete on `main`, in the order the DAG requires:
+**W3 progress (r18, 2026-11-18).** **Four** of nine tasks are complete on `main`. `E-032` (#202) merged as
+`72e0bf0`, so association expansion now runs between candidate generation and filter-and-re-rank: one recursive
+statement, the temporal and read predicates at every hop, a hop budget, and `hop_distance` on every artifact.
+`V2-D78` records the behaviour change it introduced — the planner now records `expansion="association"` for every
+intent, so every `query` traverses — which had shipped without a decision record.
+
+The findings that pass left open were then closed at the root (`#219`, `99ceb11`) under **`V2-D79`**, each with a
+control that fails when the fix is reverted:
+
+- **`E-032-F2`** — a response was bounded only by migration 3's degree cap times the page size (up to 32,000 rows at
+  `MAX_LIMIT`, with no `resource_limit`). `expand_associations` now takes a **required** `row_budget` and the executor
+  passes the plan's `rows`, so a response is at most twice `limit`. Truncation is the deterministic nearest-hop prefix,
+  and it is a page rather than an error: `resource_limit` stays reserved for a declared bound.
+- **`E-032-F3`** — the plan recorded *that* expansion happens but not *how far*. `Plan.hop_budget` is validated
+  (`none` ⇒ 0, `association` ⇒ ≥ 1), serialised for expanding plans only, and **refused** on replay when an expanding
+  record omits it, because filling it from the current default was the defect.
+- **`E-038-F2` (citation half)** — `negative_constraint.dissented_version_id` was the one non-cascading reference to
+  `memory_version` missing from `purge.EVIDENCE_REFERENCES`, excused by *"an episode is never inferred"*. That premise
+  is false — `LEGAL_LIFECYCLE` permits `episode/inferred` and a working episode is purgeable — so a purge silently
+  cleared what a dissent rejected (`ON DELETE SET NULL`) while keeping the rejection. It is retained now, and the
+  classification test compares the consulted set to the schema's own foreign keys with **no hand-written exception**.
+  The *token* half stays with `E-037` (#207).
+
+**`E-032-F1` is deliberately not fixed.** Both endpoints of a `contradicts` edge are the caller's own artifacts, so it
+is not a cross-tenant leak, and routing a contested artifact to `conflicts` is the fail-closed direction (`C-P3`). It
+is now an explicit requirement of `E-033` (#203) with a recommended answer, rather than an accident of where a filter
+happens to be applied.
+
+**Three of nine tasks complete (r17)** — the earlier state, kept for the sequence they established:
 `E-038` (#199, `d374e89`), `E-031` (#200, `8c35512`), `E-030` (#201, `4583952`). `E-035`'s harness (205-A) merged
 before them (`71b7ea1`) as designed, so the channel-integrity gate has guarded every W3 `src/` change.
 

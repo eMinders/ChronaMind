@@ -46,6 +46,11 @@ if TYPE_CHECKING:
 STAGES: tuple[str, ...] = ("plan", "candidate_generation", "expansion", "filter_rerank", "assemble")
 ASSOCIATION_EXPANSION = "association"
 
+#: The hop budget a plan records when it expands, and the one this engine executes (``E-032-F3``). Restated rather than
+#: imported: ``engine.expansion`` pulls in the connection layer, and this module's contract is that it does no I/O
+#: (criterion 3). ``tests/test_planning.py`` pins the two to each other so they cannot drift silently.
+DEFAULT_HOP_BUDGET = 1
+
 #: Indexes the planner may select, each of which exists in the schema (see this issue's §4.4). A planner that named
 #: an index the database does not have would be a plan for a database that does not exist.
 #
@@ -148,6 +153,9 @@ class Plan:
     index: str
     filters: tuple[str, ...]
     expansion: str
+    # The traversal depth expansion runs at (``E-032-F3``). A budget is a performance parameter, which is exactly why
+    # a plan records it: replaying under a different default must not silently traverse a different graph.
+    hop_budget: int
     rows: int
     scopes: tuple[ReadScope, ...]
     # The caller's instants, as canonical UTC ISO-8601 text, and only those the mode uses. They are part of the plan so
@@ -177,6 +185,14 @@ class Plan:
         ):
             # a recorded plan replays only what this engine can execute; anything else is refused, not reinterpreted
             raise PlanningError(PLAN_INTENT_REFUSED)
+        if isinstance(self.hop_budget, bool) or not isinstance(self.hop_budget, int):
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if self.expansion == "none" and self.hop_budget != 0:
+            # following no association for a nonzero depth is a contradiction, not a preference
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if self.expansion == ASSOCIATION_EXPANSION and self.hop_budget < 1:
+            # expansion at a zero budget reaches nothing; a plan that records expansion must traverse at least one hop
+            raise PlanningError(PLAN_INTENT_REFUSED)
         present = {
             name
             for name in ("target_time", "belief_time", "window_start", "window_end")
@@ -196,6 +212,10 @@ class Plan:
             "index": self.index,
             "filters": list(self.filters),
             "expansion": self.expansion,
+            # Only an expanding plan carries a budget: "none" already means it traverses nothing, so emitting a 0 would
+            # add a field to every pre-E-032 record for no information. An expanding plan must carry it, which is the
+            # whole of E-032-F3 -- a record that expands without saying how far cannot be replayed faithfully.
+            **({"hop_budget": self.hop_budget} if self.expansion != "none" else {}),
             "rows": self.rows,
             "scopes": [{"path": s.path, "mode": s.mode, "visibilities": list(s.visibilities)} for s in self.scopes],
             "target_time": self.target_time,
@@ -220,6 +240,14 @@ class Plan:
             index = payload["index"]
             filters = payload["filters"]
             expansion = payload["expansion"]
+            if "hop_budget" in payload:
+                hop_budget = payload["hop_budget"]
+            elif expansion == "none":
+                hop_budget = 0  # a no-expansion record is complete without a budget: it traverses nothing
+            else:
+                # An expanding record with no budget is exactly the ambiguity E-032-F3 describes: replaying it would
+                # silently use whatever the current default is. Refused, not guessed.
+                raise PlanningError(PLAN_INTENT_REFUSED)
             rows = payload["rows"]
             scopes = payload["scopes"]
             stages = payload["stages"]
@@ -231,6 +259,8 @@ class Plan:
             or not isinstance(route, str)
             or not isinstance(index, str)
             or not isinstance(expansion, str)
+            or not isinstance(hop_budget, int)
+            or isinstance(hop_budget, bool)
             or not isinstance(rows, int)
             or isinstance(rows, bool)
             or not isinstance(filters, Sequence)
@@ -274,6 +304,7 @@ class Plan:
                 index=index,
                 filters=tuple(filters),  # type: ignore[arg-type]
                 expansion=expansion,
+                hop_budget=hop_budget,
                 rows=rows,
                 scopes=tuple(rebuilt),
                 stages=tuple(stages),  # type: ignore[arg-type]
@@ -359,6 +390,7 @@ class RuleBasedPlanner:
             index=TEMPORAL_INDEX,
             filters=_filters_for(intent.mode),
             expansion=ASSOCIATION_EXPANSION,
+            hop_budget=DEFAULT_HOP_BUDGET,
             rows=intent.limit,
             scopes=tuple(scopes),
             target_time=kept("target_time", intent.target_time),

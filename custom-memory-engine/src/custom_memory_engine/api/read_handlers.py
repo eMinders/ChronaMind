@@ -781,6 +781,11 @@ class ReadHandlers:
                             effective_read_set,
                             [row.id for row in rows],
                             database_clock=reference_time,
+                            # the plan's own budget (E-032-F3): a replay traverses the depth it recorded
+                            hop_budget=plan.hop_budget,
+                            # the response bound (E-032-F2): at most one page of reached rows, so a dense graph cannot
+                            # make one request return 32 x limit rows
+                            row_budget=plan.rows,
                             schema_name=self.runtime.schema_name,
                         )
                 with self.observer("filter_rerank"):

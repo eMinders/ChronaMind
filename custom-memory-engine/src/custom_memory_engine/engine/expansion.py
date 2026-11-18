@@ -11,6 +11,7 @@ from custom_memory_engine.scope.access import ReadSet, read_predicate_named
 
 # Migration 3 caps degree at 32. One hop bounds incident edges per seed at 32, versus up to 1,024
 # additional inspections at two hops. This is a performance default, ahead of E-036's G3 measurement.
+# ``engine.planning.DEFAULT_HOP_BUDGET`` restates it (that module may not import this one); a test pins them together.
 DEFAULT_HOP_BUDGET = 1
 
 
@@ -22,6 +23,7 @@ async def expand_associations(
     *,
     database_clock: datetime,
     hop_budget: int = DEFAULT_HOP_BUDGET,
+    row_budget: int,
     schema_name: str = "cme_engine",
 ) -> tuple[ScopedRow, ...]:
     """Return non-seed artifacts in minimum-hop order, breaking ties by artifact ID.
@@ -31,13 +33,25 @@ async def expand_associations(
     ``corroborated_by`` and ``supersedes``. Edge weight does not affect reach or order.
 
     The hop budget bounds supplemental retrieval. At the boundary, return what was found. A budget of
-    zero disables expansion. Every seed and reached artifact must pass the temporal and read predicates.
+    zero disables expansion.
+
+    ``row_budget`` bounds the *response* (``E-032-F2``): at most that many reached rows, taken in the returned order,
+    so a whole response is bounded whatever the graph's out-degree. It has **no default**, because a forgotten budget
+    is precisely the unbounded response the finding describes -- one seed at migration 3's incident cap returned 32
+    reached rows for a plan whose ``limit`` was 1, and the one-hop ceiling is 32 x ``MAX_LIMIT``. The executor passes
+    the plan's own ``rows``, so a response is at most twice ``limit``: the candidates plus one page of reached rows.
+    Truncation follows the order this function already guarantees (nearest hop first, then artifact id), so a
+    truncated page is a deterministic prefix and not a silent failure.
+
+    Every seed and reached artifact must pass the temporal and read predicates.
     Each hop also requires an association in the read set. Audit filters artifacts at the requested belief
     time using readable associations from the stored graph.
     """
     if isinstance(hop_budget, bool) or not isinstance(hop_budget, int) or hop_budget < 0:
         raise ValueError("nonnegative_hop_budget_required")
-    if not hop_budget or not seed_ids or read_set.empty:
+    if isinstance(row_budget, bool) or not isinstance(row_budget, int) or row_budget < 0:
+        raise ValueError("nonnegative_row_budget_required")
+    if not hop_budget or not seed_ids or read_set.empty or not row_budget:
         return ()
 
     temporal = compile_predicate(query, alias="m", database_clock=database_clock)
@@ -79,6 +93,7 @@ async def expand_associations(
         SELECT m.id, m.kind, m.lifecycle, m.content, m.scope_path, m.visibility, s.hop
         FROM shortest AS s JOIN {versions} AS m ON m.id = s.id AND m.user_id = %(user_id)s
         ORDER BY s.hop, m.id
+        LIMIT %(row_budget)s
         """
     ).format(
         versions=sql.Identifier(schema_name, "memory_version"),
@@ -88,7 +103,14 @@ async def expand_associations(
     )
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
-            statement, {**temporal.parameters, **read_parameters, "seeds": list(seed_ids), "hop_budget": hop_budget}
+            statement,
+            {
+                **temporal.parameters,
+                **read_parameters,
+                "seeds": list(seed_ids),
+                "hop_budget": hop_budget,
+                "row_budget": row_budget,
+            },
         )
         return tuple(
             ScopedRow(str(id_), str(kind), str(lifecycle), str(content), str(scope), str(visibility), int(hop))

@@ -501,6 +501,59 @@ async def test_a_plan_that_ignored_its_citations_fails_closed_at_the_database(
 # ---------------------------------------------------------------------------------------------- the rule's inputs
 
 
+async def test_a_dissented_working_episode_is_retained_so_the_record_of_what_was_rejected_survives(
+    database,  # noqa: F811
+) -> None:
+    """``E-038-F2``: a dissent may name a purgeable episode, and clearing that reference would silently lose it.
+
+    ``axes.LEGAL_LIFECYCLE`` permits ``episode/inferred`` and ``SHORT_RETENTION_KINDS`` permits a working episode, so
+    a dissent can point at exactly a row a purge would delete. ``dissented_version_id`` is ``ON DELETE SET NULL``: the
+    purge would not fail, it would quietly leave a rejection with nothing saying what was rejected. The episode is
+    therefore evidence and is retained, exactly as a lift's evidence is.
+    """
+    async with workspace(database) as (conn, engine, w):
+        registered = await method(engine)  # I3: an inferred row must name a registered method
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+            await conn.execute("SELECT set_config('app.method_id', %s, true)", (registered["id"],))
+            # an inferred, working episode: the tuple the exclusion's premise claimed was impossible
+            # recorded just after whatever the workspace already put on the timeline (the watermark is monotonic)
+            await conn.execute(
+                "INSERT INTO memory_version (id, memory_key, user_id, status, subject_key, predicate_key, "
+                "single_valued, content, event_range, recorded_range, layer, visibility, scope_path, retention, "
+                "lifecycle, method_id) SELECT 'dissented-ep', 'dissented-ep', 'alice', 'active', 'user', 'diet', "
+                "false, "
+                "'inferred working episode', tstzrange(%(t)s, NULL), "
+                "tstzrange((SELECT max(lower(m.recorded_range)) FROM memory_version AS m "
+                "WHERE m.user_id = 'alice') + interval '1 second', NULL), "
+                "'episodic', 'private', %(s)s, 'working', 'inferred', %(m)s",
+                {"t": T0, "s": SESSION, "m": registered["id"]},
+            )
+            # an inferred row needs a derivation to be active at all (enforce_provenance)
+            # derived from the repository episode, which a session purge does not reach -- so the derivation cites
+            # *outward* and gives no reason to retain `dissented-ep`; only the dissent can
+            await conn.execute(
+                "INSERT INTO memory_derivation (derived_version_id, source_version_id, user_id, derivation_type) "
+                "VALUES ('dissented-ep', %s, 'alice', 'summary')",
+                (w.repo_episode,),
+            )
+            await conn.execute(
+                "INSERT INTO negative_constraint "
+                "(id, user_id, predicate_key, scope_path, method_family, dissented_at, reason, dissented_version_id) "
+                "VALUES ('nc-1', 'alice', 'user.diet', %s, 'rule-v1', %s, 'the user rejected this inference', "
+                "'dissented-ep')",
+                (SESSION, T0),
+            )
+        before = await snapshot(conn)
+        receipt = await purge_scope(engine, SESSION)
+        diff = changed(before, await snapshot(conn))
+        # the dissent target is absent from the deleted set, and the column still names it
+        assert diff["memory_version"][0] and [row["id"] for row in diff["memory_version"][0]] != ["dissented-ep"]
+        name = await rows(conn, "SELECT dissented_version_id FROM negative_constraint WHERE id = 'nc-1'")
+        assert name == [("dissented-ep",)], "the dissent must still say what was rejected"
+        assert receipt.retained_as_evidence >= 1
+
+
 async def test_every_non_cascading_reference_to_a_version_is_an_evidence_reference_or_named_here(database) -> None:  # noqa: F811
     """A new foreign key into ``memory_version`` must be classified before a purge can ignore it."""
     async with world(database) as (conn, _engine, _schema):
@@ -512,6 +565,7 @@ async def test_every_non_cascading_reference_to_a_version_is_an_evidence_referen
         )
         references = {(str(table).split(".")[-1], str(column)) for table, column, _ in found}
         cited = {(table, column) for table, column, _ in purge.EVIDENCE_REFERENCES}
-        # a dissent names the inferred artifact the user rejected; an episode is never inferred, so never dissented
-        not_evidence = {("negative_constraint", "dissented_version_id")}
-        assert references == cited | not_evidence
+        # E-038-F2: every one of them is consulted. `dissented_version_id` used to be excused here on the false premise
+        # that an episode is never inferred (`axes.LEGAL_LIFECYCLE` permits `episode/inferred`), which left a dissent
+        # pointing at a purgeable episode with no retention.
+        assert references == cited
