@@ -35,13 +35,13 @@ async def expand_associations(
     The hop budget bounds supplemental retrieval. At the boundary, return what was found. A budget of
     zero disables expansion.
 
-    ``row_budget`` bounds the *response* (``E-032-F2``): at most that many reached rows, taken in the returned order, so
-    the whole response is bounded whatever the graph's out-degree. It has **no default** because a forgotten budget is
-    precisely the unbounded response the finding describes -- one seed at migration 3's incident cap returned 32 reached
-    rows for a plan whose ``limit`` was 1, and the one-hop ceiling is 32 x ``MAX_LIMIT``. The executor passes the plan's
-    own ``rows``, so a response is at most twice ``limit``: the candidates plus one page of reached rows. Truncation
-    follows the order this function already guarantees (nearest hop first, then artifact id), so a truncated page is a
-    deterministic prefix and not a silent failure.
+    ``row_budget`` bounds the *response* (``E-032-F2``): at most that many reached rows, taken in the returned order,
+    so a whole response is bounded whatever the graph's out-degree. It has **no default**, because a forgotten budget
+    is precisely the unbounded response the finding describes -- one seed at migration 3's incident cap returned 32
+    reached rows for a plan whose ``limit`` was 1, and the one-hop ceiling is 32 x ``MAX_LIMIT``. The executor passes
+    the plan's own ``rows``, so a response is at most twice ``limit``: the candidates plus one page of reached rows.
+    Truncation follows the order this function already guarantees (nearest hop first, then artifact id), so a
+    truncated page is a deterministic prefix and not a silent failure.
 
     Every seed and reached artifact must pass the temporal and read predicates.
     Each hop also requires an association in the read set. Audit filters artifacts at the requested belief
