@@ -322,6 +322,13 @@ class ScopedRow:
     hop_distance: int = 0
 
 
+def scoped_artifact_filter(temporal: sql.Composable, readable: sql.Composable) -> sql.Composed:
+    """Combine temporal eligibility, typed-row presence and read scope for ``memory_version AS m``."""
+    return sql.SQL("{temporal} AND m.kind IS NOT NULL AND m.lifecycle IS NOT NULL AND {readable}").format(
+        temporal=temporal, readable=readable
+    )
+
+
 async def reference_instant(connection: AsyncConnection) -> datetime:
     """The engine's present as **writes** record it: ``transaction_timestamp()``.
 
@@ -375,12 +382,11 @@ async def fetch_scoped_rows(
         await cursor.execute(
             sql.SQL(
                 "SELECT m.id, m.kind, m.lifecycle, m.content, m.scope_path, m.visibility FROM {table} AS m "
-                "WHERE {temporal} AND m.kind IS NOT NULL AND m.lifecycle IS NOT NULL AND {readable} "
+                "WHERE {artifact_filter} "
                 "ORDER BY lower(m.recorded_range) DESC NULLS LAST, m.id LIMIT %(row_limit)s"
             ).format(
                 table=sql.Identifier(schema_name, "memory_version"),
-                temporal=compiled.statement,
-                readable=read_filter,
+                artifact_filter=scoped_artifact_filter(compiled.statement, read_filter),
             ),
             {**compiled.parameters, **read_parameters, "row_limit": limit},
         )

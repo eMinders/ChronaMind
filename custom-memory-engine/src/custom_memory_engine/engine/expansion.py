@@ -6,7 +6,7 @@ from datetime import datetime
 from psycopg import AsyncConnection, sql
 from psycopg.rows import tuple_row
 
-from custom_memory_engine.engine.predicates import ScopedRow, TemporalQuery, compile_predicate
+from custom_memory_engine.engine.predicates import ScopedRow, TemporalQuery, compile_predicate, scoped_artifact_filter
 from custom_memory_engine.scope.access import ReadSet, read_predicate_named
 
 # Migration 3 caps degree at 32. One hop bounds incident edges per seed at 32, versus up to 1,024
@@ -49,8 +49,7 @@ async def expand_associations(
         WITH RECURSIVE eligible AS NOT MATERIALIZED (
             SELECT m.id
             FROM {versions} AS m
-            WHERE {temporal} AND {readable}
-              AND m.kind IS NOT NULL AND m.lifecycle IS NOT NULL
+            WHERE {artifact_filter}
         ), readable_associations AS NOT MATERIALIZED (
             SELECT from_id, to_id, type
             FROM {associations}
@@ -84,7 +83,7 @@ async def expand_associations(
     ).format(
         versions=sql.Identifier(schema_name, "memory_version"),
         associations=sql.Identifier(schema_name, "association"),
-        temporal=temporal.statement,
+        artifact_filter=scoped_artifact_filter(temporal.statement, readable),
         readable=readable,
     )
     async with connection.cursor(row_factory=tuple_row) as cursor:

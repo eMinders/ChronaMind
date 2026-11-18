@@ -25,8 +25,9 @@ all values, and never changes tenant or clock context.
 
 [`planning.py`](planning.py) makes `ARCHITECTURE_V2.md` §9's staged retrieval explicit. `plan(intent, …) -> Plan` is a
 pure function: no connection, no clock, no SQL execution, so the same intent yields a byte-identical plan. The executor
-is [`ReadHandlers.execute_plan`](../api/read_handlers.py). Candidate generation and expansion each apply the temporal
-and read-set predicates in their own statement. The executor then routes rows and applies `V2-D75` procedure ordering.
+is [`ReadHandlers.execute_plan`](../api/read_handlers.py). Candidate generation and expansion use the same
+artifact filter for time, type and scope in their respective statements. The executor then routes rows and
+applies `V2-D75` procedure ordering.
 
 | Stage | What it does today |
 |---|---|
