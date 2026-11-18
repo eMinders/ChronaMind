@@ -123,7 +123,7 @@ from custom_memory_engine.scope.access import (
     row_visible,
 )
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
-from custom_memory_engine.scope.provenance import ProvenanceReference, ProvenanceSource
+from custom_memory_engine.scope.provenance import ProvenanceReference, ProvenanceSource, opaque_handle
 
 logger = structlog.get_logger(__name__)
 
@@ -465,14 +465,20 @@ class ReadHandlers:
         return stale
 
     async def _contradicted_ids(self, connection: AsyncConnection, user: str, ids: Sequence[str]) -> set[str]:
-        """Which of ``ids`` is an endpoint of an open ``contradicts`` edge (``V2-D48`` C-P4).
+        """Which of ``ids`` is an endpoint of an open ``contradicts`` edge (``V2-D48`` C-P4)."""
+        return set(await self._contradictions(connection, user, ids))
+
+    async def _contradictions(self, connection: AsyncConnection, user: str, ids: Sequence[str]) -> dict[str, set[str]]:
+        """Each of ``ids`` that has an open contradiction, mapped to **its own** counterparts (``V2-D48`` C-P4).
 
         ``open_contradiction`` holds when *both* endpoints are grounded and the edge came from the grounding policy
         or a Tier C caller. The edge records that decision in ``origin``, so this reads a recorded fact rather than
-        re-deriving the rule.
+        re-deriving the rule. The map is per artifact (``V2-D80``): an artifact's sides are the endpoints of *its*
+        edges, never every other contradicted row the query happened to retrieve (``CHANNELS.md`` R5: never merge).
         """
         if not ids:
-            return set()
+            return {}
+        wanted = set(ids)
         async with connection.cursor(row_factory=tuple_row) as cursor:
             await cursor.execute(
                 sql.SQL(
@@ -486,10 +492,57 @@ class ReadHandlers:
                 ).format(a=self.runtime.table("association"), v=self.runtime.table("memory_version")),
                 (user, list(ids), list(ids)),
             )
-            found: set[str] = set()
+            found: dict[str, set[str]] = {}
             for from_id, to_id in await cursor.fetchall():
-                found.update((str(from_id), str(to_id)))
+                if str(from_id) in wanted:
+                    found.setdefault(str(from_id), set()).add(str(to_id))
+                if str(to_id) in wanted:
+                    found.setdefault(str(to_id), set()).add(str(from_id))
         return found
+
+    async def _conflict_counterparts(
+        self,
+        connection: AsyncConnection,
+        user: str,
+        read_set: ReadSet,
+        contradictions: Mapping[str, set[str]],
+    ) -> dict[str, tuple[ConflictSide, ...]]:
+        """The other side of every open contradiction, whether or not the query retrieved it (``V2-D80``).
+
+        ``CHANNELS.md`` §1 makes membership independent of the query, and R5 requires a ``conflicts`` item to show
+        both sides, so the counterpart is *loaded*, never assumed to be among the candidates. A counterpart the caller
+        may read renders with its id, state and text. One it may not read renders as R6/``V2-D37`` render an
+        unreadable source: a per-caller opaque handle and **no** text. Its state is shown because ``C-P4`` already
+        fixes it to a grounded lifecycle -- the edge is open only when both endpoints are grounded -- so it discloses
+        nothing the existence of the contradiction does not. Visible sides come first by id, then opaque ones by
+        handle, so the order never encodes an unreadable id.
+        """
+        others = sorted({other for counterparts in contradictions.values() for other in counterparts})
+        if not others:
+            return {}
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT id, lifecycle, content, scope_path, visibility FROM {v} "
+                    "WHERE user_id = %s AND id = ANY(%s)"
+                ).format(v=self.runtime.table("memory_version")),
+                (user, others),
+            )
+            loaded = {str(row[0]): row[1:] for row in await cursor.fetchall()}
+        visible: dict[str, ConflictSide] = {}
+        opaque: dict[str, ConflictSide] = {}
+        for other, (lifecycle, content, scope_path, visibility) in loaded.items():
+            if row_visible(read_set, scope_path, visibility):
+                visible[other] = ConflictSide(other, cast(Lifecycle, lifecycle), str(content))
+            else:
+                handle = opaque_handle(self.runtime.provenance_key, user, other)
+                opaque[other] = ConflictSide(handle, cast(Lifecycle, lifecycle), "")
+        rendered: dict[str, tuple[ConflictSide, ...]] = {}
+        for artifact_id, counterparts in contradictions.items():
+            shown = sorted((visible[o] for o in counterparts if o in visible), key=lambda side: side.artifact_id)
+            hidden = sorted((opaque[o] for o in counterparts if o in opaque), key=lambda side: side.artifact_id)
+            rendered[artifact_id] = (*shown, *hidden)
+        return rendered
 
     # -- operations --------------------------------------------------------------------------------------------
 
@@ -515,7 +568,11 @@ class ReadHandlers:
             verification = (await self._verification_of(connection, user, [str(identifier)])).get(
                 str(identifier), "none"
             )
-            contradicted = str(identifier) in await self._contradicted_ids(connection, user, [str(identifier)])
+            contradictions = await self._contradictions(connection, user, [str(identifier)])
+            contradicted = str(identifier) in contradictions
+            counterpart_sides = (
+                await self._conflict_counterparts(connection, user, call.ctx.read_set, contradictions)
+            ).get(str(identifier), ())
             stale = str(identifier) in await self._stale_ids(connection, user, {str(identifier): verification})
             shape: ProcedureShape | None = None
             if kind == "procedure":
@@ -538,6 +595,7 @@ class ReadHandlers:
         channel = _channel_for(str(kind), str(lifecycle), verification, contradicted, stale)
         if channel is None or channel == "none":
             raise EntryError("forbidden")  # a retired or illegal tuple is not rendered
+        own = ConflictSide(str(identifier), cast(Lifecycle, lifecycle), str(content))
         return Artifact(
             artifact_id=str(identifier),
             kind=str(kind),
@@ -548,6 +606,8 @@ class ReadHandlers:
             verification=verification,
             shape=shape,
             provenance=provenance,
+            # R5: a conflicts item shows both sides, through `get` exactly as through `query`
+            conflict_sides=(own, *counterpart_sides) if channel == "conflicts" else (),
         )
 
     async def provenance(self, call: Call) -> ProvenanceView:
@@ -791,7 +851,8 @@ class ReadHandlers:
                 with self.observer("filter_rerank"):
                     ids = [row.id for row in rows]
                     verifications = await self._verification_of(connection, user, ids)
-                    contradicted = await self._contradicted_ids(connection, user, ids)
+                    contradictions = await self._contradictions(connection, user, ids)
+                    contradicted = set(contradictions)
                     # E-038-F5: derived staleness on every answer route; never on an audit (E-038-F3)
                     stale = set() if is_audit else await self._stale_ids(connection, user, verifications)
                     # E-027: outcome counters for the procedure rows, fetched in one statement beside the other
@@ -816,7 +877,16 @@ class ReadHandlers:
                     # move. A procedure stored without preconditions is always applicable (the empty conjunction).
                     if PROCEDURE_APPLICABILITY in plan.filters:
                         rows = await self._applicable_rows(connection, user, plan, rows, shapes)
+                    counterpart_sides: dict[str, tuple[ConflictSide, ...]] = {}
                     if not is_audit:
+                        # V2-D80: each artifact's own counterparts, loaded whether or not they were retrieved
+                        surviving = {row.id for row in rows}
+                        counterpart_sides = await self._conflict_counterparts(
+                            connection,
+                            user,
+                            effective_read_set,
+                            {key: value for key, value in contradictions.items() if key in surviving},
+                        )
                         source_map = await sources_for_artifacts(
                             connection, user, [row.id for row in rows], schema_name=self.runtime.schema_name
                         )
@@ -858,14 +928,7 @@ class ReadHandlers:
             rows_by_id = {row.id: row for row in rows}
             views: list[ArtifactView] = []
             for row in rows:
-                counterparts = tuple(
-                    ConflictSide(
-                        other_id,
-                        cast(Lifecycle, rows_by_id[other_id].lifecycle),
-                        rows_by_id[other_id].content,
-                    )
-                    for other_id in sorted(contradicted.intersection(rows_by_id) - {row.id})
-                )
+                counterparts = counterpart_sides.get(row.id, ())
                 views.append(
                     ArtifactView(
                         artifact_id=row.id,

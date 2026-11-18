@@ -1885,3 +1885,58 @@ consulted set to the schema's own foreign keys with no hand-written exception.
 the citation — reports `assert [(None,)] == [('dissented-ep',)]`).
 
 **Status:** decided under the Project Owner's delegation (2026-11-18). Closes `E-032-F2`, `E-032-F3` and `E-038-F2`.
+
+## V2-D80 — A conflict's counterparts are loaded from its own edges, never inferred from the candidate page
+
+**Context.** `E-033` (#218) routed `query` through the pure `assemble`, which renders an `open_contradiction` as a
+`ConflictItem` and refuses one with no counterpart (`conflict_counterpart_missing`). The read path built each view's
+counterparts from **the rows the query had retrieved**. Two defects followed, both reproduced against the PR head:
+
+1. **Membership depended on the query.** A claim in `/u/alice/p/one/` contradicted by a claim in `/p/two/` rendered
+   in `conflicts` for an unscoped query, but a `scope=/p/one/` query *refused* it, so it appeared in no channel.
+   `CHANNELS.md` §1 makes membership a pure function of five inputs, "not on … caller, time of day **or the query**";
+   `open_contradiction` is one of them and is derived from the edge (§2.2), not from the page.
+2. **Contradictions were merged.** Every contradicted row was offered as a side of every other, so independent pairs
+   `a1 ↔ b1` and `a2 ↔ b2` rendered `a1` against `a2` and `b2`. R5: a `conflicts` item shows both sides and **never
+   merges them**.
+
+The PR's test edits asserted defect 1 as the expected behaviour (`(w.claim, "conflict_counterpart_missing") in
+repo_view.refused`). That assertion was removed: it encoded the regression, not the contract.
+
+**Decision.**
+- The read path maps each contradicted artifact to **its own** counterparts, from its own `contradicts` edges
+  (`ReadHandlers._contradictions`), and **loads** each counterpart whether or not it was retrieved
+  (`_conflict_counterparts`).
+- A counterpart the caller may read renders with id, lifecycle and text. One it may not read renders as R6 /
+  `V2-D37` render an unreadable source: a per-caller **opaque handle** and **no text**. The lifecycle is shown,
+  because `C-P4` already restricts an open contradiction to grounded endpoints, so it discloses nothing the
+  contradiction's existence does not. Visible sides are ordered by id and precede opaque ones ordered by handle,
+  so ordering never encodes an unreadable id.
+- `get` renders the same sides as `query`. R5 applies to a `conflicts` item wherever it is rendered.
+
+**What was *not* changed, and why.** `assemble`'s refusal of a view with `open_contradiction` and no counterpart
+stays, as does `test_redteam_a_contradiction_without_a_counterpart_is_refused`. For a pure function such a view is
+malformed input: R5 cannot be met, and rendering one side would silently pick a winner. Refusing it keeps it
+accounted for under the `no_loss` invariant (rendered once, refused, or excluded). The defect was that the engine
+produced such views. It no longer does, and a test pins that boundary from the engine's side.
+
+**This settles `E-032-F1`.** An artifact whose contradicting evidence lies outside the request's read set stays in
+`conflicts`: the fail-closed direction (`C-P3`), and the one §1 requires. The caller learns *that* the artifact is
+contradicted, never *by what*. The option of classifying only within the read set would render such an artifact as a
+fact and would need §1 amended first, which this record declines.
+
+**Consequences.** Counterparts are loaded in one extra statement per query that has any contradiction, bounded by the
+association degree cap. As with `V2-D78`, a counterpart is shown at its current state: `association` carries no
+temporal range.
+
+**Evidence.** `api/read_handlers.py` (`_contradictions`, `_conflict_counterparts`, `get`, `execute_plan`);
+`tests/integration/test_conflict_counterparts_db.py` (`test_each_conflict_shows_only_its_own_counterpart`,
+`test_a_readable_counterpart_outside_the_page_is_loaded_not_required`,
+`test_membership_does_not_depend_on_the_query_scope`, `test_get_shows_both_sides_exactly_as_query_does`,
+`test_an_opaque_counterpart_leaks_no_identifier_or_content`,
+`test_the_engine_never_marks_an_open_contradiction_it_cannot_show_both_sides_of`). Controls: reverting to
+retrieved-row counterparts fails three tests, and union pairing fails three.
+`tests/integration/test_purge_working_db.py::test_an_episode_that_opens_a_contradiction_is_retained_and_the_claim_stays_in_conflicts`
+again asserts the claim in `conflicts` for the scoped query, now with both sides (the contradicting episode opaque).
+
+**Status:** decided under the Project Owner's delegation (2026-11-18). Closes `E-032-F1`.
