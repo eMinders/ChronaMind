@@ -180,9 +180,14 @@ sides of the comparison.
 - `change` is recognised but **not yet wired** (`validation_error/mode_change_not_wired`): it is a diff of two
   temporal views and belongs to `E-033`.
 
-The read set and the temporal predicate are applied in one statement, so `limit` counts rows the caller may actually
-read. *Errors:* `validation_error` (missing or malformed parameter, `target > ρ`, empty window, unknown mode, a
-caller-supplied `reference_time`), `forbidden` (`audit_as_of` as Tier B, or a scope outside the read set),
+The read set and temporal predicate are applied together before the candidate limit. Association expansion starts
+from these candidates, applies the same predicates at each hop and may add supplemental rows beyond `limit`.
+The default budget is one hop. At the boundary, expansion returns the rows found so far. Each artifact carries a
+`hop_distance` (zero for a candidate, otherwise the shortest eligible association distance); reached artifacts
+enter the same channel-routing path as candidates. Audit applies the requested belief time to the artifact rows
+and uses the stored association topology. *Errors:* `validation_error` (missing or malformed parameter,
+`target > ρ`, empty window, unknown mode, a caller-supplied `reference_time`), `forbidden` (`audit_as_of`
+as Tier B, or a scope outside the read set),
 `resource_limit` (more than 16 selectors).
 
 **`refine(ctx, result_id, instruction: str) → QueryResult`**

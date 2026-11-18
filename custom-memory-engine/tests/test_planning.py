@@ -79,16 +79,53 @@ def _bytes(plan: Plan) -> str:
 # ─────────────────────────────────────────────────────────── criterion 1: the type ──
 
 
-def test_a_plan_serialises_and_round_trips() -> None:
-    """Criterion 1: a plan is inspectable and serialisable, and its record rebuilds to an equal plan."""
-    plan = plan_retrieval(_intent("historical_window"), ALICE)
+@pytest.mark.parametrize("mode", sorted(MODES))
+def test_a_plan_serialises_and_round_trips(mode: str) -> None:
+    """Each temporal mode records the association intent and reconstructs the same plan."""
+    plan = plan_retrieval(_intent(mode), ALICE)
     rebuilt = Plan.from_dict(json.loads(_bytes(plan)))
     assert rebuilt == plan, "a recorded plan must rebuild to the identical plan"
     assert _bytes(rebuilt) == _bytes(plan)
     payload = plan.to_dict()
-    assert payload["mode"] == "historical_window"
+    assert payload["mode"] == mode
+    assert payload["expansion"] == "association"
     assert payload["index"] == TEMPORAL_INDEX
     assert payload["stages"] == list(STAGES)
+
+
+def test_a_legacy_plan_replays_without_expansion() -> None:
+    """A plan recorded before E-032 keeps its explicit no-expansion intent."""
+    payload = {
+        "mode": "current_state",
+        "route": "channels",
+        "index": "memory_version_temporal_idx",
+        "filters": [
+            "temporal_predicate",
+            "typed_artifact",
+            "read_predicate",
+            "row_visible_recheck",
+            "procedure_applicability",
+        ],
+        "expansion": "none",
+        "rows": 10,
+        "scopes": [{"path": "/u/alice/", "mode": "exact", "visibilities": ["private"]}],
+        "target_time": None,
+        "belief_time": None,
+        "window_start": None,
+        "window_end": None,
+        "scope": None,
+        "stages": ["plan", "candidate_generation", "expansion", "filter_rerank", "assemble"],
+    }
+    replayed = Plan.from_dict(json.loads(json.dumps(payload)))
+    assert replayed.expansion == "none"
+    assert replayed.to_dict() == payload
+
+
+def test_a_plan_refuses_unknown_expansion_intent() -> None:
+    payload = {**plan_retrieval(_intent(), ALICE).to_dict(), "expansion": "provenance"}
+    with pytest.raises(PlanningError) as caught:
+        Plan.from_dict(payload)
+    assert caught.value.code == PLAN_INTENT_REFUSED
 
 
 def test_a_plan_carries_only_the_instants_its_mode_uses() -> None:
@@ -113,7 +150,7 @@ def test_the_plan_carries_no_reference_instant() -> None:
 def test_a_truncated_plan_record_is_refused_rather_than_replayed() -> None:
     """A record missing a field must not replay as a different query (fail closed)."""
     payload = plan_retrieval(_intent(), ALICE).to_dict()
-    for field in ("mode", "route", "index", "filters", "rows", "scopes", "stages"):
+    for field in ("mode", "route", "index", "filters", "expansion", "rows", "scopes", "stages"):
         truncated = {k: v for k, v in payload.items() if k != field}
         with pytest.raises(PlanningError):
             Plan.from_dict(truncated)

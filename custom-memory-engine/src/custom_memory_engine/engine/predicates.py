@@ -319,6 +319,7 @@ class ScopedRow:
     content: str
     scope_path: str
     visibility: str
+    hop_distance: int = 0
 
 
 async def reference_instant(connection: AsyncConnection) -> datetime:
@@ -383,4 +384,7 @@ async def fetch_scoped_rows(
             ),
             {**compiled.parameters, **read_parameters, "row_limit": limit},
         )
-        return tuple(ScopedRow(*(str(value) for value in row)) for row in await cursor.fetchall())
+        return tuple(
+            ScopedRow(str(id_), str(kind), str(lifecycle), str(content), str(scope), str(visibility))
+            for id_, kind, lifecycle, content, scope, visibility in await cursor.fetchall()
+        )

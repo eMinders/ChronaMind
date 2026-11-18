@@ -1,5 +1,4 @@
-"""Read-path handlers: ``get`` and ``query``
-(E-033 partial / V2-D66 / E-021 AC4-AC5; temporal modes E-031 / V2-D73).
+"""Read-path handlers for ``get`` and ``query``, including temporal retrieval and association expansion.
 
 ``API_V2.md`` §4.2 defines ``get`` (one artifact by id) and ``query`` (staged retrieval returning the four channels
 of ``CHANNELS.md``). Both are owned by ``E-033``; that task is gated behind ``G2``, and the Project Owner authorized
@@ -25,15 +24,13 @@ request carrying ``reference_time`` is refused (``V2-D73``, ``I4``).
 :func:`~.engine.planning.plan_retrieval` is a **pure** function producing a
 :class:`~.engine.planning.Plan`, and :meth:`ReadHandlers.execute_plan` runs it. The plan names the index, the ordered
 filters, the expansion intent, the route (``channels`` or ``audit``) and the five stage names ``E-036`` measures; it
-names **no** channel membership, ranking or row limit. The split is a refactor, not a new retrieval algorithm: the SQL,
-the filters, the ordering and every error code are what they were, and this module's own tests are unmodified.
+names **no** channel membership or ranking. The request limit bounds candidate generation. E-032 follows associations
+from those candidates and filters each reached row as it enters expansion (``V2-D76``).
 
 **What is minimal here, and what stays with E-033.** Implemented: single-artifact retrieval with channel
 classification; scope-filtered retrieval grouped into the four channels; the four temporal modes. Not implemented here,
 and still ``E-033``'s obligation: channel **budgets** and ranking (``E-033``), the **cost** report (``E-036``),
-the ``change`` mode (``E-033``), ``refine`` (``E-034``), and **_consuming_ the derived staleness** (``E-038`` supplies
-it in ``engine/staleness.py``; passing it into this read path is ``E-033``'s rendering change — this module still
-passes ``never_stale``, the function ``channels.py`` documents for callers not yet wired to the derivation).
+the ``change`` mode (``E-033``) and ``refine`` (``E-034``). Answer routes consume E-038's derived staleness.
 
 **Why nothing below ``Engine.call`` skips authorisation.** The caller arrives already authorised for the *operation*;
 what decides which **rows** are visible is row-level security, bound to the authenticated principal by
@@ -59,8 +56,10 @@ from psycopg.rows import tuple_row
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.engine.channels import Channel, ChannelError, Verification, channel_of, stale_of
+from custom_memory_engine.engine.expansion import expand_associations
 from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
 from custom_memory_engine.engine.planning import (
+    ASSOCIATION_EXPANSION,
     PROCEDURE_APPLICABILITY,
     Intent,
     Plan,
@@ -112,10 +111,10 @@ _ALL_VISIBILITIES: frozenset[Visibility] = frozenset({"private", "project", "sha
 
 
 class Artifact:
-    """One stored artifact as ``get`` returns it (``API_V2.md`` §4.2 ``Artifact``)."""
+    """One stored artifact returned by ``get`` or ``query``, with the query's association hop distance."""
 
     __slots__ = (
-        "artifact_id", "channel", "content", "kind", "lifecycle",
+        "artifact_id", "channel", "content", "hop_distance", "kind", "lifecycle",
         "preconditions", "scope_path", "steps", "verification",
     )  # fmt: skip
 
@@ -130,6 +129,7 @@ class Artifact:
         channel: Channel,
         verification: str,
         shape: ProcedureShape | None = None,
+        hop_distance: int = 0,
     ) -> None:
         self.artifact_id = artifact_id
         self.kind = kind
@@ -138,6 +138,7 @@ class Artifact:
         self.scope_path = scope_path
         self.channel = channel
         self.verification = verification
+        self.hop_distance = hop_distance
         # E-030: a procedure's preconditions and steps (empty when stored without them); None on every other kind
         self.preconditions: tuple[Precondition, ...] | None = None if shape is None else shape.preconditions
         self.steps: tuple[str, ...] | None = None if shape is None else shape.steps
@@ -153,6 +154,7 @@ class Artifact:
             self.verification,
             self.preconditions,
             self.steps,
+            self.hop_distance,
         )
 
     def __eq__(self, other: object) -> bool:
@@ -554,14 +556,15 @@ class ReadHandlers:
         * ``candidate_generation`` -- in: the plan's filters and row limit; out: ``ScopedRow``s. The temporal
           predicate, the typed-artifact guard and the read predicate run in **one** statement before ``LIMIT``, so the
           limit counts rows the caller may read (``V2-D73``).
-        * ``expansion`` -- in and out: the same rows. The plan's expansion is ``none``; traversal is ``E-032``'s.
+        * ``expansion`` -- in: candidate rows; out: those rows followed by the reached rows in minimum-hop order.
+          The temporal and read predicates run before each reached row enters the next hop (``V2-D76``).
         * ``filter_rerank`` -- in: rows; out: rows that pass the ``V2-D45`` re-check and, on an answer route, the
           ``E-030`` applicability filter (a non-applicable procedure is removed), with the per-row facts routing needs
           (verification, open contradictions, outcome counters, procedure shapes). No score is computed here.
         * ``assemble`` -- in: rows and facts; out: :class:`QueryResult`. Channel routing by ``channel_of``; then, and
           only then, the ``V2-D75`` procedure ordering, so no statistic can move an item between channels.
 
-        The temporal filter enters the first stage and **no later one**: ``assemble`` sees a row's
+        The temporal filter runs at the first stage that sees each row. ``assemble`` sees a row's
         ``(kind, lifecycle, verification, contradiction)`` and never the mode, which is what makes the temporal
         predicate a filter rather than a score term (``ARCHITECTURE_V2.md`` §9.3, criterion 5).
 
@@ -592,7 +595,15 @@ class ReadHandlers:
                         schema_name=self.runtime.schema_name,
                     )
                 with self.observer("expansion"):
-                    pass  # plan.expansion == "none": E-032 owns traversal; the stage boundary exists for E-036
+                    if plan.expansion == ASSOCIATION_EXPANSION:
+                        rows += await expand_associations(
+                            connection,
+                            tquery,
+                            effective_read_set,
+                            [row.id for row in rows],
+                            database_clock=reference_time,
+                            schema_name=self.runtime.schema_name,
+                        )
                 with self.observer("filter_rerank"):
                     ids = [row.id for row in rows]
                     verifications = await self._verification_of(connection, user, ids)
@@ -645,6 +656,7 @@ class ReadHandlers:
                     channel=channel,
                     verification=verification,
                     shape=shapes.get(row.id, NO_SHAPE) if row.kind == "procedure" else None,
+                    hop_distance=row.hop_distance,
                 )
                 if is_audit:
                     audited.append(artifact)
