@@ -315,6 +315,23 @@ def _channel_for(
         return None
 
 
+def _verification_for(lifecycle: str, recorded: str | None) -> str:
+    """The ``verification`` membership input of one stored row (``CHANNELS.md`` §1.1).
+
+    ``abstraction_stats`` is the only home for a verification status and ``guard_abstraction_stats`` refuses a row for
+    any kind but ``abstraction``. So a row with no ledger is either non-abstraction or a pre-``abstraction_stats`` row:
+    its ``lifecycle`` decides which default is legal. ``inferred`` requires ``unverified`` or ``verified`` (§1.1: an
+    inference is never grounded, so it is never ``none``), and every other lifecycle admits ``none``.
+
+    Reading the map with a blanket ``"none"`` default refused **every** inferred episode, claim and procedure as
+    ``illegal_artifact_tuple`` -- they vanished from ``hypotheses`` and appeared in ``refused``. The reference model
+    (``tests/test_channel_membership_model.py``) routes all of them to ``hypotheses``.
+    """
+    if recorded is not None:
+        return recorded
+    return "unverified" if lifecycle == "inferred" else "none"
+
+
 class ReadHandlers:
     """Read operations bound to one :class:`Runtime`."""
 
@@ -342,8 +359,11 @@ class ReadHandlers:
     async def _verification_of(self, connection: AsyncConnection, user: str, ids: Sequence[str]) -> dict[str, str]:
         """Recorded verification status of abstractions, from ``ABSTRACTION_STATS`` (``I14``).
 
-        Only an abstraction carries one: ``CHANNELS.md`` §1.1 makes ``verification='none'`` the only legal value for
-        a grounded artifact, and an abstraction is never grounded (``V2-D48`` C-P1).
+        Only an abstraction carries a ledger: ``guard_abstraction_stats`` refuses a row for any other kind, and
+        ``verification='none'`` is the only legal value for a grounded artifact (``CHANNELS.md`` §1.1, ``V2-D48``
+        C-P1). ``inferred`` is different -- it requires ``unverified`` or ``verified`` -- and **every** kind may be
+        ``inferred`` (``axes.LEGAL_LIFECYCLE``), while only an abstraction has a ledger. So the caller must not read
+        this map with a blanket ``"none"`` default (see :func:`_verification_for`).
         """
         if not ids:
             return {}
@@ -565,8 +585,8 @@ class ReadHandlers:
             identifier, kind, lifecycle, content, scope_path, visibility = row
             if not row_visible(call.ctx.read_set, scope_path, visibility):
                 raise EntryError("forbidden")
-            verification = (await self._verification_of(connection, user, [str(identifier)])).get(
-                str(identifier), "none"
+            verification = _verification_for(
+                str(lifecycle), (await self._verification_of(connection, user, [str(identifier)])).get(str(identifier))
             )
             contradictions = await self._contradictions(connection, user, [str(identifier)])
             contradicted = str(identifier) in contradictions
@@ -911,7 +931,7 @@ class ReadHandlers:
                 audited: list[Artifact] = []
                 refused: list[tuple[str, str]] = []
                 for row in rows:
-                    verification = verifications.get(row.id, "none")
+                    verification = _verification_for(row.lifecycle, verifications.get(row.id))
                     channel = _channel_for(
                         row.kind, row.lifecycle, verification, row.id in contradicted, row.id in stale
                     )
@@ -942,7 +962,7 @@ class ReadHandlers:
                         artifact_id=row.id,
                         kind=cast(Kind, row.kind),
                         lifecycle=cast(Lifecycle, row.lifecycle),
-                        verification=cast(Verification, verifications.get(row.id, "none")),
+                        verification=cast(Verification, _verification_for(row.lifecycle, verifications.get(row.id))),
                         text=row.content,
                         sources=source_map.get(row.id, ()),
                         open_contradiction=row.id in contradicted,
@@ -979,7 +999,7 @@ class ReadHandlers:
                     content=content,
                     scope_path=row.scope_path,
                     channel=channel,
-                    verification=verifications.get(artifact_id, "none"),
+                    verification=_verification_for(row.lifecycle, verifications.get(artifact_id)),
                     shape=shapes.get(artifact_id, NO_SHAPE) if row.kind == "procedure" else None,
                     hop_distance=row.hop_distance,
                     provenance=provenance,
