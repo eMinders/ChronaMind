@@ -4,8 +4,8 @@ Seed harmless rows as the database owner, and query through a restricted runtime
 Only reads are under test. The event windows are independent of the belief clock and of the abstraction expiry.
 """
 
-from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from copy import copy
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta
@@ -35,6 +35,7 @@ from tests.integration.test_staleness_db import drop_role, read_handlers_for, se
 pytestmark = pytest.mark.integration
 
 CHANNELS = ("facts", "hypotheses", "procedures", "conflicts")
+ROOMY_BUDGETS: dict[str, int] = dict.fromkeys(CHANNELS, 2048)
 PREVIOUS = START - timedelta(days=1)
 CURRENT = START
 TURN = "A note about a blue notebook."
@@ -61,6 +62,7 @@ EXPECTED_CHANGES = [
 ]
 CANDIDATES = {"facts": 3, "hypotheses": 2, "procedures": 1, "conflicts": 2}
 REFUSAL = Refusal("incomplete", "bound_missing")
+PUBLIC_REFUSALS = ((REFUSAL.artifact_id, REFUSAL.reason),)
 STALE_LABEL = "verified, needs re-verification"
 SUPPORT = "40 supporting observations of 40 opportunities"
 
@@ -214,7 +216,7 @@ def _assert_roomy_channels(result: QueryResult, bound: Bound) -> None:
             (other, "asserted", CLAIMS[other]),
         )
     assert not result.is_audit and result.audit == ()
-    assert result.refused == (("incomplete", "bound_missing"),), "a fresh abstraction without a full bound must refuse"
+    assert result.refused == PUBLIC_REFUSALS, "a fresh abstraction without a full bound must refuse"
 
 
 def _assert_coverage(
@@ -248,6 +250,11 @@ def _assert_provenance(result: QueryResult, expected_ids: tuple[str, ...]) -> No
         assert refs == expected, (artifact_id, refs)
 
 
+def _assert_roomy_coverage(result: QueryResult, totals: Mapping[str, int]) -> None:
+    returned = {name: len(RETURNED[name]) for name in CHANNELS}
+    _assert_coverage(result, ROOMY_BUDGETS, returned, totals, totals)
+
+
 async def test_public_change_preserves_routing_and_bounds_with_and_without_budget(
     change_world: tuple[Engine, CallerContext, Bound],
 ) -> None:
@@ -256,11 +263,10 @@ async def test_public_change_preserves_routing_and_bounds_with_and_without_budge
     _assert_roomy_channels(roomy, bound)
     _assert_changes(roomy)
     _assert_provenance(roomy, tuple(artifact_id for name in CHANNELS for artifact_id in RETURNED[name]))
-    eligible = {name: len(RETURNED[name]) for name in CHANNELS}
 
     bounded_tokens = len(_bounded_text(bound).split())
     totals = _fixture_token_totals(bound)
-    _assert_coverage(roomy, dict.fromkeys(CHANNELS, 2048), eligible, totals, totals)
+    _assert_roomy_coverage(roomy, totals)
 
     previous = await _query(engine, ctx, {"mode": "historical_as_of", "target_time": PREVIOUS})
     current = await _query(engine, ctx, {"mode": "historical_as_of", "target_time": CURRENT})
@@ -284,18 +290,16 @@ async def test_public_change_preserves_routing_and_bounds_with_and_without_budge
         _assert_provenance(clipped, ("fresh",) if fits else ())
 
 
-def _assert_shared_budget_result(
-    result: QueryResult, roomy: QueryResult, bound: Bound, budgets: Mapping[str, int], shared: int
-) -> None:
+def _assert_shared_budget_result(result: QueryResult, roomy: QueryResult, bound: Bound, shared: int) -> None:
     """Only the one-token procedure fits a shared cap of one; a cap of zero allows no content."""
     assert result.facts == result.hypotheses == result.conflicts == result.audit == (), "shared cap exceeded"
     assert result.procedures == (roomy.procedures if shared else ()), "shared cap must retain the fitting procedure"
     assert not result.is_audit
-    assert result.refused == roomy.refused == (("incomplete", "bound_missing"),)
+    assert result.refused == roomy.refused == PUBLIC_REFUSALS
     _assert_changes(result)
     _assert_provenance(result, ("procedure",) if shared else ())
     counts = dict.fromkeys(CHANNELS, 0) | {"procedures": shared}
-    _assert_coverage(result, budgets, counts, counts, _fixture_token_totals(bound))
+    _assert_coverage(result, ROOMY_BUDGETS, counts, counts, _fixture_token_totals(bound))
 
 
 @pytest.mark.parametrize("shared", [0, 1], ids=["zero-tokens", "one-token"])
@@ -303,11 +307,19 @@ async def test_public_change_enforces_shared_budget_with_roomy_channel_caps(
     change_world: tuple[Engine, CallerContext, Bound], shared: int
 ) -> None:
     engine, ctx, bound = change_world
-    budgets: dict[str, int] = dict.fromkeys(CHANNELS, 2048)
-    roomy = await _query(engine, ctx, _request(budget=budgets))
+    roomy = await _query(engine, ctx, _request(budget=ROOMY_BUDGETS.copy()))
     _assert_roomy_channels(roomy, bound)
-    result = await _query(engine, ctx, _request(budget={**budgets, "total_tokens": shared, "facts_floor_tokens": 0}))
-    _assert_shared_budget_result(result, roomy, bound, budgets, shared)
+    budget = ROOMY_BUDGETS | {"total_tokens": shared, "facts_floor_tokens": 0}
+    result = await _query(engine, ctx, _request(budget=budget))
+    _assert_shared_budget_result(result, roomy, bound, shared)
+
+
+async def _assert_change_limit_refusal(engine: Engine, ctx: CallerContext, *, limit: int) -> None:
+    """A zero answer budget still requires both views to fit the independent row limit."""
+    request = _request(limit=limit, budget={"total_tokens": 0})
+    with pytest.raises(EntryError) as caught:
+        await engine.call(ctx, "query", {"request": request})
+    assert (caught.value.code, caught.value.detail) == ("resource_limit", "change_view_exceeds_limit")
 
 
 async def test_public_change_reports_no_partial_diff_if_an_endpoint_exceeds_the_limit(
@@ -319,9 +331,7 @@ async def test_public_change_reports_no_partial_diff_if_an_endpoint_exceeds_the_
     # The current view has seven rows, including the refusal and the shared row; the previous view has two.
     _assert_changes(await _query(engine, ctx, _request(limit=7, budget=budget)))
     for limit in (1, 6):
-        with pytest.raises(EntryError) as caught:
-            await engine.call(ctx, "query", {"request": _request(limit=limit, budget=budget)})
-        assert (caught.value.code, caught.value.detail) == ("resource_limit", "change_view_exceeds_limit")
+        await _assert_change_limit_refusal(engine, ctx, limit=limit)
 
 
 async def test_public_change_refuses_when_only_the_earlier_view_exceeds_the_limit(
@@ -345,9 +355,15 @@ async def test_public_change_refuses_when_only_the_earlier_view_exceeds_the_limi
             (change,) = fits.changes
             assert asdict(change) == {"outcome": "removed", "previous": ("inference",), "current": ()}
             assert all(not fits.channel(name) for name in CHANNELS)
-            with pytest.raises(EntryError) as caught:
-                await engine.call(ctx, "query", {"request": _request(limit=1, budget=budget)})
-            assert (caught.value.code, caught.value.detail) == ("resource_limit", "change_view_exceeds_limit")
+            await _assert_change_limit_refusal(engine, ctx, limit=1)
+
+
+@contextmanager
+def _reported_rejection(message: str) -> Iterator[None]:
+    """Require the intended assertion to fail and record its first line as control evidence."""
+    with pytest.raises(AssertionError, match=message) as caught:
+        yield
+    print(str(caught.value).splitlines()[0])
 
 
 async def test_public_change_oracles_detect_synthetic_projection_errors(
@@ -368,9 +384,8 @@ async def test_public_change_oracles_detect_synthetic_projection_errors(
     ):
         wrong = copy(good)
         wrong.facts = (*good.facts, artifact)
-        with pytest.raises(AssertionError, match=message) as caught:
+        with _reported_rejection(message):
             _assert_roomy_channels(wrong, bound)
-        print(str(caught.value).splitlines()[0])
 
     for invalid_bound, content, message in (
         (replace(bound, support_count=39), fresh.content, "fresh fact lost its precise bound"),
@@ -380,9 +395,8 @@ async def test_public_change_oracles_detect_synthetic_projection_errors(
         incorrect = copy(fresh)
         incorrect.bound, incorrect.content = invalid_bound, content
         wrong.facts = (incorrect, *good.facts[1:])
-        with pytest.raises(AssertionError, match=message) as caught:
+        with _reported_rejection(message):
             _assert_roomy_channels(wrong, bound)
-        print(str(caught.value).splitlines()[0])
 
     for incorrect in (
         (replace(good.changes[0], current=("in 40 observed cases",)), *good.changes[1:]),
@@ -390,18 +404,13 @@ async def test_public_change_oracles_detect_synthetic_projection_errors(
     ):
         wrong = copy(good)
         wrong.changes = incorrect
-        with pytest.raises(AssertionError, match="changes must be the exact ID-only diff") as caught:
+        with _reported_rejection("changes must be the exact ID-only diff"):
             _assert_changes(wrong)
-        print(str(caught.value).splitlines()[0])
 
     wrong = copy(good)
     wrong.coverage = replace(good.coverage, facts=replace(good.coverage.facts, tokens_used=0))
-    totals = _fixture_token_totals(bound)
-    eligible = {name: len(RETURNED[name]) for name in CHANNELS}
-    with pytest.raises(AssertionError, match="facts: wrong public budget coverage") as caught:
-        _assert_coverage(wrong, dict.fromkeys(CHANNELS, 2048), eligible, totals, totals)
-    print(str(caught.value).splitlines()[0])
+    with _reported_rejection("facts: wrong public budget coverage"):
+        _assert_roomy_coverage(wrong, _fixture_token_totals(bound))
 
-    with pytest.raises(AssertionError, match="shared cap exceeded") as caught:
-        _assert_shared_budget_result(good, good, bound, dict.fromkeys(CHANNELS, 2048), shared=1)
-    print(str(caught.value).splitlines()[0])
+    with _reported_rejection("shared cap exceeded"):
+        _assert_shared_budget_result(good, good, bound, shared=1)

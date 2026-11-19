@@ -244,6 +244,11 @@ def _must_refuse_or_omit() -> Case:
     )
 
 
+def _mixed_case() -> Case:
+    negative = _must_refuse_or_omit()
+    return Case((*_contending_channels().views, *negative.views), negative.stale_ids)
+
+
 @pytest.mark.parametrize(
     ("floor", "total", "expected_ids"),
     [
@@ -302,8 +307,7 @@ def test_an_abstraction_has_its_full_bound_or_is_omitted_whole(delta: int) -> No
 
 
 def test_zero_budget_counts_omissions_in_the_original_channels_and_keeps_actual_refusals() -> None:
-    negative = _must_refuse_or_omit()
-    case = Case((*_contending_channels().views, *negative.views), negative.stale_ids)
+    case = _mixed_case()
     result = case.run(ZERO)
     _assert_budgeted(result, _roomy_result(case), ZERO)
     assert tuple(_items(result, channel) for channel in CHANNELS) == ((), (), (), ())
@@ -319,8 +323,8 @@ def test_zero_budget_counts_omissions_in_the_original_channels_and_keeps_actual_
 
 def _seeded_case(seed: int) -> tuple[Case, ChannelBudgets]:
     rng = random.Random(seed)
-    baseline = _must_refuse_or_omit()
-    views = [*_contending_channels().views, *baseline.views]
+    baseline = _mixed_case()
+    views = list(baseline.views)
     stale_ids = set(baseline.stale_ids)
     for seq in range(100, 148):
         axes = rng.choice(spec.ITEMS)
@@ -388,6 +392,69 @@ def test_budget_fuzz_replay_includes_inputs_and_caps(
         assert marker in note
 
 
+def _alter_returned_item(roomy: Assembly, fault: str) -> Assembly:
+    """Give the oracle a wrong item while leaving its budget unchanged."""
+    match fault:
+        case "wrong_fact" | "stale_as_fact":
+            inference = roomy.hypotheses[0 if fault == "wrong_fact" else 1]
+            false_fact = GroundedFact(inference.artifact_id, inference.kind, inference.text, inference.provenance)
+            return replace(roomy, facts=(false_fact, *roomy.facts[1:]))
+        case "invented":
+            return replace(roomy, facts=(replace(roomy.facts[0], artifact_id="invented"), *roomy.facts[1:]))
+        case "duplicate":
+            return replace(roomy, facts=(roomy.facts[0], *roomy.facts))
+        case "conflict_as_hypothesis":
+            conflict = roomy.conflicts[0]
+            misplaced = Hypothesis(conflict.artifact_id, "claim", "unverified", "brief", "", conflict.provenance)
+            return replace(roomy, hypotheses=(misplaced, *roomy.hypotheses[1:]))
+        case "stale_label":
+            guess, stale = roomy.hypotheses
+            return replace(roomy, hypotheses=(guess, replace(stale, label="verified")))
+        case "changed_bound" | "missing_bound":
+            bounded = roomy.facts[-1]
+            assert isinstance(bounded, BoundedFact)
+            changed: GroundedFact | BoundedFact
+            if fault == "changed_bound":
+                false_bound = replace(bounded.bound, support_count=33)
+                changed = BoundedFact.create(bounded.artifact_id, bounded.statement, false_bound, bounded.provenance)
+            else:
+                changed = GroundedFact(bounded.artifact_id, "abstraction", bounded.statement, bounded.provenance)
+            return replace(roomy, facts=(*roomy.facts[:-1], changed))
+        case _:
+            raise AssertionError(f"unknown returned-item fault: {fault}")
+
+
+def _budget_control(case: Case, roomy: Assembly, fault: str) -> tuple[Assembly, ChannelBudgets]:
+    """Pair a deliberately wrong result with the budget the oracle must enforce."""
+    match fault:
+        case "clipped_to_zero":
+            return roomy, replace(ROOMY, facts=0)
+        case "shared_cap":
+            return roomy, replace(ROOMY, total_tokens=1)
+        case "truncation_as_refusal":
+            clipped = case.run(ZERO)
+            false_refusal = Refusal("a1", "provenance_unmaterialisable")
+            return replace(clipped, refused=(*clipped.refused, false_refusal)), ZERO
+        case "coverage":
+            # Preserve aggregate truncation, deliberately charge omitted facts to the wrong channel.
+            clipped = case.run(ZERO)
+            coverage = clipped.coverage
+            moved = replace(
+                coverage,
+                facts=replace(coverage.facts, truncated=coverage.facts.truncated - 1),
+                hypotheses=replace(coverage.hypotheses, truncated=coverage.hypotheses.truncated + 1),
+            )
+            return replace(clipped, coverage=moved), ZERO
+        case "missing_fitting_item":
+            # Report the larger cap accurately but omit the items that would fit under it.
+            clipped = case.run(replace(ROOMY, facts=0))
+            budget = replace(ROOMY, facts=10)
+            coverage = replace(clipped.coverage, facts=replace(clipped.coverage.facts, token_budget=budget.facts))
+            return replace(clipped, coverage=coverage), budget
+        case _:
+            return _alter_returned_item(roomy, fault), ROOMY
+
+
 @pytest.mark.parametrize(
     ("fault", "message"),
     [
@@ -407,66 +474,9 @@ def test_budget_fuzz_replay_includes_inputs_and_caps(
     ],
 )
 def test_budget_controls_detect_deliberate_violations(fault: str, message: str) -> None:
-    fixture = _must_refuse_or_omit()
-    case = Case((*_contending_channels().views, *fixture.views), fixture.stale_ids)
+    case = _mixed_case()
     roomy = _roomy_result(case)
-    budget = ROOMY
-    result = roomy
-    if fault in ("wrong_fact", "stale_as_fact"):
-        inference = roomy.hypotheses[0 if fault == "wrong_fact" else 1]
-        false_fact = GroundedFact(inference.artifact_id, inference.kind, inference.text, inference.provenance)
-        result = replace(roomy, facts=(false_fact, *roomy.facts[1:]))
-    elif fault == "invented":
-        result = replace(roomy, facts=(replace(roomy.facts[0], artifact_id="invented"), *roomy.facts[1:]))
-    elif fault == "duplicate":
-        result = replace(roomy, facts=(roomy.facts[0], *roomy.facts))
-    elif fault == "conflict_as_hypothesis":
-        conflict = roomy.conflicts[0]
-        misplaced = Hypothesis(conflict.artifact_id, "claim", "unverified", "brief", "", conflict.provenance)
-        result = replace(roomy, hypotheses=(misplaced, *roomy.hypotheses[1:]))
-    elif fault == "stale_label":
-        guess, stale = roomy.hypotheses
-        result = replace(roomy, hypotheses=(guess, replace(stale, label="verified")))
-    elif fault in ("changed_bound", "missing_bound"):
-        bounded = roomy.facts[-1]
-        assert isinstance(bounded, BoundedFact)
-        changed: GroundedFact | BoundedFact
-        if fault == "changed_bound":
-            false_bound = replace(bounded.bound, support_count=33)
-            changed = BoundedFact.create(bounded.artifact_id, bounded.statement, false_bound, bounded.provenance)
-        else:
-            changed = GroundedFact(bounded.artifact_id, "abstraction", bounded.statement, bounded.provenance)
-        result = replace(roomy, facts=(*roomy.facts[:-1], changed))
-    elif fault == "truncation_as_refusal":
-        budget = ZERO
-        clipped = case.run(ZERO)
-        result = replace(clipped, refused=(*clipped.refused, Refusal("a1", "provenance_unmaterialisable")))
-    elif fault == "clipped_to_zero":
-        budget = replace(ROOMY, facts=0)
-    elif fault == "shared_cap":
-        budget = replace(ROOMY, total_tokens=1)
-    elif fault == "coverage":
-        # Preserve aggregate truncation, deliberately charge omitted facts to the wrong channel.
-        result = case.run(ZERO)
-        budget = ZERO
-        coverage = result.coverage
-        result = replace(
-            result,
-            coverage=replace(
-                coverage,
-                facts=replace(coverage.facts, truncated=coverage.facts.truncated - 1),
-                hypotheses=replace(coverage.hypotheses, truncated=coverage.hypotheses.truncated + 1),
-            ),
-        )
-    else:
-        assert fault == "missing_fitting_item"
-        facts_cap = 10
-        result = case.run(replace(ROOMY, facts=0))
-        budget = replace(ROOMY, facts=facts_cap)
-        result = replace(
-            result,
-            coverage=replace(result.coverage, facts=replace(result.coverage.facts, token_budget=facts_cap)),
-        )
+    result, budget = _budget_control(case, roomy, fault)
 
     with pytest.raises(AssertionError, match=message) as failure:
         _assert_budgeted(result, roomy, budget)
