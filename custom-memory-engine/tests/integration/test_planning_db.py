@@ -193,7 +193,8 @@ def _request_for(mode: str, s: Scenario) -> dict[str, object]:
         return {}
     if mode == "historical_as_of":
         return {"target_time": T0.isoformat()}
-    if mode == "historical_window":
+    if mode in ("historical_window", "change"):
+        # `change` (V2-D81) diffs the views at the window's two instants; its channels are their union
         return {"window_start": T0.isoformat(), "window_end": T1.isoformat()}
     return {"target_time": T0.isoformat(), "belief_time": s.claim_recorded_at.isoformat()}
 
@@ -203,7 +204,7 @@ def _request_for(mode: str, s: Scenario) -> dict[str, object]:
 
 @pytest.mark.parametrize("mode", sorted(MODES))
 async def test_every_mode_plans_and_executes_through_the_plan_path(database, mode: str) -> None:  # noqa: F811
-    """Criterion 4: all four modes produce their documented result *through* the plan path.
+    """Criterion 4: every mode produces its documented result *through* the plan path (``change`` since ``V2-D81``).
 
     The recorder proves the path was taken (a plan was built and recorded), and the result matches what the mode's
     own documented semantics say — ``audit_as_of`` in ``audit`` and flagged, the others in channels.
@@ -222,7 +223,7 @@ async def test_every_mode_plans_and_executes_through_the_plan_path(database, mod
             assert result.is_audit is False
             found = _ids(result)
             assert {s.episode_a, s.episode_b} <= found, f"{mode} lost an episode the predicate admits"
-            if mode in ("historical_as_of", "historical_window"):
+            if mode in ("historical_as_of", "historical_window", "change"):
                 assert s.claim in found, f"{mode} must see the claim while its event range is open"
 
 
@@ -427,7 +428,7 @@ async def test_the_plan_path_preserves_the_documented_refusals(database) -> None
     """Criterion 8, re-asserted here: ``query``'s own validation and codes are unchanged by planning."""
     async with scenario(database) as (engine, _conn, _s, _replay):
         cases: list[tuple[dict[str, object], str]] = [
-            ({"mode": "change"}, "mode_change_not_wired"),
+            ({"mode": "change"}, "window_start_required"),  # V2-D81: wired, under the window form's codes
             ({"mode": "recently"}, "mode_invalid"),
             ({"reference_time": T0.isoformat()}, "reference_time_is_the_engine_clock"),
             ({"mode": "historical_as_of"}, "target_time_required"),

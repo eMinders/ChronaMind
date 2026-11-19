@@ -58,7 +58,9 @@ QueryRequest   { text, intent?, mode: current_state|historical_as_of|historical_
 ChannelBudgets { facts: int, hypotheses: int, procedures: int, conflicts: int,
                  total_tokens?: int, facts_floor_tokens?: int }
 QueryResult    { facts[], hypotheses[], procedures[], conflicts[], audit[], refused[], is_audit,
-                 provenance_bundle, cost: AssemblyCost, coverage: CoverageReport }   # CHANNELS.md
+                 provenance_bundle, cost: AssemblyCost, coverage: CoverageReport,
+                 changes: Change[] }                                  # CHANNELS.md; changes only for mode=change
+Change         { outcome: added|removed|changed, previous: id[], current: id[] }   # ids only (V2-D81)
 Receipt        { id, effect, recorded_at }     # content-free
 PurgeReceipt   { purged_episodes, retained_as_evidence, recorded_at }   # content-free: counts and the clock only
 OutcomeStats   { procedure_id, successes, failures, last_used_at, mean_cost }   # content-free: counters, clock, cost
@@ -193,8 +195,13 @@ sides of the comparison.
   **never** in an answer channel: `TECHNICAL_SPECIFICATION.md` 3.5 forbids using them as answer context, and
   `channel_of` maps a retired artifact to `none`, so a channel-routed audit would drop exactly the rows it exists to
   show. Tier B calling it is `forbidden`;
-- `change` is recognised but **not yet wired** (`validation_error/mode_change_not_wired`): it is a diff of two
-  temporal views and belongs to `E-033`.
+- `change` (`V2-D81`): adds `window_start`/`window_end` under the window form's names and refusals, and diffs two
+  `historical_as_of` views under ρ — *previous* at `window_start`, *current* at `window_end`. Both are answer-context
+  reads (`status='active'`, read set in SQL), so `change` never reaches a retired or archived row. Rows are keyed on
+  `(subject_key, predicate_key)` for a single-valued predicate and on `memory_key` otherwise; per key the outcome is
+  `added`, `removed` or `changed`, and an unchanged key is omitted. `changes[]` carries version ids only; the channels
+  are assembled from the union of the two views. `change` never expands associations, and a view exceeding `limit`
+  is refused (`resource_limit/change_view_exceeds_limit`) rather than diffed.
 
 The read set and temporal predicate are applied together before the candidate limit. Association expansion starts
 from these candidates, applies the same predicates to newly reached artifacts and may add supplemental rows beyond
@@ -211,7 +218,7 @@ enter the same channel-routing path as candidates. Audit applies the requested b
 and uses the stored association topology. *Errors:* `validation_error` (missing or malformed parameter,
 `target > ρ`, empty window, unknown mode, a caller-supplied `reference_time`), `forbidden` (`audit_as_of`
 as Tier B, or a scope outside the read set),
-`resource_limit` (more than 16 selectors).
+`resource_limit` (more than 16 selectors, or a `change` view exceeding `limit`).
 
 **`refine(ctx, result_id, instruction: str) → QueryResult`**
 Drill-down on a prior result within the same read set; cannot widen it. *Errors:* `forbidden` (unknown or

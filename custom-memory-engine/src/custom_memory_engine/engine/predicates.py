@@ -320,6 +320,20 @@ class ScopedRow:
     scope_path: str
     visibility: str
     hop_distance: int = 0
+    # ``V2-D81``: what a ``change`` diff matches rows on. Empty unless the read asked for it
+    # (``fetch_scoped_rows(..., with_identity=True)``), so no other route pays for columns it cannot use.
+    memory_key: str = ""
+    subject_key: str = ""
+    predicate_key: str = ""
+    single_valued: bool = False
+    #: The version's validity interval as canonical ISO-8601 text, so a diff is deterministic and serialisable.
+    valid_from: str = ""
+    valid_until: str | None = None
+
+
+def _interval_text(bound: object) -> str:
+    """An ``event_range`` bound as canonical UTC ISO-8601 text; an unbounded side is the empty string."""
+    return bound.astimezone(UTC).isoformat() if isinstance(bound, datetime) else ""
 
 
 def scoped_artifact_filter(temporal: sql.Composable, readable: sql.Composable) -> sql.Composed:
@@ -355,6 +369,7 @@ async def fetch_scoped_rows(
     *,
     limit: int,
     schema_name: str = "cme_engine",
+    with_identity: bool = False,
 ) -> tuple[ScopedRow, ...]:
     """The temporal predicate and a caller's read predicate in **one** statement, newest belief first.
 
@@ -379,18 +394,57 @@ async def fetch_scoped_rows(
         if context is None or context[0] != query.user_id:
             raise InsufficientPrivilege("temporal_user_context_mismatch")
         compiled = compile_predicate(query, alias="m", database_clock=clock_instant)
+        identity = (
+            ", m.memory_key, m.subject_key, m.predicate_key, m.single_valued, "
+            "lower(m.event_range), upper(m.event_range)"
+            if with_identity
+            else ""
+        )
         await cursor.execute(
             sql.SQL(
-                "SELECT m.id, m.kind, m.lifecycle, m.content, m.scope_path, m.visibility FROM {table} AS m "
+                "SELECT m.id, m.kind, m.lifecycle, m.content, m.scope_path, m.visibility{identity} FROM {table} AS m "
                 "WHERE {artifact_filter} "
                 "ORDER BY lower(m.recorded_range) DESC NULLS LAST, m.id LIMIT %(row_limit)s"
             ).format(
+                identity=sql.SQL(identity),
                 table=sql.Identifier(schema_name, "memory_version"),
                 artifact_filter=scoped_artifact_filter(compiled.statement, read_filter),
             ),
             {**compiled.parameters, **read_parameters, "row_limit": limit},
         )
+        fetched = await cursor.fetchall()
+        if not with_identity:
+            return tuple(
+                ScopedRow(str(id_), str(kind), str(lifecycle), str(content), str(scope), str(visibility))
+                for id_, kind, lifecycle, content, scope, visibility in fetched
+            )
         return tuple(
-            ScopedRow(str(id_), str(kind), str(lifecycle), str(content), str(scope), str(visibility))
-            for id_, kind, lifecycle, content, scope, visibility in await cursor.fetchall()
+            ScopedRow(
+                str(id_),
+                str(kind),
+                str(lifecycle),
+                str(content),
+                str(scope),
+                str(visibility),
+                memory_key=str(memory_key),
+                subject_key=str(subject_key),
+                predicate_key=str(predicate_key),
+                single_valued=bool(single_valued),
+                valid_from=_interval_text(lower_event),
+                valid_until=_interval_text(upper_event) or None,
+            )
+            for (
+                id_,
+                kind,
+                lifecycle,
+                content,
+                scope,
+                visibility,
+                memory_key,
+                subject_key,
+                predicate_key,
+                single_valued,
+                lower_event,
+                upper_event,
+            ) in fetched
         )

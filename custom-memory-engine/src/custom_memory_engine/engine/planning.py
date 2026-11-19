@@ -62,10 +62,17 @@ TEMPORAL_INDEX = "memory_version_temporal_idx"
 #: reach one (``TECHNICAL_SPECIFICATION.md`` §3.5, ``V2-D73``).
 type Route = Literal["channels", "audit"]
 
-#: ``API_V2.md`` §4.2's modes minus ``change`` (``E-033``). Stated here rather than imported, so this module stays
-#: free of the connection layer; ``test_the_planner_modes_are_the_predicate_modes`` pins it to
-#: ``predicates.QueryMode`` so the two cannot drift.
-MODES: frozenset[str] = frozenset({"current_state", "historical_as_of", "historical_window", "audit_as_of"})
+#: ``API_V2.md`` §4.2's five modes. Four are single temporal predicates (``predicates.QueryMode``); ``change`` is the
+#: diff of two of them (``V2-D81``) and so is a *plan* mode, never a predicate mode. Stated here rather than imported,
+#: so this module stays free of the connection layer; ``test_the_planner_modes_are_the_predicate_modes`` pins it to
+#: ``predicates.QueryMode`` plus ``change`` so the two cannot drift.
+MODES: frozenset[str] = frozenset({"current_state", "historical_as_of", "historical_window", "audit_as_of", "change"})
+
+#: ``V2-D81``: the diff of the belief in effect at ``window_start`` against the belief in effect at ``window_end``.
+CHANGE_MODE = "change"
+
+#: A plan's mode: one temporal predicate, or ``change`` (two of them, ``V2-D81``).
+type PlanMode = QueryMode | Literal["change"]
 
 #: An intent the planner does not recognise is refused, never defaulted (recommended 3 on the issue): a silent
 #: default is indistinguishable from a bug in a replay.
@@ -91,7 +98,7 @@ class Intent:
     (``V2-D73``), so it is never part of an intent and the planner never sees one.
     """
 
-    mode: QueryMode
+    mode: PlanMode
     limit: int
     scope: str | None = None
     target_time: datetime | None = None
@@ -148,7 +155,7 @@ class Plan:
     is sorted by :func:`read_scopes`.
     """
 
-    mode: QueryMode
+    mode: PlanMode
     route: Route
     index: str
     filters: tuple[str, ...]
@@ -189,6 +196,9 @@ class Plan:
             raise PlanningError(PLAN_INTENT_REFUSED)
         if self.expansion == "none" and self.hop_budget != 0:
             # following no association for a nonzero depth is a contradiction, not a preference
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if self.mode == CHANGE_MODE and self.expansion != "none":
+            # V2-D81: a diff compares beliefs, not neighbours; a recorded plan cannot smuggle expansion into one
             raise PlanningError(PLAN_INTENT_REFUSED)
         if self.expansion == ASSOCIATION_EXPANSION and self.hop_budget < 1:
             # expansion at a zero budget reaches nothing; a plan that records expansion must traverse at least one hop
@@ -326,6 +336,8 @@ _INSTANTS: Mapping[str, frozenset[str]] = {
     "historical_as_of": frozenset({"target_time"}),
     "historical_window": frozenset({"window_start", "window_end"}),
     "audit_as_of": frozenset({"target_time", "belief_time"}),
+    # V2-D81: the two instants the diff compares, under the names `historical_window` already uses for them
+    "change": frozenset({"window_start", "window_end"}),
 }
 
 #: The filters every mode applies, in execution order. The first three are one SQL statement, before ``LIMIT``
@@ -384,13 +396,17 @@ class RuleBasedPlanner:
         def kept(name: str, value: datetime | None) -> str | None:
             return _canonical_instant(value) if name in wanted and value is not None else None
 
+        # V2-D81: a diff compares two sets of *beliefs*. A row reached by association is not a belief the window
+        # changed, it is a neighbour of one, so `change` never expands -- and a fixed candidate set per view is what
+        # lets the executor tell "absent" from "not reached".
+        expands = intent.mode != CHANGE_MODE
         return Plan(
             mode=intent.mode,
             route=route,
             index=TEMPORAL_INDEX,
             filters=_filters_for(intent.mode),
-            expansion=ASSOCIATION_EXPANSION,
-            hop_budget=DEFAULT_HOP_BUDGET,
+            expansion=ASSOCIATION_EXPANSION if expands else "none",
+            hop_budget=DEFAULT_HOP_BUDGET if expands else 0,
             rows=intent.limit,
             scopes=tuple(scopes),
             target_time=kept("target_time", intent.target_time),
@@ -433,6 +449,7 @@ def observe_nothing(_stage: str) -> AbstractContextManager[None]:
 
 
 __all__ = [
+    "CHANGE_MODE",
     "MODES",
     "PLAN_INTENT_REFUSED",
     "PROCEDURE_APPLICABILITY",
@@ -440,6 +457,7 @@ __all__ = [
     "TEMPORAL_INDEX",
     "Intent",
     "Plan",
+    "PlanMode",
     "PlanRecorder",
     "Planner",
     "PlanningError",

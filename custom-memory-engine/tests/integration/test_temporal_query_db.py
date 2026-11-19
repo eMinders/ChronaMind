@@ -383,12 +383,12 @@ async def test_a_recorded_artifact_is_current_at_the_engine_clock(database) -> N
 # ──────────────────────────────────────────────────────────────── mode errors ──
 
 
-async def test_change_mode_is_recognised_but_not_wired(database) -> None:  # noqa: F811
-    """``change`` is E-033's diff operator; the error says so rather than pretending the mode is unknown."""
+async def test_change_mode_is_wired_and_needs_its_window(database) -> None:  # noqa: F811
+    """``change`` is wired (``V2-D81``): without its two instants it is refused under the window form's codes."""
     async with scenario(database) as (engine, _conn, s):
         with pytest.raises(EntryError) as refused:
             await engine.call(caller("alice"), "query", {"request": {"scope": SCOPE, "mode": "change"}})
-        assert (refused.value.code, refused.value.detail) == ("validation_error", "mode_change_not_wired")
+        assert (refused.value.code, refused.value.detail) == ("validation_error", "window_start_required")
 
 
 async def test_an_unknown_mode_is_a_validation_error(database) -> None:  # noqa: F811
