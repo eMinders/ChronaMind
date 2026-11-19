@@ -273,6 +273,10 @@ async def test_expansion_is_tenant_isolated(database) -> None:  # noqa: F811
 async def test_expanded_stale_abstraction_stays_a_hypothesis(database) -> None:  # noqa: F811
     async with world(database) as (conn, engine, schema):
         await verified_world(conn, schema)
+        await conn.execute(
+            "UPDATE abstraction_stats SET confidence = 0.9119, "
+            "expires_at = '2100-01-01T00:00:00+00:00' WHERE version_id = 'abs1'"
+        )
         # Give the seed the newest recording so abs1 cannot already be a candidate at limit one.
         await conn.execute("SELECT set_config('app.clock', %s, false)", (RECORDED.isoformat(),))
         await insert_version(conn, "seed", "claim", "asserted")
@@ -281,7 +285,10 @@ async def test_expanded_stale_abstraction_stays_a_hypothesis(database) -> None: 
         query = {"request": {"limit": 1}}
         fresh = await engine.call(caller("u1"), "query", query)
         assert isinstance(fresh, QueryResult)
-        assert [(row.artifact_id, row.hop_distance) for row in fresh.facts] == [("seed", 0), ("abs1", 1)]
+        assert [(row.artifact_id, row.hop_distance) for row in fresh.facts] == [
+            ("seed", 0),
+            ("abs1", 1),
+        ], f"refused={fresh.refused}, coverage={fresh.coverage}, hypotheses={fresh.hypotheses}"
         assert fresh.hypotheses == ()
         await retire(conn, "mid")
         stale = await engine.call(caller("u1"), "query", query)

@@ -54,9 +54,13 @@ SourceRef      { type: 'turn'|'tool'|'file'|'paper'|'event'|'external', ref: str
 ScopeSelector  exact(path) | subtree(path) | with_visibility(path, {project, shared})      # section 6
 QueryRequest   { text, intent?, mode: current_state|historical_as_of|historical_window|change|audit_as_of,
                  scope?, target_time?, belief_time?, window_start?, window_end?,
-                 selectors: ScopeSelector[], budget: ChannelBudgets, limit? }
+                 selectors: ScopeSelector[], budget?: ChannelBudgets, limit? }
+ChannelBudgets { facts: int, hypotheses: int, procedures: int, conflicts: int,
+                 total_tokens?: int, facts_floor_tokens?: int }
 QueryResult    { facts[], hypotheses[], procedures[], conflicts[], audit[], refused[], is_audit,
-                 provenance_bundle, cost, coverage }   # CHANNELS.md
+                 provenance_bundle, cost: AssemblyCost, coverage: CoverageReport,
+                 changes: Change[] }                                  # CHANNELS.md; changes only for mode=change
+Change         { outcome: added|removed|changed, previous: id[], current: id[] }   # ids only (V2-D81)
 Receipt        { id, effect, recorded_at }     # content-free
 PurgeReceipt   { purged_episodes, retained_as_evidence, recorded_at }   # content-free: counts and the clock only
 OutcomeStats   { procedure_id, successes, failures, last_used_at, mean_cost }   # content-free: counters, clock, cost
@@ -64,6 +68,20 @@ Precondition   { op: 'scope_within', scope: str }                      # the req
              | { op: 'exists'|'absent', match: { kind?, lifecycle?, facet?, predicate? } }   # 1-4 keys; E-030
                                                  # a procedure's preconditions are a conjunction; [] = always applicable
 ```
+
+`ChannelBudgets` values are whitespace-token ceilings, using the same deterministic proxy as
+`engine.render.default_token_counter` (not a model-accurate tokenizer). Each channel defaults to 2048 tokens;
+`total_tokens` is unbounded unless supplied. The default facts floor is 256 tokens, reduced to the facts and total
+ceilings when either is smaller. A channel that cannot fit its next item is truncated at that stable point and reports
+the number of omitted items and tokens; it does not silently shorten content. With a shared total ceiling, assembly
+reserves the facts floor first, then fills hypotheses, procedures, conflicts, and remaining facts.
+
+`coverage` counts candidates **after temporal/read filtering, expansion, and procedure applicability**, but before
+channel token budgets. For each channel it reports candidates, returned items, refused items with static reasons,
+truncated items, token ceiling, tokens used, and tokens omitted. `cost` is assembly-only: candidate rows considered,
+items rendered, tokens evaluated, and tokens rendered. `E-036` owns aggregation of costs across the other stages.
+Every artifact in an answer channel carries its own provenance bundle; `provenance_bundle` is the flattened,
+channel-ordered `(artifact_id, bundle)` view of those same items. Audit rows never enter it.
 
 ## 3. Operations and tiers (the tier matrix, `MA-015`)
 
@@ -177,8 +195,13 @@ sides of the comparison.
   **never** in an answer channel: `TECHNICAL_SPECIFICATION.md` 3.5 forbids using them as answer context, and
   `channel_of` maps a retired artifact to `none`, so a channel-routed audit would drop exactly the rows it exists to
   show. Tier B calling it is `forbidden`;
-- `change` is recognised but **not yet wired** (`validation_error/mode_change_not_wired`): it is a diff of two
-  temporal views and belongs to `E-033`.
+- `change` (`V2-D81`): adds `window_start`/`window_end` under the window form's names and refusals, and diffs two
+  `historical_as_of` views under ρ — *previous* at `window_start`, *current* at `window_end`. Both are answer-context
+  reads (`status='active'`, read set in SQL), so `change` never reaches a retired or archived row. Rows are keyed on
+  `(subject_key, predicate_key)` for a single-valued predicate and on `memory_key` otherwise; per key the outcome is
+  `added`, `removed` or `changed`, and an unchanged key is omitted. `changes[]` carries version ids only; the channels
+  are assembled from the union of the two views. `change` never expands associations, and a view exceeding `limit`
+  is refused (`resource_limit/change_view_exceeds_limit`) rather than diffed.
 
 The read set and temporal predicate are applied together before the candidate limit. Association expansion starts
 from these candidates, applies the same predicates to newly reached artifacts and may add supplemental rows beyond
@@ -195,15 +218,31 @@ enter the same channel-routing path as candidates. Audit applies the requested b
 and uses the stored association topology. *Errors:* `validation_error` (missing or malformed parameter,
 `target > ρ`, empty window, unknown mode, a caller-supplied `reference_time`), `forbidden` (`audit_as_of`
 as Tier B, or a scope outside the read set),
-`resource_limit` (more than 16 selectors).
+`resource_limit` (more than 16 selectors, or a `change` view exceeding `limit`).
 
 **`refine(ctx, result_id, instruction: str) → QueryResult`**
 Drill-down on a prior result within the same read set; cannot widen it. *Errors:* `forbidden` (unknown or
 foreign `result_id`), `validation_error`.
 
 **`get(ctx, artifact_id) → Artifact`** and **`provenance(ctx, artifact_id, depth?) → ProvenanceView`**
-Return one artifact or its provenance. A source in a scope the caller cannot read appears as an opaque reference
-only (`CHANNELS.md` R6, `THREAT_MODEL.md` T-10). *Errors:* `forbidden` for absent **and** unreadable alike.
+Return one artifact or its provenance. Provenance depth defaults to 1 and is bounded at 8; traversal stops at the
+requested depth, and `depth_limited` is true when a readable source remains beyond that boundary. A source in a scope
+the caller cannot read appears as an opaque reference only and is never traversed (`CHANNELS.md` R6,
+`THREAT_MODEL.md` T-10). *Errors:* `forbidden` for absent **and** unreadable alike; `validation_error` for a depth
+outside 1–8.
+
+`engine/render.py::render_context` remains available for `TemporalVersion` callers. Its active-status filtering,
+current-mode ended-version exclusion, validity-interval/role labels, rank-order preservation, and token accounting
+are unchanged. The channel assembler complements it: temporal filtering happens before assembly and each routed
+channel gets its own reported budget; it does not retire or silently replace `render_context`.
+
+| `render.py` behavior | E-033 mapping |
+|---|---|
+| Drop non-active versions | Query candidate predicates admit only active rows; audit rows remain isolated in `audit[]`. |
+| In current mode, omit ended event ranges | The `current_state` temporal predicate excludes them before assembly. |
+| Preserve caller rank order and stop at first non-fitting item | Assembly preserves deterministic input order within channels and truncates at the first non-fitting item; procedure ranking still runs after routing. |
+| Include validity interval and temporal role labels | Preserved unchanged by `render_context`; the channel API remains structured artifacts and does not replace that temporal-version rendering surface. |
+| Count tokens and report truncated items/tokens | The same whitespace proxy is reused; channel coverage reports per-channel tokens and omitted items/tokens. |
 
 ### 4.3 Write (grounded)
 

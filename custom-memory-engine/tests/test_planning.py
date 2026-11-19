@@ -67,7 +67,7 @@ def _intent(mode: str = "current_state", **extra: object) -> Intent:
     fields: dict[str, object] = {"limit": 200}
     if mode == "historical_as_of":
         fields["target_time"] = T0
-    elif mode == "historical_window":
+    elif mode in ("historical_window", "change"):
         fields.update(window_start=T0, window_end=T1)
     elif mode == "audit_as_of":
         fields.update(target_time=T0, belief_time=T1)
@@ -91,7 +91,8 @@ def test_a_plan_serialises_and_round_trips(mode: str) -> None:
     assert _bytes(rebuilt) == _bytes(plan)
     payload = plan.to_dict()
     assert payload["mode"] == mode
-    assert payload["expansion"] == "association"
+    # V2-D81: a diff compares beliefs, so `change` records no expansion; every single-predicate mode expands.
+    assert payload["expansion"] == ("none" if mode == "change" else "association")
     assert payload["index"] == TEMPORAL_INDEX
     assert payload["stages"] == list(STAGES)
 
@@ -284,8 +285,12 @@ def test_the_planner_does_no_io() -> None:
 
 
 def test_the_planner_modes_are_the_predicate_modes() -> None:
-    """``MODES`` is stated in the planner to keep it I/O-free; it must equal the predicate's own vocabulary."""
-    assert frozenset(get_args(QueryMode.__value__)) == MODES
+    """``MODES`` is stated in the planner to keep it I/O-free; it must equal the predicate vocabulary plus ``change``.
+
+    ``change`` is a *plan* mode, not a predicate mode: no single predicate answers it, which is why it is added here
+    rather than to ``QueryMode`` (``V2-D81``).
+    """
+    assert frozenset(get_args(QueryMode.__value__)) | {"change"} == MODES
 
 
 def test_planning_is_a_pure_function_of_its_arguments() -> None:
@@ -454,6 +459,17 @@ def test_an_expanding_record_without_a_budget_is_refused_rather_than_replayed() 
     """
     payload = plan_retrieval(_intent(), ALICE).to_dict()
     del payload["hop_budget"]
+    with pytest.raises(PlanningError) as caught:
+        Plan.from_dict(payload)
+    assert caught.value.code == PLAN_INTENT_REFUSED
+
+
+def test_a_change_plan_never_expands_and_a_record_that_does_is_refused() -> None:
+    """``V2-D81``: a diff compares beliefs, not neighbours; a recorded ``change`` plan cannot smuggle expansion in."""
+    plan = plan_retrieval(_intent("change"), ALICE)
+    assert (plan.expansion, plan.hop_budget) == ("none", 0)
+    payload = plan.to_dict()
+    payload.update(expansion=ASSOCIATION_EXPANSION, hop_budget=DEFAULT_HOP_BUDGET)
     with pytest.raises(PlanningError) as caught:
         Plan.from_dict(payload)
     assert caught.value.code == PLAN_INTENT_REFUSED

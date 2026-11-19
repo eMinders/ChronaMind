@@ -427,7 +427,17 @@ async def test_an_episode_that_opens_a_contradiction_is_retained_and_the_claim_s
             ctx("alice"), "link", {"from": w.fact_episode, "to": w.claim, "type": "related_to", "weight": 1}
         )
         assert isinstance(contradiction, str) and isinstance(related, str)
-        assert w.claim in {a.artifact_id for a in (await query(engine, REPO)).conflicts}
+        # V2-D80: membership does not depend on what the query retrieved, so a scoped query still shows the claim in
+        # `conflicts` with both sides -- the episode that contradicts it is loaded, not required to be a candidate.
+        scoped = await query(engine, REPO)
+        assert w.claim in {a.artifact_id for a in scoped.conflicts}
+        (shown,) = [a for a in scoped.conflicts if a.artifact_id == w.claim]
+        # R5: both sides are shown. The contradicting episode is `private` inside the session scope, and a
+        # `scope=REPO` request re-anchors the read set at the repository (V2 §5 rule 4), so its own scope is not
+        # selected: the side renders as an opaque handle (R6, V2-D37) with no id and no content.
+        own, other = shown.conflict_sides
+        assert own.artifact_id == w.claim and own.text != ""
+        assert other.artifact_id.startswith("opq_") and other.text == "", shown.conflict_sides
         before = await snapshot(conn)
         receipt = await purge_scope(engine, SESSION)
         assert (receipt.purged_episodes, receipt.retained_as_evidence) == (1, 3)
@@ -435,7 +445,17 @@ async def test_an_episode_that_opens_a_contradiction_is_retained_and_the_claim_s
         assert set(diff) == {"memory_version", "memory_evidence", "association", "audit_event"}, sorted(diff)
         assert [row["id"] for row in diff["memory_version"][0]] == [w.fact_episode]
         assert [row["id"] for row in diff["association"][0]] == [related] and diff["association"][1] == []
-        assert w.claim in {a.artifact_id for a in (await query(engine, REPO)).conflicts}
+        # V2-D80: membership does not depend on what the query retrieved, so a scoped query still shows the claim in
+        # `conflicts` with both sides -- the episode that contradicts it is loaded, not required to be a candidate.
+        scoped = await query(engine, REPO)
+        assert w.claim in {a.artifact_id for a in scoped.conflicts}
+        (shown,) = [a for a in scoped.conflicts if a.artifact_id == w.claim]
+        # R5: both sides are shown. The contradicting episode is `private` inside the session scope, and a
+        # `scope=REPO` request re-anchors the read set at the repository (V2 §5 rule 4), so its own scope is not
+        # selected: the side renders as an opaque handle (R6, V2-D37) with no id and no content.
+        own, other = shown.conflict_sides
+        assert own.artifact_id == w.claim and own.text != ""
+        assert other.artifact_id.startswith("opq_") and other.text == "", shown.conflict_sides
         got = await engine.call(ctx("alice"), "get", {"artifact_id": w.claim})
         assert isinstance(got, Artifact) and got.channel == "conflicts"
 

@@ -315,6 +315,23 @@ async def test_audit_as_of_returns_audit_material_and_never_an_answer_channel(da
         assert {a.artifact_id for a in result.audit} >= {s.episode_a, s.claim}
 
 
+async def test_audit_as_of_stays_out_of_the_answer_channels_under_a_budget(database) -> None:  # noqa: F811
+    """#203 criterion 12: a channel budget is applied after routing and never moves an audit row into a channel."""
+    async with scenario(database) as (engine, _conn, s):
+        result = await _query(
+            engine,
+            caller("alice"),
+            SCOPE,
+            "audit_as_of",
+            target_time=T0.isoformat(),
+            belief_time=s.claim_recorded_at.isoformat(),
+            budget={"facts": 1, "hypotheses": 1, "procedures": 1, "conflicts": 1, "total_tokens": 1},
+        )
+        assert result.is_audit is True
+        assert _ids(result) == set(), "a budget must not route audit material into an answer channel"
+        assert {a.artifact_id for a in result.audit} >= {s.episode_a, s.claim}
+
+
 async def test_audit_as_of_reaches_a_row_archived_after_the_belief_instant(database) -> None:  # noqa: F811
     """The reason ``audit_as_of`` exists: a withdrawn claim is gone from every channel but visible before it went.
 
@@ -383,12 +400,12 @@ async def test_a_recorded_artifact_is_current_at_the_engine_clock(database) -> N
 # ──────────────────────────────────────────────────────────────── mode errors ──
 
 
-async def test_change_mode_is_recognised_but_not_wired(database) -> None:  # noqa: F811
-    """``change`` is E-033's diff operator; the error says so rather than pretending the mode is unknown."""
+async def test_change_mode_is_wired_and_needs_its_window(database) -> None:  # noqa: F811
+    """``change`` is wired (``V2-D81``): without its two instants it is refused under the window form's codes."""
     async with scenario(database) as (engine, _conn, s):
         with pytest.raises(EntryError) as refused:
             await engine.call(caller("alice"), "query", {"request": {"scope": SCOPE, "mode": "change"}})
-        assert (refused.value.code, refused.value.detail) == ("validation_error", "mode_change_not_wired")
+        assert (refused.value.code, refused.value.detail) == ("validation_error", "window_start_required")
 
 
 async def test_an_unknown_mode_is_a_validation_error(database) -> None:  # noqa: F811

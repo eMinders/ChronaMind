@@ -39,10 +39,9 @@ from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.maintain_handlers import register_maintain_handlers
 from custom_memory_engine.api.outcome_handlers import register_outcome_handlers
 from custom_memory_engine.api.read_handlers import Artifact, QueryResult, register_read_handlers
-from custom_memory_engine.api.runtime import Receipt
+from custom_memory_engine.api.runtime import DbTargets, Receipt
 from custom_memory_engine.engine.channels import Verification, channel_of
 from custom_memory_engine.engine.deletion import delete_memory
-from custom_memory_engine.engine.predicates import current_state, fetch_versions
 from custom_memory_engine.engine.purge import PurgeReceipt
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.model.axes import (
@@ -154,15 +153,14 @@ def test_the_facet_enum_is_exactly_the_six_canonical_values() -> None:
 
 
 @asynccontextmanager
-async def env(database) -> AsyncIterator[tuple[AsyncConnection, str, str, str]]:  # noqa: F811
-    """A migrated schema with one user, the restricted role, and a base claim the tuples can derive from."""
+async def env(database) -> AsyncIterator[tuple[AsyncConnection, Engine, str, str, str]]:  # noqa: F811
+    """A migrated schema, one user, the restricted role and the engine the tuples are read back through."""
     config, schema = database
     role = "cme_rt_" + uuid4().hex[:12]
     async with world(database) as (conn, engine, _schema):
-        del engine
         await conn.execute("SELECT set_config('app.clock', %s, false)", (START.isoformat(),))
         try:
-            yield conn, schema, role, "alice"
+            yield conn, engine, schema, role, "alice"
         finally:  # tests provision this second role themselves; roles are cluster-wide, so it must not outlive them
             await conn.execute("RESET ROLE")
             if await rows(conn, "SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)):
@@ -221,8 +219,10 @@ async def seed_base(conn: AsyncConnection) -> None:
 @pytest.mark.parametrize("t", LEGAL, ids=str)
 async def test_every_legal_tuple_is_storable_and_queryable_and_deletable_and_routed(database, t: Tuple4) -> None:  # noqa: F811
     """Four properties, four assertions: a failure names the property and the tuple."""
-    async with env(database) as (conn, schema, role, user):
+    async with env(database) as (conn, engine, schema, role, user):
         await provision_runtime_role(conn, schema, role)
+        assert isinstance(engine.resolver, DbTargets)
+        register_read_handlers(engine, engine.resolver.runtime)
         await seed_base(conn)
         # -- storable: the database accepts it as the restricted role
         async with tenant_scope(conn, user, role=role):
@@ -232,19 +232,34 @@ async def test_every_legal_tuple_is_storable_and_queryable_and_deletable_and_rou
             conn, "SELECT kind, retention, lifecycle, um_facet FROM memory_version WHERE id = 'subject'"
         )
         assert stored == [(t.kind, t.retention, t.lifecycle, t.facet)], "storable"
-        # -- queryable: readable through row-level security, and a believed tuple is in the temporal current state
+        # -- queryable: readable through row-level security, and the public `query` operation delivers it in the
+        #    temporal current state. Driven through `Engine.call`, never below the entry point (V2-D62, E-033).
         async with tenant_scope(conn, user, role=role):
             visible = await rows(conn, "SELECT id, kind, lifecycle FROM memory_version WHERE id = 'subject'")
-            believed = {
-                version.id
-                for version in (await fetch_versions(conn, current_state(user, NOW), schema_name=schema)).versions
-            }
         assert [row[0] for row in visible] == ["subject"], "queryable (row-level security)"
-        assert ("subject" in believed) == (STATUS[t.lifecycle] == "active"), "queryable (temporal current_state)"
-        # -- routed: the row as read back (not the test's own tuple) goes where the independent reference model says
+        found = await engine.call(caller(user), "query", {"request": {"scope": f"/u/{user}/"}})
+        assert isinstance(found, QueryResult), found
+        delivered = {
+            artifact.artifact_id: artifact
+            for artifact in (*found.facts, *found.hypotheses, *found.procedures, *found.conflicts)
+        }
+        withheld = {artifact_id: reason for artifact_id, reason in found.refused}
+        believed = STATUS[t.lifecycle] == "active"
+        # a believed row is delivered; a non-believed one is not a candidate at all (recorded_range is NULL), so it is
+        # neither delivered nor refused -- and a refusal is never a silent substitute for delivery (`no_loss`).
+        assert ("subject" in delivered) == believed, (
+            f"queryable (temporal current_state): delivered={sorted(delivered)} "
+            f"refused={sorted(withheld.items())} for {t}"
+        )
+        assert "subject" not in withheld, f"queryable: a row in no channel must not be refused either: {withheld}"
+        # -- routed: the channel the public operation delivered is the one the reference model gives
         kind, lifecycle = cast(Kind, visible[0][1]), cast(Lifecycle, visible[0][2])
         expected_channel = reference_channel(Item(t.kind, t.lifecycle, verification_of(t.lifecycle), False, False))
         assert channel_of(kind, lifecycle, verification_of(lifecycle), False, False) == expected_channel, "routed"
+        if "subject" in delivered:
+            assert delivered["subject"].channel == expected_channel, (
+                f"routed (through Engine.call): {delivered['subject']} but the reference model says {expected_channel}"
+            )
         # -- deletable: the row and its derived dependent are gone, nothing else is
         async with tenant_scope(conn, user, role=role):
             receipt = await delete_memory(conn, user, scope="memory", target_ref="subject", schema_name=schema)
@@ -272,7 +287,7 @@ async def insert_tuple_dependent(conn: AsyncConnection, user: str) -> None:
 
 @pytest.mark.parametrize("t", ILLEGAL, ids=str)
 async def test_every_illegal_tuple_is_refused_by_the_database(database, t: Tuple4) -> None:  # noqa: F811
-    async with env(database) as (conn, schema, role, user):
+    async with env(database) as (conn, _engine, schema, role, user):
         await provision_runtime_role(conn, schema, role)
         await seed_base(conn)
         with pytest.raises((CheckViolation, RaiseException)) as refused:
@@ -294,7 +309,7 @@ def test_the_illegal_space_contains_every_retention_floor_violation_and_the_forb
 
 
 async def test_a_seventh_facet_and_inferred_preference_are_refused_and_the_sql_set_is_the_model_set(database) -> None:  # noqa: F811
-    async with env(database) as (conn, schema, role, user):
+    async with env(database) as (conn, _engine, schema, role, user):
         await provision_runtime_role(conn, schema, role)
         await seed_base(conn)
         for facet in ("inferred_preference", "seventh"):
@@ -483,7 +498,7 @@ async def test_procedural_memory_is_the_procedure_kind_storable_under_every_rete
     database,
 ) -> None:  # noqa: F811
     """The storage-layer half: every lifecycle of a procedure is legal. The entry-point half follows (V2-D62 item 3)."""
-    async with env(database) as (conn, schema, role, user):
+    async with env(database) as (conn, _engine, schema, role, user):
         await provision_runtime_role(conn, schema, role)
         await seed_base(conn)
         for retention in RETENTIONS:
@@ -669,8 +684,8 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         register_outcome_handlers(engine, runtime)
         unwired = set(engine.unwired_operations())
         assert {"delete", "export"} <= unwired  # W3+ owners: E-037, A-015
-        # query/get (E-033 minimal) and infer (C-021 minimal) are wired under V2-D66 and tested through Engine.call
-        assert not {"query", "get", "infer"} & unwired
+        # query/get/provenance (E-033) and infer (C-021) are wired and exercised through Engine.call
+        assert not {"query", "get", "provenance", "infer"} & unwired
         # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
         assert "create_scope" not in unwired
         # `purge_working` left it when E-026 wired it; it is exercised above through Engine.call only.

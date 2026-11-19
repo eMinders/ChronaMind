@@ -16,17 +16,19 @@ and is checked against the executable reference model (``tests/test_channel_memb
 ``E-038``, so assembly takes the staleness function as an injected dependency; :func:`stale_of` is the
 five-cause OR of ``CHANNELS.md`` section 2.3 for the day the inputs exist.
 
-Ranking, per-channel budgets and cost reporting are out of scope (``E-033``). ``engine/render.py`` (v1) is
-untouched and keeps working until ``E-033`` replaces it.
+Ranking stays outside membership. ``E-033`` applies per-channel token budgets after routing and returns exact
+coverage and assembly cost. ``engine/render.py`` remains available for temporal-version rendering; its token counter
+is reused so the channel budget uses the same deterministic counting convention.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from custom_memory_engine.engine.render import default_token_counter
 from custom_memory_engine.model.axes import KINDS, LEGAL_LIFECYCLE, LIFECYCLES, Kind, Lifecycle
 from custom_memory_engine.scope.access import ReadSet
 from custom_memory_engine.scope.provenance import (
@@ -257,6 +259,117 @@ class Refusal:
 
 
 @dataclass(frozen=True, slots=True)
+class ChannelBudgets:
+    """Token ceilings for each channel; ``facts_floor_tokens`` is reserved before other channels use the total.
+
+    Counts use ``engine.render.default_token_counter`` (whitespace-delimited tokens), not a model tokenizer.
+    ``total_tokens`` is optional; when supplied, the facts floor is selected first, then hypotheses, procedures,
+    conflicts, and remaining facts in stable input order.
+    """
+
+    facts: int = 2048
+    hypotheses: int = 2048
+    procedures: int = 2048
+    conflicts: int = 2048
+    total_tokens: int | None = None
+    facts_floor_tokens: int = 0
+
+    def __post_init__(self) -> None:
+        values = (self.facts, self.hypotheses, self.procedures, self.conflicts, self.facts_floor_tokens)
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in values):
+            raise ChannelError("channel_budgets_must_be_nonnegative_integers")
+        if self.total_tokens is not None and (
+            isinstance(self.total_tokens, bool) or not isinstance(self.total_tokens, int) or self.total_tokens < 0
+        ):
+            raise ChannelError("total_token_budget_must_be_a_nonnegative_integer")
+        if self.facts_floor_tokens > self.facts:
+            raise ChannelError("facts_floor_exceeds_facts_budget")
+        if self.total_tokens is not None and self.facts_floor_tokens > self.total_tokens:
+            raise ChannelError("facts_floor_exceeds_total_budget")
+
+    @classmethod
+    def from_value(cls, value: object) -> ChannelBudgets:
+        """Parse the optional request ``budget`` object without accepting unknown or mistyped fields."""
+        if value is None:
+            return DEFAULT_CHANNEL_BUDGETS
+        if not isinstance(value, Mapping):
+            raise ChannelError("channel_budget_object_required")
+        allowed = {"facts", "hypotheses", "procedures", "conflicts", "total_tokens", "facts_floor_tokens"}
+        if any(not isinstance(name, str) or name not in allowed for name in value):
+            raise ChannelError("channel_budget_field_unknown")
+
+        def integer(name: str, default: int) -> int:
+            result = value.get(name, default)
+            if isinstance(result, bool) or not isinstance(result, int):
+                raise ChannelError("channel_budget_field_invalid")
+            return result
+
+        total = value.get("total_tokens")
+        if total is not None and (isinstance(total, bool) or not isinstance(total, int)):
+            raise ChannelError("channel_budget_field_invalid")
+        facts = integer("facts", 2048)
+        floor = integer("facts_floor_tokens", min(256, facts, total if isinstance(total, int) else facts))
+        return cls(
+            facts=facts,
+            hypotheses=integer("hypotheses", 2048),
+            procedures=integer("procedures", 2048),
+            conflicts=integer("conflicts", 2048),
+            total_tokens=total,
+            facts_floor_tokens=floor,
+        )
+
+
+DEFAULT_CHANNEL_BUDGETS = ChannelBudgets(facts_floor_tokens=256)
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelCoverage:
+    """Counts after temporal/read filtering and routing; refusal reasons and token truncation are explicit."""
+
+    candidates: int
+    returned: int
+    refused: tuple[Refusal, ...]
+    truncated: int
+    token_budget: int
+    tokens_used: int
+    tokens_truncated: int
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageReport:
+    """Per-channel coverage, with counts based on candidates presented to assembly."""
+
+    facts: ChannelCoverage
+    hypotheses: ChannelCoverage
+    procedures: ChannelCoverage
+    conflicts: ChannelCoverage
+
+    def channel(self, name: str) -> ChannelCoverage:
+        if name not in {"facts", "hypotheses", "procedures", "conflicts"}:
+            raise ChannelError("unknown_channel")
+        return getattr(self, name)
+
+
+@dataclass(frozen=True, slots=True)
+class AssemblyCost:
+    """Work attributable to assembly; token counts use the same proxy as ``render.py``."""
+
+    candidates_considered: int
+    items_rendered: int
+    tokens_considered: int
+    tokens_rendered: int
+
+
+_EMPTY_CHANNEL_COVERAGE = ChannelCoverage(0, 0, (), 0, 0, 0, 0)
+_EMPTY_COVERAGE = CoverageReport(
+    _EMPTY_CHANNEL_COVERAGE,
+    _EMPTY_CHANNEL_COVERAGE,
+    _EMPTY_CHANNEL_COVERAGE,
+    _EMPTY_CHANNEL_COVERAGE,
+)
+
+
+@dataclass(frozen=True, slots=True)
 class Assembly:
     facts: tuple[GroundedFact | BoundedFact, ...]
     hypotheses: tuple[Hypothesis, ...]
@@ -264,6 +377,8 @@ class Assembly:
     conflicts: tuple[ConflictItem, ...]
     refused: tuple[Refusal, ...]
     excluded: int  # artifacts in no channel (`retired`); a count, never content
+    coverage: CoverageReport = _EMPTY_COVERAGE
+    cost: AssemblyCost = AssemblyCost(0, 0, 0, 0)
 
 
 # --- assembly ------------------------------------------------------------------------------------------
@@ -307,20 +422,38 @@ def assemble(
     read_set: ReadSet,
     key: ProvenanceKey,
     staleness: Staleness,
+    budgets: ChannelBudgets = DEFAULT_CHANNEL_BUDGETS,
 ) -> Assembly:
     """Sort retrieved artifacts into the four channels and render their mandatory fields.
 
     Fails closed per item: an illegal tuple, a missing bound, a missing conflict counterpart, or provenance that
     cannot be materialised refuses that item (reported, never rendered) and does not abort the rest.
     """
-    facts: list[GroundedFact | BoundedFact] = []
-    hypotheses: list[Hypothesis] = []
-    procedures: list[ProcedureItem] = []
-    conflicts: list[ConflictItem] = []
+    channels: dict[str, list[object]] = {
+        "facts": [],
+        "hypotheses": [],
+        "procedures": [],
+        "conflicts": [],
+    }
+    refused_by_channel: dict[str, list[Refusal]] = {name: [] for name in channels}
+    candidate_counts = {name: 0 for name in channels}
     refused: list[Refusal] = []
     excluded = 0
+    token_counts = {name: 0 for name in channels}
+    rendered_tokens = {name: 0 for name in channels}
+    rendered_counts = {name: 0 for name in channels}
+    pending: dict[str, list[tuple[object, int]]] = {name: [] for name in channels}
+    token_budget = {
+        "facts": budgets.facts,
+        "hypotheses": budgets.hypotheses,
+        "procedures": budgets.procedures,
+        "conflicts": budgets.conflicts,
+    }
+    tokens_considered = 0
+    candidates_considered = 0
 
     for view in views:
+        candidates_considered += 1
         stale = staleness(view) if view.verification == "verified" else False
         try:
             channel = channel_of(view.kind, view.lifecycle, view.verification, stale, view.open_contradiction)
@@ -330,33 +463,36 @@ def assemble(
         if channel == "none":
             excluded += 1
             continue
+        candidate_counts[channel] += 1
         if not view.sources:
-            refused.append(Refusal(view.artifact_id, "provenance_unmaterialisable"))
+            refusal = Refusal(view.artifact_id, "provenance_unmaterialisable")
+            refused.append(refusal)
+            refused_by_channel[channel].append(refusal)
             continue
         provenance = render_bundle(list(view.sources), caller_user_id=caller_user_id, read_set=read_set, key=key)
 
         if channel == "facts":
             if view.kind == "abstraction":
                 if view.bound is None:
-                    refused.append(Refusal(view.artifact_id, "bound_missing"))
+                    refusal = Refusal(view.artifact_id, "bound_missing")
+                    refused.append(refusal)
+                    refused_by_channel[channel].append(refusal)
                     continue
-                facts.append(BoundedFact.create(view.artifact_id, view.text, view.bound, provenance))
+                item: object = BoundedFact.create(view.artifact_id, view.text, view.bound, provenance)
             else:
-                facts.append(GroundedFact(view.artifact_id, view.kind, view.text, provenance))
+                item = GroundedFact(view.artifact_id, view.kind, view.text, provenance)
         elif channel == "hypotheses":
-            hypotheses.append(
-                Hypothesis(
-                    view.artifact_id,
-                    view.kind,
-                    hypothesis_label(view.verification, stale),
-                    view.text,
-                    view.support_summary,
-                    provenance,
-                    view.bound,
-                )
+            item = Hypothesis(
+                view.artifact_id,
+                view.kind,
+                hypothesis_label(view.verification, stale),
+                view.text,
+                view.support_summary,
+                provenance,
+                view.bound,
             )
         elif channel == "procedures":
-            procedures.append(ProcedureItem(view.artifact_id, view.text, provenance))
+            item = ProcedureItem(view.artifact_id, view.text, provenance)
         else:
             reason: Literal["contested", "open_contradiction"] = (
                 "contested" if view.lifecycle == "contested" else "open_contradiction"
@@ -364,11 +500,81 @@ def assemble(
             own = ConflictSide(view.artifact_id, view.lifecycle, view.text)
             sides = (own, *view.counterparts)
             if reason == "open_contradiction" and not view.counterparts:
-                refused.append(Refusal(view.artifact_id, "conflict_counterpart_missing"))
+                refusal = Refusal(view.artifact_id, "conflict_counterpart_missing")
+                refused.append(refusal)
+                refused_by_channel[channel].append(refusal)
                 continue
-            conflicts.append(ConflictItem(view.artifact_id, reason, sides, provenance))
+            item = ConflictItem(view.artifact_id, reason, sides, provenance)
+        text = _rendered_item_text(item)
+        cost = default_token_counter(text)
+        pending[channel].append((item, cost))
+        token_counts[channel] += cost
+        tokens_considered += cost
 
-    return Assembly(tuple(facts), tuple(hypotheses), tuple(procedures), tuple(conflicts), tuple(refused), excluded)
+    total_used = 0
+
+    def select(channel: str, *, stop_at_floor: bool = False) -> None:
+        nonlocal total_used
+        for item, cost in pending[channel][rendered_counts[channel] :]:
+            if stop_at_floor and rendered_tokens["facts"] >= budgets.facts_floor_tokens:
+                break
+            if rendered_tokens[channel] + cost > token_budget[channel]:
+                break
+            if budgets.total_tokens is not None and total_used + cost > budgets.total_tokens:
+                break
+            channels[channel].append(item)
+            rendered_counts[channel] += 1
+            rendered_tokens[channel] += cost
+            total_used += cost
+
+    select("facts", stop_at_floor=True)
+    for channel in ("hypotheses", "procedures", "conflicts"):
+        select(channel)
+    select("facts")
+
+    coverage = CoverageReport(
+        **{
+            channel: ChannelCoverage(
+                candidates=candidate_counts[channel],
+                returned=rendered_counts[channel],
+                refused=tuple(refused_by_channel[channel]),
+                truncated=candidate_counts[channel] - len(refused_by_channel[channel]) - rendered_counts[channel],
+                token_budget=token_budget[channel],
+                tokens_used=rendered_tokens[channel],
+                tokens_truncated=token_counts[channel] - rendered_tokens[channel],
+            )
+            for channel in channels
+        }
+    )
+    cost = AssemblyCost(
+        candidates_considered=candidates_considered,
+        items_rendered=sum(rendered_counts.values()),
+        tokens_considered=tokens_considered,
+        tokens_rendered=total_used,
+    )
+    return Assembly(
+        tuple(channels["facts"]),  # type: ignore[arg-type]
+        tuple(channels["hypotheses"]),  # type: ignore[arg-type]
+        tuple(channels["procedures"]),  # type: ignore[arg-type]
+        tuple(channels["conflicts"]),  # type: ignore[arg-type]
+        tuple(refused),
+        excluded,
+        coverage,
+        cost,
+    )
+
+
+def _rendered_item_text(item: object) -> str:
+    """Text carried into answer context; provenance handles are metadata and consume no context tokens."""
+    if isinstance(item, GroundedFact | BoundedFact):
+        return item.text
+    if isinstance(item, Hypothesis):
+        return f"{item.label}: {item.text} {item.support_summary}".strip()
+    if isinstance(item, ProcedureItem):
+        return item.text
+    if isinstance(item, ConflictItem):
+        return "\n".join(f"{side.lifecycle}: {side.text}" for side in item.sides)
+    raise ChannelError("assembled_item_type_invalid")
 
 
 __all__ = [
@@ -378,6 +584,11 @@ __all__ = [
     "Assembly",
     "Bound",
     "BoundedFact",
+    "DEFAULT_CHANNEL_BUDGETS",
+    "ChannelBudgets",
+    "ChannelCoverage",
+    "CoverageReport",
+    "AssemblyCost",
     "Channel",
     "ChannelError",
     "ConflictItem",

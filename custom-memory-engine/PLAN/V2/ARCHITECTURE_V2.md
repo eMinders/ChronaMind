@@ -544,9 +544,12 @@ Consequences that matter:
   cross-scope read oracle. **r7 (`V2-D37`):** the opaque reference is a per-caller HMAC
   handle plus the derivation type of the caller's own edge — *no* scope, source id or
   source type. The approved text read "(id + scope + type)", which contradicted `I17`.
-- **Cost and coverage returned** per stage; `coverage` per channel (how much of the
-  budget each channel consumed) so a caller can see if `hypotheses` crowded out
-  `facts`.
+- **Cost and coverage returned** per stage. Assembly returns its own cost
+  (`candidates_considered`, `items_rendered`, `tokens_considered`, `tokens_rendered`);
+  `E-036` aggregates costs from the other stages. Per-channel coverage counts
+  candidates after temporal/read/applicability filtering, returned items,
+  refusals-with-reason, and budget truncation, so neither omitted data nor channel
+  consumption is silent.
 - **Iteration:** `refine(result, instruction)` for drill-down.
 
 ---

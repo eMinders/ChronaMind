@@ -1885,3 +1885,151 @@ consulted set to the schema's own foreign keys with no hand-written exception.
 the citation — reports `assert [(None,)] == [('dissented-ep',)]`).
 
 **Status:** decided under the Project Owner's delegation (2026-11-18). Closes `E-032-F2`, `E-032-F3` and `E-038-F2`.
+
+## V2-D80 — A conflict's counterparts are loaded from its own edges, never inferred from the candidate page
+
+**Context.** `E-033` (#218) routed `query` through the pure `assemble`, which renders an `open_contradiction` as a
+`ConflictItem` and refuses one with no counterpart (`conflict_counterpart_missing`). The read path built each view's
+counterparts from **the rows the query had retrieved**. Two defects followed, both reproduced against the PR head:
+
+1. **Membership depended on the query.** A claim in `/u/alice/p/one/` contradicted by a claim in `/p/two/` rendered
+   in `conflicts` for an unscoped query, but a `scope=/p/one/` query *refused* it, so it appeared in no channel.
+   `CHANNELS.md` §1 makes membership a pure function of five inputs, "not on … caller, time of day **or the query**";
+   `open_contradiction` is one of them and is derived from the edge (§2.2), not from the page.
+2. **Contradictions were merged.** Every contradicted row was offered as a side of every other, so independent pairs
+   `a1 ↔ b1` and `a2 ↔ b2` rendered `a1` against `a2` and `b2`. R5: a `conflicts` item shows both sides and **never
+   merges them**.
+
+The PR's test edits asserted defect 1 as the expected behaviour (`(w.claim, "conflict_counterpart_missing") in
+repo_view.refused`). That assertion was removed: it encoded the regression, not the contract.
+
+**Decision.**
+- The read path maps each contradicted artifact to **its own** counterparts, from its own `contradicts` edges
+  (`ReadHandlers._contradictions`), and **loads** each counterpart whether or not it was retrieved
+  (`_conflict_counterparts`).
+- A counterpart the caller may read renders with id, lifecycle and text. One it may not read renders as R6 /
+  `V2-D37` render an unreadable source: a per-caller **opaque handle** and **no text**. The lifecycle is shown,
+  because `C-P4` already restricts an open contradiction to grounded endpoints, so it discloses nothing the
+  contradiction's existence does not. Visible sides are ordered by id and precede opaque ones ordered by handle,
+  so ordering never encodes an unreadable id.
+- `get` renders the same sides as `query`. R5 applies to a `conflicts` item wherever it is rendered.
+
+**What was *not* changed, and why.** `assemble`'s refusal of a view with `open_contradiction` and no counterpart
+stays, as does `test_redteam_a_contradiction_without_a_counterpart_is_refused`. For a pure function such a view is
+malformed input: R5 cannot be met, and rendering one side would silently pick a winner. Refusing it keeps it
+accounted for under the `no_loss` invariant (rendered once, refused, or excluded). The defect was that the engine
+produced such views. It no longer does, and a test pins that boundary from the engine's side.
+
+**This settles `E-032-F1`.** An artifact whose contradicting evidence lies outside the request's read set stays in
+`conflicts`: the fail-closed direction (`C-P3`), and the one §1 requires. The caller learns *that* the artifact is
+contradicted, never *by what*. The option of classifying only within the read set would render such an artifact as a
+fact and would need §1 amended first, which this record declines.
+
+**Consequences.** Counterparts are loaded in one extra statement per query that has any contradiction, bounded by the
+association degree cap. As with `V2-D78`, a counterpart is shown at its current state: `association` carries no
+temporal range.
+
+**Evidence.** `api/read_handlers.py` (`_contradictions`, `_conflict_counterparts`, `get`, `execute_plan`);
+`tests/integration/test_conflict_counterparts_db.py` (`test_each_conflict_shows_only_its_own_counterpart`,
+`test_a_readable_counterpart_outside_the_page_is_loaded_not_required`,
+`test_membership_does_not_depend_on_the_query_scope`, `test_get_shows_both_sides_exactly_as_query_does`,
+`test_an_opaque_counterpart_leaks_no_identifier_or_content`,
+`test_the_engine_never_marks_an_open_contradiction_it_cannot_show_both_sides_of`). Controls: reverting to
+retrieved-row counterparts fails three tests, and union pairing fails three.
+`tests/integration/test_purge_working_db.py::test_an_episode_that_opens_a_contradiction_is_retained_and_the_claim_stays_in_conflicts`
+again asserts the claim in `conflicts` for the scoped query, now with both sides (the contradicting episode opaque).
+
+**Status:** decided under the Project Owner's delegation (2026-11-18). Closes `E-032-F1`.
+
+## V2-D81 — `change` diffs two `historical_as_of` views under ρ, keyed by the identity a belief keeps
+
+**Context.** `API_V2.md` §4.2 has listed `mode='change'` since `E-031`, and `query` refused it with
+`validation_error/mode_change_not_wired`. `E-033` owns the mode but could not implement it, because no decision record
+said *which two views* it compares, *what row key* it matches them on, or *what outcomes* it reports. `E-033-F1` (#73)
+recorded that gap rather than letting the mode land with an invented contract.
+
+**Decision — the two views.** `TECHNICAL_SPECIFICATION.md` §3.5 already groups change queries with the **window** form
+of the historical predicate, so `change` takes `window_start` and `window_end` (the names and the refusal codes the
+window form already uses: `window_start_required`, `window_end_required`,
+`historical_window_must_be_nonempty`, `historical_window_after_reference`). It evaluates two of them:
+
+- *previous* = `historical_as_of(user, window_start, ρ)`, *current* = `historical_as_of(user, window_end, ρ)`.
+
+Both are `status='active'` under ρ with the read set applied in SQL, so both are answer-context material. `change` is
+therefore **not** a route to `audit_as_of` (`V2-D73`): a retired or archived version cannot enter either view, and no
+channel receives one.
+
+**Decision — the key.** A row is matched on the identity a **belief** keeps across its versions, which is *not*
+`memory_key`: the API mints a fresh `memory_key` per assertion (`ingest_handlers` calls `new_id("ep")`), so keying on it
+would report every re-assertion as one removal plus one addition.
+
+- **single-valued** predicate → `(subject_key, predicate_key)`. Supersession (`R1`/`R2`) closes the old version and
+  opens the new one under exactly that pair.
+- **multi-valued** predicate → `memory_key`, which `R7` preserves across the close-then-insert that ends one value.
+
+**Decision — the outcomes.** Per key: `added` (only in *current*), `removed` (only in *previous*), `changed` (in both,
+different version sets). A key whose version set is identical in both views is unchanged and is not reported — the diff
+names what moved, and a caller reads what it *is* from the channels, which are assembled from the union of the two
+views. `changes` therefore carries ids, never content: a second copy of the text in the diff would be a second place
+for the budget and the redaction rules to disagree.
+
+**Decision — no expansion.** A row reached by following an association is not a belief the window changed; it is a
+neighbour of one, and expanding would make "removed" mean "no longer reachable from a different candidate set" rather
+than "no longer believed". `change` therefore records `expansion='none'`, `hop_budget=0`, and `Plan` refuses a recorded
+`change` plan that expands.
+
+**Decision — a truncated view is refused, not diffed.** Each view is fetched one row past the plan's limit. If either
+exceeds it, `query` raises `resource_limit/change_view_exceeds_limit` rather than returning a diff computed from a
+truncated view: truncation makes a key look `removed` (or `added`) when it was merely not fetched, and a diff that
+silently means "changed beyond the page" is worse than a bounded refusal.
+
+**Consequences.** `change` is one statement per view, both inside the same transaction, so both see one ρ (`I4`). The
+channels are built exactly as a single-view query builds them — same assembler, same budgets, same coverage, same
+provenance — so a changed artifact is rendered identically whether it is asked for by `change` or by
+`historical_as_of`. `QueryResult.changes` is empty for every other mode.
+
+**Evidence.** `API_V2.md` §4.2 (`QueryResult.changes`, `Change`, the `change` mode bullet and its
+`resource_limit`); `engine/change.py` (`change_key`, `diff_views`); `api/read_handlers.py` (`_change_queries_for`,
+`execute_plan`'s `CHANGE_MODE` branch); `engine/planning.py` (`MODES`, `PlanMode`, the no-expansion invariant);
+`engine/predicates.py` (`ScopedRow` identity columns, `fetch_scoped_rows(with_identity=True)`).
+`tests/test_change_diff.py` pins the key and the three outcomes against both predicates and a multi-valued change;
+`tests/integration/test_change_mode_db.py` drives `Engine.call(…, "query", {"mode": "change", …})` over a
+supersession, a close-then-insert and a multi-valued end, and asserts each appears once with the right outcome in the
+right channel. Controls (run on this branch): keying on `memory_key` throughout turns the single-valued cases into an
+add plus a remove (3 tests fail, all in `tests/test_change_diff.py`); diffing a truncated view answers instead of
+refusing (`test_a_truncated_view_is_refused_not_diffed` fails); letting the planner build an expanding `change` plan is
+refused by `Plan`'s own invariant (11 fail); and removing that invariant alone lets a recorded expanding `change` plan
+replay (`test_a_change_plan_never_expands_and_a_record_that_does_is_refused` fails).
+
+**Status:** decided under the Project Owner's delegation (2026-11-19). Closes `E-033-F1`.
+
+## V2-D82 — a close-then-insert re-issues a belief where it was
+
+**Context.** Found while wiring `change` (`V2-D81`). `R1` makes every revision of a belief a new row: supersession
+re-issues the old value under a closed validity range, boundary revision re-issues both sides, conflict resolution
+re-issues the value an accepted candidate covers, and ending a multi-valued fact re-issues the row with an upper bound.
+None of those paths wrote `scope_path`, `visibility`, `kind`, `method_id` or `subject_entity_id`, so the axes trigger
+(`fill_scope_path()`, migration 11) placed every re-issued row at the user's **personal root** at `private`. A belief
+stored at `/u/alice/p/chrona/` left that scope the first time it was superseded: it vanished for every reader holding
+only the project scope, and a scoped `change` query reported it `removed` when it had only been revised.
+
+**Decision.** A re-issued row is the **same belief**, so it carries the placement of the row it re-issues, read back
+from the database under the writer's own lock (`transactions.py::_placement_of`). A **new** value that supersedes a
+belief (`_successor_placement`) goes where the candidate names; a candidate that names no scope (every v1 writer, the
+extraction pipeline) replaces the belief in place, at its scope and visibility. A candidate that names the prior's own
+scope keeps its visibility too; one that names **another** scope goes there at the column default (`private`), because
+sharing is never inherited across scopes. `kind`, `method_id` and `subject_entity_id` describe the new value, so they
+come from the candidate and the trigger derives what it leaves unset. A first version with nothing to supersede now
+honours the candidate's placement as well.
+
+**Consequences.** No schema change and no migration: the columns already existed and the triggers still derive
+whatever a writer leaves unset. Rows written before this fix keep the root placement they were given; nothing
+rewrites history (`I10`).
+
+**Evidence.** `engine/transactions.py` (`_placement_of`, `_successor_placement`, and every close-then-insert in
+`supersede_single`, `revise_transition_boundary`, `resolve_conflict_pending`, `end_multivalued`).
+`tests/integration/test_version_placement_db.py` (6 tests) asserts each copy against the original read back from the
+database. Control: with the placement carry removed, all 6 fail, and so does
+`test_change_reports_each_outcome_once_and_names_the_versions` (the superseded predicate leaves the scoped view).
+
+**Status:** decided under the Project Owner's delegation (2026-11-19). Recorded on #73 as `E-033-F3`.

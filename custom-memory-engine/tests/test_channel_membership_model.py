@@ -313,3 +313,46 @@ def test_each_staleness_cause_alone_demotes_a_verified_abstraction(cause: int) -
     assert channel_of(Item("abstraction", "inferred", "verified", stale_of(*flags), False)) == "facts"
     flags[cause] = True
     assert channel_of(Item("abstraction", "inferred", "verified", stale_of(*flags), False)) == "hypotheses"
+
+
+# --- the read path must supply a legal `verification` for every stored row (E-033-F2) --------------------
+
+
+def test_every_legal_row_reads_back_with_a_verification_its_lifecycle_admits() -> None:
+    """``api.read_handlers._verification_for`` never hands ``channel_of`` a tuple §1.1 declares illegal.
+
+    ``abstraction_stats`` exists only for abstractions (``guard_abstraction_stats``), so a row of any other kind has no
+    recorded status. Defaulting that to ``'none'`` made **every** inferred episode, claim and procedure illegal,
+    and the read path refused them as ``illegal_artifact_tuple`` -- they vanished from ``hypotheses``. This pins the
+    resolver to the reference model: for every lifecycle, the value it supplies when nothing is recorded is one the
+    reference model accepts, and an inferred row lands in ``hypotheses``.
+    """
+    from custom_memory_engine.api.read_handlers import _verification_for
+
+    for kind in axes.KINDS:
+        for lifecycle in axes.LEGAL_LIFECYCLE[kind]:
+            resolved = _verification_for(lifecycle, None)
+            unrecorded = Item(kind, lifecycle, resolved, False, False)  # type: ignore[arg-type]
+            assert is_legal(unrecorded), (
+                f"a {kind}/{lifecycle} row with no abstraction_stats ledger reads back as "
+                f"verification={unrecorded.verification!r}, which §1.1 declares illegal"
+            )
+            if lifecycle == "inferred":
+                assert channel_of(unrecorded) == "hypotheses", (
+                    f"an inferred {kind} must be a hypothesis, not {channel_of(unrecorded)}"
+                )
+
+
+def test_a_recorded_verification_status_always_wins() -> None:
+    """The resolver only fills a gap: a sealed ``abstraction_stats.verification_status`` is never overwritten."""
+    from custom_memory_engine.api.read_handlers import _verification_for
+
+    for recorded in ("unverified", "verified", "refuted"):
+        assert _verification_for("inferred", recorded) == recorded
+        assert _verification_for("observed", recorded) == recorded
+    # `inferred` is the one lifecycle whose unrecorded default is not `none`
+    assert _verification_for("inferred", None) == "unverified"
+    assert _verification_for("observed", None) == "none"
+    assert _verification_for("asserted", None) == "none"
+    assert _verification_for("contested", None) == "none"
+    assert _verification_for("retired", None) == "none"
