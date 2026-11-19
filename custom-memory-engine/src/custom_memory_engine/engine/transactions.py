@@ -419,7 +419,7 @@ _INSERT_COLUMNS = (
 )
 _INSERT_BASE_ARITY = 18
 #: Columns written only when the caller supplies them; absent, the axes/method triggers derive them.
-_OPTIONAL_COLUMNS = ("scope_path", "kind", "method_id", "subject_entity_id")
+_OPTIONAL_COLUMNS = ("scope_path", "visibility", "kind", "method_id", "subject_entity_id")
 
 
 async def _insert_version(
@@ -444,6 +444,7 @@ async def _insert_version(
     reinforcement_count: int,
     extractor_version: str,
     scope_path: str | None = None,
+    visibility: str | None = None,
     kind: str | None = None,
     method_id: str | None = None,
     subject_entity_id: str | None = None,
@@ -472,6 +473,7 @@ async def _insert_version(
     )
     optional = {
         "scope_path": scope_path,
+        "visibility": visibility,
         "kind": kind,
         "method_id": method_id,
         "subject_entity_id": subject_entity_id,
@@ -484,6 +486,49 @@ async def _insert_version(
         template.format(mv=sql.Identifier(schema_name, "memory_version")),
         base_values + tuple(optional[name] for name in extra),
     )
+
+
+#: The columns that place a row rather than describe a version of it (``V2-D82``). A close-then-insert re-issues the
+#: *same belief*, so it must carry these from the row it re-issues; the axes trigger derives them for a new one.
+_PLACEMENT_COLUMNS = "scope_path, visibility, kind, method_id, subject_entity_id"
+
+
+async def _placement_of(cursor: Any, schema_name: str, version_id: str, user_id: str) -> dict[str, Any]:
+    """Where ``version_id`` sits, so a re-issued copy stays there (``V2-D82``).
+
+    ``R1`` makes every revision a new row; without this, ``fill_scope_path()`` fills the personal root and a belief
+    stored at ``/u/alice/p/chrona/`` silently moves out of its project scope the first time it is superseded -- out of
+    sight of every reader holding only that scope, and reported as removed by a scoped ``change`` query.
+    """
+    await cursor.execute(
+        sql.SQL("SELECT {} FROM {} WHERE id = %s AND user_id = %s").format(
+            sql.SQL(_PLACEMENT_COLUMNS), sql.Identifier(schema_name, "memory_version")
+        ),
+        (version_id, user_id),
+    )
+    row = await cursor.fetchone()
+    if row is None:  # the caller has already proved the row exists under its own lock
+        raise TransactionError("version_not_found")
+    return dict(zip(_PLACEMENT_COLUMNS.split(", "), row, strict=True))
+
+
+def _successor_placement(candidate: CandidateVersionInput, prior: dict[str, Any]) -> dict[str, Any]:
+    """Where a value that supersedes ``prior`` goes (``V2-D82``).
+
+    A candidate that names no scope (every v1 writer, the extraction pipeline) replaces the belief *in place*: same
+    scope, same visibility. A candidate that names the prior's own scope keeps its visibility too. A candidate that
+    names another scope goes there at the column default (``private``): sharing is never inherited across scopes.
+    ``kind``/``method_id``/``subject_entity_id`` describe the new value, so they come from the candidate (the axes
+    trigger derives what it leaves unset).
+    """
+    scope_path = candidate.scope_path or prior["scope_path"]
+    return {
+        "scope_path": scope_path,
+        "visibility": prior["visibility"] if scope_path == prior["scope_path"] else None,
+        "kind": candidate.kind,
+        "method_id": candidate.method_id,
+        "subject_entity_id": candidate.subject_entity_id,
+    }
 
 
 async def _insert_provenance(
@@ -899,6 +944,10 @@ async def supersede_single(
                     importance=candidate.importance,
                     reinforcement_count=candidate.reinforcement_count,
                     extractor_version=candidate.extractor_version,
+                    scope_path=candidate.scope_path,
+                    kind=candidate.kind,
+                    method_id=candidate.method_id,
+                    subject_entity_id=candidate.subject_entity_id,
                 )
                 await _insert_provenance(
                     cursor,
@@ -939,6 +988,7 @@ async def supersede_single(
                 old_reinforcement,
                 old_extractor,
             ) = existing_rows[-1]
+            old_placement = await _placement_of(cursor, schema_name, old_id, candidate.user_id)
             v_old = _utc_instant(v_old_raw)
             v_old_end = None if v_old_upper_inf or v_old_end_raw is None else _utc_instant(v_old_end_raw)
             r_old_from = _utc_instant(r_old_from_raw)
@@ -967,6 +1017,7 @@ async def supersede_single(
                     importance=candidate.importance,
                     reinforcement_count=candidate.reinforcement_count,
                     extractor_version=candidate.extractor_version,
+                    **_successor_placement(candidate, old_placement),
                 )
                 await _insert_provenance(
                     cursor,
@@ -1085,6 +1136,7 @@ async def supersede_single(
                         importance=old_importance,
                         reinforcement_count=old_reinforcement,
                         extractor_version=old_extractor,
+                        **old_placement,
                     )
                     await _insert_provenance(
                         cursor,
@@ -1124,6 +1176,7 @@ async def supersede_single(
                         importance=old_importance,
                         reinforcement_count=old_reinforcement,
                         extractor_version=old_extractor,
+                        **old_placement,
                     )
                     await _copy_provenance(
                         cursor,
@@ -1154,6 +1207,7 @@ async def supersede_single(
                 importance=candidate.importance,
                 reinforcement_count=candidate.reinforcement_count,
                 extractor_version=candidate.extractor_version,
+                **_successor_placement(candidate, old_placement),
             )
             await _insert_provenance(
                 cursor,
@@ -1276,6 +1330,9 @@ async def revise_transition_boundary(
                 user_id=user_id,
             )
 
+            prior_placement = await _placement_of(cursor, schema_name, prior_version_id, user_id)
+            later_placement = await _placement_of(cursor, schema_name, later_version_id, user_id)
+
             # Close both prior and later versions at c
             await cursor.execute(
                 sql.SQL("UPDATE {mv} SET recorded_range = %s WHERE id = %s AND user_id = %s").format(mv=ident_mv),
@@ -1310,6 +1367,7 @@ async def revise_transition_boundary(
                 importance=p_row[16],
                 reinforcement_count=p_row[17],
                 extractor_version=p_row[18],
+                **prior_placement,
             )
             await _copy_provenance(
                 cursor,
@@ -1340,6 +1398,7 @@ async def revise_transition_boundary(
                 importance=l_row[16],
                 reinforcement_count=l_row[17],
                 extractor_version=l_row[18],
+                **later_placement,
             )
             await _copy_provenance(
                 cursor,
@@ -1550,6 +1609,7 @@ async def resolve_conflict_pending(
                         user_id=user_id,
                     )
                     existing_id_for_conflict = old_id
+                    old_placement = await _placement_of(cursor, schema_name, old_id, user_id)
                     v_old = _utc_instant(v_old_raw)
                     v_old_end = None if v_old_upper_inf or v_old_end_raw is None else _utc_instant(v_old_end_raw)
                     r_old_from = _utc_instant(r_old_from_raw)
@@ -1585,6 +1645,7 @@ async def resolve_conflict_pending(
                             importance=old_importance,
                             reinforcement_count=old_reinforcement,
                             extractor_version=old_extractor,
+                            **old_placement,
                         )
                         await _copy_provenance(
                             cursor,
@@ -1738,6 +1799,7 @@ async def end_multivalued(
                 user_id=user_id,
             )
 
+            old_placement = await _placement_of(cursor, schema_name, version_id, user_id)
             closed_id: str | None = None
             deleted_id: str | None = None
 
@@ -1762,6 +1824,7 @@ async def end_multivalued(
                     importance=importance,
                     reinforcement_count=reinforcement,
                     extractor_version=extractor,
+                    **old_placement,
                 )
                 await _copy_provenance(
                     cursor,
@@ -1811,6 +1874,7 @@ async def end_multivalued(
                     importance=importance,
                     reinforcement_count=reinforcement,
                     extractor_version=extractor,
+                    **old_placement,
                 )
                 await _copy_provenance(
                     cursor,
