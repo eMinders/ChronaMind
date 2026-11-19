@@ -96,6 +96,10 @@ def _check_channel_gate(engine: str, name: str, command: str) -> None:
     assert len(steps) == 1, f"exactly one {name} step is required"
     step = steps[0]
     assert re.findall(r"(?m)^        run: ([^\n]+)$", step) == [command], "the gate must run the full selection"
+    # Pytest also takes options from the environment; verify inherits workflow and job settings.
+    assert not re.search(r"(?m)^(?![ \t]*#)[^\n]*\bPYTEST_ADDOPTS\b", engine), "must not set PYTEST_ADDOPTS"
+    for flag in ("-k ", "--ignore", "--deselect", "-m "):
+        assert flag not in step, f"the gate must not filter tests: {flag}"
     assert not re.search(r"(?m)^        (?:if|continue-on-error):", step), "the gate must not be suppressed"
     assert verify.index(f"- name: {name}") < verify.index("- name: pytest (full CI scope")
 
@@ -143,6 +147,32 @@ def test_channel_integrity_gate_rejects_a_changed_selection(
     assert mutated != engine
     with pytest.raises(AssertionError, match="must run the full selection"):
         _check_channel_gate(mutated, name, command)
+
+
+@pytest.mark.parametrize("scope", ["workflow", "job", "step"])
+@pytest.mark.parametrize(
+    ("name", "command"),
+    [(_PURE_CHANNEL_STEP, _PURE_CHANNEL_COMMAND), (_DB_CHANNEL_STEP, _DB_CHANNEL_COMMAND)],
+    ids=["pure", "postgres"],
+)
+def test_channel_integrity_gate_rejects_pytest_selection_overrides(
+    engine: str, name: str, command: str, scope: str
+) -> None:
+    """A selection override can narrow coverage while leaving the exact run command intact."""
+    if scope == "workflow":
+        anchor = "permissions:\n"
+        replacement = "env: {PYTEST_ADDOPTS: '-k test_example'}\n" + anchor
+    elif scope == "job":
+        anchor = "    env:\n      CME_TEST_DATABASE_URL:"
+        replacement = "    env:\n      PYTEST_ADDOPTS: '-k test_example'\n      CME_TEST_DATABASE_URL:"
+    else:
+        anchor = f"      - name: {name}\n"
+        replacement = anchor + "        env:\n          'PYTEST_ADDOPTS': '-k test_example'\n"
+    mutated = engine.replace(anchor, replacement, 1)
+    assert mutated != engine and f"run: {command}" in mutated
+    with pytest.raises(AssertionError, match="must not set PYTEST_ADDOPTS") as rejected:
+        _check_channel_gate(mutated, name, command)
+    print(f"{scope}: {str(rejected.value).splitlines()[0]}")
 
 
 def test_default_install_job_syncs_no_extras(engine: str) -> None:

@@ -251,6 +251,8 @@ def _must_refuse_or_omit() -> Case:
         (1, 7, (("a1", "a2"), ("a3",), ("a4",), ())),
         (2, 7, (("a1", "a2"), ("a3",), ("a4",), ())),
         (2, 9, (("a1",), ("a3",), ("a4",), ("a5",))),
+        # Reserving both two-token facts before other channels leaves no room for the four-token conflict.
+        (4, 9, (("a1", "a2"), ("a3",), ("a4",), ())),
         (2, 4, (("a1",), ("a3",), (), ())),
         (2, 5, (("a1",), ("a3",), ("a4",), ())),
     ],
@@ -479,3 +481,14 @@ def test_budget_control_detects_an_ignored_facts_reserve() -> None:
     with pytest.raises(AssertionError, match="did not honor the facts reserve") as failure:
         _assert_expected_allocation(result, (("a1", "a2"), ("a3",), ("a4",), ()))
     print(f"ignored_facts_reserve: {str(failure.value).splitlines()[0]}")
+
+
+def test_budget_control_detects_a_reserve_that_stops_after_one_fact() -> None:
+    """R7: honoring only the first fact can still produce valid accounting and fit all ceilings."""
+    case = _contending_channels()
+    budget = ChannelBudgets(total_tokens=9, facts_floor_tokens=4)
+    stopped_early = case.run(replace(budget, facts_floor_tokens=2))
+    _assert_budgeted(stopped_early, _roomy_result(case), budget)
+    with pytest.raises(AssertionError, match="facts: shared budget did not honor the facts reserve") as failure:
+        _assert_expected_allocation(stopped_early, (("a1", "a2"), ("a3",), ("a4",), ()))
+    print(f"stopped_after_one_reserved_fact: {str(failure.value).splitlines()[0]}")

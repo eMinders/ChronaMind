@@ -5,6 +5,7 @@ Only reads are under test. The event windows are independent of the belief clock
 """
 
 from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from copy import copy
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta
@@ -96,15 +97,33 @@ async def _claim(
             )
 
 
+async def _seed_prior_claims(conn: AsyncConnection) -> None:
+    """One grounded claim spans both endpoints; the inferred claim ends at the later endpoint."""
+    await seed_turn(conn, "t0", TURN, PREVIOUS)
+    await _claim(conn, "src", PREVIOUS)
+    await _claim(conn, "inference", PREVIOUS, CURRENT, inferred=True)
+
+
+@asynccontextmanager
+async def _restricted_reader(
+    database_config: tuple[DatabaseConfig, str], conn: AsyncConnection
+) -> AsyncIterator[tuple[Engine, CallerContext]]:
+    handlers, ctx, role = await read_handlers_for(database_config, conn)
+    try:
+        engine = build_engine(handlers.runtime)
+        register_read_handlers(engine, handlers.runtime)
+        yield engine, ctx
+    finally:
+        await drop_role(conn, role)
+
+
 @pytest_asyncio.fixture
 async def change_world(
     database: tuple[DatabaseConfig, str],  # noqa: F811
 ) -> AsyncIterator[tuple[Engine, CallerContext, Bound]]:
     _, schema = database
     async with connect(database) as conn:
-        await seed_turn(conn, "t0", TURN, PREVIOUS)
-        await _claim(conn, "src", PREVIOUS)
-        await _claim(conn, "inference", PREVIOUS, CURRENT, inferred=True)
+        await _seed_prior_claims(conn)
         await _claim(conn, "left", CURRENT)
         await _claim(conn, "right", CURRENT)
         await edge(conn, "left-right", "left", "right", kind="contradicts")
@@ -131,13 +150,8 @@ async def change_world(
         expected_bound = Bound(40, 40, 0.91, 1.0, "m-test", "1", verified_at.isoformat(), unexpired)
         await conn.execute("SELECT set_config('app.clock', %s, false)", (review_at.isoformat(),))
 
-        handlers, ctx, role = await read_handlers_for(database, conn)
-        try:
-            engine = build_engine(handlers.runtime)
-            register_read_handlers(engine, handlers.runtime)
+        async with _restricted_reader(database, conn) as (engine, ctx):
             yield engine, ctx, expected_bound
-        finally:
-            await drop_role(conn, role)
 
 
 def _request(**extra: object) -> dict[str, object]:
@@ -174,7 +188,7 @@ def _assert_changes(result: QueryResult) -> None:
 
 
 def _assert_roomy_channels(result: QueryResult, bound: Bound) -> None:
-    """C-P2/C-P3/C-P4 and V2-D24: routing, uncertainty, bound and both conflict sides survive the public projection."""
+    """C-P2–C-P4 and R2/R3: routing, staleness, bounds and both conflict sides survive the public projection."""
     facts = {item.artifact_id: item for item in result.facts}
     hypotheses = {item.artifact_id: item for item in result.hypotheses}
     assert "inference" not in facts, "inferred claim in facts"
@@ -270,6 +284,32 @@ async def test_public_change_preserves_routing_and_bounds_with_and_without_budge
         _assert_provenance(clipped, ("fresh",) if fits else ())
 
 
+def _assert_shared_budget_result(
+    result: QueryResult, roomy: QueryResult, bound: Bound, budgets: Mapping[str, int], shared: int
+) -> None:
+    """Only the one-token procedure fits a shared cap of one; a cap of zero allows no content."""
+    assert result.facts == result.hypotheses == result.conflicts == result.audit == (), "shared cap exceeded"
+    assert result.procedures == (roomy.procedures if shared else ()), "shared cap must retain the fitting procedure"
+    assert not result.is_audit
+    assert result.refused == roomy.refused == (("incomplete", "bound_missing"),)
+    _assert_changes(result)
+    _assert_provenance(result, ("procedure",) if shared else ())
+    counts = dict.fromkeys(CHANNELS, 0) | {"procedures": shared}
+    _assert_coverage(result, budgets, counts, counts, _fixture_token_totals(bound))
+
+
+@pytest.mark.parametrize("shared", [0, 1], ids=["zero-tokens", "one-token"])
+async def test_public_change_enforces_shared_budget_with_roomy_channel_caps(
+    change_world: tuple[Engine, CallerContext, Bound], shared: int
+) -> None:
+    engine, ctx, bound = change_world
+    budgets: dict[str, int] = dict.fromkeys(CHANNELS, 2048)
+    roomy = await _query(engine, ctx, _request(budget=budgets))
+    _assert_roomy_channels(roomy, bound)
+    result = await _query(engine, ctx, _request(budget={**budgets, "total_tokens": shared, "facts_floor_tokens": 0}))
+    _assert_shared_budget_result(result, roomy, bound, budgets, shared)
+
+
 async def test_public_change_reports_no_partial_diff_if_an_endpoint_exceeds_the_limit(
     change_world: tuple[Engine, CallerContext, Bound],
 ) -> None:
@@ -282,6 +322,32 @@ async def test_public_change_reports_no_partial_diff_if_an_endpoint_exceeds_the_
         with pytest.raises(EntryError) as caught:
             await engine.call(ctx, "query", {"request": _request(limit=limit, budget=budget)})
         assert (caught.value.code, caught.value.detail) == ("resource_limit", "change_view_exceeds_limit")
+
+
+async def test_public_change_refuses_when_only_the_earlier_view_exceeds_the_limit(
+    database: tuple[DatabaseConfig, str],  # noqa: F811
+) -> None:
+    """V2-D81: check the earlier-view limit independently of the later-view limit."""
+    async with connect(database) as conn:
+        await _seed_prior_claims(conn)
+        async with _restricted_reader(database, conn) as (engine, ctx):
+            earlier = await _query(engine, ctx, {"mode": "historical_as_of", "target_time": PREVIOUS})
+            later = await _query(engine, ctx, {"mode": "historical_as_of", "target_time": CURRENT})
+            assert sorted(item.artifact_id for name in CHANNELS for item in earlier.channel(name)) == [
+                "inference",
+                "src",
+            ]
+            assert [item.artifact_id for name in CHANNELS for item in later.channel(name)] == ["src"]
+            assert earlier.refused == later.refused == ()
+
+            budget = {"total_tokens": 0}
+            fits = await _query(engine, ctx, _request(limit=2, budget=budget))
+            (change,) = fits.changes
+            assert asdict(change) == {"outcome": "removed", "previous": ("inference",), "current": ()}
+            assert all(not fits.channel(name) for name in CHANNELS)
+            with pytest.raises(EntryError) as caught:
+                await engine.call(ctx, "query", {"request": _request(limit=1, budget=budget)})
+            assert (caught.value.code, caught.value.detail) == ("resource_limit", "change_view_exceeds_limit")
 
 
 async def test_public_change_oracles_detect_synthetic_projection_errors(
@@ -334,4 +400,8 @@ async def test_public_change_oracles_detect_synthetic_projection_errors(
     eligible = {name: len(RETURNED[name]) for name in CHANNELS}
     with pytest.raises(AssertionError, match="facts: wrong public budget coverage") as caught:
         _assert_coverage(wrong, dict.fromkeys(CHANNELS, 2048), eligible, totals, totals)
+    print(str(caught.value).splitlines()[0])
+
+    with pytest.raises(AssertionError, match="shared cap exceeded") as caught:
+        _assert_shared_budget_result(good, good, bound, dict.fromkeys(CHANNELS, 2048), shared=1)
     print(str(caught.value).splitlines()[0])
