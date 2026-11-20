@@ -379,17 +379,26 @@ def random_views(rng: random.Random, count: int, *, start: int = 1000) -> list[A
     return views
 
 
+def replay_note(seed: int, views: Sequence[ArtifactView], stale_ids: frozenset[str]) -> str:
+    """Print the seed and synthetic inputs on an invariant or assembly failure."""
+    return "\n".join(
+        (f"seed={seed} (re-run with CME_FUZZ_SEED={seed})", f"stale_ids={sorted(stale_ids)}", *map(repr, views))
+    )
+
+
 def fuzz(seed: int, count: int = 60) -> None:
-    """One seeded sweep. Failure quotes the seed so it is re-runnable (§5.2)."""
+    """One seeded sweep. Failure prints its seed and inputs (§5.2, requirement 7.2)."""
     rng = random.Random(seed)
     views = random_views(rng, count, start=seed * 1000)
     stale_ids = frozenset(view.artifact_id for view in views if rng.random() < 0.3)
     staleness = stale_for(stale_ids)
-    assembly = run(views, staleness)
-    violations = check_invariants(views, assembly, staleness)
-    assert not violations, f"seed={seed} (re-run with CME_FUZZ_SEED={seed})\n" + "\n".join(
-        f"{v.invariant}: {v.detail}" for v in violations
-    )
+    try:
+        assembly = run(views, staleness)
+        violations = check_invariants(views, assembly, staleness)
+        assert not violations, "\n".join(f"{v.invariant}: {v.detail}" for v in violations)
+    except Exception as exc:
+        exc.add_note(replay_note(seed, views, stale_ids))
+        raise
 
 
 @pytest.mark.parametrize("seed", FIXED_SEEDS)

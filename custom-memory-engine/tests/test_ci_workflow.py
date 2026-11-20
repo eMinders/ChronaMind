@@ -79,48 +79,100 @@ def test_verify_runs_the_full_suite_on_pinned_postgres_and_falkordb(engine: str)
     assert "CME_TEST_DATABASE_URL" in verify and "--extra" not in verify  # extras come from setup-cme
 
 
-def test_channel_integrity_fuzz_runs_as_a_gate_before_the_suite(engine: str) -> None:
-    """E-035 (205-A): the channel-integrity fuzz is a gate, not an optional extra, and runs before the suite.
+_PURE_CHANNEL_STEP = "Channel-integrity fuzz (E-035 gate)"
+_DB_CHANNEL_STEP = "Channel integrity in change mode (E-035 gate)"
+_PART_A_COMMAND = "uv run --no-sync pytest -q tests/test_channel_integrity.py --durations=5"
+_PART_B_COMMAND = "uv run --no-sync pytest -q tests/test_channel_integrity_budget.py --durations=5"
+_PURE_CHANNEL_COMMAND = f"{_PART_A_COMMAND} && {_PART_B_COMMAND}"
+_DB_CHANNEL_COMMAND = (
+    'test -n "$CME_TEST_DATABASE_URL" && '
+    "uv run --no-sync pytest -q tests/integration/test_change_channel_integrity_db.py --durations=5"
+)
 
-    It is pure and needs no database, so a step in ``verify`` keeps it cheap. The assertions that matter are that it
-    exists, that it runs the module directly (no ``-k`` filter that could silently select nothing), and that it
-    cannot be suppressed or made non-fatal.
-    """
+
+def _check_channel_gate(engine: str, name: str, command: str) -> None:
     verify = _job(engine, "verify")
-    steps = re.findall(r"(?ms)^      - name: Channel-integrity fuzz \(E-035 gate\)\n(.*?)(?=^      - |\Z)", verify)
-    assert len(steps) == 1, "exactly one channel-integrity gate step is required"
+    steps = re.findall(rf"(?ms)^      - name: {re.escape(name)}\n(.*?)(?=^      - |\Z)", verify)
+    assert len(steps) == 1, f"exactly one {name} step is required"
     step = steps[0]
-    assert re.search(r"(?m)^        run: uv run --no-sync pytest -q tests/test_channel_integrity\.py(?:\s|$)", step), (
-        "the gate must run the module itself, not a filtered selection"
-    )
-    # `-k`/`--ignore`/`--deselect` could empty the gate while looking green.
-    for evasion in ("-k ", "--ignore", "--deselect", "-m "):
-        assert evasion not in step, evasion
+    assert re.findall(r"(?m)^        run: ([^\n]+)$", step) == [command], "the gate must run the full selection"
+    # Pytest also takes options from the environment; verify inherits workflow and job settings.
+    assert not re.search(r"(?m)^(?![ \t]*#)[^\n]*\bPYTEST_ADDOPTS\b", engine), "must not set PYTEST_ADDOPTS"
+    for flag in ("-k ", "--ignore", "--deselect", "-m "):
+        assert flag not in step, f"the gate must not filter tests: {flag}"
     assert not re.search(r"(?m)^        (?:if|continue-on-error):", step), "the gate must not be suppressed"
-    # It must precede the full suite, so a contract violation fails fast rather than after ~2 minutes of DB work.
-    assert verify.index("Channel-integrity fuzz (E-035 gate)") < verify.index("pytest (full CI scope")
+    assert verify.index(f"- name: {name}") < verify.index("- name: pytest (full CI scope")
+
+
+def test_channel_integrity_fuzz_runs_as_a_gate_before_the_suite(engine: str) -> None:
+    """E-035: both pure modules run unfiltered and fail before the full suite."""
+    _check_channel_gate(engine, _PURE_CHANNEL_STEP, _PURE_CHANNEL_COMMAND)
+
+
+def test_change_channel_integrity_runs_with_postgres_before_the_suite(engine: str) -> None:
+    """E-035-B: run the public change cases with the required PostgreSQL test URL."""
+    _check_channel_gate(engine, _DB_CHANNEL_STEP, _DB_CHANNEL_COMMAND)
 
 
 @pytest.mark.parametrize("suppression", ["if: false", "continue-on-error: true"])
-def test_channel_integrity_gate_rejects_a_suppressed_step(engine: str, suppression: str) -> None:
+@pytest.mark.parametrize(
+    ("name", "command"), [(_PURE_CHANNEL_STEP, _PURE_CHANNEL_COMMAND), (_DB_CHANNEL_STEP, _DB_CHANNEL_COMMAND)]
+)
+def test_channel_integrity_gate_rejects_a_suppressed_step(
+    engine: str, name: str, command: str, suppression: str
+) -> None:
     mutated = engine.replace(
-        "      - name: Channel-integrity fuzz (E-035 gate)\n",
-        f"      - name: Channel-integrity fuzz (E-035 gate)\n        {suppression}\n",
+        f"      - name: {name}\n",
+        f"      - name: {name}\n        {suppression}\n",
     )
     assert mutated != engine
-    with pytest.raises(AssertionError):
-        test_channel_integrity_fuzz_runs_as_a_gate_before_the_suite(mutated)
+    with pytest.raises(AssertionError, match="must not be suppressed"):
+        _check_channel_gate(mutated, name, command)
 
 
-def test_channel_integrity_gate_rejects_a_filtered_selection(engine: str) -> None:
-    """A `-k` filter that matches nothing would let the gate pass while observing nothing."""
-    mutated = engine.replace(
-        "run: uv run --no-sync pytest -q tests/test_channel_integrity.py --durations=5",
-        "run: uv run --no-sync pytest -q tests/test_channel_integrity.py -k nothing_matches",
-    )
+@pytest.mark.parametrize(
+    ("name", "command", "faulty_command"),
+    [
+        (_PURE_CHANNEL_STEP, _PURE_CHANNEL_COMMAND, _PART_A_COMMAND),
+        (_PURE_CHANNEL_STEP, _PURE_CHANNEL_COMMAND, _PURE_CHANNEL_COMMAND + " -k test_empty"),
+        (_DB_CHANNEL_STEP, _DB_CHANNEL_COMMAND, _DB_CHANNEL_COMMAND.split(" && ")[1]),
+        (_DB_CHANNEL_STEP, _DB_CHANNEL_COMMAND, _DB_CHANNEL_COMMAND + " || true"),
+    ],
+    ids=["missing-budget-module", "filtered-selection", "missing-database-check", "masked-failure"],
+)
+def test_channel_integrity_gate_rejects_a_changed_selection(
+    engine: str, name: str, command: str, faulty_command: str
+) -> None:
+    mutated = engine.replace(f"run: {command}", f"run: {faulty_command}")
     assert mutated != engine
-    with pytest.raises(AssertionError):
-        test_channel_integrity_fuzz_runs_as_a_gate_before_the_suite(mutated)
+    with pytest.raises(AssertionError, match="must run the full selection"):
+        _check_channel_gate(mutated, name, command)
+
+
+@pytest.mark.parametrize("scope", ["workflow", "job", "step"])
+@pytest.mark.parametrize(
+    ("name", "command"),
+    [(_PURE_CHANNEL_STEP, _PURE_CHANNEL_COMMAND), (_DB_CHANNEL_STEP, _DB_CHANNEL_COMMAND)],
+    ids=["pure", "postgres"],
+)
+def test_channel_integrity_gate_rejects_pytest_selection_overrides(
+    engine: str, name: str, command: str, scope: str
+) -> None:
+    """A selection override can narrow coverage while leaving the exact run command intact."""
+    if scope == "workflow":
+        anchor = "permissions:\n"
+        replacement = "env: {PYTEST_ADDOPTS: '-k test_example'}\n" + anchor
+    elif scope == "job":
+        anchor = "    env:\n      CME_TEST_DATABASE_URL:"
+        replacement = "    env:\n      PYTEST_ADDOPTS: '-k test_example'\n      CME_TEST_DATABASE_URL:"
+    else:
+        anchor = f"      - name: {name}\n"
+        replacement = anchor + "        env:\n          'PYTEST_ADDOPTS': '-k test_example'\n"
+    mutated = engine.replace(anchor, replacement, 1)
+    assert mutated != engine and f"run: {command}" in mutated
+    with pytest.raises(AssertionError, match="must not set PYTEST_ADDOPTS") as rejected:
+        _check_channel_gate(mutated, name, command)
+    print(f"{scope}: {str(rejected.value).splitlines()[0]}")
 
 
 def test_default_install_job_syncs_no_extras(engine: str) -> None:
