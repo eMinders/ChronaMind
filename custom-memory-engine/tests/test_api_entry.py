@@ -619,3 +619,22 @@ def test_no_creation_operation_accepts_a_caller_chosen_identifier() -> None:
 
 async def _echo(call: Call) -> object:
     return {"ok": call.operation.name}
+
+
+def test_a_path_the_scope_grammar_cannot_read_is_never_treated_as_the_callers_own() -> None:
+    """Rule 6 fails closed: a doubtful read is recorded, so an unreadable path is cross-namespace, not ours.
+
+    ``Engine._record_scope_read`` drops from the audit exactly the targets this predicate accepts, so returning
+    ``True`` for a path the grammar rejects would erase the only record of a read the engine could not place. The
+    database shape ``CHECK`` caps neither depth nor segment length (migrations 11 and 15) while ``parse_scope`` refuses
+    a path deeper than ``MAX_DEPTH``, so such a path is representable even though ``row_visible`` refuses it today.
+    """
+    from custom_memory_engine.scope.paths import MAX_DEPTH
+
+    too_deep = "/u/alice/" + "".join(f"s{i}/" for i in range(MAX_DEPTH + 2))
+    assert entry._within_callers_namespace("bob", too_deep) is False
+    # A malformed principal cannot place any target in its own namespace, so the target stays cross-namespace.
+    assert entry._within_callers_namespace("bob/../eve", "/u/alice/") is False
+    # The two cases that must remain ours.
+    assert entry._within_callers_namespace("bob", "/u/bob/") is True
+    assert entry._within_callers_namespace("bob", "/u/bob/p/repo/") is True
