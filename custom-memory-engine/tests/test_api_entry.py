@@ -25,6 +25,8 @@ from custom_memory_engine.api.entry import (
     EntryError,
     TargetInfo,
 )
+from custom_memory_engine.api.refine import ResultStore
+from custom_memory_engine.engine.planning import Intent
 from custom_memory_engine.model.axes import AxisError
 from custom_memory_engine.scope.access import ReadSet, Selector, resolve_read_set
 from custom_memory_engine.scope.paths import ScopeError
@@ -83,6 +85,10 @@ KNOWN = {
     "bobs-grant": TargetInfo("/u/bob/", "private", None, "bob"),
 }
 READ_SET = resolve_read_set("alice", [Selector.of("/u/alice/")], [])
+#: E-034: `refine` names a result handle, not a row. One shared store, so a handle issued for `valid_arguments` is
+#: resolvable by the engine under test (the fake handlers never read it).
+RESULT_STORE = ResultStore()
+RESULT_INTENT = Intent(mode="current_state", limit=1)
 
 
 def ctx(
@@ -108,7 +114,7 @@ VALUES: dict[str, object] = {
     "event_time": None,
     "event_range": None,
     "request": {},
-    "result_id": "r1",
+    "result_id": "",  # replaced by a real handle in `valid_arguments` (E-034)
     "instruction": "x",
     "artifact_id": "a1",
     "depth": 1,
@@ -155,7 +161,13 @@ VALUES: dict[str, object] = {
 
 
 def valid_arguments(op_name: str) -> dict[str, object]:
-    return {name: VALUES[name] for name in BY_NAME[op_name].inputs}
+    arguments = {name: VALUES[name] for name in BY_NAME[op_name].inputs}
+    if "result_id" in arguments:
+        # a real, unforgeable handle from the shared store, issued under the read set `ctx()` builds
+        arguments["result_id"] = RESULT_STORE.issue(
+            principal="alice", read_set=READ_SET, intent=RESULT_INTENT, candidates=()
+        )
+    return arguments
 
 
 def engine(
@@ -176,6 +188,7 @@ def engine(
         methods=methods or Methods(),
         principals=principals if principals is not None else Principals(),
         handlers={op.name: handler for op in OPERATIONS},
+        results=RESULT_STORE,
     )
 
 
@@ -495,7 +508,12 @@ async def test_no_error_code_outside_the_operations_contract_is_ever_raised() ->
     async def handler(_: Call) -> object:
         raise EntryError("retryable_conflict")
 
-    sut = Engine(resolver=Resolver(KNOWN), methods=Methods(), handlers={op.name: handler for op in OPERATIONS})
+    sut = Engine(
+        resolver=Resolver(KNOWN),
+        methods=Methods(),
+        handlers={op.name: handler for op in OPERATIONS},
+        results=RESULT_STORE,
+    )
     for op in OPERATIONS:
         tier = "B" if "B" in op.tiers else "C"
         with pytest.raises(EntryError) as raised:

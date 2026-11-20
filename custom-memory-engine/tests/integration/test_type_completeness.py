@@ -690,6 +690,8 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         assert "create_scope" not in unwired
         # `purge_working` left it when E-026 wired it; it is exercised above through Engine.call only.
         assert "purge_working" not in unwired
+        # E-034 wires `refine`; `test_refine_db.py` drives the whole drill-down through Engine.call.
+        assert "refine" not in unwired
         # E-024 wires `link_entity` (V2-D71); `test_link_entity_is_wired_through_engine_call_...` drives it here.
         assert "link_entity" not in unwired
         # E-027 wires `record_outcome` (V2-D75); `test_record_outcome_db.py` drives the whole feedback loop here.
