@@ -119,10 +119,15 @@ jobs:
           prompt: >-
             /review-pr
             PR_NUMBER=${{ github.event.issue.number }}
+            REPOSITORY=${{ github.repository }}
             BASE_REF=${{ steps.pr.outputs.base_ref }}
+            BASE_SHA=${{ steps.pr.outputs.base_sha }}
             HEAD_SHA=${{ steps.pr.outputs.head_sha }}
             The base branch is checked out at the workspace root and the pull request at ./pr-head.
+            REPOSITORY is the canonical owner/name: every repository URL you write comes from it.
             This is a full review requested by a maintainer: cover the whole pull request, not only its last commit.
+            Classify yourself whether this is a first review or a re-review, and say so, since a comment event carries
+            no tier.
           claude_args: |
             --permission-mode default
             --model ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5-5' }}

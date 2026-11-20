@@ -371,3 +371,123 @@ def test_the_skill_reports_its_own_uncertainty_and_resolves_dead_threads(skill: 
     """A reviewer that cannot say "I could not check this" is read as a green light it never gave."""
     assert re.search(r"(?i)could not (verify|check)|not verified|unverified", skill)
     assert re.search(r"(?i)resolv", skill), "a fixed finding must not stay open on the next review"
+
+
+# --- the four things the canary showed the reviewer getting wrong (`.github/workflows/README.md`) -----------
+
+
+def test_the_reviewer_is_given_the_canonical_identity_and_may_not_invent_one(
+    skill: str, review_workflow: str, assistant_workflow: str
+) -> None:
+    """A review cited `HussainAlmutawa/ChronaMind`: a recalled owner, on a repository that is not ours.
+
+    A wrong link does not just fail to help — it turns a correct finding into something that looks fabricated, because
+    the reader follows it to code that is not under review. So the identity is passed in, and it is the only source.
+    """
+    for workflow, name in ((review_workflow, "claude-code-review.yml"), (assistant_workflow, "claude.yml")):
+        assert "REPOSITORY=${{ github.repository }}" in workflow, f"{name} must pass the canonical identity"
+    assert "$GITHUB_REPOSITORY" in skill, "the skill needs a fallback when the invocation predates it"
+    assert re.search(r"(?i)the only source of any URL", skill)
+    assert re.search(r"(?i)never (write|invent|infer).{0,80}from memory", skill), "identity is read, not recalled"
+    assert "omit the link" in skill, "an unverifiable identity must drop the link, not guess one"
+    assert "grep -o" in skill, "the links must be checked against the identity before posting"
+    # The placeholder the old text used is what let a model fill it from memory.
+    assert "github.com/<owner>/<repo>" not in skill
+    assert "<owner>/<repo>" not in skill
+
+
+def test_the_review_is_told_its_tier_rather_than_inferring_it(skill: str, review_workflow: str) -> None:
+    """The canary's second review called itself a first review once the base branch moved the diff range."""
+    job = _job(review_workflow, "claude-review")
+    for output in ("tier", "previous_head_sha", "previous_base_sha", "reason"):
+        assert f"steps.gate.outputs.{output}" in job, output
+    assert "REVIEW_TIER=" in job and "PREVIOUS_HEAD_SHA=" in job
+    assert re.search(r"(?i)do not re-derive the tier", skill), "the tier is an input, not a conclusion"
+    for tier in ("first review", "re-review", "unknown"):
+        assert tier in skill, tier
+    assert re.search(r"(?i)earlier findings exist even when the diff", skill), (
+        "the failure was reporting nothing because the earlier finding left the diff range"
+    )
+    assert re.search(r"(?i)history incomplete", skill), "an unreadable record is a state, not a silent first review"
+
+
+def test_the_skill_resolves_its_own_threads_only_after_verifying_the_fix(skill: str) -> None:
+    """The canary verified its fix and left the 🔴 thread open, so conversation resolution still blocked the PR."""
+    assert "resolveReviewThread" in skill, "the mutation must be named, not left to be improvised"
+    assert "reviewThreads" in skill and "comment matching" not in skill
+    assert re.search(r"(?i)match a thread by its body", skill), "associate by content, never by position or a guess"
+    assert "THREAD_ID" in skill
+    # The four states the owner needs to tell apart, and no shortcut between them.
+    for state in ("reported", "fix observed", "fix verified", "thread resolved"):
+        assert state in skill, state
+    assert re.search(r"(?i)require .{0,40}isResolved.{0,10}true", skill), "GitHub must confirm it"
+    assert re.search(r"(?i)resolution failed", skill), "a refused mutation must be reported, not glossed over"
+    assert re.search(r"(?i)author\.login.{0,80}claude", skill), "only this reviewer's threads are its own to resolve"
+    assert re.search(r"(?i)another reviewer|a human", skill)
+    assert re.search(r"(?i)only after verifying|after you have verified|verify it in the code", skill)
+    # A review may not resolve on the strength of a push description, and may not claim what it did not get.
+    assert re.search(r"(?i)not resolved because the push", skill)
+
+
+def test_the_review_analyses_reachability_before_it_sets_a_severity(skill: str) -> None:
+    """The canary found a real contract violation and described it as a live cross-tenant leak.
+
+    The finding was right; the exploit was not — `row_visible` refused the input first. Both documents must require the
+    trace, and neither may let it become a reason to stop reporting: a latent violation is still 🔴.
+    """
+    standard = ROOT_REVIEW.read_text(encoding="utf-8")
+    assert "## Reachability before severity" in standard
+    for term in ("reachable today", "latent", "unverified", "**Reachability:**"):
+        assert term in standard, term
+    assert re.search(r"(?i)still (this level|🔴)", standard) or "is still 🔴" in standard, (
+        "the analysis must not weaken the reviewer into silence"
+    )
+    assert "**Reachability:**" in skill
+    for step in ("guards upstream", "reached", "latent"):
+        assert re.search(rf"(?i){step}", skill), step
+    assert re.search(r"(?i)never assert a leak", skill), "no impact claim without a path"
+
+
+def test_a_push_that_changes_no_tree_is_skipped_before_the_action_runs(review_workflow: str) -> None:
+    """The canary's empty commit cost a full run and posted nothing."""
+    job = _job(review_workflow, "claude-review")
+    gate = re.search(r"(?ms)^      - name: .*\n        id: gate\n(.*?)^      - name: ", job)
+    assert gate, "the gate must run as its own step"
+    assert ".github/scripts/review_gate.py" in gate.group(1)
+    assert "python3 " in gate.group(1), "no extra dependency: the gate is stdlib Python"
+    # It must be a decision *before* the expensive step, and the skip must be explained rather than silent.
+    assert job.index("id: gate") < job.index("Run the review")
+    gate_source = (REPO / ".github" / "scripts" / "review_gate.py").read_text(encoding="utf-8")
+    assert "no_reviewable_changes" in gate_source, "the skip reason is machine-readable, not prose"
+    assert "GITHUB_STEP_SUMMARY" in gate_source, "a skipped run must say why, on the run's own page"
+    assert re.search(r"(?i)not silent|::notice::", gate_source)
+    # The gate does not filter by path: a governance change is reviewable here.
+    assert "PLAN/" in gate_source or "allow list" in gate_source
+
+
+def test_the_documented_link_check_actually_catches_a_fabricated_owner(skill: str) -> None:
+    """The P0 the canary produced: a finding linked to `HussainAlmutawa/ChronaMind`, an owner nobody chose.
+
+    The skill tells the reviewer to extract every `github.com/<owner>/<name>` from the body it is about to post, and to
+    keep exactly one, its own. That instruction is only worth the pattern it names, so the pattern is taken *out of the
+    skill* and run here against a body that contains the real repository and the fabricated one.
+    """
+    pattern = re.search(r"grep -o '([^']+)'", skill)
+    assert pattern, "the skill must document a concrete check for the links it is about to post"
+    extract = re.compile(pattern.group(1))
+
+    canonical = "eMinders/ChronaMind"
+    sha = "d98f1b934dc21ab8fe56d485726b4a2a80fd4262"
+    good = (
+        f"🔴 **Finding.** See https://github.com/{canonical}/blob/{sha}/custom-memory-engine/src/x.py#L1-L2 and "
+        f"[/custom-memory-engine/PLAN/V2/ARCHITECTURE_V2.md](https://github.com/{canonical}/blob/{sha}/PLAN.md)."
+    )
+    assert set(extract.findall(good)) == {f"github.com/{canonical}"}, "a correct review must pass the check"
+
+    fabricated = good + " Compare https://github.com/HussainAlmutawa/ChronaMind/blob/" + sha + "/x.py#L3."
+    found = set(extract.findall(fabricated))
+    assert len(found) == 2, found
+    assert found - {f"github.com/{canonical}"} == {"github.com/HussainAlmutawa/ChronaMind"}, (
+        "the check must flag an owner that is not ours: it is the only thing between the reviewer and a link to "
+        "someone else's code"
+    )
