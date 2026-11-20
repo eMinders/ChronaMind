@@ -107,7 +107,7 @@ jobs:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         run: |
           git init --quiet pr-head
-          git -C pr-head fetch --no-tags --depth=50 origin "$HEAD_SHA"
+          git -C pr-head fetch --no-tags --depth=200 origin "$HEAD_SHA"
           git -C pr-head checkout --quiet FETCH_HEAD
           git -C pr-head log --oneline -1
 

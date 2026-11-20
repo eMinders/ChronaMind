@@ -58,9 +58,15 @@ never approves, never merges and never pushes — those tools are denied in `cla
 protection requirement or substitute for a human decision. It complements the deterministic gates; it does not replace
 them, and a clean review is not proof of correctness.
 
-**Cost and duplicate reviews.** Each run is billed to the subscription behind `CLAUDE_CODE_OAUTH_TOKEN` and consumes
-GitHub Actions minutes. The managed **Claude Code Review** service (Team/Enterprise, enabled by a Claude organization
-Owner) is a different, deeper product with a check run, inline findings and its own spend limit; if it is enabled for
+**Cost.** Each run is billed to the subscription behind `CLAUDE_CODE_OAUTH_TOKEN` and consumes GitHub Actions
+minutes. The two levers are repository variables, not edits to the workflow: `CLAUDE_REVIEW_MODEL` (default
+`claude-opus-5-5`; `claude-sonnet-5-5` is materially cheaper and shallower) and, indirectly, how often it runs — it
+reviews every push, because a PR here is rebased several times and the merged tree is what ships. The run log's last
+line reports `num_turns` and `total_cost_usd` for each review, so the per-PR cost is measured, not guessed. A concurrency
+group keyed on the PR cancels a superseded review, and every job has a timeout, so a stuck run cannot bill for long.
+
+**Duplicate reviews.** The managed **Claude Code Review** service (Team/Enterprise, enabled by a Claude organization
+Owner) is a different, deeper product with a check run, inline findings and its own spend limit. If it is enabled for
 this repository, set the repository variable **`CLAUDE_REVIEW_MODE=native`** and the Action job skips before minting a
 token. Nothing in this repository can read or change that setting, so it is an administrator action, not a file.
 
