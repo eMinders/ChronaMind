@@ -522,6 +522,11 @@ async def test_a8_skips_lineage_and_primary_deletion_removes_it(database) -> Non
 
 
 async def test_deletion_closure_stops_at_depth_three(database) -> None:
+    """Superseded v1 invariant (``DELETION_ORDER.md`` §4, ``V2-D09``, ``BASELINE.md`` §2).
+
+    In v1, ``MAX_LINEAGE_DEPTH = 3`` left ``depth-4`` surviving deletion of ``depth-0``. Under V2 (``E-037``),
+    the closure is correctness-unbounded, so all 5 versions ``depth-0..depth-4`` are deleted.
+    """
     _, schema = database
     async with connect(database) as conn:
         await identity(conn, "u1")
@@ -544,9 +549,9 @@ async def test_deletion_closure_stops_at_depth_three(database) -> None:
             )
         async with conn.transaction():
             receipt = await delete_memory(conn, "u1", target_ref="depth-root", schema_name=schema)
-        assert receipt.deleted_versions == 4
+        assert receipt.deleted_versions == 5
         cursor = await conn.execute("SELECT id FROM memory_version WHERE id LIKE 'depth-%' ORDER BY id")
-        assert [row[0] for row in await cursor.fetchall()] == ["depth-4"]
+        assert [row[0] for row in await cursor.fetchall()] == []
 
 
 async def test_deletion_failure_during_rebuild_rolls_back_all_writes(database) -> None:

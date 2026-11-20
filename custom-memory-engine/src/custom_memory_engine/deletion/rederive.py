@@ -1,4 +1,18 @@
-"""Synchronous, transactional re-derivation of summaries after source deletion."""
+"""Synchronous, transactional re-derivation and retire-by-deletion tombstoning (RL-070, E-037; ``V2-D50``).
+
+Two separate named paths execute Phase B's non-delete decisions so partial-failure rollback tests (F7) can target
+each independently:
+
+* :func:`rederive_summary` / :func:`rederive_version` — rebuilds an active dependent from its surviving active
+  sources in-place (preserving its stable ID and, for a verified abstraction, its prior ``closed_over_hash`` so
+  derived staleness automatically routes it to ``hypotheses`` until re-verified, F12).
+* :func:`retire_version` — tombstones a dependent retired by source deletion (``V2-D50`` rule 3): ``id``, ``scope``,
+  ``kind``, ``lifecycle='retired'``, ``retirement_reason='source_deleted'`` and the audit record stay, while
+  ``content`` (and generated ``content_fts``), rendered bounds in ``abstraction_stats`` and vectors in
+  ``memory_embedding`` are removed in the same transaction.
+"""
+
+from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -17,7 +31,7 @@ EMBEDDING_DIMENSION = 384
 
 
 class ReDerivationError(InvalidParameterValue):
-    """A summary rebuild failed and its surrounding deletion transaction must roll back."""
+    """A re-derivation or retire-by-deletion step failed and its surrounding transaction must roll back."""
 
     def __init__(self, code: str) -> None:
         super().__init__(code)
@@ -26,7 +40,7 @@ class ReDerivationError(InvalidParameterValue):
 
 @dataclass(frozen=True)
 class ActiveSource:
-    """Content and identity of one surviving Active source passed to a summary builder."""
+    """Content and identity of one surviving Active source passed to a re-derivation builder."""
 
     version_id: str
     content: str
@@ -34,7 +48,7 @@ class ActiveSource:
 
 @dataclass(frozen=True)
 class RebuiltSummary:
-    """New summary text and its model-specific vector representation."""
+    """New text and model-specific vector representation returned by a builder."""
 
     content: str
     embedding_model: str
@@ -42,9 +56,18 @@ class RebuiltSummary:
 
 
 class SummaryBuilder(Protocol):
-    """Provider boundary for rebuilding a summary from surviving source content."""
+    """Provider boundary for rebuilding a derived artifact from surviving source content."""
 
     async def __call__(self, summary_id: str, sources: Sequence[ActiveSource]) -> RebuiltSummary: ...
+
+
+def _validate_ids(user_id: str, version_id: str, schema_name: str) -> None:
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise ReDerivationError("nonblank_user_id_required")
+    if not isinstance(version_id, str) or not version_id.strip():
+        raise ReDerivationError("nonblank_summary_id_required")
+    if not schema_name.startswith("cme_") or fullmatch(r"cme_[a-z][a-z0-9_]*", schema_name) is None:
+        raise ReDerivationError("isolated_engine_schema_identifier_required")
 
 
 async def rederive_summary(
@@ -57,7 +80,7 @@ async def rederive_summary(
     schema_name: str = "cme_engine",
     clock_tick: ClockTick | None = None,
 ) -> bool:
-    """Replace one summary in-place using only surviving Active sources.
+    """Replace one semantic summary in-place using only surviving Active sources.
 
     The existing row is deleted and recreated with the same stable ID so immutable
     memory content and its embedding are replaced together. All writes are made on
@@ -65,12 +88,7 @@ async def rederive_summary(
     that transaction back. Returns ``False`` without invoking the builder when no
     Active source survives.
     """
-    if not isinstance(user_id, str) or not user_id.strip():
-        raise ReDerivationError("nonblank_user_id_required")
-    if not isinstance(summary_id, str) or not summary_id.strip():
-        raise ReDerivationError("nonblank_summary_id_required")
-    if not schema_name.startswith("cme_") or fullmatch(r"cme_[a-z][a-z0-9_]*", schema_name) is None:
-        raise ReDerivationError("isolated_engine_schema_identifier_required")
+    _validate_ids(user_id, summary_id, schema_name)
     ordered_ids = tuple(dict.fromkeys(source_ids))
     if not ordered_ids:
         return False
@@ -138,6 +156,294 @@ async def rederive_summary(
     return True
 
 
+async def rederive_version(
+    connection: AsyncConnection,
+    user_id: str,
+    version_id: str,
+    source_ids: Sequence[str],
+    *,
+    builder: SummaryBuilder,
+    derivation_type: str = "re_derivation",
+    schema_name: str = "cme_engine",
+) -> bool:
+    """Re-derive any active dependent (claim, abstraction, procedure, episode) in-place on surviving sources.
+
+    Preserves the row's V2 axes (``kind``, ``lifecycle``, ``retention``, ``scope_path``, ``visibility``,
+    ``method_id``, ``um_facet``) and, for an ``abstraction``, preserves its prior ``abstraction_stats`` (including the
+    old ``closed_over_hash``) and ``verification`` records so derived staleness sees the changed closure and routes
+    the re-derived abstraction to ``hypotheses`` until re-verified (F12).
+    """
+    _validate_ids(user_id, version_id, schema_name)
+    ordered_ids = tuple(dict.fromkeys(source_ids))
+    if not ordered_ids:
+        return False
+
+    versions = sql.Identifier(schema_name, "memory_version")
+    derivations = sql.Identifier(schema_name, "memory_derivation")
+    embeddings = sql.Identifier(schema_name, "memory_embedding")
+    stats_tbl = sql.Identifier(schema_name, "abstraction_stats")
+    verif_tbl = sql.Identifier(schema_name, "verification")
+
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL(
+                "SELECT id, content FROM {v} WHERE user_id = %s AND id = ANY(%s) AND status = 'active' ORDER BY id"
+            ).format(v=versions),
+            (user_id, list(ordered_ids)),
+        )
+        active_sources = tuple(ActiveSource(str(row[0]), str(row[1])) for row in await cursor.fetchall())
+        if not active_sources:
+            return False
+
+        await cursor.execute(
+            sql.SQL(
+                "SELECT memory_key, subject_key, predicate_key, single_valued, event_range, layer, "
+                "valid_from_basis, assertion_mode, confidence, importance, extractor_version, "
+                "kind, lifecycle, retention, scope_path, visibility, method_id, um_facet, "
+                "subject_entity_id, created_by, created_tier, status "
+                "FROM {v} WHERE user_id = %s AND id = %s"
+            ).format(v=versions),
+            (user_id, version_id),
+        )
+        meta = await cursor.fetchone()
+        if meta is None or meta[21] != "active":
+            raise ReDerivationError("active_dependent_required")
+
+        prior_stats = None
+        prior_verifications: list[tuple[object, ...]] = []
+        if meta[11] == "abstraction":
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT support_count, counter_count, undetermined_count, opportunity_count, "
+                    "evidence_generation, counter_absence_basis, refutation_attempts, confidence, "
+                    "confidence_method_id, closed_over_hash, verification_status, expires_at "
+                    "FROM {s} WHERE user_id = %s AND version_id = %s"
+                ).format(s=stats_tbl),
+                (user_id, version_id),
+            )
+            prior_stats = await cursor.fetchone()
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT id, held_out_split_id, verified_on, negative_control_slice_id, "
+                    "support_window, held_out_window, support_context_key, held_out_context_key, outcome "
+                    "FROM {ver} WHERE user_id = %s AND version_id = %s ORDER BY verified_on, id"
+                ).format(ver=verif_tbl),
+                (user_id, version_id),
+            )
+            prior_verifications = list(await cursor.fetchall())
+
+    try:
+        rebuilt = await builder(version_id, active_sources)
+    except Exception as exc:
+        raise ReDerivationError("summary_rebuild_failed") from exc
+    _validate_rebuilt_summary(rebuilt)
+
+    (
+        memory_key,
+        subject_key,
+        predicate_key,
+        single_valued,
+        event_range,
+        layer,
+        valid_from_basis,
+        assertion_mode,
+        confidence,
+        importance,
+        extractor_version,
+        kind,
+        lifecycle,
+        retention,
+        scope_path,
+        visibility,
+        method_id,
+        um_facet,
+        subject_entity_id,
+        created_by,
+        created_tier,
+        _status,
+    ) = meta
+
+    edge_type = (
+        derivation_type
+        if derivation_type in ("consolidation", "summary", "corroboration", "re_derivation")
+        else "re_derivation"
+    )
+
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL(
+                "DELETE FROM {d} WHERE user_id = %s AND (derived_version_id = %s OR source_version_id = %s)"
+            ).format(d=derivations),
+            (user_id, version_id, version_id),
+        )
+        await cursor.execute(
+            sql.SQL("DELETE FROM {v} WHERE user_id = %s AND id = %s").format(v=versions), (user_id, version_id)
+        )
+        await cursor.execute(
+            sql.SQL(
+                "INSERT INTO {v} ("
+                "id, memory_key, user_id, status, subject_key, predicate_key, single_valued, content, "
+                "event_range, recorded_range, layer, valid_from_basis, assertion_mode, confidence, "
+                "importance, extractor_version, kind, lifecycle, retention, scope_path, visibility, "
+                "method_id, um_facet, subject_entity_id, created_by, created_tier"
+                ") VALUES ("
+                "%s, %s, %s, 'active', %s, %s, %s, %s, "
+                "%s, tstzrange(clock_now(), NULL, '[)'), %s, %s, %s, %s, "
+                "%s, %s, %s, %s, %s, %s, %s, "
+                "%s, %s, %s, %s, %s"
+                ")"
+            ).format(v=versions),
+            (
+                version_id,
+                memory_key,
+                user_id,
+                subject_key,
+                predicate_key,
+                single_valued,
+                rebuilt.content,
+                event_range,
+                layer,
+                valid_from_basis,
+                assertion_mode,
+                confidence,
+                importance,
+                extractor_version,
+                kind,
+                lifecycle,
+                retention,
+                scope_path,
+                visibility,
+                method_id,
+                um_facet,
+                subject_entity_id,
+                created_by,
+                created_tier,
+            ),
+        )
+        for src in active_sources:
+            await cursor.execute(
+                sql.SQL(
+                    "INSERT INTO {d} (derived_version_id, source_version_id, user_id, derivation_type) "
+                    "VALUES (%s, %s, %s, %s)"
+                ).format(d=derivations),
+                (version_id, src.version_id, user_id, edge_type),
+            )
+        vector_literal = "[" + ",".join(repr(float(value)) for value in rebuilt.embedding) + "]"
+        await cursor.execute(
+            sql.SQL(
+                "INSERT INTO {e} (version_id, embedding_model, user_id, embedding) VALUES (%s, %s, %s, %s::vector)"
+            ).format(e=embeddings),
+            (version_id, rebuilt.embedding_model, user_id, vector_literal),
+        )
+        if kind == "abstraction" and prior_stats is not None:
+            for vrow in prior_verifications:
+                await cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {ver} ("
+                        "id, version_id, user_id, held_out_split_id, verified_on, negative_control_slice_id, "
+                        "support_window, held_out_window, support_context_key, held_out_context_key, outcome"
+                        ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    ).format(ver=verif_tbl),
+                    (vrow[0], version_id, user_id, *vrow[1:]),
+                )
+            await cursor.execute(
+                sql.SQL(
+                    "INSERT INTO {s} (version_id, user_id) VALUES (%s, %s) ON CONFLICT (version_id) DO NOTHING"
+                ).format(s=stats_tbl),
+                (version_id, user_id),
+            )
+            await cursor.execute(
+                sql.SQL(
+                    "UPDATE {s} SET "
+                    "support_count = %s, counter_count = %s, undetermined_count = %s, opportunity_count = %s, "
+                    "evidence_generation = %s, counter_absence_basis = %s, refutation_attempts = %s, "
+                    "confidence = %s, confidence_method_id = %s, closed_over_hash = %s, "
+                    "verification_status = %s, expires_at = %s "
+                    "WHERE user_id = %s AND version_id = %s"
+                ).format(s=stats_tbl),
+                (*prior_stats, user_id, version_id),
+            )
+    return True
+
+
+async def retire_version(
+    connection: AsyncConnection,
+    user_id: str,
+    version_id: str,
+    surviving_source_ids: Sequence[str] = (),
+    *,
+    schema_name: str = "cme_engine",
+) -> None:
+    """Retire one dependent by source deletion and tombstone its content, bounds and vectors (``V2-D50`` rule 3).
+
+    Runs inside the deletion transaction (with ``app.deletion_active = '1'``). Keeps ``id``, ``scope_path``, ``kind``,
+    ``lifecycle = 'retired'`` and ``retirement_reason = 'source_deleted'``; removes ``content`` (clearing generated
+    ``content_fts``), clears ``abstraction_stats`` bounds, deletes vectors via ``clear_retired_tombstone_vectors``,
+    and retains derivation edges **only** to surviving sources so a later deletion of those sources still deletes the
+    tombstone.
+    """
+    _validate_ids(user_id, version_id, schema_name)
+    versions = sql.Identifier(schema_name, "memory_version")
+    derivations = sql.Identifier(schema_name, "memory_derivation")
+    stats_tbl = sql.Identifier(schema_name, "abstraction_stats")
+    clear_vectors = sql.Identifier(schema_name, "clear_retired_tombstone_vectors")
+
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL("SELECT kind, lifecycle, recorded_range FROM {v} WHERE user_id = %s AND id = %s").format(
+                v=versions
+            ),
+            (user_id, version_id),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise ReDerivationError("retire_target_missing")
+        kind, lifecycle, recorded_range = row
+        if lifecycle != "retired":
+            if recorded_range is not None:
+                await cursor.execute(
+                    sql.SQL(
+                        "UPDATE {v} SET "
+                        "recorded_range = CASE WHEN upper_inf(recorded_range) "
+                        "  THEN tstzrange(lower(recorded_range), clock_now()) ELSE recorded_range END, "
+                        "status = 'archived', archival_branch = 'S', lifecycle = 'retired', "
+                        "retirement_reason = 'source_deleted', content = '' "
+                        "WHERE user_id = %s AND id = %s"
+                    ).format(v=versions),
+                    (user_id, version_id),
+                )
+            else:
+                await cursor.execute(
+                    sql.SQL(
+                        "UPDATE {v} SET "
+                        "status = 'rejected', archival_branch = NULL, lifecycle = 'retired', "
+                        "retirement_reason = 'source_deleted', content = '' "
+                        "WHERE user_id = %s AND id = %s"
+                    ).format(v=versions),
+                    (user_id, version_id),
+                )
+        if kind == "abstraction":
+            await cursor.execute(
+                sql.SQL(
+                    "UPDATE {s} SET "
+                    "support_count = 0, counter_count = 0, undetermined_count = 0, opportunity_count = 0, "
+                    "counter_absence_basis = NULL, refutation_attempts = 0, confidence = NULL, "
+                    "confidence_method_id = NULL, closed_over_hash = NULL, expires_at = NULL "
+                    "WHERE user_id = %s AND version_id = %s"
+                ).format(s=stats_tbl),
+                (user_id, version_id),
+            )
+        await cursor.execute(sql.SQL("SELECT {fn}(%s, %s)").format(fn=clear_vectors), (user_id, [version_id]))
+        for source_id in dict.fromkeys(surviving_source_ids):
+            await cursor.execute(
+                sql.SQL(
+                    "INSERT INTO {d} (derived_version_id, source_version_id, user_id, derivation_type) "
+                    "VALUES (%s, %s, %s, 're_derivation') ON CONFLICT DO NOTHING"
+                ).format(d=derivations),
+                (version_id, source_id, user_id),
+            )
+
+
 def _validate_rebuilt_summary(rebuilt: RebuiltSummary) -> None:
     if not isinstance(rebuilt, RebuiltSummary):
         raise ReDerivationError("summary_builder_return_type_invalid")
@@ -162,8 +468,10 @@ def _validate_rebuilt_summary(rebuilt: RebuiltSummary) -> None:
 __all__ = [
     "ActiveSource",
     "EMBEDDING_DIMENSION",
-    "RebuiltSummary",
     "ReDerivationError",
+    "RebuiltSummary",
     "SummaryBuilder",
     "rederive_summary",
+    "rederive_version",
+    "retire_version",
 ]

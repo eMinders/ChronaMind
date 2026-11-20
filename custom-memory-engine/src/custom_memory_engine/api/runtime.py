@@ -49,6 +49,8 @@ class Runtime:
     role: str
     schema_name: str = "cme_engine"
     provenance_key: ProvenanceKey = field(default_factory=lambda: ProvenanceKey(token_bytes(32)), repr=False)
+    #: Keyed HMAC-SHA256 secret for ``deletion_request.target_ref`` digests (``T-29``, E-037).
+    deletion_key: bytes = field(default_factory=lambda: token_bytes(32), repr=False)
 
     @asynccontextmanager
     async def session(self, principal: str) -> AsyncIterator[AsyncConnection]:

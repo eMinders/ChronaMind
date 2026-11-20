@@ -156,25 +156,34 @@ class ClosureCache:
 
 
 async def _deletion_token(connection: AsyncConnection, user_id: str, *, schema_name: str = "cme_engine") -> str:
-    """``epoch:request_id`` of the user's latest deletion, or ``0:`` when there is none.
+    """``epoch:request_id`` (plus ``:p:<purge_audit_id>`` when a purge has run) of the user's latest erasure/purge.
 
     The epoch alone is not a safe cache key: it is ``MAX(deletion_epoch) + 1``, so a rolled-back request returns its
     number to the pool and a later deletion reuses it. The request id is a ``uuid4`` and is never reused, so the pair
     identifies one committed deletion rather than a number that can be handed out twice.
+
+    ``E-038-F2``: including the latest ``working_purged`` audit id makes cache invalidation on ``purge_working``
+    unconditional too, without touching any table outside the three a purge already writes.
     """
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
                 "SELECT COALESCE(MAX(deletion_epoch), 0), "
                 " (SELECT id FROM {r} WHERE user_id = %s ORDER BY deletion_epoch DESC, requested_at DESC, id DESC "
-                "  LIMIT 1) "
+                "  LIMIT 1), "
+                " (SELECT id FROM {a} WHERE user_id = %s AND event_type = 'working_purged' "
+                "  ORDER BY event_at DESC, id DESC LIMIT 1) "
                 "FROM {r} WHERE user_id = %s"
-            ).format(r=sql.Identifier(schema_name, "deletion_request")),
-            (user_id, user_id),
+            ).format(
+                r=sql.Identifier(schema_name, "deletion_request"),
+                a=sql.Identifier(schema_name, "audit_event"),
+            ),
+            (user_id, user_id, user_id),
         )
         row = await cursor.fetchone()
-    epoch, request_id = (0, None) if row is None else (row[0], row[1])
-    return f"{epoch}:{request_id or ''}"
+    epoch, request_id, purge_id = (0, None, None) if row is None else (row[0], row[1], row[2])
+    base = f"{epoch}:{request_id or ''}"
+    return f"{base}:p:{purge_id}" if purge_id is not None else base
 
 
 async def _require_context(connection: AsyncConnection, user_id: str) -> None:
