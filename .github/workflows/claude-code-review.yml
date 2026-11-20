@@ -65,20 +65,35 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Take the review standard from the base branch, not from the pull request
-        # The action restores `CLAUDE.md`, `AGENTS.md` and `.claude/` for its own working tree, but `REVIEW.md` is not on
-        # its list and `pr-head` is a separate checkout. Restore all five in the reviewed tree too, so a search across
-        # `pr-head` cannot surface a pull request's own copy of the standard as if it were the standard. The pull
-        # request's versions remain in its diff, which is where they are reviewed.
+      - name: Resolve the review standard from the base branch, not from the pull request
+        # Three copies coexist, and each has one job:
+        #   workspace root  the base branch's instructions, trusted. The action itself restores `CLAUDE.md`, `AGENTS.md`
+        #                   and `.claude/` here, and a `/skill-name` prompt resolves its SKILL.md from here too.
+        #   pr-head         the reviewed code. Its own copies of the instructions are replaced below, so a search across
+        #                   `pr-head` cannot surface a pull request's standard as though it were the standard.
+        # The pull request's versions stay in its diff, which is where an instruction change is reviewed.
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
+          # 1. The skill's file comes from the pull request when its base has none, so a pull request that introduces
+          #    it is reviewable at all. The prompt says which instruction files were the pull request's own.
+          if git cat-file -e "HEAD:.claude/skills/review-pr/SKILL.md" 2>/dev/null; then
+            echo "skill: from the base branch"
+          else
+            rm -rf .claude/skills/review-pr
+            mkdir -p .claude/skills
+            git -C pr-head archive HEAD .claude/skills/review-pr | tar -x -C .
+            echo "skill: introduced by this pull request (:warning: its instruction change is part of the diff)"
+          fi
+          test -f .claude/skills/review-pr/SKILL.md
+          # 2. The reviewed tree carries the base branch's instructions.
           for path in REVIEW.md CLAUDE.md AGENTS.md custom-memory-engine/CLAUDE.md .claude; do
             if git cat-file -e "HEAD:$path" 2>/dev/null; then
               rm -rf "pr-head/${path:?}"
               git archive HEAD "$path" | tar -x -C pr-head
             fi
           done
-          # A file this pull request introduces does not exist on its base: verify only what base has. The skill is
-          # told to name that case in the review rather than treat it as a missing standard.
           for path in REVIEW.md custom-memory-engine/CLAUDE.md; do
             if [ -f "$path" ]; then diff -q "$path" "pr-head/$path"; fi
           done

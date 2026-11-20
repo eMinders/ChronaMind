@@ -119,6 +119,27 @@ def test_untrusted_and_automated_pull_requests_never_receive_the_token(review_wo
     assert "pull_request_target" not in review_workflow, "never that trigger: it runs untrusted code with secrets"
 
 
+def test_the_skill_resolves_even_when_the_base_branch_does_not_have_it(review_workflow: str) -> None:
+    """The action restores ``.claude/`` from the base branch, and a prompt's ``/skill-name`` resolves from there.
+
+    A pull request that introduces the skill to a base branch without one would otherwise invoke a command that
+    does not exist, and the run would fail before the first finding — on exactly the PR that adds the reviewer.
+    """
+    job = _job(review_workflow, "claude-review")
+    skill = ".claude/skills/review-pr/SKILL.md"
+    assert f'git cat-file -e "HEAD:{skill}"' in job, "the base copy is probed before the pull request's is used"
+    assert f"test -f {skill}" in job, "a missing skill must fail the job, not the review"
+    assert "introduced by this pull request" in job, "the review must say whose copy of the standard it used"
+
+
+def test_the_reviewed_tree_carries_the_base_branch_instructions(review_workflow: str) -> None:
+    """A search across the reviewed tree must not surface the pull request's own copy of the standard."""
+    job = _job(review_workflow, "claude-review")
+    for path in ("REVIEW.md", "CLAUDE.md", "AGENTS.md", "custom-memory-engine/CLAUDE.md", ".claude"):
+        assert path in job, path
+    assert 'git archive HEAD "$path" | tar -x -C pr-head' in job
+
+
 def test_the_review_holds_a_read_only_token_and_cannot_merge(review_workflow: str) -> None:
     job = _job(review_workflow, "claude-review")
     permissions = re.search(r"(?ms)^    permissions:\n((?:      [a-z-]+: \w+\n)+)", job)
