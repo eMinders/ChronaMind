@@ -175,14 +175,15 @@ When these three W3 operations land, the conformance suite's corresponding asser
 as "not yet testable", never as passes. `E-018` (#69) is closed with this record; the W3 tasks carry the
 outstanding criterion (`V2-D62`).
 
-### 4.1 `E-039` deferral register — the 11 unwired operations (r14, `V2-D63`)
+### 4.1 `E-039` deferral register — the 7 unwired operations (r19, `V2-D63`)
 
-`Engine.call` dispatches to registered handlers and nothing else. **18 of 29** operations are wired
+`Engine.call` dispatches to registered handlers and nothing else. **22 of 29** operations are wired on `main`
 (`register_method`, `create_entity`, `create_scope`, `link`, `unlink`, `link_entity`, `adjudicate`, `retract_own`,
 `grant_access`, `revoke_access` via `api/handlers.py`; `ingest_episode`, `assert`, `ingest_artifact` via
-`api/ingest_handlers.py`; `get`, `query` via `api/read_handlers.py`; `infer` via `api/infer_handlers.py`;
-`record_outcome` via `api/outcome_handlers.py`; `purge_working` via `api/maintain_handlers.py`).
-The remaining **11** answer `forbidden` (`operation_not_wired`) before any statement runs, so `E-039`'s criterion 5 — *"`E-018`'s
+`api/ingest_handlers.py`; `get`, `query`, `provenance`, `refine`, `cost` via `api/read_handlers.py`; `infer` via
+`api/infer_handlers.py`; `record_outcome` via `api/outcome_handlers.py`; `purge_working` via `api/maintain_handlers.py`;
+`delete` via `api/delete_handlers.py`).
+The remaining **7** answer `forbidden` (`operation_not_wired`) before any statement runs, so `E-039`'s criterion 5 — *"`E-018`'s
 conformance suite drives the engine only through this entry point"* — cannot be satisfied yet, and `E-039` (#97)
 stays open until it is.
 
@@ -207,11 +208,11 @@ criteria in its own task:
 
 | # | Operation | Owner | Issue | Entry-point criterion (a)(b)(c) |
 |---|---|---|---|---|
-| 1 | `query` | `E-033` | W3 tracker #73 → **#203** | wires `query`; suite's **queryable** property runs through `Engine.call` |
-| 2 | `get` | `E-033` | W3 tracker #73 → **#203** | wires `get`; suite's **queryable** property runs through `Engine.call` |
-| 3 | `provenance` | `E-033` | W3 tracker #73 → **#203** | wires `provenance`; suite's **queryable** property runs through `Engine.call`, opaque handles intact (`V2-D37`) |
-| 4 | `refine` | `E-034` | W3 tracker #73 → **#204** | wires `refine`; suite's **queryable** property runs through `Engine.call` |
-| 5 | `infer` | `C-021` | W5 tracker #75 (child not yet created) | wires `infer`; suite's **procedural** property runs through `Engine.call` |
+| 1 | ~~`query`~~ | ~~`E-033`~~ | **wired** (#203, #218, `805365e`) | `query` is wired with four-channel assembly, budgets, coverage, `change` mode (`V2-D81`) and `E-018`'s `queryable` property runs through `Engine.call`; it leaves this register |
+| 2 | ~~`get`~~ | ~~`E-033`~~ | **wired** (#203, #218, `805365e`) | `get` is wired through `Engine.call` and routed through `assemble` (`I14`, `R2`–`R5`, `tests/integration/test_w3_audit_closures_db.py`); it leaves this register |
+| 3 | ~~`provenance`~~ | ~~`E-033`~~ | **wired** (#203, #218, `805365e`) | `provenance` is wired with bounded depth (`1..8`) and per-caller opaque handles (`V2-D37`, `tests/integration/test_read_path_db.py`, `tests/integration/test_cross_domain_entity.py`); it leaves this register |
+| 4 | ~~`refine`~~ | ~~`E-034`~~ | **wired** (#204, #225, `d23cf3e`) | `refine` is wired with opaque handles, read-set containment and rule-based narrowing (`V2-D83`, `tests/integration/test_refine_db.py`); it leaves this register |
+| 5 | ~~`infer`~~ | ~~`C-021`~~ | **wired** (`V2-D66`, #158, #161) | `infer` is wired through `Engine.call` (`api/infer_handlers.py`, `tests/integration/test_infer_db.py`); full W5 reflection runtime stays with `C-021` (#75); it leaves this register |
 | 6 | `verify` | `C-021` | W5 tracker #75 (child not yet created) | wires `verify`; `I11`/`I15` ledger properties asserted through `Engine.call` |
 | 7 | `refute` | `C-026` | W5 tracker #75 (child not yet created) | wires `refute`; recovery-or-retirement asserted through `Engine.call` |
 | 8 | ~~`link_entity`~~ | ~~`E-024`~~ | **wired** (#145/#190) | `link_entity` is wired with dual-scope authorization and asserted through `Engine.call` (`tests/integration/test_cross_domain_entity.py`); it leaves this register |
@@ -220,11 +221,11 @@ criteria in its own task:
 | 11 | ~~`purge_working`~~ | ~~`E-026`~~ | **wired** (#189) | `purge_working` is wired admin-only and asserted through `Engine.call` (`tests/integration/test_purge_working_db.py`); the retention-floor survivor test runs through the entry point; it leaves this register |
 | 12 | `expire` | `A-014` | W7 tracker #79 (child not yet created) | wires `expire`; `I9` idempotency asserted through `Engine.call` |
 | 13 | `rebuild_index` | `A-014` | W7 tracker #79 (child not yet created) | wires `rebuild_index`; admin-only refusal asserted through `Engine.call` |
-| 14 | `delete` | `E-037` | W3 tracker #73 → **#207** | wires `delete`; suite's **deletable** property runs through `Engine.call` |
+| 14 | ~~`delete`~~ | ~~`E-037`~~ | **wired** (#207, #228, `932456d`) | `delete` is wired for Tier C with unbounded closure, two-phase ordering, 11-channel scanning, T-29 keyed-digest receipts, S-08 exclusive-turn deletion, and `E-018`'s **deletable** property runs through `Engine.call` (`tests/integration/test_type_completeness.py`, `tests/integration/test_deletion_through_cognition_db.py`); it leaves this register |
 | 15 | `export` | `A-015` | W7 tracker #79 (child not yet created) | wires `export`; export selector set asserted through `Engine.call` |
 | 16 | ~~`create_scope`~~ | ~~`E-040`~~ | **wired** (#151) | `create_scope` is wired under `namespace_owner_only` and asserted through `Engine.call` (`tests/integration/test_create_scope.py`); it leaves this register |
 | 17 | `stats` | `C-010` | W4 tracker #74 (child not yet created) | wires `stats`; `ABSTRACTION_STATS` read asserted through `Engine.call` |
-| 18 | `cost` | `E-036` | W3 tracker #73 → **#206** | wires `cost`; per-stage cost report asserted through `Engine.call` |
+| 18 | ~~`cost`~~ | ~~`E-036`~~ | **wired** (#206, #227, `cdcbc84`) | `cost` is wired for Tier B/C with per-stage `QueryCost`/`CostReport` and asserted through `Engine.call` (`tests/integration/test_cost_db.py`, `tests/integration/test_type_completeness.py`); it leaves this register |
 
 **Closure conditions for `E-039` (#97).** Criterion 5 is satisfied when, and only when:
 
@@ -294,13 +295,26 @@ domains and record why tool-grounded memory needs a different substrate.
 |---|---|---|---|
 | `E-030` | **Procedure storage**: `preconditions`, `steps`, preconditions matching. **Done** (#201, `4583952`): its own side table `procedure_shape` (migration 21, `V2-D77`), not columns on `outcome_stats`; the `E-031` planner applies the matcher before routing | No execution engine. Child issue **#201** | M |
 | `E-031` | **Retrieval planner**: intent → index selection → filters → expansion plan. Rule-based first (replayable), model-assisted later. **Done** (#200, `8c35512`): `engine/planning.py`, five stages named for `E-036`; the temporal predicate runs in candidate generation (`V2-D76`) | **Temporal modes landed (`V2-D73`):** `query` runs `current_state`, `historical_as_of`, `historical_window` and `audit_as_of` through `compile_predicate`, with the read set applied in the same statement and ρ taken from the engine clock (never the caller). `change` stays with `E-033`, as do budgets, ranking and `refine`. Child issue **#200** | L |
-| `E-032` | **Graph expansion**: association traversal with hop budget + provenance retention | Must not violate the temporal filter. Child issue **#202** | L |
-| `E-033` | **Assembly**: four channels, per-channel budgets, provenance bundle, cost + coverage report | Supersedes v1 `render.py` behaviour with a superset. Child issue **#203** | L |
-| `E-034` | **Iterative refine** | Needed for coding-agent drill-down. Child issue **#204** | M |
-| `E-035` | **Channel-integrity fuzz + red-team**: no path renders an inferred artifact as fact; no path renders an abstraction without its bound | Runs in CI from the first W3 commit. Ships as **205-A** (harness + invariants + CI job, merges before `E-038`) then **205-B** (budget/coverage on the new surface, after `E-033`). Child issue **#205** | M |
-| `E-036` | **Cost instrumentation**: per-stage latency, candidate counts, tokens into `Usage` | Reuse `harness/models.py::Usage`. Child issue **#206** | M |
-| `E-037` | **Deletion-through-cognition, implemented now** *(moved from `R-014`/W6)*: unbounded closure with cycle detection, deepest-first dependent resolution, `stale` via closure hash, retirement when support < threshold, **11 channels** | Must exist before W5 writes any abstraction, or W5 is built on an undeletable substrate. Owns the channel-7 base shift and the keyed-digest receipt (`T-29`). Child issue **#207** | L |
+| `E-032` | **Graph expansion**: association traversal with hop budget + provenance retention. **Done** (#202, `72e0bf0` + #219, `99ceb11`): single-statement recursive traversal with temporal + read predicates at every hop, recorded `hop_budget` (`V2-D79`), and `row_budget` paging (`E-032-F2`/`F3` closed) | Must not violate the temporal filter. Child issue **#202** | L |
+| `E-033` | **Assembly**: four channels, per-channel budgets, provenance bundle, cost + coverage report. **Done** (#203, `805365e`): `ChannelBudgets`, `CoverageReport`, `AssemblyCost`, `get`/`provenance` wired, per-edge conflict counterparts (`V2-D80`), `change` mode (`V2-D81`), close-then-insert placement fix (`V2-D82`) | Supersedes v1 `render.py` behaviour with a superset. Child issue **#203** | L |
+| `E-034` | **Iterative refine**. **Done** (#204, `d23cf3e`): opaque `res_` handles (`V2-D83`), read-set containment, rule-based `artifact`/`channel`/`mention`/`scope` narrowing, depth cap 4, wired through `Engine.call` | Needed for coding-agent drill-down. Child issue **#204** | M |
+| `E-035` | **Channel-integrity fuzz + red-team**: no path renders an inferred artifact as fact; no path renders an abstraction without its bound. **Done** (#205; 205-A `71b7ea1` + 205-B `97e693a`): 320-tuple enumeration, seeded fuzz, budget/coverage + public `change` gates running in CI `verify` | Runs in CI from the first W3 commit. Child issue **#205** | M |
+| `E-036` | **Cost instrumentation**: per-stage latency, candidate counts, tokens into `Usage`. **Done** (#206, `cdcbc84`): `StageCost`/`QueryCost`/`CostStore`, `cost` wired for Tier B/C, `evaluation/harness/cost.py` `Usage` boundary, G3 benchmark report `reports/benchmarks/retrieval_stages_2000.json` (V2 staged P95 11.82 ms vs stricter 2× limit 53.98 ms) | Reuse `harness/models.py::Usage`. Child issue **#206** | M |
+| `E-037` | **Deletion-through-cognition, implemented now** *(moved from `R-014`/W6)*: unbounded closure with cycle detection, deepest-first dependent resolution, `stale` via closure hash, retirement when support < threshold, **11 channels**. **Done** (#207, #228, `932456d`): `delete` wired for Tier C (`api/delete_handlers.py`), migration 22, T-29 keyed-digest receipts, S-08 exclusive-turn deletion | Must exist before W5 writes any abstraction, or W5 is built on an undeletable substrate. Owns the channel-7 base shift and the keyed-digest receipt (`T-29`). Child issue **#207** | L |
 | `E-038` | **Staleness derivation** (§9.2): `stale` computed from closure hash, never stored as a flag; `verified ∧ stale` legal and rendered in `hypotheses`. Includes a closure-hash cache with an invalidation path, since recomputing it per query is the obvious performance trap. **Done** (#199, `d374e89`); consumed by `get`/`query` since the integrity pass (`E-038-F5` closed) | Closes the disagreement hole; `V2-D24`. Child issue **#199** | M |
+
+**W3 progress (r19, 2026-11-20).** **Nine of nine** W3 tasks are complete on `main`: `E-038` (#199, `d374e89`),
+`E-031` (#200, `8c35512`), `E-030` (#201, `4583952`), `E-032` (#202, `72e0bf0` + `99ceb11`), `E-033` (#203, `805365e`),
+`E-034` (#204, `d23cf3e`), `E-035` (#205, `71b7ea1` + `97e693a`), `E-036` (#206, `cdcbc84`), and `E-037` (#207, `932456d`).
+A pre-closure W3 audit closed six remaining gaps before G3 sign-off:
+1. `api/read_handlers.py::get` now routes through `engine/channels.py::assemble` so verified abstractions never render bare without bounds (`I14`/`R2`–`R4`) and one-sided conflicts (`R5`) fail closed (`tests/integration/test_w3_audit_closures_db.py`).
+2. `api/read_handlers.py::refine` enforces Tier C on `audit_as_of` handles even when empty and evaluates procedure applicability (`exists{...}`) over the live candidate set *before* applying the caller's narrowing instruction (`tests/integration/test_w3_audit_closures_db.py`).
+3. `tests/integration/test_type_completeness.py` re-pointed `E-018`'s **deletable** property across all legal tuples from direct `delete_memory` to `Engine.call(..., "delete", ...)` (`V2-D62`, `V2-D63`) and exercises `provenance` and `refine` through `Engine.call`.
+4. `consolidation/consolidator.py` exposes `max_depth: int | None = MAX_DERIVATION_DEPTH` as a cost/performance parameter (`V2-D09`, `DELETION_ORDER.md` §6) now that `E-037` makes deletion closure unbounded.
+5. `evaluation/harness/deletion_suite.py` adds 11-channel Suite `D` measurement (`--channels 11` / `include_cognition_channels=True`, default 7 preserved), verified clean under `P` and sensitive under `A8` (`tests/integration/test_deletion_suite_db.py`).
+6. `INVARIANT_LEDGER.md` promotes `I1′`, `I8`, `I13`, `I14`, and `I17` to `ENFORCED`; `THREAT_MODEL.md` moves `T-29` to `existing`; `COVERAGE.md` and `COVERAGE_MATRIX.md` match the 22 wired / 7 unwired state (all 7 remaining unwired operations belong to W4/W5/W7).
+
+**G3 confirmatory sample-size note (`D-16` / `u*`):** `pilot_rules.py` freezes `u* = 0.10`, which requires `N_D >= 36` zero-leak scenarios for the one-sided 97.5% Clopper–Pearson bound. Suite `D` `dev` has `N = 20` (`cp_upper_97_5 = 0.168433 > 0.10`), while Suite `D` `test` has `N = 50` (`cp_upper_97_5 = 0.071122 <= 0.10`) and remains locked behind gate `G-TS` until the confirmatory phase.
 
 **W3 child issues created (r16, 2026-11-16).** All nine were specified up front, each carrying the W2 issue
 format plus the W3 additions: an explicit **execution order** position, a **ground-truth** section that makes the

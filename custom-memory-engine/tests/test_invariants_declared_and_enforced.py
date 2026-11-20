@@ -177,9 +177,12 @@ def test_gaps_closed_in_r7_are_enforced_with_tests(rows: list[Row]) -> None:
         assert by_name[name].tests
 
 
-def test_r7_primitives_are_partial_until_integrated_by_w1(rows: list[Row]) -> None:
-    status = {r.invariant: r.status for r in rows}
-    assert status["I1′"] == status["I7"] == status["I17"] == "PARTIAL"
+def test_w3_invariants_are_enforced_while_i7_stays_honestly_partial(rows: list[Row]) -> None:
+    """W3 closed I1′, I8, I13, I14 and I17 end to end via Engine.call; I7 stays PARTIAL until shared writes land."""
+    by_name = {r.invariant: r for r in rows}
+    for name in ("I1′", "I8", "I13", "I14", "I17"):
+        assert by_name[name].status == "ENFORCED" and by_name[name].sites and by_name[name].tests, name
+    assert by_name["I7"].status == "PARTIAL"
 
 
 def test_removing_a_ledger_row_is_detected(rows: list[Row]) -> None:
@@ -217,9 +220,9 @@ def test_an_enforced_claim_without_a_test_is_detected(rows: list[Row]) -> None:
 
 
 def test_an_owner_must_be_a_real_task(rows: list[Row]) -> None:
-    target = next(r for r in rows if r.invariant == "I8")
+    target = next(r for r in rows if r.invariant == "I11")
     mutated = [replace(target, owners=("E-999",)) if r is target else r for r in rows]
-    assert "I8:undefined_owner:E-999" in validate(mutated, declared_invariants(), defined_tasks())
+    assert "I11:undefined_owner:E-999" in validate(mutated, declared_invariants(), defined_tasks())
 
 
 def test_a_ledger_row_for_an_undeclared_invariant_is_detected(rows: list[Row]) -> None:

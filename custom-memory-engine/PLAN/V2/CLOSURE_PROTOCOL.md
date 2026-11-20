@@ -67,6 +67,6 @@ closed, and tests that are *specified but not yet written* (`DELETION_ORDER.md`'
 failure modes will need). Do not gate CI on a PLAN scan. Do gate a closure on the strict one.
 
 Running it over `PLAN/V2/*.md` found one citation that *was* a defect: `V2-D55`'s Verification line cited
-`test_known_v1_gaps_are_reported_not_silently_passed`, which the same commit deleted because the gaps it reported were
+~~`test_known_v1_gaps_are_reported_not_silently_passed`~~, which the same commit deleted because the gaps it reported were
 closed. That is corrected in `DECISIONS_V2.md`; the behaviour it was cited for is still enforced, by `validate`'s
 `gap_required`/`owner_required` rules and `test_an_unenforced_row_must_say_what_is_missing_and_who_owns_it`.

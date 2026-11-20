@@ -58,6 +58,7 @@ from custom_memory_engine.config import TestDatabaseConfig
 from custom_memory_engine.deletion.closure import invalidate_cache_entries
 from custom_memory_engine.deletion.rederive import ActiveSource, RebuiltSummary
 from custom_memory_engine.deletion.scanner import (
+    ALL_CHANNELS,
     CHANNELS,
     ChannelProbe,
     LeakChannel,
@@ -173,6 +174,7 @@ class SuiteReport:
     embedding_model: str
     answerer: str
     scenarios: list[ScenarioResult] = field(default_factory=list)
+    channels: tuple[LeakChannel, ...] = CHANNELS
 
     @property
     def leaking_scenarios(self) -> int:
@@ -183,12 +185,12 @@ class SuiteReport:
         return sum(len(event.incomplete_channels) for s in self.scenarios for event in s.events)
 
     def channel_totals(self) -> dict[str, int]:
-        totals: dict[str, int] = dict.fromkeys(CHANNELS, 0)
+        totals: dict[str, int] = dict.fromkeys(self.channels, 0)
         for scenario in self.scenarios:
             for event in scenario.events:
                 if event.scored_in_primary:
                     for channel, count in event.channel_residuals.items():
-                        totals[channel] += count
+                        totals[channel] = totals.get(channel, 0) + count
         return totals
 
     def to_json(self) -> dict[str, object]:
@@ -308,6 +310,8 @@ class _Run:
     cache: ContextCache
     log_lines: list[str]
     clock: datetime
+    include_cognition_channels: bool = False
+    export_snapshots: ContextCache = field(default_factory=ContextCache)
     sequence: int = 0
 
     def tick(self) -> datetime:
@@ -482,7 +486,7 @@ def _harness_probes(run: _Run, user_id: str, probe: DeletionProbe) -> dict[LeakC
         cached = sum(1 for text in run.cache.texts(user_id) if context.canary in text)
         return ProbeMeasurement(sql_count + cached, complete=True)
 
-    return {
+    probes: dict[LeakChannel, ChannelProbe] = {
         **database,
         "channel_1_storage_index_queue_cache_scan": storage_and_cache,
         "channel_3_vector_search": vector,
@@ -490,14 +494,67 @@ def _harness_probes(run: _Run, user_id: str, probe: DeletionProbe) -> dict[LeakC
         "channel_6_final_answer": answer,
         "channel_7_application_logs": log_sink_probe(lambda: list(run.log_lines)),
     }
+    if not run.include_cognition_channels:
+        return probes
+
+    async def cache_only(context: ScanContext) -> ProbeMeasurement:
+        # ``scan_deleted_key(..., connection=run.conn)`` automatically supplements SQL storage with this surface.
+        cached = sum(1 for text in run.cache.texts(user_id) if context.canary in text)
+        return ProbeMeasurement(cached, complete=True)
+
+    async def hypothesis_rendering(context: ScanContext) -> ProbeMeasurement:
+        versions = sql.Identifier(run.schema, "memory_version")
+        async with run.conn.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT content FROM {v} WHERE user_id = %s AND status = 'active' AND lifecycle = 'inferred'"
+                ).format(v=versions),
+                (context.user_id,),
+            )
+            texts = [str(row[0]) for row in await cursor.fetchall()]
+        return ProbeMeasurement(sum(1 for text in texts if context.canary in text), complete=True)
+
+    async def abstraction_rendered_surface(context: ScanContext) -> ProbeMeasurement:
+        versions = sql.Identifier(run.schema, "memory_version")
+        async with run.conn.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT content FROM {v} WHERE user_id = %s AND status = 'active' AND kind = 'abstraction'"
+                ).format(v=versions),
+                (context.user_id,),
+            )
+            texts = [str(row[0]) for row in await cursor.fetchall()]
+        return ProbeMeasurement(sum(1 for text in texts if context.canary in text), complete=True)
+
+    async def export_snapshots(context: ScanContext) -> ProbeMeasurement:
+        snapshots = run.export_snapshots.texts(context.user_id)
+        return ProbeMeasurement(sum(1 for text in snapshots if context.canary in text), complete=True)
+
+    probes.pop("channel_2_lexical_search")
+    probes.pop("channel_4_derived_memory_lookup")
+    probes["channel_1_storage_index_queue_cache_scan"] = cache_only
+    probes["channel_8_hypothesis_rendering"] = hypothesis_rendering
+    probes["channel_9_abstraction_statements_and_bounds"] = abstraction_rendered_surface
+    probes["channel_11_export_snapshots"] = export_snapshots
+    return probes
 
 
 async def _measure(run: _Run, user_id: str, memory_key: str, canary: str, epoch: int, probes: Sequence[DeletionProbe]):
-    residuals: dict[str, int] = dict.fromkeys(CHANNELS, 0)
+    target_channels: tuple[LeakChannel, ...] = ALL_CHANNELS if run.include_cognition_channels else CHANNELS
+    residuals: dict[str, int] = dict.fromkeys(target_channels, 0)
     incomplete: set[str] = set()
     for probe in probes:
         context = ScanContext(user_id, memory_key, canary, max(epoch, 1))
-        report = await scan_deleted_key(context, _harness_probes(run, user_id, probe))
+        if run.include_cognition_channels:
+            report = await scan_deleted_key(
+                context,
+                _harness_probes(run, user_id, probe),
+                connection=run.conn,
+                schema_name=run.schema,
+                channels=ALL_CHANNELS,
+            )
+        else:
+            report = await scan_deleted_key(context, _harness_probes(run, user_id, probe))
         for finding in report.findings:
             if not finding.measured or not finding.complete:
                 incomplete.add(finding.channel)
@@ -514,7 +571,10 @@ async def run_scenario(run: _Run, scenario: DeletionScenario) -> ScenarioResult:
         # Warm the cache before deletion, as a serving system would have.
         before = await _deletion_epoch(run, user_id)
         for probe in event.probes:
-            run.cache.put(user_id, probe.query_text, before, await _assemble(run, user_id, probe.query_text))
+            assembled_before = await _assemble(run, user_id, probe.query_text)
+            run.cache.put(user_id, probe.query_text, before, assembled_before)
+            if run.include_cognition_channels:
+                run.export_snapshots.put(user_id, f"export:{probe.query_text}", before, assembled_before)
         moment = run.tick()
         await _set_clock(run, moment)
         async with run.conn.transaction():
@@ -529,6 +589,8 @@ async def run_scenario(run: _Run, scenario: DeletionScenario) -> ScenarioResult:
                 replay_time=moment,
             )
         await invalidate_cache_entries(run.cache, user_id, receipt.deletion_epoch)
+        if run.include_cognition_channels:
+            await invalidate_cache_entries(run.export_snapshots, user_id, receipt.deletion_epoch)
         residuals, incomplete = await _measure(
             run, user_id, event.target_memory_key, event.canary_value, receipt.deletion_epoch, event.probes
         )
@@ -589,6 +651,7 @@ async def run_suite(
     split: str = "dev",
     limit: int | None = None,
     answerer_name: str = "extractive",
+    include_cognition_channels: bool = False,
 ) -> SuiteReport:
     """Run Suite ``D`` in a fresh disposable schema and return the measured report."""
     if ablation not in ("P", "A8"):
@@ -596,7 +659,10 @@ async def run_suite(
     dataset = load_split(split)
     scenarios = dataset.scenarios[:limit] if limit else dataset.scenarios
     schema = "cme_suite_d_" + uuid4().hex[:12]
-    report = SuiteReport(dataset.suite, dataset.split, ablation, EMBEDDING_MODEL, answerer_name)
+    target_channels: tuple[LeakChannel, ...] = ALL_CHANNELS if include_cognition_channels else CHANNELS
+    report = SuiteReport(
+        dataset.suite, dataset.split, ablation, EMBEDDING_MODEL, answerer_name, channels=target_channels
+    )
     async with await AsyncConnection.connect(database_url, autocommit=True, connect_timeout=10) as admin:
         await admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
     try:
@@ -620,6 +686,7 @@ async def run_suite(
                             ContextCache(),
                             lines,
                             datetime(2025, 5, 1, 9, tzinfo=UTC),
+                            include_cognition_channels=include_cognition_channels,
                         )
                         result = await run_scenario(run, scenario)
                     lines.extend(json.dumps(entry, default=str) for entry in captured)
@@ -655,11 +722,12 @@ def render(report: SuiteReport, console: Console) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Suite D seven-channel deletion run (#46).")
+    parser = argparse.ArgumentParser(description="Suite D deletion run (#46 seven-channel / E-037 eleven-channel).")
     parser.add_argument("--ablation", choices=("P", "A8"), required=True)
     parser.add_argument("--assets", type=Path, required=True, help="verified BGE asset directory")
     parser.add_argument("--split", default="dev")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--channels", type=int, choices=(7, 11), default=7)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     database_url = os.environ.get("CME_TEST_DATABASE_URL", "")
@@ -668,7 +736,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     TestDatabaseConfig.from_environment()  # refuses anything but the disposable test database
     report = asyncio.run(
         run_suite(
-            database_url, ablation=args.ablation, embed=onnx_embedder(args.assets), split=args.split, limit=args.limit
+            database_url,
+            ablation=args.ablation,
+            embed=onnx_embedder(args.assets),
+            split=args.split,
+            limit=args.limit,
+            include_cognition_channels=args.channels == 11,
         )
     )
     if args.out:

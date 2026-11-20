@@ -12,6 +12,7 @@ from collections.abc import Sequence
 import pytest
 
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
+from custom_memory_engine.deletion.scanner import ALL_CHANNELS
 from evaluation.harness.deletion_suite import run_suite
 
 pytestmark = pytest.mark.integration
@@ -66,3 +67,24 @@ async def test_report_carries_the_one_sided_cp_bound(database_url: str) -> None:
     bound = report.to_json()["cp_upper_one_sided_97_5"]
     assert isinstance(bound, float)
     assert abs(bound - (1 - 0.025 ** (1 / SCENARIOS))) < 1e-9  # zero-leak closed form
+
+
+async def test_eleven_channel_suite_d_under_p_is_clean_and_a8_is_detected(database_url: str) -> None:
+    """E-037 / G3: Suite D runner measures all 11 channels (1-7 + 8-11) cleanly under P and detects A8."""
+    clean = await run_suite(
+        database_url, ablation="P", embed=bag_of_words, limit=SCENARIOS, include_cognition_channels=True
+    )
+    data = clean.to_json()
+    totals = data["primary_channel_totals"]
+    assert isinstance(totals, dict)
+    assert tuple(totals.keys()) == ALL_CHANNELS
+    assert set(totals.values()) == {0}
+    assert data["incomplete_measurements"] == 0
+    assert data["leaking_scenarios"] == 0
+    assert data["never_stated_false_positives"] == 0
+
+    broken = await run_suite(
+        database_url, ablation="A8", embed=bag_of_words, limit=SCENARIOS, include_cognition_channels=True
+    )
+    assert broken.leaking_scenarios == SCENARIOS
+    assert broken.incomplete_measurements == 0

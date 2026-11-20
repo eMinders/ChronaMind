@@ -33,11 +33,11 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `ingest_artifact` | operation | `E-039`, `E-015` | |
 | `query` | operation | `E-039`, `E-031`, `E-033` | wired; `E-031` added the four temporal modes (`V2-D73`), `E-033` added budgets, ranking and `change` |
 | `refine` | operation | `E-039`, `E-034` | wired: `E-034` lands it through `Engine.call` (§4.1), with the result handle and the read-set containment of `V2-D83` |
-| `get` | operation | `E-039`, `E-033` | unwired: `E-033` lands it through `Engine.call` (§4.1) |
-| `provenance` | operation | `E-039`, `E-033` | opaque handles (`V2-D37`); unwired: `E-033` lands it through `Engine.call` (§4.1) |
+| `get` | operation | `E-039`, `E-033` | wired: `E-033` lands it through `Engine.call` (§4.1), routed through `assemble` (`I14`, `R2`–`R5`) |
+| `provenance` | operation | `E-039`, `E-033` | wired: `E-033` lands it through `Engine.call` (§4.1) with opaque handles (`V2-D37`) |
 | `assert` | operation | `E-039`, `E-015` | |
 | `retract_own` | operation | `E-039`, `E-016` | |
-| `infer` | operation | `E-039`, `C-021` | unwired: `C-021` lands it through `Engine.call` (§4.1) |
+| `infer` | operation | `E-039`, `C-021` | wired (`V2-D66`, `api/infer_handlers.py`); full W5 reflection runtime stays with `C-021` |
 | `verify` | operation | `E-039`, `C-021` | unwired: `C-021` lands it through `Engine.call` (§4.1) |
 | `refute` | operation | `E-039`, `C-026` | unwired: `C-026` lands it through `Engine.call` (§4.1) |
 | `link` | operation | `E-039`, `E-014` | `grounded_endpoint_protected` (`V2-D48`) |
@@ -53,7 +53,7 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `register_method` | operation | `E-039`, `E-014` | admin-only; `V2-D46` |
 | `delete` | operation | `E-039`, `E-037` | wired: `E-037` lands it through `Engine.call` (§4.1), with unbounded closure, two-phase ordering, 11 channels and T-29/S-08 |
 | `export` | operation | `E-039`, `A-015` | unwired: `A-015` lands it through `Engine.call` (§4.1) |
-| `create_scope` | operation | `E-039`, `E-040` | `V2-D46`; behaviour split from `E-011` at its closure (`V2-D63`); unwired: `E-040` lands it through `Engine.call` (§4.1) |
+| `create_scope` | operation | `E-039`, `E-040` | `V2-D46`; wired by `E-040` (#151) through `Engine.call` under `namespace_owner_only` |
 | `grant_access` | operation | `E-039`, `E-011` | `V2-D46`, `V2-D36` |
 | `revoke_access` | operation | `E-039`, `E-011` | |
 | `stats` | operation | `E-039`, `C-010` | unwired: `C-010` lands it through `Engine.call` (§4.1) |

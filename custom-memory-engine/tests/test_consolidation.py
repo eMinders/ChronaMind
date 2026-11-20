@@ -105,6 +105,20 @@ def test_plan_refuses_to_exceed_the_depth_budget() -> None:
         plan_consolidation((source(depth=MAX_DERIVATION_DEPTH),), user_id="u1", content="x", version_id="c1")
 
 
+def test_plan_accepts_higher_explicit_max_depth_and_unbounded_none() -> None:
+    """V2-D09 / #73 §7: ``max_depth`` is a performance parameter now that deletion closure is unbounded."""
+    deeper = plan_consolidation((source(depth=3),), user_id="u1", content="x", version_id="c4", max_depth=4)
+    assert deeper.source_depth == 4
+    unbounded = plan_consolidation((source(depth=7),), user_id="u1", content="x", version_id="c8", max_depth=None)
+    assert unbounded.source_depth == 8
+
+
+@pytest.mark.parametrize("bad_depth", [0, -1, True])
+def test_plan_rejects_nonpositive_or_boolean_max_depth(bad_depth: int) -> None:
+    with pytest.raises(ConsolidationError, match="positive_derivation_depth_required"):
+        plan_consolidation((source(),), user_id="u1", content="x", version_id="c1", max_depth=bad_depth)
+
+
 def test_plan_derives_a_version_id_when_absent() -> None:
     plan = plan_consolidation((source(),), user_id="u1", content="x")
     assert plan.version_id.startswith("c-")
