@@ -84,6 +84,16 @@ The reviewer's decisions are recorded as `V2-D##` entries with their rationale a
 confirm, amend or reverse them. Where GitHub's own branch protection would require an approval, that is a
 platform setting, not this policy, and no human approval is ever fabricated to satisfy it.
 
+**Where this standard is implemented.** The seven steps above are executable, not aspirational: the procedure lives in
+`.claude/skills/review-pr/SKILL.md`, the review-only rules in the repository-root `REVIEW.md`, and the engine context a
+reviewer has to read in `custom-memory-engine/CLAUDE.md`. The workflow `.github/workflows/claude-code-review.yml` runs
+it on every non-draft same-repository pull request, and `@claude review` runs it on demand (see
+`.github/workflows/README.md`). It replaced the stock `code-review` plugin, which over 106 pull requests posted 106
+"No issues found" summaries and four inline comments: the plugin stops a review once Claude has commented on a pull
+request, and its bug agents are told to read the diff and not the surrounding code — the opposite of step 2 above. The
+instruction files' references are checked by `tests/test_claude_integration.py`, so a dead `path::symbol` in the
+standard fails CI rather than misleading the next review.
+
 ### 1.2 Branch protection on `main`
 
 **History.** In r11 the session account had only `write`. After the transfer to `eMinders` (2026-11-05) it was admin, but GitHub's Free plan refused protection and rulesets on a private repository (`403`). The Project Owner made the repository **public** on 2026-11-05, which lifts that restriction.

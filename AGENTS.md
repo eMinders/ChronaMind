@@ -1,6 +1,17 @@
-# AI Agent Development Guide
+# AI Agent Development Guide — the FastAPI application
 
-This document provides essential guidelines for AI agents working on this LangGraph FastAPI Agent project.
+This document provides essential guidelines for AI agents working on this LangGraph FastAPI Agent project: `app/`, `evals/`,
+`alembic/`, `docs/`, and the root packaging files. It is the FastAPI/LangGraph template's guide.
+
+> **Scope.** This file governs the root **application** only (CPython 3.14, root `pyproject.toml`/`uv.lock`, `make check`).
+> It does **not** apply to `custom-memory-engine/`, which is a separate project with its own interpreter (CPython 3.12),
+> its own Ruff/Pyright/lock, its own CI job, and its own instructions in
+> [`custom-memory-engine/CLAUDE.md`](custom-memory-engine/CLAUDE.md). A rule below is not evidence about the engine, and
+> must never be used to review an engine change.
+>
+> Two rules below are already **false in the code this file governs**, and are marked where they appear: the import rule
+> (both projects use deliberate guarded/lazy imports) and the rate-limiter rule (four `app/api/v1/auth.py` session routes
+> have none). Do not enforce either retroactively; do not extend the import rule to new lazy imports without a reason.
 
 ## First-Time Setup & Installation
 
@@ -78,7 +89,11 @@ This is a production-ready AI agent application built with:
 ## Quick Reference: Critical Rules
 
 ### Import Rules
-- **All imports MUST be at the top of the file** - never add imports inside functions or classes
+- Keep imports at the top of the file, **except for an optional dependency**: `app/core/cache.py` (redis),
+  `app/core/middleware.py` (pyinstrument) and `app/services/llm/router.py` (provider SDKs) import inside a
+  `TYPE_CHECKING`/`try` block on purpose, so the application runs without that extra installed. A guarded optional
+  import is the one correct place for an import below the top, and it needs its `# pyright: ignore[reportMissingImports]`.
+- The memory engine's deliberate lazy imports are **not** covered by this rule, and are not violations of it.
 
 ### Logging Rules
 - Use **structlog** for all logging
@@ -101,7 +116,10 @@ This is a production-ready AI agent application built with:
 - Use appropriate cache TTL based on data volatility
 
 ### FastAPI Rules
-- All routes must have rate limiting decorators
+- **New** routes must have rate limiting decorators (`@limiter.limit(settings.RATE_LIMIT_ENDPOINTS[...])`). The four
+  `app/api/v1/auth.py` session routes (`POST /session`, `PATCH /session/{id}/name`, `DELETE /session/{id}`,
+  `GET /sessions`) predate this rule and do not have one: adding it is a behavioural change for existing clients, so it
+  is a tracked decision, not a drive-by fix.
 - Use dependency injection for services, database connections, and auth
 - All database operations must be async
 
@@ -201,14 +219,14 @@ This is a production-ready AI agent application built with:
 
 ## 10 Commandments for This Project
 
-1. All routes must have rate limiting decorators
+1. Every **new** route has a rate limiting decorator (the four legacy `auth.py` session routes are the known exception)
 2. All LLM operations must have Langfuse tracing
 3. All async operations must have proper error handling
 4. All logs must follow structured logging format with lowercase_underscore event names
 5. All retries must use tenacity library
 6. All console outputs should use rich formatting
 7. All caching should only store successful responses
-8. All imports must be at the top of files
+8. Imports stay at the top of a file, except a guarded import of an optional dependency (see Import Rules)
 9. All database operations must be async
 10. All endpoints must have proper type hints and Pydantic models
 11. All code must pass `make typecheck` (pyright standard mode)
@@ -217,7 +235,7 @@ This is a production-ready AI agent application built with:
 
 - ❌ Using f-strings in structlog events
 - ❌ Adding imports inside functions
-- ❌ Forgetting rate limiting decorators on routes
+- ❌ Forgetting rate limiting decorators on a **new** route (see FastAPI Rules for the four legacy exceptions)
 - ❌ Missing Langfuse tracing on LLM calls
 - ❌ Caching error responses
 - ❌ Using `logger.error()` instead of `logger.exception()` for exceptions

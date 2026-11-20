@@ -4,8 +4,8 @@
 |---|---|---|---|
 | `custom-memory-engine.yaml` | Every PR (a `changes` job skips the gates when neither `custom-memory-engine/` nor `.github/` changed, so required checks still report; `.github/` counts because the engine suite tests the CI configuration); pushes to `main` touching those paths; manual | `changes`, then `static`, `verify`, `default-install` (parallel), plus advisory `dual-profile` | Engine quality gates (below) |
 | `ci.yaml` | Every PR; pushes to `main`; manual | `checks`, `workflows` | `checks`: root application lint, format, type check and tests (`tests/`, no services). The engine is excluded from the root Ruff config and verified only by its own workflow. `workflows`: actionlint over every workflow, pinned by digest |
-| `claude-code-review.yml` | Same-repository, non-draft PRs | `claude-review` | Advisory automated review: a second pair of eyes, not the review gate. The gate is the AI review on the Project Owner's behalf (`V2-D57`, `PLAN/CONTRIBUTING.md` §1.1); no human peer review is a prerequisite |
-| `claude.yml` | `@claude` mentions by an owner, member or collaborator | `claude` | On-demand assistant |
+| `claude-code-review.yml` | Same-repository, non-draft, non-Dependabot PRs, on open, push, ready and reopen | `claude-review` | Advisory automated review, through the repository's own `review-pr` skill (below), not the stock `code-review` plugin. A second pair of eyes, not the review gate: the gate is the AI review on the Project Owner's behalf (`V2-D57`, `PLAN/CONTRIBUTING.md` §1.1), and no human peer review is a prerequisite |
+| `claude.yml` | `@chronamind` in an issue or PR comment, or `@claude review` on a PR, by an owner, member or collaborator | `claude` (assistant), `review` (reviewer) | The interactive assistant, and an on-demand review through the same `review-pr` skill |
 | `app-image.yaml` | PRs and `main` pushes touching anything that goes into the root image (`Dockerfile`, lock, `app/`, ...); manual | `image` | Builds the root image, imports the app inside it, checks it runs as `appuser` with read-only code, reports its size. Not required, so its path filter is safe |
 | `deploy.yaml` | Manual (`workflow_dispatch`) only | `Build and push to Docker Hub` | Root application image. Automatic publication on `main` is an owner decision and is not enabled |
 
@@ -35,3 +35,42 @@ All three required gates must be green (or skipped by `changes` when no engine p
 - **Lint scope.** Each project is linted once, by its own pinned Ruff and Pyright: the root config excludes `custom-memory-engine/`.
 - **Secrets.** Never interpolate `${{ secrets.* }}` or event data directly into `run:` scripts; pass them through `env:`.
 - **Validation.** `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12` (includes shellcheck) must report nothing.
+
+## The Claude review
+
+`.github/workflows/claude-code-review.yml` runs `.claude/skills/review-pr/SKILL.md`, a procedure this repository owns,
+rather than the stock `code-review` plugin. The plugin was measured on this repository: over 106 pull requests it
+posted 106 "No issues found" summaries and four inline comments, because its own instructions stop a review as soon as
+Claude has commented on a PR and restrict its bug agents to the diff. The defects it was meant to catch (`#228`'s
+`SECURITY DEFINER` gate on a forgeable GUC, `#229`'s `get` bypassing `assemble`) were found by hand afterwards.
+
+The replacement differs in four ways that matter here:
+
+| | Stock plugin | `review-pr` |
+|---|---|---|
+| Instructions | plugin text, same for every repository | `REVIEW.md` and `custom-memory-engine/CLAUDE.md`, **read from the base branch** so a PR cannot edit the standard it is reviewed against |
+| Scope | the diff | the diff plus the callers, the SQL/Python twins, the invariant ledger, the threat model and the migration list |
+| A second push | skipped if Claude has already commented | reviewed, strictly: new regressions and unfixed earlier findings |
+| Findings | high-signal only | evidence bar of six parts, severity-ranked, nit-capped, deduplicated |
+
+What it can and cannot do: it reads the diff and the surrounding code, and it does not build or run the repository. It
+never approves, never merges and never pushes — those tools are denied in `claude_args` — so it cannot satisfy a branch
+protection requirement or substitute for a human decision. It complements the deterministic gates; it does not replace
+them, and a clean review is not proof of correctness.
+
+**Cost and duplicate reviews.** Each run is billed to the subscription behind `CLAUDE_CODE_OAUTH_TOKEN` and consumes
+GitHub Actions minutes. The managed **Claude Code Review** service (Team/Enterprise, enabled by a Claude organization
+Owner) is a different, deeper product with a check run, inline findings and its own spend limit; if it is enabled for
+this repository, set the repository variable **`CLAUDE_REVIEW_MODE=native`** and the Action job skips before minting a
+token. Nothing in this repository can read or change that setting, so it is an administrator action, not a file.
+
+**Verifying the reviewer.** A green run proves nothing about detection. After any change to `REVIEW.md`, the skill or
+the workflow, open a throwaway PR with a planted defect (delete a guard from a migration trigger, bypass `assemble` on a
+read path) and confirm the review reports it inline and cites the mechanism. The instruction files' own references are
+checked on every run: `tests/test_claude_integration.py` holds them to `scripts/check_evidence.py`, and pins the
+workflow's triggers, permissions, deny list and base-branch checkout.
+
+**Why `@chronamind`, not `@claude`.** One comment must start one agent. `@claude review` is the reviewer, in both the
+managed service and `claude.yml`; the interactive assistant has its own phrase so a plain `@claude` in prose never
+starts two runs. The assistant can implement a change on a branch but is denied `git push` to a protected one, merge,
+approve and `gh api --method PUT`.

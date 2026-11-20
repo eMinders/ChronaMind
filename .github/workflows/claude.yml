@@ -1,33 +1,39 @@
 name: Claude Code
 
-# Runs when a repository owner, member or collaborator mentions @claude. The author-association
-# guard is defence in depth on top of the action's own write-permission check.
+# Two on-demand jobs, with two different trigger phrases, because they are two different agents:
+#
+#   @chronamind …        the interactive assistant: answers in an issue or PR, and can implement a change on a branch.
+#   @claude review       the reviewer: runs the same `.claude/skills/review-pr/SKILL.md` procedure as the automatic
+#                        review, on demand — for a draft, a fork PR, a PR the automatic run skipped, or a full re-pass.
+#
+# The phrases are distinct on purpose. Claude Code Review (the managed service) also reacts to `@claude review`, and one
+# comment must never start two agents. The action matches a trigger phrase on word boundaries, so `@chronamind` does not
+# fire on `@claude`, and the review job's `startsWith` guard keeps the assistant out of a review request.
+#
+# Every job is limited to an owner, member or collaborator: the author-association guard is defence in depth on top of
+# the action's own write-permission check, so no fork and no bot can spend the subscription.
 
 on:
   issue_comment:
     types: [created]
   pull_request_review_comment:
     types: [created]
-  issues:
-    types: [opened, assigned]
   pull_request_review:
     types: [submitted]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '@claude review') && 'review' || 'assist' }}
+  cancel-in-progress: true
 
 jobs:
   claude:
+    # `@chronamind` only. A comment that asks for a review is handled by the `review` job, never by both.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+        github.event.comment.author_association || github.event.review.author_association) &&
+      !(github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '@claude review')) &&
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@chronamind') ||
+       github.event_name != 'pull_request_review' && contains(github.event.comment.body, '@chronamind'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -38,14 +44,87 @@ jobs:
       actions: read # Required for Claude to read CI results on PRs
     steps:
       - name: Checkout repository
+        # The action restores `CLAUDE.md`, `AGENTS.md`, `.claude/` and `.mcp.json` from the base branch on pull-request
+        # events, so a pull request cannot change the instructions this job follows.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1
+        uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1.0.275
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          trigger_phrase: "@chronamind"
+          # Claude may commit to its own branch or the pull request's branch, but never merge, approve or push over
+          # `main` (which is protected anyway). It opens no pull request: it replies with the creation link for a human.
+          claude_args: |
+            --permission-mode auto
+            --disallowedTools "Bash(gh pr merge:*),Bash(gh pr review:*),Bash(git push:*),Bash(gh api -X PUT:*),Bash(gh api --method PUT:*)"
           additional_permissions: |
             actions: read
+
+  review:
+    # `@claude review` on a pull request: one full review, now, through the repository's own procedure.
+    if: |
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+      startsWith(github.event.comment.body, '@claude review')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    env:
+      PR_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Resolve the pull request's base branch and head commit
+        # An `issue_comment` payload carries no base ref, so it is read from the API once and exported for the steps
+        # below. Nothing here comes from the comment's text: the PR number is the issue number GitHub reported.
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '"base_ref=" + .base.ref,
+            "base_sha=" + .base.sha, "head_sha=" + .head.sha' >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the base branch (the standard, and the repo the action expects)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.base_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout the pull request beside it (the code under review)
+        # The base ref is the working tree because a comment does not name a trusted ref; the pull request is fetched
+        # only into `pr-head` (docs/security.md, "Which files come from the base branch on pull requests"). A fork works
+        # here, because a maintainer asked for the review explicitly.
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          git init --quiet pr-head
+          git -C pr-head fetch --no-tags --depth=50 origin "$HEAD_SHA"
+          git -C pr-head checkout --quiet FETCH_HEAD
+          git -C pr-head log --oneline -1
+
+      - name: Run the review
+        id: claude-review
+        uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1.0.275
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: >-
+            /review-pr
+            PR_NUMBER=${{ github.event.issue.number }}
+            BASE_REF=${{ steps.pr.outputs.base_ref }}
+            HEAD_SHA=${{ steps.pr.outputs.head_sha }}
+            The base branch is checked out at the workspace root and the pull request at ./pr-head.
+            This is a full review requested by a maintainer: cover the whole pull request, not only its last commit.
+          claude_args: |
+            --permission-mode default
+            --add-dir pr-head
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh api:*),Bash(gh issue view:*),Bash(gh search:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git grep:*),Bash(git show-ref:*),Bash(git fetch:*)"
+            --disallowedTools "Edit,Write,NotebookEdit,mcp__github_file_ops,Bash(git push:*),Bash(git commit:*),Bash(git merge:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr review:*),Bash(gh pr edit:*)"
