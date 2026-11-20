@@ -4,7 +4,8 @@
 DROP TRIGGER IF EXISTS trg_memory_derivation_acyclic ON memory_derivation;
 DROP FUNCTION IF EXISTS prevent_derivation_cycle();
 DROP FUNCTION IF EXISTS delete_exclusive_turns(text, text[]);
-DROP FUNCTION IF EXISTS clear_retired_tombstone_vectors(text, text[]);
+DROP FUNCTION IF EXISTS clear_retired_tombstone_content(text, text[]);
+DROP POLICY IF EXISTS procedure_shape_tombstone ON procedure_shape;
 
 CREATE OR REPLACE FUNCTION guard_update() RETURNS trigger
 LANGUAGE plpgsql
@@ -175,6 +176,8 @@ BEGIN
   END LOOP;
 END
 $pin$;
+
+DROP FUNCTION IF EXISTS deletion_in_this_transaction(text);
 
 ALTER TABLE memory_version DROP COLUMN IF EXISTS retirement_reason;
 

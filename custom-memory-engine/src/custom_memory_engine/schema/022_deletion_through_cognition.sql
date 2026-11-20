@@ -8,9 +8,14 @@
 --    ``enforce_transition_records()``, and permits a tombstoned row to hold zero derivation/evidence rows in
 --    ``enforce_provenance()``.
 -- 3. Narrowed privilege paths (S-08 & V2-D50 rule 3): ``delete_exclusive_turns(text, text[])`` and
---    ``clear_retired_tombstone_vectors(text, text[])`` are ``SECURITY DEFINER`` functions with pinned ``search_path``
---    that verify ``app.user_id`` and ``app.deletion_active = '1'``, widening ``DELETE`` on ``turn`` and
---    ``memory_embedding`` **only** inside a deletion transaction without widening table grants for the runtime role.
+--    ``clear_retired_tombstone_content(text, text[])`` are ``SECURITY DEFINER`` functions with pinned ``search_path``
+--    that widen ``DELETE`` on ``turn``, ``memory_embedding`` and ``procedure_shape`` **only** inside a deletion
+--    transaction, without widening table grants for the runtime role. "Inside a deletion transaction" is
+--    ``deletion_in_this_transaction(user)``: ``app.user_id`` and ``app.deletion_active`` are set AND the current
+--    transaction has itself written a ``deletion_request`` row for that user. The GUCs alone are not a gate (any
+--    session can set a custom GUC); the receipt is, because ``deletion_request`` is append-only, so a caller cannot use
+--    these paths without leaving a durable, content-free record of a deletion. The ``guard_update`` tombstone
+--    exception uses the same predicate, so content can be cleared in place only by a deletion.
 --
 -- No backfill is performed or invented: existing rows carry ``retirement_reason IS NULL``.
 
@@ -50,6 +55,29 @@ CREATE TRIGGER trg_memory_derivation_acyclic
   BEFORE INSERT OR UPDATE OF derived_version_id, source_version_id ON memory_derivation
   FOR EACH ROW EXECUTE FUNCTION prevent_derivation_cycle();
 
+-- The deletion-transaction predicate shared by the tombstone exception and the narrowed helpers (see header, item 3).
+-- A visible deletion_request row whose inserting transaction is still in progress can only have been written by this
+-- transaction (or one of its subtransactions): another session's uncommitted row is invisible. ``age(xmin) <= 0`` keeps
+-- older transactions out and lets the full xid8 be computed exactly from the current one, so ``pg_xact_status`` is
+-- never asked about an id outside the valid range.
+CREATE FUNCTION deletion_in_this_transaction(p_user_id text) RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT NULLIF(pg_catalog.current_setting('app.user_id', true), '') IS NOT DISTINCT FROM p_user_id
+     AND pg_catalog.current_setting('app.deletion_active', true) IS NOT DISTINCT FROM '1'
+     AND EXISTS (
+       SELECT 1
+         FROM deletion_request AS r,
+              (SELECT pg_catalog.pg_current_xact_id()::text::bigint AS top) AS x
+        WHERE r.user_id = p_user_id
+          AND CASE WHEN pg_catalog.age(r.xmin) <= 0
+                   THEN pg_catalog.pg_xact_status((x.top - pg_catalog.age(r.xmin))::text::xid8) = 'in progress'
+                   ELSE false
+              END
+     )
+$$;
+
 -- 2. Retire-by-deletion tombstoning in guard_update / enforce_transition_records / enforce_provenance ---------------
 CREATE OR REPLACE FUNCTION guard_update() RETURNS trigger
 LANGUAGE plpgsql
@@ -58,7 +86,7 @@ DECLARE
   is_source_deleted_tombstone boolean;
 BEGIN
   -- Belief content is immutable in place, with one narrow V2-D50 exception: retiring a dependent by source deletion
-  -- tombstones its content to '' and records retirement_reason = 'source_deleted' in the same transaction.
+  -- tombstones its content to '' and records retirement_reason = 'source_deleted', and only a deletion may do it.
   is_source_deleted_tombstone := (
     OLD.lifecycle IS DISTINCT FROM 'retired'
     AND NEW.lifecycle = 'retired'
@@ -69,6 +97,7 @@ BEGIN
       (OLD.recorded_range IS NOT NULL AND NEW.status = 'archived' AND NEW.archival_branch = 'S')
       OR (OLD.recorded_range IS NULL AND NEW.status = 'rejected' AND NEW.archival_branch IS NULL)
     )
+    AND deletion_in_this_transaction(OLD.user_id)
   );
   IF is_source_deleted_tombstone THEN
     IF (
@@ -241,8 +270,7 @@ AS $$
 DECLARE
   deleted_count integer := 0;
 BEGIN
-  IF NULLIF(pg_catalog.current_setting('app.user_id', true), '') IS DISTINCT FROM p_user_id
-     OR pg_catalog.current_setting('app.deletion_active', true) IS DISTINCT FROM '1' THEN
+  IF NOT deletion_in_this_transaction(p_user_id) THEN
     RAISE EXCEPTION 'exclusive_turn_deletion_forbidden' USING ERRCODE = '42501';
   END IF;
   DELETE FROM turn AS t
@@ -259,16 +287,22 @@ BEGIN
 END
 $$;
 
-CREATE FUNCTION clear_retired_tombstone_vectors(p_user_id text, p_version_ids text[]) RETURNS integer
+-- Tombstone content that lives outside memory_version: vectors and, for a procedure, its shape (steps are free text).
+-- procedure_shape has no DELETE policy for anyone else, so this one exists for the owner-run function only; the
+-- runtime role holds no DELETE grant on the table, so the policy widens nothing for it.
+CREATE POLICY procedure_shape_tombstone ON procedure_shape FOR DELETE
+  USING (user_id = NULLIF(pg_catalog.current_setting('app.user_id', true), ''));
+
+CREATE FUNCTION clear_retired_tombstone_content(p_user_id text, p_version_ids text[]) RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
   deleted_count integer := 0;
+  shape_count integer := 0;
 BEGIN
-  IF NULLIF(pg_catalog.current_setting('app.user_id', true), '') IS DISTINCT FROM p_user_id
-     OR pg_catalog.current_setting('app.deletion_active', true) IS DISTINCT FROM '1' THEN
-    RAISE EXCEPTION 'tombstone_vector_cleanup_forbidden' USING ERRCODE = '42501';
+  IF NOT deletion_in_this_transaction(p_user_id) THEN
+    RAISE EXCEPTION 'tombstone_content_cleanup_forbidden' USING ERRCODE = '42501';
   END IF;
   DELETE FROM memory_embedding AS e
    WHERE e.user_id = p_user_id
@@ -281,7 +315,18 @@ BEGIN
           AND v.retirement_reason = 'source_deleted'
      );
   GET DIAGNOSTICS deleted_count = ROW_COUNT;
-  RETURN deleted_count;
+  DELETE FROM procedure_shape AS p
+   WHERE p.user_id = p_user_id
+     AND p.version_id = ANY(p_version_ids)
+     AND EXISTS (
+       SELECT 1 FROM memory_version AS v
+        WHERE v.user_id = p_user_id
+          AND v.id = p.version_id
+          AND v.lifecycle = 'retired'
+          AND v.retirement_reason = 'source_deleted'
+     );
+  GET DIAGNOSTICS shape_count = ROW_COUNT;
+  RETURN deleted_count + shape_count;
 END
 $$;
 
@@ -293,11 +338,12 @@ DECLARE
 BEGIN
   FOREACH fn IN ARRAY ARRAY[
     'prevent_derivation_cycle()',
+    'deletion_in_this_transaction(text)',
     'guard_update()',
     'enforce_provenance()',
     'enforce_transition_records()',
     'delete_exclusive_turns(text, text[])',
-    'clear_retired_tombstone_vectors(text, text[])'
+    'clear_retired_tombstone_content(text, text[])'
   ] LOOP
     EXECUTE pg_catalog.format(
       'ALTER FUNCTION %I.%s SET search_path = %I, pg_catalog, pg_temp', engine_schema, fn, engine_schema

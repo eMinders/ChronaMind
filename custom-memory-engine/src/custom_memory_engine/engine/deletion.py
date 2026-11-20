@@ -45,6 +45,7 @@ from custom_memory_engine.deletion.closure import (
 )
 from custom_memory_engine.deletion.rederive import (
     SummaryBuilder,
+    rederivation_blocker,
     rederive_summary,
     rederive_version,
     retire_version,
@@ -568,9 +569,19 @@ async def _delete_memory_once(
                     if source_status == "active":
                         active_nodes.add(s_id)
 
+            # A builder rebuilds text only: a procedure (shape, outcomes) or a version a sticky dissent names cannot
+            # be re-derived faithfully, so it has no builder and is retired (V2-D50 rule 2).
+            unrebuildable: set[str] = set()
+            if rederivation_builder is not None or summary_builder is not None:
+                for dependent_id in sorted(active_nodes & set(dependents)):
+                    if await rederivation_blocker(connection, user_id, dependent_id, schema_name=schema_name):
+                        unrebuildable.add(dependent_id)
+
             def _builder_for(node_id: str) -> SummaryBuilder | None:
                 # Re-derivation builders available: `rederivation_builder` rebuilds any active dependent;
                 # `summary_builder` rebuilds semantic summaries whose edges are `summary` (v1 contract).
+                if node_id in unrebuildable:
+                    return None
                 if rederivation_builder is not None:
                     return rederivation_builder
                 if (
@@ -633,7 +644,7 @@ async def _delete_memory_once(
                         ExternalExclusion(str(row[0]), str(row[1])) for row in await cursor.fetchall()
                     )
 
-            # Narrow transaction-local marker read by delete_exclusive_turns / clear_retired_tombstone_vectors (S-08,
+            # Narrow transaction-local marker read by delete_exclusive_turns / clear_retired_tombstone_content (S-08,
             # V2-D50 rule 3). Set only once Phase B is certain to run, and cleared again before this function returns.
             await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '1', true)")
 

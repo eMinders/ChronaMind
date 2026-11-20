@@ -1251,6 +1251,113 @@ async def test_deletion_marker_is_cleared_before_delete_returns(db) -> None:
                     await conn.execute("SELECT delete_exclusive_turns('u1', ARRAY['t-base'])")
 
 
+async def test_narrowed_paths_refuse_a_forged_marker_outside_a_deletion(db) -> None:
+    """S-08 / V2-D50 rule 3: the GUCs alone are not enough; only a transaction that wrote a deletion receipt passes."""
+    _, schema = db
+    async with connect(db) as conn:
+        await _set_user(conn)
+        async with conn.transaction():
+            await _add_claim(conn, "keep-me", "content that must stay")
+        async with conn.transaction():
+            await conn.execute("SELECT pg_catalog.set_config('app.deletion_active', '1', true)")
+            with pytest.raises(InsufficientPrivilege):
+                async with conn.transaction():
+                    await conn.execute("SELECT delete_exclusive_turns('u1', ARRAY['t-base'])")
+            with pytest.raises(InsufficientPrivilege):
+                async with conn.transaction():
+                    await conn.execute("SELECT clear_retired_tombstone_content('u1', ARRAY['keep-me'])")
+            # the in-place tombstone exception of guard_update is gated the same way
+            with pytest.raises(RaiseException):
+                async with conn.transaction():
+                    await conn.execute(
+                        "UPDATE memory_version SET recorded_range = tstzrange(lower(recorded_range), clock_now()), "
+                        "status = 'archived', archival_branch = 'S', lifecycle = 'retired', "
+                        "retirement_reason = 'source_deleted', content = '' WHERE id = 'keep-me'"
+                    )
+        cur = await conn.execute("SELECT content FROM memory_version WHERE id = 'keep-me'")
+        assert await cur.fetchone() == ("content that must stay",)
+        cur = await conn.execute("SELECT count(*) FROM turn WHERE id = 't-base'")
+        assert await cur.fetchone() == (1,)
+
+
+async def test_rederived_dependent_keeps_its_gate_references_evidence_and_associations(db) -> None:
+    """Re-deriving rebuilds the row with the same id; rows that reference it are carried across, not lost or blocking.
+
+    ``memory_conflict.existing_version_id`` has no ON DELETE action, so without carrying it a dependent that the gate
+    once compared against would abort the whole deletion; evidence and associations would silently cascade away.
+    """
+    _, schema = db
+    async with connect(db) as conn:
+        await _set_user(conn)
+        async with conn.transaction():
+            await _add_turn(conn, "t-dep-own", 2, "the dependent's own turn")
+            await _add_claim(conn, "s-gone", "deleted source")
+            await _add_claim(conn, "s-stay", "surviving source")
+            await _add_claim(conn, "dep", "derived from both", derived=True)
+            await _add_claim(conn, "other", "an associated claim")
+            await _add_claim(conn, "cand", "a later candidate matched against dep")
+            await conn.execute(
+                "INSERT INTO memory_derivation VALUES "
+                "('dep', 's-gone', 'u1', 'consolidation'), ('dep', 's-stay', 'u1', 'consolidation')"
+            )
+            await conn.execute(
+                "INSERT INTO memory_evidence (version_id, turn_id, user_id, evidence_span, evidence_role) "
+                "VALUES ('dep', 't-dep-own', 'u1', 'own span', 'support')"
+            )
+            await conn.execute(
+                "INSERT INTO memory_conflict (id, candidate_version_id, existing_version_id, user_id, relation, "
+                "decision, reason_code, decided_by, decided_at) VALUES ('mc-dup', 'cand', 'dep', 'u1', 'duplicate', "
+                "'accept', 'reinforce_duplicate', 'gate', clock_now())"
+            )
+            await conn.execute(
+                "INSERT INTO association (id, user_id, from_id, to_id, type, weight, created_by, origin) "
+                "VALUES ('assoc-dep', 'u1', 'dep', 'other', 'contradicts', 1.0, 'u1', 'tier_c')"
+            )
+        async with conn.transaction():
+            receipt = await delete_memory(
+                conn, "u1", target_ref="s-gone", rederivation_builder=_builder, schema_name=schema
+            )
+        assert (receipt.deleted_versions, receipt.rederived_dependents) == (1, 1)
+        cur = await conn.execute("SELECT existing_version_id FROM memory_conflict WHERE id = 'mc-dup'")
+        assert await cur.fetchone() == ("dep",)
+        cur = await conn.execute("SELECT turn_id FROM memory_evidence WHERE version_id = 'dep'")
+        assert await cur.fetchall() == [("t-dep-own",)]
+        cur = await conn.execute("SELECT from_id, to_id FROM association WHERE id = 'assoc-dep'")
+        assert await cur.fetchone() == ("dep", "other")
+        cur = await conn.execute("SELECT content FROM memory_version WHERE id = 'dep'")
+        row = await cur.fetchone()
+        assert row is not None and "deleted source" not in str(row[0])
+
+
+async def test_dependent_named_by_a_sticky_dissent_is_retired_not_rederived(db) -> None:
+    """V2-D50 rule 2: a dissent's reference cannot be re-pointed at a rebuilt row, so that dependent has no builder."""
+    _, schema = db
+    async with connect(db) as conn:
+        await _set_user(conn)
+        async with conn.transaction():
+            await _add_claim(conn, "s-gone", "deleted source")
+            await _add_claim(conn, "s-stay", "surviving source")
+            await _add_claim(conn, "dep", "dissented dependent", derived=True)
+            await conn.execute(
+                "INSERT INTO memory_derivation VALUES "
+                "('dep', 's-gone', 'u1', 'consolidation'), ('dep', 's-stay', 'u1', 'consolidation')"
+            )
+            await conn.execute(
+                "INSERT INTO negative_constraint (id, user_id, predicate_key, scope_path, method_family, "
+                "dissented_at, reason, dissented_version_id) VALUES ('nc-1', 'u1', 'statement', '/u/u1/', "
+                "'consolidation', clock_now(), 'user dissent', 'dep')"
+            )
+        async with conn.transaction():
+            receipt = await delete_memory(
+                conn, "u1", target_ref="s-gone", rederivation_builder=_builder, schema_name=schema
+            )
+        assert (receipt.deleted_versions, receipt.rederived_dependents, receipt.retired_dependents) == (1, 0, 1)
+        cur = await conn.execute("SELECT lifecycle, retirement_reason, content FROM memory_version WHERE id = 'dep'")
+        assert await cur.fetchone() == ("retired", "source_deleted", "")
+        cur = await conn.execute("SELECT dissented_version_id FROM negative_constraint WHERE id = 'nc-1'")
+        assert await cur.fetchone() == ("dep",)
+
+
 def test_receipt_key_defaults_to_the_deployment_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """T-29: with ``CME_DELETION_RECEIPT_KEY`` set, every Runtime and direct caller digests with the deployment key."""
     monkeypatch.setenv(RECEIPT_KEY_ENV, "deployment-key-for-test")

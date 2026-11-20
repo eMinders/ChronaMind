@@ -70,6 +70,115 @@ def _validate_ids(user_id: str, version_id: str, schema_name: str) -> None:
         raise ReDerivationError("isolated_engine_schema_identifier_required")
 
 
+# Rows that reference a version and would be lost (``ON DELETE CASCADE``) or would block the rebuild (a NO ACTION
+# foreign key) when the version row is deleted and recreated with the same id. Re-deriving replaces the artifact's
+# content only, so these are carried across the rebuild unchanged: the dependent's own evidence, its gate decisions,
+# the gate decisions that name it as the version compared against, and its associations.
+_CARRIED_TABLES = ("memory_evidence", "memory_conflict", "association")
+
+
+@dataclass(frozen=True)
+class _CarriedRows:
+    rows: tuple[tuple[str, str], ...]  # (table, row as JSON text) to re-insert after the rebuild
+    gate_refs: tuple[str, ...]  # memory_conflict ids whose existing_version_id names the rebuilt version
+
+
+async def _relation_exists(cursor: object, schema_name: str, table: str) -> bool:
+    await cursor.execute("SELECT pg_catalog.to_regclass(%s) IS NOT NULL", (f"{schema_name}.{table}",))  # type: ignore[attr-defined]
+    row = await cursor.fetchone()  # type: ignore[attr-defined]
+    return bool(row and row[0])
+
+
+async def rederivation_blocker(
+    connection: AsyncConnection, user_id: str, version_id: str, *, schema_name: str = "cme_engine"
+) -> str | None:
+    """Why ``version_id`` cannot be faithfully re-derived in place, or ``None`` when it can.
+
+    A builder returns new *text*; it cannot rebuild a procedure's shape and outcomes, and a sticky dissent
+    (``negative_constraint``) that names the version cannot be re-pointed at the rebuilt row (its guard allows only the
+    database to clear the reference). Such a dependent is retired instead (``V2-D50`` rule 2: no builder).
+    """
+    _validate_ids(user_id, version_id, schema_name)
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL("SELECT kind FROM {v} WHERE user_id = %s AND id = %s").format(
+                v=sql.Identifier(schema_name, "memory_version")
+            ),
+            (user_id, version_id),
+        )
+        row = await cursor.fetchone()
+        if row is not None and row[0] == "procedure":
+            return "rederivation_unsupported_for_procedure"
+        if await _relation_exists(cursor, schema_name, "negative_constraint"):
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT EXISTS (SELECT 1 FROM {n} WHERE user_id = %s "
+                    "AND (dissented_version_id = %s OR lift_evidence_version_id = %s))"
+                ).format(n=sql.Identifier(schema_name, "negative_constraint")),
+                (user_id, version_id, version_id),
+            )
+            found = await cursor.fetchone()
+            if found and found[0]:
+                return "rederivation_blocked_by_negative_constraint"
+    return None
+
+
+async def _detach_carried_rows(
+    connection: AsyncConnection, user_id: str, version_id: str, schema_name: str
+) -> _CarriedRows:
+    """Read every carried row of ``version_id`` and clear the gate references that would block deleting it."""
+    rows: list[tuple[str, str]] = []
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        for table in _CARRIED_TABLES:
+            if not await _relation_exists(cursor, schema_name, table):
+                continue
+            if table == "association":
+                where, params = sql.SQL("(t.from_id = %s OR t.to_id = %s)"), (user_id, version_id, version_id)
+            elif table == "memory_conflict":
+                where, params = sql.SQL("t.candidate_version_id = %s"), (user_id, version_id)
+            else:
+                where, params = sql.SQL("t.version_id = %s"), (user_id, version_id)
+            await cursor.execute(
+                sql.SQL("SELECT pg_catalog.to_jsonb(t)::text FROM {t} AS t WHERE t.user_id = %s AND {w}").format(
+                    t=sql.Identifier(schema_name, table), w=where
+                ),
+                params,
+            )
+            rows.extend((table, str(record[0])) for record in await cursor.fetchall())
+        conflicts = sql.Identifier(schema_name, "memory_conflict")
+        await cursor.execute(
+            sql.SQL(
+                "UPDATE {c} SET existing_version_id = NULL WHERE user_id = %s AND existing_version_id = %s "
+                "AND candidate_version_id <> %s RETURNING id"
+            ).format(c=conflicts),
+            (user_id, version_id, version_id),
+        )
+        gate_refs = tuple(str(record[0]) for record in await cursor.fetchall())
+    return _CarriedRows(tuple(rows), gate_refs)
+
+
+async def _restore_carried_rows(
+    connection: AsyncConnection, user_id: str, version_id: str, carried: _CarriedRows, schema_name: str
+) -> None:
+    """Re-insert the carried rows on the rebuilt version and point the gate references back at it."""
+    async with connection.cursor() as cursor:
+        for table, record in carried.rows:
+            target = sql.Identifier(schema_name, table)
+            await cursor.execute(
+                sql.SQL("INSERT INTO {t} SELECT * FROM pg_catalog.jsonb_populate_record(NULL::{t}, %s::jsonb)").format(
+                    t=target
+                ),
+                (record,),
+            )
+        if carried.gate_refs:
+            await cursor.execute(
+                sql.SQL("UPDATE {c} SET existing_version_id = %s WHERE user_id = %s AND id = ANY(%s)").format(
+                    c=sql.Identifier(schema_name, "memory_conflict")
+                ),
+                (version_id, user_id, list(carried.gate_refs)),
+            )
+
+
 async def rederive_summary(
     connection: AsyncConnection,
     user_id: str,
@@ -122,6 +231,7 @@ async def rederive_summary(
         raise ReDerivationError("summary_rebuild_failed") from exc
     _validate_rebuilt_summary(rebuilt)
 
+    carried = await _detach_carried_rows(connection, user_id, summary_id, schema_name)
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
@@ -153,6 +263,7 @@ async def rederive_summary(
             ).format(e=embeddings),
             (summary_id, rebuilt.embedding_model, user_id, vector_literal),
         )
+    await _restore_carried_rows(connection, user_id, summary_id, carried, schema_name)
     return True
 
 
@@ -166,7 +277,10 @@ async def rederive_version(
     derivation_type: str = "re_derivation",
     schema_name: str = "cme_engine",
 ) -> bool:
-    """Re-derive any active dependent (claim, abstraction, procedure, episode) in-place on surviving sources.
+    """Re-derive an active dependent (claim, abstraction, episode) in place on its surviving sources.
+
+    A procedure, or a version a sticky dissent names, is refused (:func:`rederivation_blocker`); the deletion retires
+    it instead. Evidence, gate decisions and associations of the version are carried across the rebuild unchanged.
 
     Preserves the row's V2 axes (``kind``, ``lifecycle``, ``retention``, ``scope_path``, ``visibility``,
     ``method_id``, ``um_facet``) and, for an ``abstraction``, preserves its prior ``abstraction_stats`` (including the
@@ -209,6 +323,11 @@ async def rederive_version(
         if meta is None or meta[21] != "active":
             raise ReDerivationError("active_dependent_required")
 
+    blocker = await rederivation_blocker(connection, user_id, version_id, schema_name=schema_name)
+    if blocker is not None:
+        raise ReDerivationError(blocker)
+
+    async with connection.cursor(row_factory=tuple_row) as cursor:
         prior_stats = None
         prior_verifications: list[tuple[object, ...]] = []
         if meta[11] == "abstraction":
@@ -269,6 +388,7 @@ async def rederive_version(
         else "re_derivation"
     )
 
+    carried = await _detach_carried_rows(connection, user_id, version_id, schema_name)
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
@@ -363,6 +483,7 @@ async def rederive_version(
                 ).format(s=stats_tbl),
                 (*prior_stats, user_id, version_id),
             )
+    await _restore_carried_rows(connection, user_id, version_id, carried, schema_name)
     return True
 
 
@@ -378,7 +499,8 @@ async def retire_version(
 
     Runs inside the deletion transaction (with ``app.deletion_active = '1'``). Keeps ``id``, ``scope_path``, ``kind``,
     ``lifecycle = 'retired'`` and ``retirement_reason = 'source_deleted'``; removes ``content`` (clearing generated
-    ``content_fts``), clears ``abstraction_stats`` bounds, deletes vectors via ``clear_retired_tombstone_vectors``,
+    ``content_fts``), clears ``abstraction_stats`` bounds, deletes vectors (and a procedure's shape) via
+    ``clear_retired_tombstone_content``,
     and retains derivation edges **only** to surviving sources so a later deletion of those sources still deletes the
     tombstone.
     """
@@ -386,7 +508,7 @@ async def retire_version(
     versions = sql.Identifier(schema_name, "memory_version")
     derivations = sql.Identifier(schema_name, "memory_derivation")
     stats_tbl = sql.Identifier(schema_name, "abstraction_stats")
-    clear_vectors = sql.Identifier(schema_name, "clear_retired_tombstone_vectors")
+    clear_content = sql.Identifier(schema_name, "clear_retired_tombstone_content")
 
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
@@ -433,7 +555,7 @@ async def retire_version(
                 ).format(s=stats_tbl),
                 (user_id, version_id),
             )
-        await cursor.execute(sql.SQL("SELECT {fn}(%s, %s)").format(fn=clear_vectors), (user_id, [version_id]))
+        await cursor.execute(sql.SQL("SELECT {fn}(%s, %s)").format(fn=clear_content), (user_id, [version_id]))
         for source_id in dict.fromkeys(surviving_source_ids):
             await cursor.execute(
                 sql.SQL(
@@ -471,6 +593,7 @@ __all__ = [
     "ReDerivationError",
     "RebuiltSummary",
     "SummaryBuilder",
+    "rederivation_blocker",
     "rederive_summary",
     "rederive_version",
     "retire_version",

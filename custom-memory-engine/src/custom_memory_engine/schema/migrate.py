@@ -103,12 +103,14 @@ FUNCTIONS = (
     "guard_procedure_shape",  # migration 21 (E-030): kind, immutability and the precondition grammar
     "prevent_derivation_cycle",  # migration 22 (E-037): acyclic memory_derivation at write time (F9)
     "delete_exclusive_turns",  # migration 22 (E-037): S-08 exclusive turn deletion inside a deletion transaction
-    "clear_retired_tombstone_vectors",  # migration 22 (E-037): V2-D50 rule 3 tombstone vector removal
+    "clear_retired_tombstone_content",  # migration 22 (E-037): V2-D50 rule 3 tombstone vector/shape removal
+    "deletion_in_this_transaction",  # migration 22 (E-037): the gate of the two helpers and the tombstone exception
 )
 # Parameterized SQL argument lists for non-zero-arg functions in FUNCTIONS so reset() drops them cleanly.
 FUNCTION_ARG_TYPES: Mapping[str, str] = {
     "delete_exclusive_turns": "text, text[]",
-    "clear_retired_tombstone_vectors": "text, text[]",
+    "clear_retired_tombstone_content": "text, text[]",
+    "deletion_in_this_transaction": "text",
 }
 logger = structlog.get_logger(__name__)
 
