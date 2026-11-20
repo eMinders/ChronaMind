@@ -70,7 +70,16 @@ async def test_report_carries_the_one_sided_cp_bound(database_url: str) -> None:
 
 
 async def test_eleven_channel_suite_d_under_p_is_clean_and_a8_is_detected(database_url: str) -> None:
-    """E-037 / G3: Suite D runner measures all 11 channels (1-7 + 8-11) cleanly under P and detects A8."""
+    """E-037 / G3: Suite D measures all 11 channels cleanly under ``P`` and the extended half detects ``A8``.
+
+    The control matters as much as the zero: the 7-channel report already leaks under ``A8`` through channel 4, so
+    asserting only ``leaking_scenarios == SCENARIOS`` would pass with every cognition channel dead. The extended
+    run must show the leak *arriving on a cognition channel* (8: inferred content rendered as a hypothesis).
+    Channels 9-11 are measured and complete here but record zero under this ablation: the suite's scenarios carry
+    no abstraction, verification record or export snapshot for the canary, so their positive controls live beside
+    the probes themselves (``test_deletion_through_cognition_db.py``: ``A8`` leaks through a verified abstraction
+    on channel 9; channel 11 is proven by the stale-epoch export refusal).
+    """
     clean = await run_suite(
         database_url, ablation="P", embed=bag_of_words, limit=SCENARIOS, include_cognition_channels=True
     )
@@ -78,6 +87,7 @@ async def test_eleven_channel_suite_d_under_p_is_clean_and_a8_is_detected(databa
     totals = data["primary_channel_totals"]
     assert isinstance(totals, dict)
     assert tuple(totals.keys()) == ALL_CHANNELS
+    assert data["channels"] == list(ALL_CHANNELS)
     assert set(totals.values()) == {0}
     assert data["incomplete_measurements"] == 0
     assert data["leaking_scenarios"] == 0
@@ -88,3 +98,10 @@ async def test_eleven_channel_suite_d_under_p_is_clean_and_a8_is_detected(databa
     )
     assert broken.leaking_scenarios == SCENARIOS
     assert broken.incomplete_measurements == 0
+    broken_totals = broken.channel_totals()
+    assert tuple(broken_totals) == ALL_CHANNELS
+    # the positive control must reach the extended half, not only the v1 channels 1-7
+    assert broken_totals["channel_8_hypothesis_rendering"] > 0, (
+        "A8 leaked only through v1 channels, so the cognition channels are insensitive in this suite"
+    )
+    assert broken_totals["channel_4_derived_memory_lookup"] > 0

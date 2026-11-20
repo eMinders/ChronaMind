@@ -75,7 +75,7 @@ from custom_memory_engine.engine.ingest import (
     persist_turn,
 )
 from custom_memory_engine.engine.predicates import current_state
-from custom_memory_engine.engine.render import render_context
+from custom_memory_engine.engine.render import RenderedContext, render_context
 from custom_memory_engine.engine.retrieval import rank_versions
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput
 from custom_memory_engine.schema.migrate import migration_scripts
@@ -202,6 +202,9 @@ class SuiteReport:
             "ablation": self.ablation,
             "embedding_model": self.embedding_model,
             "answerer": self.answerer,
+            # The channel set this run measured (7 v1 or all 11). A channel that was targeted but could not be
+            # measured is counted in ``incomplete_measurements``; it is never reported as a zero.
+            "channels": list(self.channels),
             "scenario_count": n,
             "leaking_scenarios": k,
             "incomplete_measurements": self.incomplete_measurements,
@@ -345,7 +348,8 @@ async def _deletion_epoch(run: _Run, user_id: str) -> int:
     return int(row[0]) if row else 0
 
 
-async def _assemble(run: _Run, user_id: str, query: str) -> str:
+async def _render(run: _Run, user_id: str, query: str) -> RenderedContext:
+    """The rendered answer context for ``query``: ranking plus ``render_context``, nothing else."""
     vector = run.embed([query], query=True)[0]
     async with run.conn.transaction():
         outcome = await rank_versions(
@@ -356,12 +360,16 @@ async def _assemble(run: _Run, user_id: str, query: str) -> str:
             embedding_model=EMBEDDING_MODEL,
             schema_name=run.schema,
         )
-        rendered = render_context(
+        return render_context(
             tuple(ranked.version for ranked in outcome.ranked),
             mode="current",
             token_budget=TOKEN_BUDGET,
             reference_time=run.clock,
         )
+
+
+async def _assemble(run: _Run, user_id: str, query: str) -> str:
+    rendered = await _render(run, user_id, query)
     return "\n".join(item.text for item in rendered.items)
 
 
@@ -515,15 +523,11 @@ def _harness_probes(run: _Run, user_id: str, probe: DeletionProbe) -> dict[LeakC
         return ProbeMeasurement(sum(1 for text in texts if context.canary in text), complete=True)
 
     async def abstraction_rendered_surface(context: ScanContext) -> ProbeMeasurement:
-        versions = sql.Identifier(run.schema, "memory_version")
-        async with run.conn.cursor(row_factory=tuple_row) as cursor:
-            await cursor.execute(
-                sql.SQL(
-                    "SELECT content FROM {v} WHERE user_id = %s AND status = 'active' AND kind = 'abstraction'"
-                ).format(v=versions),
-                (context.user_id,),
-            )
-            texts = [str(row[0]) for row in await cursor.fetchall()]
+        # The *rendered* half of channel 9: only abstractions the answer context actually selected, never a second
+        # read of storage. The scanner already supplies the storage half (``abstraction_db_probe``) when
+        # ``connection`` is passed, and counting rows here too would double every residual.
+        rendered = await _render(run, context.user_id, probe.query_text)
+        texts = [item.text for item in rendered.items if item.version.layer == "persona"]
         return ProbeMeasurement(sum(1 for text in texts if context.canary in text), complete=True)
 
     async def export_snapshots(context: ScanContext) -> ProbeMeasurement:

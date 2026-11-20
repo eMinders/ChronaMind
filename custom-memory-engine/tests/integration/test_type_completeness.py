@@ -67,6 +67,7 @@ from custom_memory_engine.security import provision_runtime_role, tenant_scope
 from tests.integration.test_api_wiring_structure import (
     caller,
     database,  # noqa: F401  (fixture)
+    forbidden,
     world,
 )
 from tests.integration.test_migration_m1 import START, rows
@@ -265,6 +266,20 @@ async def test_every_legal_tuple_is_storable_and_queryable_and_deletable_and_rou
             assert delivered["subject"].channel == expected_channel, (
                 f"routed (through Engine.call): {delivered['subject']} but the reference model says {expected_channel}"
             )
+        # -- answerable by id: `get` names the same artifact through the same assembler (E-033, E-039). A retired
+        #    tuple is rendered in no channel, so by id it is `forbidden`, never a bare row. Every delivered tuple must
+        #    be *identical* to the one `query` delivered -- the same content, bound, label, support summary,
+        #    provenance, shape and channel -- not merely present (this is the divergence the W3 audit closed).
+        expected_channel_none = expected_channel == "none"
+        if expected_channel_none:
+            gone = await forbidden(engine, caller(user), "get", {"artifact_id": "subject"})
+            assert (gone.code, gone.detail) == ("forbidden", None), f"by_id (retired): {gone} for {t}"
+        else:
+            by_id = await engine.call(caller(user), "get", {"artifact_id": "subject"})
+            assert isinstance(by_id, Artifact), by_id
+            assert by_id.channel == expected_channel, f"by_id (through Engine.call): {by_id} for {t}"
+            if "subject" in delivered:
+                assert by_id == delivered["subject"], f"by_id == query: {by_id} != {delivered['subject']} for {t}"
         # -- deletable: the row and its derived dependent are gone via Engine.call (V2-D62, E-037)
         receipt = await engine.call(
             caller(user), "delete", {"scope": "memory", "target_ref": "subject", "deletion_epoch": None}
@@ -275,6 +290,9 @@ async def test_every_legal_tuple_is_storable_and_queryable_and_deletable_and_rou
         assert await rows(
             conn, "SELECT count(*) FROM memory_evidence WHERE version_id IN ('subject', 'dependent')"
         ) == [(0,)]
+        # deleting a row that was answerable also removes it from the by-id route, so absent and deleted agree
+        deleted_by_id = await forbidden(engine, caller(user), "get", {"artifact_id": "subject"})
+        assert (deleted_by_id.code, deleted_by_id.detail) == ("forbidden", None), f"deletable (by id) for {t}"
 
 
 async def insert_tuple_dependent(conn: AsyncConnection, user: str) -> None:

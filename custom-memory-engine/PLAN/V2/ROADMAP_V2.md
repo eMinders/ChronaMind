@@ -311,10 +311,18 @@ A pre-closure W3 audit closed six remaining gaps before G3 sign-off:
 2. `api/read_handlers.py::refine` enforces Tier C on `audit_as_of` handles even when empty and evaluates procedure applicability (`exists{...}`) over the live candidate set *before* applying the caller's narrowing instruction (`tests/integration/test_w3_audit_closures_db.py`).
 3. `tests/integration/test_type_completeness.py` re-pointed `E-018`'s **deletable** property across all legal tuples from direct `delete_memory` to `Engine.call(..., "delete", ...)` (`V2-D62`, `V2-D63`) and exercises `provenance` and `refine` through `Engine.call`.
 4. `consolidation/consolidator.py` exposes `max_depth: int | None = MAX_DERIVATION_DEPTH` as a cost/performance parameter (`V2-D09`, `DELETION_ORDER.md` §6) now that `E-037` makes deletion closure unbounded.
-5. `evaluation/harness/deletion_suite.py` adds 11-channel Suite `D` measurement (`--channels 11` / `include_cognition_channels=True`, default 7 preserved), verified clean under `P` and sensitive under `A8` (`tests/integration/test_deletion_suite_db.py`).
+5. `evaluation/harness/deletion_suite.py` adds 11-channel Suite `D` measurement (`--channels 11` / `include_cognition_channels=True`, default 7 preserved), verified clean under `P` and sensitive under `A8` (`tests/integration/test_deletion_suite_db.py`). The recorded runs are `reports/deletion/suite_d_dev_11ch_{P,A8}.json`: **0 leaking scenarios of 20 on all 11 channels, `incomplete_measurements = 0`**, and the `A8` control leaks with residual counts on channel 8 alongside the v1 channels (`channel_8_hypothesis_rendering = 80`), so the extended half is sensitive rather than merely present. Channels 9–11 record zero under this ablation because Suite `D`'s scenarios carry no abstraction, verification record or export snapshot for the canary; their controls sit beside the probes (`test_deletion_through_cognition_db.py`: `A8` leaks on channel 9 through a verified abstraction; channel 11 is proven by the stale-epoch export refusal), so a measured-but-unexercised channel is never cited as evidence of a leak. The 7-channel reports were regenerated with the frozen model and differ only by the new explicit `channels` field.
 6. `INVARIANT_LEDGER.md` promotes `I1′`, `I8`, `I13`, `I14`, and `I17` to `ENFORCED`; `THREAT_MODEL.md` moves `T-29` to `existing`; `COVERAGE.md` and `COVERAGE_MATRIX.md` match the 22 wired / 7 unwired state (all 7 remaining unwired operations belong to W4/W5/W7).
+7. `E-018`'s **queryable** property is now asserted for `get` as well: for every legal tuple, the by-id route returns the *identical* artifact `query` delivered (same content, bound, label, support summary, provenance, shape and channel), a `retired` tuple is `forbidden` by id, and a deleted row leaves the by-id route (`tests/integration/test_type_completeness.py`). This is the class of divergence finding 1 fixed, pinned across the whole tuple space rather than one example.
 
-**G3 confirmatory sample-size note (`D-16` / `u*`):** `pilot_rules.py` freezes `u* = 0.10`, which requires `N_D >= 36` zero-leak scenarios for the one-sided 97.5% Clopper–Pearson bound. Suite `D` `dev` has `N = 20` (`cp_upper_97_5 = 0.168433 > 0.10`), while Suite `D` `test` has `N = 50` (`cp_upper_97_5 = 0.071122 <= 0.10`) and remains locked behind gate `G-TS` until the confirmatory phase.
+**Channel 7 (`#207` §4.4, requirement 14) is closed.** `E-037`'s obligation to prove or qualify the application-log
+probe is met by a positive control, not a qualification: `structlog.testing.capture_logs()` emits a real canary and
+`log_sink_probe` reports `residual_count = 1, leaked = True`
+(`tests/integration/test_deletion_through_cognition_db.py::test_eleven_channel_scan_clean_on_v2_deletion_and_a8_leaks_through_abstraction`).
+The `A8` suite still records `0` on channel 7 because no deleted scenario writes the canary to a log, which is
+the probe behaving correctly; the control is what makes that zero evidence.
+
+**G3 confirmatory sample-size note (`D-16` / `u*`):** `pilot_rules.py` freezes `u* = 0.10`, which requires `N_D >= 36` zero-leak scenarios for the one-sided 97.5% Clopper–Pearson bound. Suite `D` `dev` has `N = 20` (`cp_upper_97_5 = 0.168433 > 0.10`), while Suite `D` `test` has `N = 50` (`cp_upper_97_5 = 0.071122 <= 0.10`) and remains locked behind gate `G-TS` until the confirmatory phase. This is the same basis `G2` was signed off on (`E-023`, Suite `I`: 20 scenarios, `0.168433`): the frozen `dev` split measures the *mechanism* at zero leaks on every channel, and the number that must meet `u*` is the confirmatory `test` split, which no W3 run touches. No frozen split was executed or modified.
 
 **W3 child issues created (r16, 2026-11-16).** All nine were specified up front, each carrying the W2 issue
 format plus the W3 additions: an explicit **execution order** position, a **ground-truth** section that makes the
@@ -410,6 +418,28 @@ evidence (`reports/benchmarks/retrieval_2000.json`, 2,000 candidates) the dense 
 smaller figure is the stricter reading (54 ms vs 59 ms) and is kept deliberately; see
 `audits/PLAN_CORRECTION_REGISTER.md` (A5) and `E-002` (#51), which records the exact
 comparison basis before W3 measures anything.
+
+**G3 (channel + deletion integrity) — MET (2026-11-20), with one criterion deferred to the confirmatory phase.**
+Every criterion is evidenced on `main`; none is asserted. The two rows that could be mistaken for a stronger claim than
+they are say so in place.
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| `E-035` passes under fuzzing and a red-team attempt | **met** | `tests/test_channel_integrity.py` (320-tuple enumeration, seeded sweep with `CME_FUZZ_SEED`, eight red-team cases), `tests/test_channel_integrity_budget.py`, `tests/integration/test_change_channel_integrity_db.py`; CI `verify` steps *Channel-integrity fuzz (E-035 gate)* and *Channel integrity in change mode* run from the first W3 commit |
+| `E-037`'s chain-longer-than-any-bound test is green | **met** | `tests/integration/test_deletion_through_cognition_db.py::test_chain_longer_than_any_bound_is_fully_reconciled` (the `F2` chain the v1 depth-3 cap left alive); `tests/test_deletion_order_model.py` reproduces 698 → 0 |
+| Extended Suite `D` reports zero leaks on 11 channels, measured distinguished from unmeasured | **met** | `reports/deletion/suite_d_dev_11ch_P.json`: `leaking_scenarios = 0/20`, `incomplete_measurements = 0`, all 11 channels at `0`, `channels` names the targeted set; `A8` run beside it |
+| Scenario-level CP bound ≤ `u*` | **deferred to the confirmatory phase** (owner `R-010`, gate `G-TS`, #76) | `dev` has `N = 20` → `cp_upper_97_5 = 0.168433`; `u* = 0.10` needs `N_D >= 36`, which the frozen `test` split meets (`N = 50`, `0.071122`) and no W3 run may read before `G-TS` (`V2-D42`). `V2-D84` records why eleven channels do not change `N_D` and why the `dev` run is the mechanism check, not the confirmatory claim — the same basis `G2` was signed off on |
+| A positive control leaks **through an abstraction** | **met** | `suite_d_dev_11ch_A8.json` leaks on `channel_8_hypothesis_rendering` (80) beside the v1 channels; `test_eleven_channel_scan_clean_on_v2_deletion_and_a8_leaks_through_abstraction` also leaks on channel 9 through a verified abstraction; channel 7's probe is proven by its own positive control (`§4.4(a)`) |
+| Retrieval P95 at v1 scale within 2× of the 27 ms reference | **met** | `reports/benchmarks/retrieval_stages_2000.json`: staged end-to-end P95 **11.82 ms** against the 53.98 ms (2 × 26.99) limit, instrumentation overhead `+0.97 %` P50 |
+
+**Not claimed.** The confirmatory CP bound is *not* met on the frozen `dev` split and is not presented as met; it is the
+number the confirmatory run must produce after `G-TS`, and `E-022`'s split gate refuses to load that split today.
+Channels 9–11 record zero under the suite's `A8` ablation because no scenario carries an abstraction, verification
+record or export snapshot for the canary — measured, controls beside the probes, never cited as a leak.
+
+**W3 is closed.** Work moves to W4 (§7). `E-039` (#97) stays open on criterion 5 until the remaining 7 unwired
+operations land, all of them in W4/W5/W7; no W3 obligation is carried forward except the confirmatory CP bound row
+above, which belongs to the measurement phase by `V2-D42` and `V2-D84`.
 
 ---
 
