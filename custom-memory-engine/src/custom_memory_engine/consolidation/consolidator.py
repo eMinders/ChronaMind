@@ -37,9 +37,19 @@ from custom_memory_engine.engine.transactions import (
 
 logger = structlog.get_logger(__name__)
 
-#: Maximum derivation chain length, matching ``deletion.MAX_LINEAGE_DEPTH`` so a
-#: consolidation the deletion walk cannot see is never created.
+#: Default cost/performance limit on consolidation derivation depth (``V2-D09``, ``DELETION_ORDER.md`` §6).
+#: Since ``E-037`` made deletion closure unbounded, this default is a performance parameter rather than a
+#: correctness bound: callers may pass ``max_depth`` explicitly (or ``None`` for unbounded consolidation).
 MAX_DERIVATION_DEPTH = 3
+
+
+def _validate_max_depth(max_depth: int | None) -> int | None:
+    if max_depth is None:
+        return None
+    if isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 1:
+        raise ConsolidationError("positive_derivation_depth_required")
+    return max_depth
+
 
 #: ``layer`` in the schema is one of ``episodic|semantic|opinion|persona``; "summary"
 #: is a *derivation type*, not a layer. A summary is a ``semantic`` row whose
@@ -128,6 +138,7 @@ async def load_sources(
     source_version_ids: Sequence[str],
     *,
     schema_name: str = "cme_engine",
+    max_depth: int | None = MAX_DERIVATION_DEPTH,
 ) -> tuple[SourceVersion, ...]:
     """Read the requested source rows and their existing derivation depth.
 
@@ -144,6 +155,7 @@ async def load_sources(
     if any(not item.strip() for item in ordered):
         raise ConsolidationError("nonblank_source_version_id_required")
 
+    depth_limit = _validate_max_depth(max_depth)
     namespace = _schema(schema_name)
     await _verify_context(connection, user_id)
 
@@ -169,18 +181,33 @@ async def load_sources(
         # Depth = length of the longest derivation chain *above* a version, computed over
         # the user's links and then looked up for the requested sources. A new derived
         # version sits one hop above that, so its depth is ``max(depth) + 1``.
-        await cursor.execute(
-            sql.SQL(
-                "WITH RECURSIVE chain(derived, source, depth) AS ("
-                "  SELECT derived_version_id, source_version_id, 1 FROM {d} WHERE user_id = %s "
-                "  UNION ALL "
-                "  SELECT c.derived, d.source_version_id, c.depth + 1 "
-                "  FROM {d} AS d JOIN chain AS c ON d.derived_version_id = c.source "
-                "  WHERE d.user_id = %s AND c.depth < %s "
-                ") SELECT derived, MAX(depth) FROM chain GROUP BY derived"
-            ).format(d=derivations),
-            (user_id, user_id, MAX_DERIVATION_DEPTH),
-        )
+        if depth_limit is not None:
+            await cursor.execute(
+                sql.SQL(
+                    "WITH RECURSIVE chain(derived, source, depth) AS ("
+                    "  SELECT derived_version_id, source_version_id, 1 FROM {d} WHERE user_id = %s "
+                    "  UNION ALL "
+                    "  SELECT c.derived, d.source_version_id, c.depth + 1 "
+                    "  FROM {d} AS d JOIN chain AS c ON d.derived_version_id = c.source "
+                    "  WHERE d.user_id = %s AND c.depth < %s "
+                    ") SELECT derived, MAX(depth) FROM chain GROUP BY derived"
+                ).format(d=derivations),
+                (user_id, user_id, depth_limit),
+            )
+        else:
+            await cursor.execute(
+                sql.SQL(
+                    "WITH RECURSIVE chain(derived, source, depth, visited) AS ("
+                    "  SELECT derived_version_id, source_version_id, 1, ARRAY[derived_version_id, source_version_id] "
+                    "  FROM {d} WHERE user_id = %s "
+                    "  UNION ALL "
+                    "  SELECT c.derived, d.source_version_id, c.depth + 1, c.visited || d.source_version_id "
+                    "  FROM {d} AS d JOIN chain AS c ON d.derived_version_id = c.source "
+                    "  WHERE d.user_id = %s AND NOT (d.source_version_id = ANY(c.visited)) "
+                    ") SELECT derived, MAX(depth) FROM chain GROUP BY derived"
+                ).format(d=derivations),
+                (user_id, user_id),
+            )
         depths = {row[0]: int(row[1]) for row in await cursor.fetchall()}
 
     sources: list[SourceVersion] = []
@@ -234,12 +261,14 @@ def plan_consolidation(
     layer: ConsolidationLayer = "semantic",
     derivation_type: DerivationType = "consolidation",
     single_valued: bool = False,
+    max_depth: int | None = MAX_DERIVATION_DEPTH,
 ) -> ConsolidationPlan:
     """Validate a request against ``(C)`` coverage rules and the depth budget.
 
     Raises ``ConsolidationError`` rather than returning a plan that could not be
     committed, so a caller never writes a partially-valid consolidation.
     """
+    depth_limit = _validate_max_depth(max_depth)
     if not isinstance(user_id, str) or not user_id.strip():
         raise ConsolidationError("nonblank_user_id_required")
     if not isinstance(content, str) or not content.strip():
@@ -273,7 +302,7 @@ def plan_consolidation(
         raise ConsolidationError("source_versions_must_share_one_user")
 
     depth = max(source.depth for source in sources) + 1
-    if depth > MAX_DERIVATION_DEPTH:
+    if depth_limit is not None and depth > depth_limit:
         raise ConsolidationError("derivation_depth_exceeded")
 
     keys = {(source.subject_key, source.predicate_key) for source in sources}
@@ -340,6 +369,7 @@ async def consolidate(
     schema_name: str = "cme_engine",
     clock_tick: ClockTick | None = None,
     replay_time: datetime | None = None,
+    max_depth: int | None = MAX_DERIVATION_DEPTH,
 ) -> ConsolidationOutcome:
     """Derive one consolidated version covering the given active sources.
 
@@ -347,7 +377,7 @@ async def consolidate(
     left untouched; archive them separately via ``archive_version`` afterwards if
     the caller wants branch ``(C)`` archival.
     """
-    sources = await load_sources(connection, user_id, source_version_ids, schema_name=schema_name)
+    sources = await load_sources(connection, user_id, source_version_ids, schema_name=schema_name, max_depth=max_depth)
     plan = plan_consolidation(
         sources,
         user_id=user_id,
@@ -357,6 +387,7 @@ async def consolidate(
         layer=layer,
         derivation_type=derivation_type,
         single_valued=single_valued,
+        max_depth=max_depth,
     )
     candidate = plan_to_candidate(plan)
     committed, _ = await commit_initial_version(

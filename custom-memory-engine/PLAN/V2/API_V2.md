@@ -249,7 +249,15 @@ recorded read set the caller no longer holds), `validation_error` (`instruction_
 `instruction_unrecognised`, `refine_depth_exceeded`).
 
 **`get(ctx, artifact_id) → Artifact`** and **`provenance(ctx, artifact_id, depth?) → ProvenanceView`**
-Return one artifact or its provenance. Provenance depth defaults to 1 and is bounded at 8; traversal stops at the
+Return one artifact or its provenance. `get` renders the artifact through the **same** channel assembler `query` uses
+(`engine/channels.py::assemble`, one non-truncating budget), so every rendered-item rule holds on this route too: a
+fresh verified abstraction carries its complete bound in `content` **and** `bound`, a hypothesis carries its label and
+support summary, a `conflicts` item carries both sides, and every item carries its provenance bundle. An artifact the
+assembler cannot render — a missing bound, a missing conflict counterpart, a `retired` row (rendered in no channel), or
+a source that cannot be materialised at all — answers `forbidden`, the same answer as absent, so an unrenderable
+artifact is never distinguishable from one the caller may not read (`T-11`, `T-18`). `get` does not apply a temporal
+predicate; it is a lookup by id, and an artifact still staged at `conflict_pending` is readable by id even though
+`current_state` does not yet deliver it. Provenance depth defaults to 1 and is bounded at 8; traversal stops at the
 requested depth, and `depth_limited` is true when a readable source remains beyond that boundary. A source in a scope
 the caller cannot read appears as an opaque reference only and is never traversed (`CHANNELS.md` R6,
 `THREAT_MODEL.md` T-10). *Errors:* `forbidden` for absent **and** unreadable alike; `validation_error` for a depth

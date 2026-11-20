@@ -1,6 +1,15 @@
 {
   "ablation": "P",
   "answerer": "extractive",
+  "channels": [
+    "channel_1_storage_index_queue_cache_scan",
+    "channel_2_lexical_search",
+    "channel_3_vector_search",
+    "channel_4_derived_memory_lookup",
+    "channel_5_assembled_context",
+    "channel_6_final_answer",
+    "channel_7_application_logs"
+  ],
   "cp_upper_one_sided_97_5": 0.16843347098308534,
   "embedding_model": "BAAI/bge-small-en-v1.5",
   "incomplete_measurements": 0,

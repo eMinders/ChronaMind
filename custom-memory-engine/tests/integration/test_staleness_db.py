@@ -466,14 +466,21 @@ async def test_the_read_path_renders_a_stale_verified_abstraction_in_hypotheses(
     async with connect(database) as conn:
         _, schema = database
         await verified_world(conn, schema)
+        # Complete the bound (R3/I14): a fresh verified abstraction cannot render in ``facts`` without its bound.
+        await conn.execute(
+            "UPDATE abstraction_stats SET confidence = 0.91, expires_at = clock_now() + interval '30 days' "
+            "WHERE version_id = 'abs1'"
+        )
         handlers, ctx, role = await read_handlers_for(database, conn)
         try:
             fresh = await handlers.get(Call(ctx=ctx, operation=OP["get"], arguments={"artifact_id": "abs1"}))
             assert fresh.channel == "facts", "a fresh verified abstraction must still render as a fact"
+            assert fresh.bound is not None, "a fresh verified abstraction in facts must carry its bound (I14)"
             await retire(conn, "mid")  # a transitive source is withdrawn: abs1 is now stale (C-P3)
             stale = await handlers.get(Call(ctx=ctx, operation=OP["get"], arguments={"artifact_id": "abs1"}))
             assert stale.channel == "hypotheses", "a stale verified abstraction rendered as a fact through get"
             assert stale.verification == "verified", "stale and verified is a legal pair, not a downgrade"
+            assert stale.label == "verified, needs re-verification"
             result = await handlers.query(Call(ctx=ctx, operation=OP["query"], arguments={"request": {}}))
             assert [item.artifact_id for item in result.hypotheses] == ["abs1"]
             assert "abs1" not in {item.artifact_id for item in result.facts}

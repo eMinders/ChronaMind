@@ -6,16 +6,17 @@ authoritative rules (``model.axes``), never hand-listed, and each one is exercis
 as a ``NOSUPERUSER NOBYPASSRLS`` role. Each property is its own assertion so a failure names it:
 
 * **storable**   the database accepts the tuple, with every record its lifecycle requires;
-* **queryable**  the owner reads it back through row-level security, and a believed tuple appears in the temporal ``current_state``;
-* **deletable**  ``delete_memory`` removes it and its derived dependent (the closure);
+* **queryable**  the owner reads it back through ``Engine.call("query", ...)`` in the temporal ``current_state``;
+* **deletable**  ``Engine.call("delete", ...)`` removes it and its derived dependent (the unbounded closure);
 * **routed**     the channel of ``CHANNELS.md`` is the one the independent reference model gives.
 
 Illegal tuples (every retention-floor violation included, and the facet ``inferred_preference``) are refused by the database.
 
-Honest scope: ``Engine.call`` drives what is wired today (``ingest_episode``, ``assert``); the other properties are measured
-below the entry point. ``delete``, ``query`` and procedure creation are wired by W3 (``E-037``, ``E-033``, ``E-030``), and an
-unwired operation is *not yet testable*, never a pass. ``tests/test_channel_membership_model.py`` (channels), ``model.axes`` (rules)
-and ``tests/profile_branching.py`` (no branching on a profile) are the independent oracles.
+Honest scope: ``Engine.call`` drives all wired W1–W3 operations (``ingest_episode``, ``assert``, ``query``, ``get``,
+``provenance``, ``refine``, ``record_outcome``, ``cost``, ``delete``, ``create_scope``, ``link_entity``,
+``purge_working``, ``register_method``, ``infer``); the remaining 7 later-wave operations are reported as
+*not yet testable*, never as passes (``V2-D62``, ``V2-D63``). ``tests/test_channel_membership_model.py`` (channels),
+``model.axes`` (rules) and ``tests/profile_branching.py`` (no branching on a profile) are the independent oracles.
 """
 
 import json
@@ -42,8 +43,9 @@ from custom_memory_engine.api.outcome_handlers import register_outcome_handlers
 from custom_memory_engine.api.read_handlers import Artifact, CostReport, QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Receipt
 from custom_memory_engine.engine.channels import Verification, channel_of
-from custom_memory_engine.engine.deletion import DeletionReceipt, delete_memory
+from custom_memory_engine.engine.deletion import DeletionReceipt
 from custom_memory_engine.engine.planning import STAGES
+from custom_memory_engine.engine.provenance import ProvenanceView
 from custom_memory_engine.engine.purge import PurgeReceipt
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.model.axes import (
@@ -65,6 +67,7 @@ from custom_memory_engine.security import provision_runtime_role, tenant_scope
 from tests.integration.test_api_wiring_structure import (
     caller,
     database,  # noqa: F401  (fixture)
+    forbidden,
     world,
 )
 from tests.integration.test_migration_m1 import START, rows
@@ -225,6 +228,7 @@ async def test_every_legal_tuple_is_storable_and_queryable_and_deletable_and_rou
         await provision_runtime_role(conn, schema, role)
         assert isinstance(engine.resolver, DbTargets)
         register_read_handlers(engine, engine.resolver.runtime)
+        register_delete_handlers(engine, engine.resolver.runtime)
         await seed_base(conn)
         # -- storable: the database accepts it as the restricted role
         async with tenant_scope(conn, user, role=role):
@@ -262,15 +266,33 @@ async def test_every_legal_tuple_is_storable_and_queryable_and_deletable_and_rou
             assert delivered["subject"].channel == expected_channel, (
                 f"routed (through Engine.call): {delivered['subject']} but the reference model says {expected_channel}"
             )
-        # -- deletable: the row and its derived dependent are gone, nothing else is
-        async with tenant_scope(conn, user, role=role):
-            receipt = await delete_memory(conn, user, scope="memory", target_ref="subject", schema_name=schema)
-        assert receipt.deleted_versions >= 1, "deletable"
+        # -- answerable by id: `get` names the same artifact through the same assembler (E-033, E-039). A retired
+        #    tuple is rendered in no channel, so by id it is `forbidden`, never a bare row. Every delivered tuple must
+        #    be *identical* to the one `query` delivered -- the same content, bound, label, support summary,
+        #    provenance, shape and channel -- not merely present (this is the divergence the W3 audit closed).
+        expected_channel_none = expected_channel == "none"
+        if expected_channel_none:
+            gone = await forbidden(engine, caller(user), "get", {"artifact_id": "subject"})
+            assert (gone.code, gone.detail) == ("forbidden", None), f"by_id (retired): {gone} for {t}"
+        else:
+            by_id = await engine.call(caller(user), "get", {"artifact_id": "subject"})
+            assert isinstance(by_id, Artifact), by_id
+            assert by_id.channel == expected_channel, f"by_id (through Engine.call): {by_id} for {t}"
+            if "subject" in delivered:
+                assert by_id == delivered["subject"], f"by_id == query: {by_id} != {delivered['subject']} for {t}"
+        # -- deletable: the row and its derived dependent are gone via Engine.call (V2-D62, E-037)
+        receipt = await engine.call(
+            caller(user), "delete", {"scope": "memory", "target_ref": "subject", "deletion_epoch": None}
+        )
+        assert isinstance(receipt, DeletionReceipt) and receipt.deleted_versions >= 1, "deletable"
         remaining = {r[0] for r in await rows(conn, "SELECT id FROM memory_version")}
         assert remaining == {"base"}, "deletable (closure: the dependent goes with its only source)"
         assert await rows(
             conn, "SELECT count(*) FROM memory_evidence WHERE version_id IN ('subject', 'dependent')"
         ) == [(0,)]
+        # deleting a row that was answerable also removes it from the by-id route, so absent and deleted agree
+        deleted_by_id = await forbidden(engine, caller(user), "get", {"artifact_id": "subject"})
+        assert (deleted_by_id.code, deleted_by_id.detail) == ("forbidden", None), f"deletable (by id) for {t}"
 
 
 async def insert_tuple_dependent(conn: AsyncConnection, user: str) -> None:
@@ -706,6 +728,29 @@ async def test_cost_is_wired_through_engine_call_for_all_tiers(database) -> None
             assert report.query_count == 1
             assert tuple(entry.stage for entry in report.stages) == STAGES
             assert report.charged_calls == 0 and report.cost_usd == 0
+
+
+async def test_provenance_and_refine_are_wired_through_engine_call(database) -> None:  # noqa: F811
+    """E-033 / E-034 / E-039: ``provenance`` and ``refine`` execute exclusively through ``Engine.call``."""
+    async with world(database) as (conn, engine, _schema):
+        await add_turn(conn)
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_ingest_handlers(
+            engine, runtime, profile_with("read-e018", kinds=["episode"], retention={"episode": "durable"})
+        )
+        register_read_handlers(engine, runtime)
+        assert not {"provenance", "refine"} & set(engine.unwired_operations())
+        first = await episode_through_the_api(conn, engine, key="e018-pr-1")
+        second = await episode_through_the_api(conn, engine, key="e018-pr-2")
+        view = await engine.call(caller("alice"), "provenance", {"artifact_id": first.id})
+        assert isinstance(view, ProvenanceView) and view.artifact_id == first.id and len(view.edges) == 1
+        queried = await engine.call(caller("alice"), "query", {"request": {"scope": "/u/alice/"}})
+        assert isinstance(queried, QueryResult) and queried.result_id is not None
+        assert {item.artifact_id for item in queried.facts} == {first.id, second.id}
+        refined = await engine.call(
+            caller("alice"), "refine", {"result_id": queried.result_id, "instruction": f"artifact {first.id}"}
+        )
+        assert isinstance(refined, QueryResult) and [item.artifact_id for item in refined.facts] == [first.id]
 
 
 async def test_delete_is_wired_through_engine_call_for_tier_c_only(database) -> None:  # noqa: F811

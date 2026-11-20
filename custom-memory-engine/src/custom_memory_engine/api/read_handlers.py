@@ -135,7 +135,6 @@ from custom_memory_engine.engine.provenance import (
     DEFAULT_PROVENANCE_DEPTH,
     MAX_PROVENANCE_DEPTH,
     ProvenanceView,
-    bundles_for_artifacts,
     provenance_view,
     sources_for_artifacts,
 )
@@ -701,60 +700,144 @@ class ReadHandlers:
             row = await cursor.fetchone()
             if row is None:
                 raise EntryError("forbidden")  # absent and unreadable are the same answer (T-11, T-18)
-            identifier, kind, lifecycle, content, scope_path, visibility = row
-            if not row_visible(call.ctx.read_set, scope_path, visibility):
+            raw_id, raw_kind, raw_lifecycle, raw_content, raw_scope, raw_visibility = row
+            identifier = str(raw_id)
+            kind = str(raw_kind)
+            lifecycle = str(raw_lifecycle)
+            content = str(raw_content)
+            scope_path = str(raw_scope)
+            if not row_visible(call.ctx.read_set, scope_path, str(raw_visibility)):
                 raise EntryError("forbidden")
             verification = _verification_for(
-                str(lifecycle), (await self._verification_of(connection, user, [str(identifier)])).get(str(identifier))
+                lifecycle, (await self._verification_of(connection, user, [identifier])).get(identifier)
             )
-            contradictions = await self._contradictions(connection, user, [str(identifier)])
-            contradicted = str(identifier) in contradictions
+            contradictions = await self._contradictions(connection, user, [identifier])
+            contradicted = identifier in contradictions
+            stale = identifier in await self._stale_ids(connection, user, {identifier: verification})
+            # Routing comes before loading provenance/bounds: a retired or illegal tuple is not rendered at all
+            # (`API_V2.md` §1.1's `forbidden` for a target that cannot be answered), so nothing else is fetched.
+            channel = _channel_for(kind, lifecycle, verification, contradicted, stale)
+            if channel is None or channel == "none":
+                raise EntryError("forbidden")  # a retired or illegal tuple is not rendered
             counterpart_sides = (
                 await self._conflict_counterparts(connection, user, call.ctx.read_set, contradictions)
-            ).get(str(identifier), ())
-            stale = str(identifier) in await self._stale_ids(connection, user, {str(identifier): verification})
+            ).get(identifier, ())
+            sources = (
+                await sources_for_artifacts(connection, user, [identifier], schema_name=self.runtime.schema_name)
+            ).get(identifier, ())
+            bounds, summaries = (
+                await self._bounds_of(connection, user, [identifier]) if kind == "abstraction" else ({}, {})
+            )
             shape: ProcedureShape | None = None
             if kind == "procedure":
                 shapes = await shapes_for(
-                    connection, user_id=user, procedure_ids=[str(identifier)], schema_name=self.runtime.schema_name
+                    connection, user_id=user, procedure_ids=[identifier], schema_name=self.runtime.schema_name
                 )
-                shape = shapes.get(str(identifier), NO_SHAPE)
-            # Routing comes before provenance: a retired or illegal tuple is not rendered at all (`API_V2.md` §1.1's
-            # `forbidden` for a target that cannot be answered), so nothing is fetched for it. Checking provenance
-            # first made `get` answer `internal_error` for a retired row where it used to answer `forbidden`, which
-            # both broke the entry point's error contract and made a retired artifact distinguishable from absent.
-            channel = _channel_for(str(kind), str(lifecycle), verification, contradicted, stale)
-            if channel is None or channel == "none":
-                raise EntryError("forbidden")  # a retired or illegal tuple is not rendered
-            provenance = (
-                await bundles_for_artifacts(
-                    connection,
-                    user,
-                    [str(identifier)],
-                    read_set=call.ctx.read_set,
-                    key=self.runtime.provenance_key,
-                    schema_name=self.runtime.schema_name,
-                )
-            ).get(str(identifier), ())
-            if not provenance:
-                # Requirement 4: an answer item never renders without its provenance bundle. For the pure assembler the
-                # same view is refused as `provenance_unmaterialisable`, so on this route the target is simply not
-                # renderable -- `forbidden`, not `internal_error`, which `V2-D58` reserves for `Engine.call` itself.
-                raise EntryError("forbidden")
-        own = ConflictSide(str(identifier), cast(Lifecycle, lifecycle), str(content))
-        return Artifact(
-            artifact_id=str(identifier),
-            kind=str(kind),
-            lifecycle=str(lifecycle),
-            content=str(content),
-            scope_path=str(scope_path),
-            channel=channel,
-            verification=verification,
-            shape=shape,
-            provenance=provenance,
-            # R5: a conflicts item shows both sides, through `get` exactly as through `query`
-            conflict_sides=(own, *counterpart_sides) if channel == "conflicts" else (),
+                shape = shapes.get(identifier, NO_SHAPE)
+
+        # Route through the same pure four-channel assembler as ``query`` so every channel invariant holds on ``get``
+        # as well: ``I14``/R2-R3 (bounded text + complete bound, refusing ``bound_missing``), R4 (hypothesis label +
+        # support summary), R5 (both conflict sides, refusing ``conflict_counterpart_missing``), and R1/R6 (provenance
+        # bundle, opaque for unreadable sources). ``get`` names one artifact and has no budget parameter, so the
+        # ceiling is sized above this item's rendered token count so it never truncates.
+        support_summary = summaries.get(identifier, "")
+        ceiling = max(
+            2048,
+            len(content.split())
+            + sum(len(side.text.split()) for side in counterpart_sides)
+            + len(support_summary.split())
+            + 1024,
         )
+        single_budget = ChannelBudgets(
+            facts=ceiling,
+            hypotheses=ceiling,
+            procedures=ceiling,
+            conflicts=ceiling,
+            total_tokens=None,
+            facts_floor_tokens=0,
+        )
+        assembled = assemble(
+            [
+                ArtifactView(
+                    artifact_id=identifier,
+                    kind=cast(Kind, kind),
+                    lifecycle=cast(Lifecycle, lifecycle),
+                    verification=cast(Verification, verification),
+                    text=content,
+                    sources=sources,
+                    open_contradiction=contradicted,
+                    bound=bounds.get(identifier),
+                    support_summary=support_summary,
+                    counterparts=counterpart_sides,
+                )
+            ],
+            caller_user_id=user,
+            read_set=call.ctx.read_set,
+            key=self.runtime.provenance_key,
+            staleness=lambda _view: stale,
+            budgets=single_budget,
+        )
+        if assembled.refused or assembled.excluded:
+            # Refused (missing provenance, missing bound, missing conflict counterpart, illegal tuple) or excluded
+            # (retired) is not renderable -- fail closed with ``forbidden`` so absent and unrenderable stay one answer.
+            raise EntryError("forbidden")
+        if assembled.facts:
+            item = assembled.facts[0]
+            return Artifact(
+                artifact_id=identifier,
+                kind=kind,
+                lifecycle=lifecycle,
+                content=item.text,
+                scope_path=scope_path,
+                channel="facts",
+                verification=verification,
+                provenance=item.provenance,
+                bound=item.bound if isinstance(item, BoundedFact) else None,
+            )
+        if assembled.hypotheses:
+            hyp = assembled.hypotheses[0]
+            return Artifact(
+                artifact_id=identifier,
+                kind=kind,
+                lifecycle=lifecycle,
+                content=hyp.text,
+                scope_path=scope_path,
+                channel="hypotheses",
+                verification=verification,
+                shape=shape,
+                provenance=hyp.provenance,
+                label=hyp.label,
+                support_summary=hyp.support_summary,
+                bound=hyp.bound,
+            )
+        if assembled.procedures:
+            proc = assembled.procedures[0]
+            return Artifact(
+                artifact_id=identifier,
+                kind=kind,
+                lifecycle=lifecycle,
+                content=proc.text,
+                scope_path=scope_path,
+                channel="procedures",
+                verification=verification,
+                shape=shape,
+                provenance=proc.provenance,
+            )
+        if assembled.conflicts:
+            conflict = assembled.conflicts[0]
+            return Artifact(
+                artifact_id=identifier,
+                kind=kind,
+                lifecycle=lifecycle,
+                content=content,
+                scope_path=scope_path,
+                channel="conflicts",
+                verification=verification,
+                shape=shape,
+                provenance=conflict.provenance,
+                conflict_sides=conflict.sides,
+            )
+        raise EntryError("forbidden")
 
     async def provenance(self, call: Call) -> ProvenanceView:
         """Return at most eight visible lineage levels; an unreadable source is an opaque leaf."""
@@ -1070,12 +1153,27 @@ class ReadHandlers:
                 with self._stage(collector, "filter_rerank") as span:
                     if span is not None:
                         span.candidates_in = len(rows)
+                    # Defence in depth (V2-D45): the reference semantics must agree with the SQL predicate. Run first
+                    # so an invisible row can never feed metadata lookups, procedure preconditions or narrowing.
+                    rows = tuple(
+                        row for row in rows if row_visible(effective_read_set, row.scope_path, row.visibility)
+                    )
                     ids = [row.id for row in rows]
                     verifications = await self._verification_of(connection, user, ids)
                     contradictions = await self._contradictions(connection, user, ids)
                     contradicted = set(contradictions)
                     # E-038-F5: derived staleness on every answer route; never on an audit (E-038-F3)
                     stale = set() if is_audit else await self._stale_ids(connection, user, verifications)
+                    # E-030: each procedure's preconditions and steps, evaluated against the live candidate set
+                    # **before** any refine narrowing so drilling into `channel procedures` or `artifact <proc>` does
+                    # not discard sibling artifacts required by an `exists{...}` precondition (while a sibling that
+                    # was actually deleted/purged is absent from `rows` and honestly drops the procedure).
+                    procedure_ids = [row.id for row in rows if row.kind == "procedure"]
+                    shapes = await shapes_for(
+                        connection, user_id=user, procedure_ids=procedure_ids, schema_name=self.runtime.schema_name
+                    )
+                    if PROCEDURE_APPLICABILITY in plan.filters:
+                        rows = await self._applicable_rows(connection, user, plan, rows, shapes)
                     if narrowing is not None:
                         # E-034: the instruction narrows *before* assembly, so coverage and cost report the drilled
                         # candidate set honestly, and a kept row reaches `channel_of` unchanged (membership is only
@@ -1090,28 +1188,14 @@ class ReadHandlers:
                                 channel=_channel_name(row, verifications, contradicted, stale),
                             )
                         )
-                    # E-027: outcome counters for the procedure rows, fetched in one statement beside the other
-                    # per-row metadata. Only procedures have them, so asking for every id is a wasted round trip at
-                    # best; asking only for procedure ids keeps the read proportional to what is ranked.
-                    procedure_ids = [row.id for row in rows if row.kind == "procedure"]
+                    # E-027: outcome counters for the surviving procedure rows, fetched in one statement.
+                    surviving_procedure_ids = [row.id for row in rows if row.kind == "procedure"]
                     stats = await outcome_stats_for(
-                        connection, user_id=user, procedure_ids=procedure_ids, schema_name=self.runtime.schema_name
+                        connection,
+                        user_id=user,
+                        procedure_ids=surviving_procedure_ids,
+                        schema_name=self.runtime.schema_name,
                     )
-                    # E-030: each procedure's preconditions and steps, in one statement beside its counters
-                    shapes = await shapes_for(
-                        connection, user_id=user, procedure_ids=procedure_ids, schema_name=self.runtime.schema_name
-                    )
-                    # Defence in depth (V2-D45): the reference semantics must agree with the SQL predicate. The
-                    # statement above already filtered, so this drops nothing in a correct build -- which is exactly
-                    # what a control breaks, and why the check stays.
-                    rows = tuple(
-                        row for row in rows if row_visible(effective_read_set, row.scope_path, row.visibility)
-                    )
-                    # E-030 (criterion 8): the plan's applicability filter, **before** routing. It only removes a
-                    # non-applicable procedure; every survivor reaches `channel_of` unchanged, so membership cannot
-                    # move. A procedure stored without preconditions is always applicable (the empty conjunction).
-                    if PROCEDURE_APPLICABILITY in plan.filters:
-                        rows = await self._applicable_rows(connection, user, plan, rows, shapes)
                     counterpart_sides: dict[str, tuple[ConflictSide, ...]] = {}
                     if not is_audit:
                         # V2-D80: each artifact's own counterparts, loaded whether or not they were retrieved
@@ -1365,6 +1449,9 @@ class ReadHandlers:
         if snapshot is None:
             # Unreachable through `Engine.call` (the condition resolves the handle first); a direct handler call has
             # no authorised result to drill into and must fail closed rather than fall back to a fresh query.
+            raise EntryError("forbidden")
+        if snapshot.intent.mode == "audit_as_of" and call.ctx.tier != "C":
+            # API_V2.md §4.2: audit_as_of is Tier C only, including when refining an empty or non-empty audit handle.
             raise EntryError("forbidden")
         # Depth first: an exhausted chain cannot drill again whatever it asked for, so the answer does not depend on
         # whether the instruction also happens to be malformed (one precedence, not two).

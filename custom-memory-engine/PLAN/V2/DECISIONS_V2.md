@@ -468,7 +468,7 @@ the mechanism is what produces the result.
 | `D-09`–`D-14` (pilot params) | In force | Same freeze discipline |
 | `D-17`, `D-18`, `D-25` (stack, concurrency, versions) | In force | |
 | `D-23`, `D-24`, `D-26` (timestamps, judge, licence) | In force | |
-| `D-16` `N_D` | In force; **revisit** if abstraction channels change per-scenario leak probability | |
+| `D-16` `N_D` | In force; **revisit** if abstraction channels change per-scenario leak probability — **revisited in `V2-D84`**: the bound is on the scenario, so eleven channels make a zero stricter and `N_D` is unchanged | |
 
 ---
 
@@ -2091,3 +2091,53 @@ unmodified result for an unrecognised instruction fails
 `test_an_unrecognised_instruction_is_a_static_error_never_the_unmodified_result`.
 
 **Status:** decided under the Project Owner's delegation (2026-11-19). Recorded on #204 as `E-034`.
+
+## V2-D84 — `D-16`'s scenario-level sample size survives the four cognition channels, and Suite `D` records which channels it measured
+
+**Context.** W3's tracker (#73 §6) makes revisiting `D-16` (`N_D`) a condition of the wave: "revisit if abstraction
+channels change the per-scenario leak probability". `E-037` extended the deletion scan from seven channels to eleven
+(`ARCHITECTURE_V2.md` §10.4), and the pre-closure audit made Suite `D` able to measure all eleven
+(`evaluation/harness/deletion_suite.py`, `--channels 11`). Two questions follow: does the frozen sample size still
+hold, and does a recorded report say what it measured?
+
+**Decision 1 — `N_D` is unchanged, because the bound is on the scenario, not the channel.** `verdict` and the suite
+score a scenario as leaking when **any** targeted channel reports a residual, so the statistic the Clopper–Pearson
+bound is computed over is the per-scenario leak indicator. Adding channels can only *raise* that indicator's
+probability, so a zero over eleven channels is strictly stronger evidence than a zero over seven at the same `N`;
+the number of scenarios needed for a one-sided 97.5% bound at `k = 0` does not depend on how many channels were
+scanned. `pilot_rules.py`'s `u* = 0.10` therefore still requires `N_D >= 36` zero-leak scenarios, and the frozen
+split that meets it is unchanged: Suite `D` `test` has `N = 50` (`cp_upper_97_5 = 0.071122`). Reading that split is
+forbidden before gate `G-TS` (`V2-D42`), so **G3's evidence is the mechanism check on the frozen `dev` split**
+(`N = 20`, `0.168433` — the same basis `G2` was signed off on), and the confirmatory number stays a measurement-phase
+obligation, never a W3 claim.
+
+**Decision 2 — a report names its channel set, and channel 9's rendered half is rendered.** `SuiteReport.to_json`
+emits `channels`, so a reader can tell a seven-channel run from an eleven-channel one without counting keys; a
+targeted channel that could not be measured is still counted in `incomplete_measurements` and never as a zero. The
+harness's channel-9 probe now reads the **rendered** answer context (`_render`, abstractions only) instead of
+re-reading `memory_version.kind = 'abstraction'`: `scan_deleted_key(..., connection=...)` already supplies the
+storage half (`abstraction_db_probe`), so counting rows in both halves doubled every residual. The seventh-channel
+default is unchanged, so every recorded v1 report keeps its meaning and its numbers.
+
+**Consequences.**
+- The recorded G3 runs are `reports/deletion/suite_d_dev_11ch_P.json` (0 leaking of 20, `incomplete_measurements = 0`,
+  all eleven channels at 0) and `suite_d_dev_11ch_A8.json` (20 of 20 leaking, with residuals on
+  `channel_8_hypothesis_rendering` beside the v1 channels). Channels 9–11 record zero under this ablation because no
+  Suite `D` scenario carries an abstraction, verification record or export snapshot for the canary; their controls
+  live beside the probes (`test_eleven_channel_scan_clean_on_v2_deletion_and_a8_leaks_through_abstraction` proves
+  `A8` leaks on channel 9 through a verified abstraction; channel 11 is proven by the stale-epoch export refusal,
+  `test_export_snapshot_taken_before_deletion_is_not_served_after`).
+- The frozen seven-channel reports were regenerated with the frozen model and differ **only** by the added
+  `channels` field, which is what makes the regeneration checkable rather than merely asserted.
+- A leak count on channel 9 is now the rendered surface plus storage, each counted once. No `N_D`, `u*` or pilot
+  parameter changes, and no frozen split was executed.
+
+**Evidence.** `evaluation/harness/deletion_suite.py` (`channels`, `_render`, `abstraction_rendered_surface`,
+`--channels`); `deletion/scanner.py` (`_supplemented`, `ALL_CHANNELS`); `tests/integration/test_deletion_suite_db.py`
+(`test_eleven_channel_suite_d_under_p_is_clean_and_a8_is_detected`, whose `A8` assertion requires a residual on
+channel 8 — asserting only `leaking_scenarios` would pass with every cognition channel dead, because channels 1–7
+already leak under that ablation); `reports/deletion/suite_d_dev_11ch_{P,A8}.json`; `scripts/check_statistics.py`,
+`scripts/check_test_split_gate.py`.
+
+**Status:** decided under the Project Owner's delegation (2026-11-20). Closes W3's `D-16` revisit obligation
+(#73 §6) and records the eleven-channel Suite `D` evidence G3 cites.

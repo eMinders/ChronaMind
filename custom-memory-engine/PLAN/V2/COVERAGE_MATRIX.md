@@ -31,23 +31,23 @@
 
 | Element | Declared | Owners |
 |---|---|---|
-| `I1′` | §11 | `E-017`, `E-035` |
+| `I1′` | §11 | `enforced` |
 | `I2` | §11 | `E-014` |
 | `I3` | §11 | `enforced` |
 | `I4` | §11 | `enforced` |
 | `I5` | §11 | `enforced` |
 | `I6` | §11 | `enforced` |
 | `I7` | §11 | `E-023`, `E-033` |
-| `I8` | §11 | `E-037` |
-| `I9` | §11 | `E-037`, `A-014` |
+| `I8` | §11 | `enforced` |
+| `I9` | §11 | `A-014` |
 | `I10` | §11 | `E-016`, `E-037` |
 | `I11` | §11 | `C-010`, `C-021` |
 | `I12` | §11 | `E-025` |
-| `I13` | §11 | `E-037`, `E-038` |
-| `I14` | §11 | `E-035`, `E-033` |
+| `I13` | §11 | `enforced` |
+| `I14` | §11 | `enforced` |
 | `I15` | §11 | `C-010`, `C-021` |
 | `I16` | §11 | `UM-012` |
-| `I17` | §11 | `E-011`, `E-014`, `E-017`, `E-024` |
+| `I17` | §11 | `enforced` |
 
 ## Channels (4)
 
@@ -113,9 +113,9 @@
 - `M9`: SYNC_LOG §3 ['E-011', 'MA-011'] → now ['E-011']
 - `M8`: SYNC_LOG §3 ['E-018', 'E-020'] → now ['E-020']
 - `I12`: SYNC_LOG §3 ['E-004'] → now ['E-025']
-- `I1′`: SYNC_LOG §3 ['E-004'] → now ['E-017', 'E-035']
-- `I13`: SYNC_LOG §3 ['E-017', 'E-037', 'E-038', 'MA-011', 'UM-012'] → now ['E-037', 'E-038']
-- `I17`: SYNC_LOG §3 ['E-017', 'E-037', 'E-038', 'MA-011', 'UM-012'] → now ['E-011', 'E-014', 'E-017', 'E-024']
+- `I1′`: SYNC_LOG §3 ['E-004'] → now ['enforced']
+- `I13`: SYNC_LOG §3 ['E-017', 'E-037', 'E-038', 'MA-011', 'UM-012'] → now ['enforced']
+- `I17`: SYNC_LOG §3 ['E-017', 'E-037', 'E-038', 'MA-011', 'UM-012'] → now ['enforced']
 - `SCOPE` (table): absent from SYNC_LOG §3
 - `M5` (migration): absent from SYNC_LOG §3
 - `M7` (migration): absent from SYNC_LOG §3
