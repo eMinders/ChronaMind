@@ -19,6 +19,7 @@ CME_TEST_DATABASE_URL=... uv run python scripts/bench_retrieval.py \
 |---|---:|---:|
 | `retrieval_500.json` | 500 | 500 |
 | `retrieval_2000.json` | 2000 | 2000 |
+| `retrieval_stages_2000.json` | 2000 | 2000 (v1 + V2 five-stage `query` P50/P95, overhead, and G3 comparison) |
 
 Machine-readable (`p50_ms`, `p95_ms`, `min_ms`, `max_ms` per channel, plus the
 `EXPLAIN (ANALYZE, FORMAT JSON)` plan for the temporal predicate).

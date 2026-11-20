@@ -411,8 +411,12 @@ Receipt`** — sets `revoked_at` once; grants are append-only. *Errors:* `forbid
 
 **`stats(ctx, artifact_id) → Stats`** returns counts, coverage, refutation attempts, verification status and the
 *ids* of support and counter items. Item **content** is returned only if the caller could read it through
-`query`. **`cost(ctx, window) → CostReport`** returns tokens, latency and counts for the caller's own activity.
-Neither returns another scope's content or counts. *Errors:* `forbidden`.
+`query`. **`cost(ctx, window) → CostReport`** returns per-stage latency (`latency_ms`), candidate counts
+(`candidates_in`, `candidates_out`, with documented unit per stage), context-budget token counts
+(`tokens_considered`, `tokens_rendered`) and charged usage (`charged_calls`, `input_tokens`, `output_tokens`,
+`embedding_tokens`, `cost_usd`, all zero when zero charged calls occurred) for the caller's own retrieval activity
+within `window` (`None` for the retained window, positive seconds, `timedelta`, or `{start, end}` aware instants).
+Neither returns another scope's content or counts. *Errors:* `forbidden`, `validation_error` (`window_invalid`).
 
 ## 5. Gaps found in review, and how each was closed (`V2-D46`)
 

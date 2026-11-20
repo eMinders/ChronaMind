@@ -52,7 +52,8 @@ in ``QueryResult.audit`` with ``is_audit=True`` — never in an answer channel, 
 artifact to ``none`` and would drop exactly the withdrawn rows an audit exists to show.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import cast
@@ -87,6 +88,15 @@ from custom_memory_engine.engine.channels import (
     assemble,
     channel_of,
     stale_of,
+)
+from custom_memory_engine.engine.cost import (
+    CostError,
+    CostOperation,
+    CostReport,
+    CostStore,
+    QueryCost,
+    StageCollector,
+    StageSpan,
 )
 from custom_memory_engine.engine.expansion import expand_associations
 from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
@@ -246,7 +256,7 @@ class QueryResult:
 
     __slots__ = (
         "audit", "changes", "conflicts", "coverage", "cost", "facts", "hypotheses", "is_audit", "procedures",
-        "refused", "result_id",
+        "refused", "result_id", "stage_costs",
     )  # fmt: skip
 
     def __init__(
@@ -263,6 +273,7 @@ class QueryResult:
         cost: AssemblyCost | None = None,
         changes: Sequence[Change] = (),
         result_id: str | None = None,
+        stage_costs: QueryCost | None = None,
     ) -> None:
         self.facts = tuple(facts)
         self.hypotheses = tuple(hypotheses)
@@ -273,6 +284,7 @@ class QueryResult:
         self.changes = tuple(changes)
         self.is_audit = is_audit
         self.result_id = result_id
+        self.stage_costs = stage_costs
         empty = ChannelCoverage(0, 0, (), 0, 0, 0, 0)
         self.coverage = coverage or CoverageReport(empty, empty, empty, empty)
         self.cost = cost or AssemblyCost(0, 0, 0, 0)
@@ -408,20 +420,58 @@ class ReadHandlers:
         recorder: PlanRecorder | None = None,
         observer: StageObserver | None = None,
         results: ResultStore | None = None,
+        costs: CostStore | None = None,
+        clock: Callable[[], float] | None = None,
+        collect_cost: bool = True,
     ) -> None:
         self.runtime = runtime
         # E-031: the model seam, defaulted to the rule-based planner and therefore unused (criterion 9). The recorder
-        # and observer are the two things E-036 attaches to; both default to a no-op, so production behaviour is
-        # unchanged unless something opts in.
+        # and observer remain opt-in seams; E-036's stage collector runs alongside the observer so injected stage
+        # observers stay compatible and attribution is measured in one place.
         self.planner: Planner = planner if planner is not None else RuleBasedPlanner()
         self.recorder: PlanRecorder = recorder if recorder is not None else record_nothing
         self.observer: StageObserver = observer if observer is not None else observe_nothing
         # E-034: the handle map `query` issues into and `refine` resolves from. The engine owns the canonical store
         # (the entry point resolves a `result_id` before dispatch); a handler built on its own keeps a private one.
         self.results: ResultStore = results if results is not None else ResultStore()
+        # E-036: per-stage cost collection and caller-scoped windowed reporting (`cost` operation).
+        self.costs: CostStore = costs if costs is not None else CostStore()
+        self._clock: Callable[[], float] | None = clock
+        self._collect_cost: bool = collect_cost
         # E-038 (V2-D24): the closure-hash cache the read path derives `stale` through. One per handler, so repeated
         # reads of an unchanged abstraction hash its closure once; the deletion token invalidates it (F6).
         self.closure_cache = ClosureCache()
+
+    def _new_collector(self) -> StageCollector | None:
+        if not self._collect_cost:
+            return None
+        return StageCollector(clock=self._clock) if self._clock is not None else StageCollector()
+
+    @contextmanager
+    def _stage(self, collector: StageCollector | None, stage: str) -> Iterator[StageSpan | None]:
+        """Enter one retrieval stage boundary for ``E-036`` cost measurement and any external ``StageObserver``."""
+        if collector is None:
+            with self.observer(stage):
+                yield None
+            return
+        with collector.track(stage) as span, self.observer(stage):
+            yield span
+
+    def _finalize_cost(
+        self, collector: StageCollector | None, *, operation: CostOperation, plan: Plan
+    ) -> QueryCost | None:
+        if collector is None:
+            return None
+        stage_costs = collector.finish(operation=operation, mode=plan.mode, hop_budget=plan.hop_budget)
+        logger.debug(
+            "retrieval_stage_costs",
+            operation=stage_costs.operation,
+            mode=stage_costs.mode,
+            hop_budget=stage_costs.hop_budget,
+            total_latency_ms=round(stage_costs.total_latency_ms, 3),
+            stages={entry.stage: round(entry.latency_ms, 3) for entry in stage_costs.stages},
+        )
+        return stage_costs
 
     # -- shared reads ------------------------------------------------------------------------------------------
 
@@ -897,6 +947,8 @@ class ReadHandlers:
         *,
         budgets: ChannelBudgets | None = None,
         narrowing: Narrowing | None = None,
+        _collector: StageCollector | None = None,
+        _operation: CostOperation = "query",
     ) -> QueryResult:
         """Run ``plan`` for ``call``: the execution half of ``query``, separate from planning (``E-031`` W2).
 
@@ -944,9 +996,16 @@ class ReadHandlers:
         source_map: Mapping[str, tuple[ProvenanceSource, ...]] = {}
         bounds: dict[str, Bound] = {}
         support_summaries: dict[str, str] = {}
+        collector = _collector
+        if collector is None and self._collect_cost:
+            collector = self._new_collector()
+            assert collector is not None
+            collector.record_bypassed("plan", candidates_in=len(plan.scopes), candidates_out=len(plan.scopes))
         try:
             async with self.runtime.session(user) as connection:
-                with self.observer("candidate_generation"):
+                with self._stage(collector, "candidate_generation") as span:
+                    if span is not None:
+                        span.candidates_in = len(narrowing.candidates) if narrowing is not None else plan.rows
                     # the reference instant is the clock writes record against, read inside this transaction (I4)
                     reference_time = await reference_instant(connection)
                     previous_view: tuple[ScopedRow, ...] = ()
@@ -987,7 +1046,11 @@ class ReadHandlers:
                             limit=plan.rows,
                             schema_name=self.runtime.schema_name,
                         )
-                with self.observer("expansion"):
+                    if span is not None:
+                        span.candidates_out = len(rows)
+                with self._stage(collector, "expansion") as span:
+                    if span is not None:
+                        span.candidates_in = len(rows)
                     if plan.expansion == ASSOCIATION_EXPANSION:
                         rows += await expand_associations(
                             connection,
@@ -1002,7 +1065,11 @@ class ReadHandlers:
                             row_budget=plan.rows,
                             schema_name=self.runtime.schema_name,
                         )
-                with self.observer("filter_rerank"):
+                    if span is not None:
+                        span.candidates_out = len(rows)
+                with self._stage(collector, "filter_rerank") as span:
+                    if span is not None:
+                        span.candidates_in = len(rows)
                     ids = [row.id for row in rows]
                     verifications = await self._verification_of(connection, user, ids)
                     contradictions = await self._contradictions(connection, user, ids)
@@ -1061,13 +1128,17 @@ class ReadHandlers:
                         bounds, support_summaries = await self._bounds_of(
                             connection, user, [row.id for row in rows if row.kind == "abstraction"]
                         )
+                    if span is not None:
+                        span.candidates_out = len(rows)
         except InsufficientPrivilege as exc:
             raise EntryError("forbidden") from exc
         except TemporalQueryError as exc:
             raise EntryError("validation_error", exc.code) from exc
 
-        with self.observer("assemble"):
-            if is_audit:
+        if is_audit:
+            with self._stage(collector, "assemble") as span:
+                if span is not None:
+                    span.candidates_in = len(rows)
                 audited: list[Artifact] = []
                 refused: list[tuple[str, str]] = []
                 for row in rows:
@@ -1091,8 +1162,12 @@ class ReadHandlers:
                             hop_distance=row.hop_distance,
                         )
                     )
-                return QueryResult(audit=audited, refused=refused, is_audit=True)
+                if span is not None:
+                    span.candidates_out = len(audited)
+            stage_costs = self._finalize_cost(collector, operation=_operation, plan=plan)
+            return QueryResult(audit=audited, refused=refused, is_audit=True, stage_costs=stage_costs)
 
+        with self._stage(collector, "assemble") as span:
             rows_by_id = {row.id: row for row in rows}
             views: list[ArtifactView] = []
             for row in rows:
@@ -1119,6 +1194,11 @@ class ReadHandlers:
                 staleness=lambda view: view.artifact_id in stale,
                 budgets=budgets,
             )
+            if span is not None:
+                span.candidates_in = assembled.cost.candidates_considered
+                span.candidates_out = assembled.cost.items_rendered
+                span.tokens_considered = assembled.cost.tokens_considered
+                span.tokens_rendered = assembled.cost.tokens_rendered
 
             def to_artifact(
                 artifact_id: str,
@@ -1196,16 +1276,18 @@ class ReadHandlers:
                     changes = tuple(
                         change for change in changes if kept.intersection((*change.previous, *change.current))
                     )
-            return QueryResult(
-                facts=facts,
-                hypotheses=hypotheses,
-                procedures=procedures,
-                conflicts=conflicts,
-                refused=[(item.artifact_id, item.reason) for item in assembled.refused],
-                coverage=assembled.coverage,
-                cost=assembled.cost,
-                changes=changes,
-            )
+        stage_costs = self._finalize_cost(collector, operation=_operation, plan=plan)
+        return QueryResult(
+            facts=facts,
+            hypotheses=hypotheses,
+            procedures=procedures,
+            conflicts=conflicts,
+            refused=[(item.artifact_id, item.reason) for item in assembled.refused],
+            coverage=assembled.coverage,
+            cost=assembled.cost,
+            changes=changes,
+            stage_costs=stage_costs,
+        )
 
     async def query(self, call: Call) -> QueryResult:
         request = call.arguments.get("request")
@@ -1253,13 +1335,20 @@ class ReadHandlers:
             )
         if len(effective_read_set.entries) > MAX_SELECTORS:
             raise EntryError("resource_limit", "too_many_selectors")
-        with self.observer("plan"):
+        collector = self._new_collector()
+        with self._stage(collector, "plan") as span:
+            if span is not None:
+                span.candidates_in = len(effective_read_set.entries)
             try:
                 plan = plan_retrieval(intent, effective_read_set, planner=self.planner)
             except PlanningError as exc:
                 raise EntryError("validation_error", exc.code) from None
+            if span is not None:
+                span.candidates_out = len(plan.scopes)
         self.recorder(plan)
-        result = await self.execute_plan(call, plan, budgets=budgets)
+        result = await self.execute_plan(call, plan, budgets=budgets, _collector=collector, _operation="query")
+        if result.stage_costs is not None:
+            self.costs.record(call.ctx.principal, result.stage_costs)
         return self._issue(call, read_set=effective_read_set, intent=intent, budgets=budgets, result=result, depth=0)
 
     async def refine(self, call: Call) -> QueryResult:
@@ -1296,7 +1385,10 @@ class ReadHandlers:
                 result=QueryResult(is_audit=snapshot.intent.mode == "audit_as_of"),
                 depth=snapshot.depth + 1,
             )
-        with self.observer("plan"):
+        collector = self._new_collector()
+        with self._stage(collector, "plan") as span:
+            if span is not None:
+                span.candidates_in = len(snapshot.read_set.entries)
             try:
                 plan = refine_plan(
                     plan_retrieval(snapshot.intent, snapshot.read_set, planner=self.planner),
@@ -1304,6 +1396,8 @@ class ReadHandlers:
                 )
             except PlanningError as exc:
                 raise EntryError("validation_error", exc.code) from None
+            if span is not None:
+                span.candidates_out = len(plan.scopes)
         self.recorder(plan)
         # Execute under the *recorded* read set, never the caller's current one. The entry point proved the current
         # credential still covers it, so this is a narrowing by construction: a widened credential changes nothing,
@@ -1312,8 +1406,15 @@ class ReadHandlers:
         # The original answer's budgets, not this call's: a refine has no ``request`` to read them from, and
         # defaulting would let a drill-down return rows the result it names never contained (or fewer of them).
         result = await self.execute_plan(
-            recorded, plan, budgets=snapshot.budgets, narrowing=Narrowing(snapshot.candidates, instruction)
+            recorded,
+            plan,
+            budgets=snapshot.budgets,
+            narrowing=Narrowing(snapshot.candidates, instruction),
+            _collector=collector,
+            _operation="refine",
         )
+        if result.stage_costs is not None:
+            self.costs.record(call.ctx.principal, result.stage_costs)
         return self._issue(
             call,
             read_set=snapshot.read_set,
@@ -1322,6 +1423,13 @@ class ReadHandlers:
             result=result,
             depth=snapshot.depth + 1,
         )
+
+    async def cost(self, call: Call) -> CostReport:
+        """Return per-stage latency, candidate counts and tokens for the caller's own queries (``API_V2.md`` §4.11)."""
+        try:
+            return self.costs.report(call.ctx.principal, window=call.arguments.get("window"))
+        except CostError as exc:
+            raise EntryError("validation_error", exc.code) from None
 
     def _issue(
         self,
@@ -1373,30 +1481,45 @@ def register_read_handlers(
     recorder: PlanRecorder | None = None,
     observer: StageObserver | None = None,
     results: ResultStore | None = None,
+    costs: CostStore | None = None,
+    clock: Callable[[], float] | None = None,
+    collect_cost: bool = True,
 ) -> ReadHandlers:
-    """Wire ``get``, ``query``, ``refine`` and ``provenance`` onto ``engine``.
+    """Wire ``get``, ``query``, ``refine``, ``provenance`` and ``cost`` onto ``engine``.
 
-    The three keyword arguments are ``E-031``'s seams and are all optional, so the production wiring in
-    ``api/wiring.py`` is unchanged: the rule-based planner, no recording, no measurement. ``results`` defaults to the
-    engine's own handle map, so a ``query`` and a later ``refine`` through the same engine see the same handles.
+    The optional keyword arguments are the ``E-031``/``E-034``/``E-036`` seams so tests can inject a planner,
+    recorder, observer, result store, cost store or monotonic clock without patching module state. ``results`` and
+    ``costs`` default to the engine's own stores so every call through ``engine`` sees one shared view.
     """
     # `is not None`, not `or`: a store is a seam (it may carry an injected clock or capacity), and an empty one is
     # falsy, so `or` would silently swap it for the engine's own map.
     store = results if results is not None else engine.results
+    cost_store = costs if costs is not None else engine.costs
     # One map or none: `Engine.call` resolves a `result_id` through `engine.results` while the handler issues into
     # whatever it was given, so a store that is not the engine's would split issue from resolve and refuse every
     # refine on a handle the engine just minted.
     engine.results = store
-    handlers = ReadHandlers(runtime, planner=planner, recorder=recorder, observer=observer, results=store)
+    engine.costs = cost_store
+    handlers = ReadHandlers(
+        runtime,
+        planner=planner,
+        recorder=recorder,
+        observer=observer,
+        results=store,
+        costs=cost_store,
+        clock=clock,
+        collect_cost=collect_cost,
+    )
     table: Mapping[str, Handler] = {
         "get": handlers.get,
         "query": handlers.query,
         "refine": handlers.refine,
         "provenance": handlers.provenance,
+        "cost": handlers.cost,
     }
     for name, handler in table.items():
         engine.register(name, handler)
     return handlers
 
 
-__all__ = ["Artifact", "QueryResult", "ReadHandlers", "register_read_handlers"]
+__all__ = ["Artifact", "CostReport", "QueryCost", "QueryResult", "ReadHandlers", "register_read_handlers"]

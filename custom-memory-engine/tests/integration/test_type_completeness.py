@@ -38,10 +38,11 @@ from custom_memory_engine.api.infer_handlers import register_infer_handlers
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.maintain_handlers import register_maintain_handlers
 from custom_memory_engine.api.outcome_handlers import register_outcome_handlers
-from custom_memory_engine.api.read_handlers import Artifact, QueryResult, register_read_handlers
+from custom_memory_engine.api.read_handlers import Artifact, CostReport, QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Receipt
 from custom_memory_engine.engine.channels import Verification, channel_of
 from custom_memory_engine.engine.deletion import delete_memory
+from custom_memory_engine.engine.planning import STAGES
 from custom_memory_engine.engine.purge import PurgeReceipt
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.model.axes import (
@@ -634,7 +635,7 @@ async def test_link_entity_is_wired_through_engine_call_and_both_endpoints_must_
 def test_no_profile_specific_code_path_in_the_generic_engine_api() -> None:
     """Requirement 6: the handlers read a profile's DATA (kinds, retention); they never branch on which profile it is."""
     root = Path(__file__).resolve().parents[2] / "src" / "custom_memory_engine"
-    for relative in ("api/ingest_handlers.py", "api/handlers.py", "api/entry.py", "api/runtime.py"):
+    for relative in ("api/ingest_handlers.py", "api/handlers.py", "api/entry.py", "api/runtime.py", "engine/cost.py"):
         assert find_profile_branching((root / relative).read_text(encoding="utf-8")) == [], relative
 
 
@@ -673,6 +674,28 @@ async def test_register_method_is_wired_through_engine_call(database) -> None:  
             )
 
 
+async def test_cost_is_wired_through_engine_call_for_all_tiers(database) -> None:  # noqa: F811
+    """E-036 / E-039: ``cost`` is wired through ``Engine.call`` for all tiers and reports per-stage retrieval costs."""
+    async with world(database) as (conn, engine, _schema):
+        await add_turn(conn)
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_ingest_handlers(
+            engine, runtime, profile_with("cost-e018", kinds=["episode"], retention={"episode": "durable"})
+        )
+        register_read_handlers(engine, runtime)
+        assert "cost" not in engine.unwired_operations()
+        await episode_through_the_api(conn, engine, key="e018-cost")
+        result = await engine.call(caller("alice"), "query", {"request": {"scope": "/u/alice/"}})
+        assert isinstance(result, QueryResult) and result.stage_costs is not None
+        assert tuple(entry.stage for entry in result.stage_costs.stages) == STAGES
+        for tier in ("B", "C"):
+            report = await engine.call(caller("alice", tier), "cost", {"window": None})
+            assert isinstance(report, CostReport)
+            assert report.query_count == 1
+            assert tuple(entry.stage for entry in report.stages) == STAGES
+            assert report.charged_calls == 0 and report.cost_usd == 0
+
+
 async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_passes(database) -> None:  # noqa: F811
     async with world(database) as (conn, engine, _schema):
         del conn
@@ -684,8 +707,8 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         register_outcome_handlers(engine, runtime)
         unwired = set(engine.unwired_operations())
         assert {"delete", "export"} <= unwired  # W3+ owners: E-037, A-015
-        # query/get/provenance (E-033) and infer (C-021) are wired and exercised through Engine.call
-        assert not {"query", "get", "provenance", "infer"} & unwired
+        # query/get/provenance (E-033), cost (E-036) and infer (C-021) are wired and exercised through Engine.call
+        assert not {"query", "get", "provenance", "cost", "infer"} & unwired
         # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
         assert "create_scope" not in unwired
         # `purge_working` left it when E-026 wired it; it is exercised above through Engine.call only.

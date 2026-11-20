@@ -1,0 +1,223 @@
+{
+  "rows_per_user": 2000,
+  "users": 2,
+  "candidates": 2000,
+  "dense": {
+    "p50_ms": 28.89,
+    "p95_ms": 30.33,
+    "min_ms": 27.96,
+    "max_ms": 30.94
+  },
+  "lexical": {
+    "p50_ms": 11.81,
+    "p95_ms": 13.4,
+    "min_ms": 10.87,
+    "max_ms": 15.07
+  },
+  "fused": {
+    "p50_ms": 29.56,
+    "p95_ms": 32.61,
+    "min_ms": 19.3,
+    "max_ms": 54.7
+  },
+  "temporal_scan": {
+    "Node Type": "Index Scan",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Scan Direction": "Forward",
+    "Index Name": "memory_version_temporal_idx",
+    "Relation Name": "memory_version",
+    "Alias": "m",
+    "Startup Cost": 0.15,
+    "Total Cost": 8.17,
+    "Plan Rows": 1,
+    "Plan Width": 32,
+    "Actual Startup Time": 0.048,
+    "Actual Total Time": 0.867,
+    "Actual Rows": 1795,
+    "Actual Loops": 1,
+    "Index Cond": "((user_id = 'bench-0'::text) AND (event_range @> now()) AND (recorded_range @> now()))",
+    "Rows Removed by Index Recheck": 0,
+    "Filter": "(status = 'active'::text)",
+    "Rows Removed by Filter": 0
+  },
+  "staged_retrieval": {
+    "limit": 50,
+    "iterations": 50,
+    "end_to_end": {
+      "p50_ms": 10.44,
+      "p95_ms": 11.82,
+      "min_ms": 9.58,
+      "max_ms": 12.79
+    },
+    "stages": {
+      "plan": {
+        "p50_ms": 0.02,
+        "p95_ms": 0.03,
+        "min_ms": 0.02,
+        "max_ms": 0.03,
+        "unit": "scope_selectors",
+        "candidates_in": 1,
+        "candidates_out": 1,
+        "tokens_considered": 0,
+        "tokens_rendered": 0
+      },
+      "candidate_generation": {
+        "p50_ms": 4.78,
+        "p95_ms": 6.1,
+        "min_ms": 4.37,
+        "max_ms": 6.29,
+        "unit": "rows",
+        "candidates_in": 50,
+        "candidates_out": 50,
+        "tokens_considered": 0,
+        "tokens_rendered": 0
+      },
+      "expansion": {
+        "p50_ms": 1.09,
+        "p95_ms": 1.5,
+        "min_ms": 0.96,
+        "max_ms": 1.6,
+        "unit": "rows",
+        "candidates_in": 50,
+        "candidates_out": 50,
+        "tokens_considered": 0,
+        "tokens_rendered": 0
+      },
+      "filter_rerank": {
+        "p50_ms": 2.54,
+        "p95_ms": 2.84,
+        "min_ms": 2.25,
+        "max_ms": 2.96,
+        "unit": "rows",
+        "candidates_in": 50,
+        "candidates_out": 50,
+        "tokens_considered": 0,
+        "tokens_rendered": 0
+      },
+      "assemble": {
+        "p50_ms": 0.57,
+        "p95_ms": 1.16,
+        "min_ms": 0.54,
+        "max_ms": 1.17,
+        "unit": "items",
+        "candidates_in": 50,
+        "candidates_out": 50,
+        "tokens_considered": 350,
+        "tokens_rendered": 350
+      }
+    },
+    "overhead": {
+      "instrumented_p50_ms": 10.44,
+      "uninstrumented_p50_ms": 10.34,
+      "delta_p50_ms": 0.1,
+      "delta_p50_pct": 0.97,
+      "instrumented_p95_ms": 11.82,
+      "uninstrumented_p95_ms": 12.01,
+      "delta_p95_ms": -0.19,
+      "delta_p95_pct": -1.58
+    },
+    "cost_operation_report": {
+      "principal": "bench-0",
+      "window_start": "2026-11-20T16:38:11.916757+00:00",
+      "window_end": "2026-11-20T17:38:11.916757+00:00",
+      "query_count": 50,
+      "total_latency_ms": 464.28718600327556,
+      "tokens_considered": 17500,
+      "tokens_rendered": 17500,
+      "charged_calls": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "embedding_tokens": 0,
+      "cost_usd": "0",
+      "stages": [
+        {
+          "stage": "plan",
+          "unit": "scope_selectors",
+          "calls": 50,
+          "total_latency_ms": 0.9676370045781368,
+          "mean_latency_ms": 0.019352740091562737,
+          "p50_latency_ms": 0.018494999949325575,
+          "p95_latency_ms": 0.026789999537868425,
+          "candidates_in": 50,
+          "candidates_out": 50,
+          "tokens_considered": 0,
+          "tokens_rendered": 0
+        },
+        {
+          "stage": "candidate_generation",
+          "unit": "rows",
+          "calls": 50,
+          "total_latency_ms": 247.6161400009005,
+          "mean_latency_ms": 4.95232280001801,
+          "p50_latency_ms": 4.782145500485058,
+          "p95_latency_ms": 6.104545999733091,
+          "candidates_in": 2500,
+          "candidates_out": 2500,
+          "tokens_considered": 0,
+          "tokens_rendered": 0
+        },
+        {
+          "stage": "expansion",
+          "unit": "rows",
+          "calls": 50,
+          "total_latency_ms": 56.07469700044021,
+          "mean_latency_ms": 1.1214939400088042,
+          "p50_latency_ms": 1.0866324996641197,
+          "p95_latency_ms": 1.4998269998613978,
+          "candidates_in": 2500,
+          "candidates_out": 2500,
+          "tokens_considered": 0,
+          "tokens_rendered": 0
+        },
+        {
+          "stage": "filter_rerank",
+          "unit": "rows",
+          "calls": 50,
+          "total_latency_ms": 127.58907100123906,
+          "mean_latency_ms": 2.5517814200247813,
+          "p50_latency_ms": 2.543858000080945,
+          "p95_latency_ms": 2.844974999788974,
+          "candidates_in": 2500,
+          "candidates_out": 2500,
+          "tokens_considered": 0,
+          "tokens_rendered": 0
+        },
+        {
+          "stage": "assemble",
+          "unit": "items",
+          "calls": 50,
+          "total_latency_ms": 32.03964099611767,
+          "mean_latency_ms": 0.6407928199223534,
+          "p50_latency_ms": 0.5748549997406371,
+          "p95_latency_ms": 1.1602419999690028,
+          "candidates_in": 2500,
+          "candidates_out": 2500,
+          "tokens_considered": 17500,
+          "tokens_rendered": 17500
+        }
+      ]
+    }
+  },
+  "g3_comparison": {
+    "basis": {
+      "baseline_file": "reports/benchmarks/retrieval_2000.json",
+      "baseline_tag": "cme-v1.0.0",
+      "dataset": "rows_per_user=2000, users=2, limit=50, iterations=50",
+      "frozen_dense_p50_ms": 26.99,
+      "frozen_fused_p95_ms": 29.84,
+      "stricter_2x_limit_ms": 53.98,
+      "fused_2x_limit_ms": 59.68
+    },
+    "measured": {
+      "same_host_v1_fused_p95_ms": 32.61,
+      "v2_staged_query_p50_ms": 10.44,
+      "v2_staged_query_p95_ms": 11.82
+    },
+    "verdict": {
+      "v1_fused_vs_stricter_2x": "within_2x",
+      "v2_staged_vs_stricter_2x": "within_2x",
+      "v2_staged_vs_fused_2x": "within_2x"
+    }
+  }
+}
