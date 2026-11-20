@@ -155,6 +155,31 @@ def resolve_read_set(
     return ReadSet(tuple(ReadEntry(path, frozenset(v), mode) for (path, mode), v in entries.items()), tuple(denied))
 
 
+def covers(held: ReadSet, needed: ReadSet) -> bool:
+    """Whether ``held`` grants everything ``needed`` grants, entry by entry (read-set containment, ``E-034``).
+
+    This is the "never widen" rule of ``V2-D83``: a handle records the read set of the call that produced its result,
+    and a drill-down may execute only while the caller still holds at least that. An entry is covered when one held
+    entry grants **every** visibility it names, at the same path or above it (through a ``subtree`` selector), and
+    itself is permissive enough (an ``exact`` held entry never covers a ``subtree`` need).
+
+    A newer, narrower credential therefore refuses rather than silently redirecting the drill-down, and a wider one
+    changes nothing: the refine still runs under the recorded set, so it can never see more than its result did.
+    """
+    return all(
+        any(
+            entry.visibilities <= held_entry.visibilities
+            and (
+                entry.path == held_entry.path
+                or (held_entry.mode == "subtree" and entry.path.startswith(held_entry.path))
+            )
+            and (entry.mode == "exact" or held_entry.mode == "subtree")
+            for held_entry in held.entries
+        )
+        for entry in needed.entries
+    )
+
+
 def row_visible(read_set: ReadSet, row_scope_path: object, row_visibility: object) -> bool:
     """Reference semantics: may a row at ``row_scope_path`` with ``row_visibility`` be read?"""
     if row_visibility not in VISIBILITIES:
@@ -384,6 +409,7 @@ __all__ = [
     "acl_readable",
     "active_grant_paths",
     "authorize_write",
+    "covers",
     "read_predicate",
     "read_predicate_named",
     "resolve",

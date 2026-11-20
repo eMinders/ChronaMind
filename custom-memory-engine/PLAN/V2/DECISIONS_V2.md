@@ -2033,3 +2033,61 @@ database. Control: with the placement carry removed, all 6 fail, and so does
 `test_change_reports_each_outcome_once_and_names_the_versions` (the superseded predicate leaves the scoped view).
 
 **Status:** decided under the Project Owner's delegation (2026-11-19). Recorded on #73 as `E-033-F3`.
+
+## V2-D83 — `refine` drills into a result handle under the recorded read set, with a total rule-based vocabulary
+
+**Context.** `API_V2.md` §4.2 specified `refine(result_id, instruction) → QueryResult` ("drill-down on a prior result
+within the same read set; cannot widen it") but nothing stored a result: `query` returned a `QueryResult` and the
+value was gone, so `result_id` had no referent. Three questions had to be answered before code: what a handle is,
+what "the same read set" means when the caller's read set is resolved per call, and what an instruction is allowed
+to mean (`E-034`, #204).
+
+**Decision — the handle is a capability, not a row.** `query` issues `res_` + 128 random bits into a bounded
+(`MAX_RESULTS = 1024`), time-limited (15 minutes) map owned by the engine and shared by the read handlers. It is not
+persisted, because a result is answer-context material and not a memory: there is nothing to purge and nothing that
+`export`/`delete` should reach. A restart, a different worker, another principal or an expired entry are therefore
+**one failed lookup** and one answer, `forbidden`, indistinguishably (`THREAT_MODEL.md` T-11). The map records the
+principal, the **read set of the issuing call**, the planner intent (so a refine re-enters `E-031`'s planner, never
+the assembler), the **channel budgets the answer used** (a refine carries no `request`, so defaulting there would
+re-assemble to a different answer than the one being drilled into), the candidate ids the result named, and the
+chain depth.
+
+**Decision — contain the read set, do not re-resolve it.** `CallerContext.read_set` is derived per call from live
+grants, so "the same read set" cannot mean equality of two independently resolved sets. A refine is authorised only
+while the current credential still **covers** every entry the issuing call held (`scope.access.covers`); a narrowed
+credential is `forbidden` rather than silently redirected, and a widened one passes but executes under the
+**recorded** set. That makes "cannot widen" structural: association expansion is cut (`expansion='none'`,
+`hop_budget=0`), the statement fetches only the result's candidate ids re-read from the database, and provenance
+renders against the same set, so a foreign source stays opaque. A row purged or retired since the query is absent
+from the re-read, never resurrected.
+
+**Decision — one operator per instruction, matched exhaustively, never a model.** `artifact <id>`,
+`channel <facts|hypotheses|procedures|conflicts>`, `mention <text>` (case-insensitive substring) and
+`scope <path>` (canonical path, at or inside). `channel` is answered by `channel_of` on the same tuple assembly
+uses, so narrowing can never move an artifact between channels. The filter runs **before** assembly, so coverage and
+cost describe the narrowed candidates and a kept abstraction keeps its label, support summary and bound (`I14`).
+A narrowed `change` result keeps each change that touches a kept row whole, with its original outcome.
+Anything else — absent, blank, unknown operator, missing argument, a multi-word argument to any operator but
+`mention`, unknown channel, malformed path — is
+`validation_error` with a static detail (`instruction_required` / `instruction_unrecognised`), never a silent no-op
+returning the unmodified result. A chain is bounded at `MAX_REFINE_DEPTH = 4`; the fifth answers
+`validation_error/refine_depth_exceeded`.
+
+**Decision — no second `scope_read` for a refine.** `ARCHITECTURE_V2.md` §5 rule 6 records a *read that reached*
+outside the caller's namespace. The issuing `query` already recorded it, and a refine reaches no scope that read set
+does not already name; recording it again would multiply audit rows without adding a locator.
+
+**Consequences.** `Plan` is unchanged: a refine is `refine_plan(prior, candidates=n)`, a pure narrowing of the
+recorded plan that still replays. No schema change and no migration. A deployment with several workers must route a
+refine to the worker that answered the query (sticky routing) or accept the fail-closed `forbidden`; both are safe,
+and neither widens.
+
+**Evidence.** `api/refine.py` (store, interpreter), `engine/planning.py::refine_plan`,
+`api/read_handlers.py::ReadHandlers.refine`, `api/entry.py` (`_result_id`, `RESULT_TARGETS`,
+`Engine.resolve_result`). `tests/test_refine.py` (47 tests) covers the store, the vocabulary, `covers` and the plan.
+`tests/integration/test_refine_db.py` (13 tests) drives every acceptance row through `Engine.call`. Controls: allowing
+a widened read set to execute fails `test_a_widened_credential_does_not_widen_the_drill_down`; returning the
+unmodified result for an unrecognised instruction fails
+`test_an_unrecognised_instruction_is_a_static_error_never_the_unmodified_result`.
+
+**Status:** decided under the Project Owner's delegation (2026-11-19). Recorded on #204 as `E-034`.

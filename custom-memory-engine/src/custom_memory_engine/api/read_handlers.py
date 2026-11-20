@@ -33,7 +33,12 @@ from those candidates and filters each reached row as it enters expansion (``V2-
 reported refusals/truncation, coverage and assembly cost. Each returned artifact carries a provenance bundle.
 ``get`` returns its bundle; ``provenance`` traverses readable lineage to a bounded depth and stops at opaque sources.
 ``change`` returns :attr:`QueryResult.changes` (``V2-D81``). Per-stage collection beyond assembly is ``E-036``'s
-responsibility; ``refine`` remains ``E-034``'s.
+responsibility.
+
+**Iterative refine (E-034).** ``query`` returns an opaque ``result_id`` and ``refine`` drills into that result with
+one rule-based operator (``artifact``/``channel``/``mention``/``scope``). The handle records the issuing read set, and
+a refine executes under it — expansion cut, candidates re-read from the database, the instruction applied before
+assembly — so a drill-down can narrow and never widen (``V2-D83``).
 
 **Why nothing below ``Engine.call`` skips authorisation.** The caller arrives already authorised for the *operation*;
 what decides which **rows** are visible is row-level security, bound to the authenticated principal by
@@ -48,6 +53,7 @@ artifact to ``none`` and would drop exactly the withdrawn rows an audit exists t
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import cast
 
@@ -57,6 +63,13 @@ from psycopg.errors import InsufficientPrivilege
 from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
+from custom_memory_engine.api.refine import (
+    MAX_REFINE_DEPTH,
+    InstructionError,
+    Narrowing,
+    ResultStore,
+    parse_instruction,
+)
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.engine.change import Change, diff_views
 from custom_memory_engine.engine.channels import (
@@ -92,6 +105,7 @@ from custom_memory_engine.engine.planning import (
     observe_nothing,
     plan_retrieval,
     record_nothing,
+    refine_plan,
 )
 from custom_memory_engine.engine.predicates import (
     ScopedRow,
@@ -122,6 +136,7 @@ from custom_memory_engine.scope.access import (
     ReadSet,
     SelectorMode,
     Visibility,
+    covers,
     read_predicate_named,
     row_visible,
 )
@@ -222,11 +237,16 @@ class QueryResult:
     ``changes`` is non-empty only for ``mode='change'`` (``V2-D81``): one entry per key that differs between the two
     views, alongside the channels built from their union. A caller reads *what changed* from ``changes`` and *what it
     is* from the channels, which is why the diff names ids rather than carrying a second copy of the content.
+
+    ``result_id`` is the opaque handle a ``refine`` drills into (``E-034``, ``V2-D83``). It is ``None`` only on a
+    result built outside the answer path (a plain ``execute_plan`` replay, or an empty shortcut); ``query`` and
+    ``refine`` always return one. It is not part of equality: two results with equal content are still equal results,
+    and a handle is a capability, not content.
     """
 
     __slots__ = (
         "audit", "changes", "conflicts", "coverage", "cost", "facts", "hypotheses", "is_audit", "procedures",
-        "refused",
+        "refused", "result_id",
     )  # fmt: skip
 
     def __init__(
@@ -242,6 +262,7 @@ class QueryResult:
         coverage: CoverageReport | None = None,
         cost: AssemblyCost | None = None,
         changes: Sequence[Change] = (),
+        result_id: str | None = None,
     ) -> None:
         self.facts = tuple(facts)
         self.hypotheses = tuple(hypotheses)
@@ -251,6 +272,7 @@ class QueryResult:
         self.audit = tuple(audit)
         self.changes = tuple(changes)
         self.is_audit = is_audit
+        self.result_id = result_id
         empty = ChannelCoverage(0, 0, (), 0, 0, 0, 0)
         self.coverage = coverage or CoverageReport(empty, empty, empty, empty)
         self.cost = cost or AssemblyCost(0, 0, 0, 0)
@@ -328,6 +350,36 @@ def _channel_for(
         return None
 
 
+def _result_ids(result: QueryResult) -> tuple[str, ...]:
+    """Every artifact id a result named, in channel order, audit included.
+
+    This is the whole of the candidate set a refine may return: a drill-down is a subset of the prior answer, never a
+    fresh page of the read set (``E-034``).
+    """
+    return tuple(
+        item.artifact_id
+        for items in (result.facts, result.hypotheses, result.procedures, result.conflicts, result.audit)
+        for item in items
+    )
+
+
+def _channel_name(
+    row: ScopedRow,
+    verifications: Mapping[str, str],
+    contradicted: set[str],
+    stale: set[str],
+) -> str | None:
+    """The channel the assembler will route ``row`` to, computed the same way ``assemble`` does (``channel_of``).
+
+    A ``refine`` instruction may name a channel, and which channel an artifact belongs to is never the instruction
+    interpreter's decision: it is ``channel_of``'s pure function of the artifact's own tuple (``CHANNELS.md``,
+    ``V2-D48``). This helper reads that function with the *same* inputs assembly uses, so a narrowed result cannot
+    disagree with the channel the artifact came from.
+    """
+    verification = _verification_for(row.lifecycle, verifications.get(row.id))
+    return _channel_for(row.kind, row.lifecycle, verification, row.id in contradicted, row.id in stale)
+
+
 def _verification_for(lifecycle: str, recorded: str | None) -> str:
     """The ``verification`` membership input of one stored row (``CHANNELS.md`` §1.1).
 
@@ -355,6 +407,7 @@ class ReadHandlers:
         planner: Planner | None = None,
         recorder: PlanRecorder | None = None,
         observer: StageObserver | None = None,
+        results: ResultStore | None = None,
     ) -> None:
         self.runtime = runtime
         # E-031: the model seam, defaulted to the rule-based planner and therefore unused (criterion 9). The recorder
@@ -363,6 +416,9 @@ class ReadHandlers:
         self.planner: Planner = planner if planner is not None else RuleBasedPlanner()
         self.recorder: PlanRecorder = recorder if recorder is not None else record_nothing
         self.observer: StageObserver = observer if observer is not None else observe_nothing
+        # E-034: the handle map `query` issues into and `refine` resolves from. The engine owns the canonical store
+        # (the entry point resolves a `result_id` before dispatch); a handler built on its own keeps a private one.
+        self.results: ResultStore = results if results is not None else ResultStore()
         # E-038 (V2-D24): the closure-hash cache the read path derives `stale` through. One per handler, so repeated
         # reads of an unchanged abstraction hash its closure once; the deletion token invalidates it (F6).
         self.closure_cache = ClosureCache()
@@ -828,18 +884,20 @@ class ReadHandlers:
             wanted = frozenset(scope.visibilities)
             if not wanted <= _ALL_VISIBILITIES:
                 raise EntryError("forbidden")
-            held = any(
-                wanted <= entry.visibilities
-                and (scope.path == entry.path or (entry.mode == "subtree" and scope.path.startswith(entry.path)))
-                and (scope.mode == "exact" or entry.mode == "subtree")
-                for entry in read_set.entries
-            )
-            if not held:
-                raise EntryError("forbidden")
             entries.append(ReadEntry(scope.path, cast(frozenset[Visibility], wanted), cast(SelectorMode, scope.mode)))
-        return ReadSet(tuple(entries), ())
+        effective = ReadSet(tuple(entries), ())
+        if not covers(read_set, effective):
+            raise EntryError("forbidden")
+        return effective
 
-    async def execute_plan(self, call: Call, plan: Plan, *, budgets: ChannelBudgets | None = None) -> QueryResult:
+    async def execute_plan(
+        self,
+        call: Call,
+        plan: Plan,
+        *,
+        budgets: ChannelBudgets | None = None,
+        narrowing: Narrowing | None = None,
+    ) -> QueryResult:
         """Run ``plan`` for ``call``: the execution half of ``query``, separate from planning (``E-031`` W2).
 
         Stages, in plan order, each inside the observer's boundary (``E-036`` measures these):
@@ -877,6 +935,12 @@ class ReadHandlers:
             except ChannelError as exc:
                 raise EntryError("validation_error", exc.code) from None
         read_filter, read_parameters = read_predicate_named(effective_read_set, "m.scope_path", "m.visibility")
+        if narrowing is not None:
+            # E-034: a drill-down fetches the prior result's own ids, never a fresh page of the read set. The id
+            # restriction is composed into the same statement *before* LIMIT, beside the temporal and read predicates,
+            # so a candidate the caller may no longer read (or that is no longer believed) is simply absent.
+            read_filter = sql.SQL("({}) AND m.id = ANY(%(candidate_ids)s)").format(read_filter)
+            read_parameters = {**read_parameters, "candidate_ids": list(narrowing.candidates)}
         source_map: Mapping[str, tuple[ProvenanceSource, ...]] = {}
         bounds: dict[str, Bound] = {}
         support_summaries: dict[str, str] = {}
@@ -945,6 +1009,20 @@ class ReadHandlers:
                     contradicted = set(contradictions)
                     # E-038-F5: derived staleness on every answer route; never on an audit (E-038-F3)
                     stale = set() if is_audit else await self._stale_ids(connection, user, verifications)
+                    if narrowing is not None:
+                        # E-034: the instruction narrows *before* assembly, so coverage and cost report the drilled
+                        # candidate set honestly, and a kept row reaches `channel_of` unchanged (membership is only
+                        # ever narrowed, never moved). A `channel` instruction is evaluated with `channel_of` itself.
+                        rows = tuple(
+                            row
+                            for row in rows
+                            if narrowing.instruction.keeps(
+                                artifact_id=row.id,
+                                scope_path=row.scope_path,
+                                content=row.content,
+                                channel=_channel_name(row, verifications, contradicted, stale),
+                            )
+                        )
                     # E-027: outcome counters for the procedure rows, fetched in one statement beside the other
                     # per-row metadata. Only procedures have them, so asking for every id is a wasted round trip at
                     # best; asking only for procedure ids keeps the read proportional to what is ranked.
@@ -1106,6 +1184,18 @@ class ReadHandlers:
                 )
                 for item in assembled.conflicts
             ]
+            changes: tuple[Change, ...] = ()
+            if plan.mode == CHANGE_MODE:
+                # `query` keeps the unfiltered diff it always reported (W6). A *refine* keeps only the changes that
+                # touch a row it kept, each **whole and with its original outcome**: diffing the narrowed views
+                # instead would re-key the report, so narrowing to one side of a `changed` key would misreport it as
+                # `added` or `removed`, a change the drilled-into result never contained.
+                changes = diff_views(previous_view, current_view)
+                if narrowing is not None:
+                    kept = {row.id for row in rows}
+                    changes = tuple(
+                        change for change in changes if kept.intersection((*change.previous, *change.current))
+                    )
             return QueryResult(
                 facts=facts,
                 hypotheses=hypotheses,
@@ -1114,7 +1204,7 @@ class ReadHandlers:
                 refused=[(item.artifact_id, item.reason) for item in assembled.refused],
                 coverage=assembled.coverage,
                 cost=assembled.cost,
-                changes=diff_views(previous_view, current_view) if plan.mode == CHANGE_MODE else (),
+                changes=changes,
             )
 
     async def query(self, call: Call) -> QueryResult:
@@ -1149,18 +1239,114 @@ class ReadHandlers:
             effective_read_set = call.ctx.read_set
         if mode == "audit_as_of" and call.ctx.tier != "C":
             raise EntryError("forbidden")  # checked before the empty-read-set shortcut, so it never answers
+        intent = self._intent_for(str(mode), request, limit, requested_path)
         if effective_read_set.empty:
-            return QueryResult(is_audit=mode == "audit_as_of")
+            # Nothing can be read, so nothing runs; the answer is still an answer and still gets a handle, so a
+            # caller can drill into it exactly like any other result (``_issue``: every answer path issues one).
+            return self._issue(
+                call,
+                read_set=effective_read_set,
+                intent=intent,
+                budgets=budgets,
+                result=QueryResult(is_audit=mode == "audit_as_of"),
+                depth=0,
+            )
         if len(effective_read_set.entries) > MAX_SELECTORS:
             raise EntryError("resource_limit", "too_many_selectors")
-        intent = self._intent_for(str(mode), request, limit, requested_path)
         with self.observer("plan"):
             try:
                 plan = plan_retrieval(intent, effective_read_set, planner=self.planner)
             except PlanningError as exc:
                 raise EntryError("validation_error", exc.code) from None
         self.recorder(plan)
-        return await self.execute_plan(call, plan, budgets=budgets)
+        result = await self.execute_plan(call, plan, budgets=budgets)
+        return self._issue(call, read_set=effective_read_set, intent=intent, budgets=budgets, result=result, depth=0)
+
+    async def refine(self, call: Call) -> QueryResult:
+        """Drill into a prior result, within its read set (``API_V2.md`` §4.2; ``E-034``, ``V2-D83``).
+
+        The entry point has already resolved ``result_id`` to the snapshot the ``query`` left and answered
+        ``forbidden`` for an unknown, foreign or expired handle, and for a credential that no longer holds the
+        recorded read set. Everything here therefore *narrows*: the plan is the recorded question with expansion
+        cut off (reaching a neighbour would be a widening), the statement fetches only the result's own candidate
+        ids, and the instruction is applied to those rows before assembly, so channel membership and bounds are
+        exactly what the original result had. Nothing can add a row.
+        """
+        snapshot = call.result
+        if snapshot is None:
+            # Unreachable through `Engine.call` (the condition resolves the handle first); a direct handler call has
+            # no authorised result to drill into and must fail closed rather than fall back to a fresh query.
+            raise EntryError("forbidden")
+        # Depth first: an exhausted chain cannot drill again whatever it asked for, so the answer does not depend on
+        # whether the instruction also happens to be malformed (one precedence, not two).
+        if snapshot.depth >= MAX_REFINE_DEPTH:
+            raise EntryError("validation_error", "refine_depth_exceeded")
+        try:
+            instruction = parse_instruction(call.arguments.get("instruction"))
+        except InstructionError as exc:
+            raise EntryError("validation_error", exc.code) from None
+        if not snapshot.candidates:
+            # The prior question answered nothing, so there is nothing to narrow. No statement runs, and the chain
+            # still returns a result of the same shape with a fresh handle instead of an error for asking exactly.
+            return self._issue(
+                call,
+                read_set=snapshot.read_set,
+                intent=snapshot.intent,
+                budgets=snapshot.budgets,
+                result=QueryResult(is_audit=snapshot.intent.mode == "audit_as_of"),
+                depth=snapshot.depth + 1,
+            )
+        with self.observer("plan"):
+            try:
+                plan = refine_plan(
+                    plan_retrieval(snapshot.intent, snapshot.read_set, planner=self.planner),
+                    candidates=len(snapshot.candidates),
+                )
+            except PlanningError as exc:
+                raise EntryError("validation_error", exc.code) from None
+        self.recorder(plan)
+        # Execute under the *recorded* read set, never the caller's current one. The entry point proved the current
+        # credential still covers it, so this is a narrowing by construction: a widened credential changes nothing,
+        # and provenance renders against the same set, keeping a foreign source opaque.
+        recorded = replace(call, ctx=replace(call.ctx, read_set=snapshot.read_set))
+        # The original answer's budgets, not this call's: a refine has no ``request`` to read them from, and
+        # defaulting would let a drill-down return rows the result it names never contained (or fewer of them).
+        result = await self.execute_plan(
+            recorded, plan, budgets=snapshot.budgets, narrowing=Narrowing(snapshot.candidates, instruction)
+        )
+        return self._issue(
+            call,
+            read_set=snapshot.read_set,
+            intent=snapshot.intent,
+            budgets=snapshot.budgets,
+            result=result,
+            depth=snapshot.depth + 1,
+        )
+
+    def _issue(
+        self,
+        call: Call,
+        *,
+        read_set: ReadSet,
+        intent: Intent,
+        budgets: ChannelBudgets,
+        result: QueryResult,
+        depth: int,
+    ) -> QueryResult:
+        """Attach a fresh drill-down handle to ``result`` and return it (``E-034``).
+
+        Every answer path issues one, so a caller can always drill again; the handle records the read set, the intent
+        and the channel budgets of *this* call, which is what confines and shapes the next refine.
+        """
+        result.result_id = self.results.issue(
+            principal=call.ctx.principal,
+            read_set=read_set,
+            intent=intent,
+            budgets=budgets,
+            candidates=_result_ids(result),
+            depth=depth,
+        )
+        return result
 
     @staticmethod
     def _granted_for(read_set: ReadSet, path: str) -> tuple[ReadEntry, ...]:
@@ -1186,16 +1372,26 @@ def register_read_handlers(
     planner: Planner | None = None,
     recorder: PlanRecorder | None = None,
     observer: StageObserver | None = None,
+    results: ResultStore | None = None,
 ) -> ReadHandlers:
-    """Wire ``get``, ``query`` and ``provenance`` onto ``engine``.
+    """Wire ``get``, ``query``, ``refine`` and ``provenance`` onto ``engine``.
 
     The three keyword arguments are ``E-031``'s seams and are all optional, so the production wiring in
-    ``api/wiring.py`` is unchanged: the rule-based planner, no recording, no measurement.
+    ``api/wiring.py`` is unchanged: the rule-based planner, no recording, no measurement. ``results`` defaults to the
+    engine's own handle map, so a ``query`` and a later ``refine`` through the same engine see the same handles.
     """
-    handlers = ReadHandlers(runtime, planner=planner, recorder=recorder, observer=observer)
+    # `is not None`, not `or`: a store is a seam (it may carry an injected clock or capacity), and an empty one is
+    # falsy, so `or` would silently swap it for the engine's own map.
+    store = results if results is not None else engine.results
+    # One map or none: `Engine.call` resolves a `result_id` through `engine.results` while the handler issues into
+    # whatever it was given, so a store that is not the engine's would split issue from resolve and refuse every
+    # refine on a handle the engine just minted.
+    engine.results = store
+    handlers = ReadHandlers(runtime, planner=planner, recorder=recorder, observer=observer, results=store)
     table: Mapping[str, Handler] = {
         "get": handlers.get,
         "query": handlers.query,
+        "refine": handlers.refine,
         "provenance": handlers.provenance,
     }
     for name, handler in table.items():
