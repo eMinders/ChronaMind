@@ -2141,3 +2141,50 @@ already leak under that ablation); `reports/deletion/suite_d_dev_11ch_{P,A8}.jso
 
 **Status:** decided under the Project Owner's delegation (2026-11-20). Closes W3's `D-16` revisit obligation
 (#73 §6) and records the eleven-channel Suite `D` evidence G3 cites.
+
+## V2-D85 — `V2-D57`'s review gate is executed by a repository-owned procedure, not by a stock plugin prompt
+
+**Context.** `V2-D57` makes the AI review the project's review gate but says nothing about *how* it runs, so it ran on
+the generic `code-review` plugin. Measured on this repository: across 106 pull requests, 107 summary comments — every
+one "No issues found" — and four inline comments. The plugin's own instructions explain the result — it stops when "Claude has already commented on
+this PR", so only the first push of a pull request was ever reviewed, and its bug agents are told to "focus only on the
+diff itself without reading extra context", which excludes exactly the defects `V2-D57`'s own rationale lists (an
+audit-key collision, a ledger reverted by merge order, a property test running 315 cases where its issue required
+1,000). The defects that mattered on `main` were found by hand afterwards: `#228`'s `SECURITY DEFINER` helper gated on
+a forgeable GUC, and `#229`'s `get` assembling its response without `assemble`.
+
+**Decision.** The review procedure is repository-owned and evidence-bearing:
+
+1. **The standard is executable.** `.claude/skills/review-pr/SKILL.md` implements `PLAN/CONTRIBUTING.md` §1.1 as steps;
+   `REVIEW.md` holds review-only rules (severity, the six-part evidence bar, the do-not-report list, the nit cap, the
+   re-review rule) and `custom-memory-engine/CLAUDE.md` holds the context a reviewer must read (authority order, what is
+   actually enforced, the traps). Instructions are a routing layer: none of the three restates `PLAN/V2/`.
+2. **The instructions are read from the base branch.** A pull request must not be able to edit the standard it is held
+   to. `REVIEW.md` is not among the paths the Claude Code action restores from the base ref, so the skill reads it — and
+   the engine's instructions — from the base commit explicitly; the base branch is also the workspace root, and the
+   pull request is checked out beside it at `pr-head`.
+3. **Every push is reviewed, and a re-review is stricter.** A later commit is reviewed for new regressions and unfixed
+   earlier findings only, with its resolved threads resolved rather than declared fixed.
+4. **The reviewer cannot change what it reviews.** The review jobs run `--permission-mode default` with an explicit
+   allow list and `--disallowedTools` covering editing, pushing, merging, approving and `PUT`; no approval is ever
+   fabricated, as `V2-D57` requires. This is enforced by the workflow, not asked of the model.
+5. **The instructions cannot rot silently.** `tests/test_claude_integration.py` holds the instruction files to
+   `scripts/check_evidence.py` (a dead `path::symbol` fails CI) and pins the workflow's triggers, permissions,
+   base-branch checkout and deny list.
+6. **One reviewer, not two.** If the managed Code Review service is enabled for this repository, the repository variable
+   `CLAUDE_REVIEW_MODE=native` makes the Action job skip before minting a token.
+
+**What this does not change.** `V2-D57`'s policy, branch protection, and the requirement that a review means reading the
+code rather than the description. The review is still advisory to the owner and still not a required check; it
+complements deterministic verification and never replaces it. A clean review remains not a proof of correctness.
+
+**What it does not do.** A green run does not show that a review finds bugs. Only a planted defect does, so after any
+change to the standard the reviewer is exercised on a throwaway pull request that contains one, and the recorded result
+is the evidence — not the run's conclusion.
+
+**Evidence.** `.claude/skills/review-pr/SKILL.md`; `REVIEW.md`; `custom-memory-engine/CLAUDE.md`;
+`.github/workflows/claude-code-review.yml` and `claude.yml`; `.github/workflows/README.md` ("The Claude review");
+`custom-memory-engine/tests/test_claude_integration.py` (25 checks); `actionlint` over both workflows.
+
+**Status:** decided and implemented (2026-11-20), under the Project Owner's instruction to make the review gate
+repository-aware. `V2-D57` stands; this records how it runs.

@@ -3,7 +3,23 @@ name: Claude Code Review
 # Advisory automated review on every non-draft PR (a second pair of eyes, not the review gate itself).
 # The review gate is the AI review on the Project Owner's behalf (V2-D57, PLAN/CONTRIBUTING.md §1.1): no human peer
 # review is a prerequisite for merging. This workflow is belt-and-braces, and a red run here blocks nothing.
+#
+# What it runs is `.claude/skills/review-pr/SKILL.md`, a procedure this repository owns, rather than the stock
+# `code-review` plugin. The plugin's own instructions stop as soon as Claude has commented on a PR (so a second push is
+# never reviewed) and restrict its bug agents to the diff. Measured over 106 pull requests it posted 106 "No issues
+# found" summaries and four inline findings, while the defects it was meant to catch were found later by hand (#228,
+# #229). The skill reads REVIEW.md and the engine's CLAUDE.md from the BASE branch, so a pull request cannot edit the
+# standard it is reviewed against. Both behaviours are pinned by custom-memory-engine/tests/test_claude_integration.py.
+#
+# Two reviewers must never run on one PR. If Code Review (the managed service, an Owner setting) is enabled for this
+# repository, set the repository variable CLAUDE_REVIEW_MODE=native and this job skips before minting any token.
+#
 # Same-repository, non-draft, non-Dependabot PRs only: fork and Dependabot PRs never receive the OAuth secret.
+#
+# Verifying the reviewer itself: the repository variable CLAUDE_REVIEW_MODE does not affect it, but the reviewer cannot
+# prove it finds bugs by going green. Plant a defect in a throwaway PR (a guard deleted from a migration's trigger, an
+# `assemble` bypass on a read path) and confirm it is reported inline; do this after any change to REVIEW.md, the skill,
+# or this file.
 
 on:
   pull_request:
@@ -16,9 +32,12 @@ concurrency:
 jobs:
   claude-review:
     if: >-
+      !cancelled() &&
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      !endsWith(vars.CLAUDE_REVIEW_MODE, 'native')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -28,18 +47,81 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout the base branch at the workspace root (the standard, and the repo the action expects)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0 # the review needs the commit history and the base commit itself, not one commit
+          persist-credentials: false
 
-      - name: Run Claude Code Review
+      - name: Checkout the pull request beside it (the code under review)
+        # The action's documented layout for a ref it does not own: never into the workspace root
+        # (docs/security.md, "Which files come from the base branch on pull requests"). REVIEW.md, CLAUDE.md and this
+        # skill's own text are read from the base checkout, so a pull request cannot edit the standard it is held to.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve the review standard from the base branch, not from the pull request
+        # Three copies coexist, and each has one job:
+        #   workspace root  the base branch's instructions, trusted. The action itself restores `CLAUDE.md`, `AGENTS.md`
+        #                   and `.claude/` here, and a `/skill-name` prompt resolves its SKILL.md from here too.
+        #   pr-head         the reviewed code. Its own copies of the instructions are replaced below, so a search across
+        #                   `pr-head` cannot surface a pull request's standard as though it were the standard.
+        # The pull request's versions stay in its diff, which is where an instruction change is reviewed.
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          # 1. The skill's file comes from the pull request when its base has none, so a pull request that introduces
+          #    it is reviewable at all. The prompt says which instruction files were the pull request's own.
+          if git cat-file -e "HEAD:.claude/skills/review-pr/SKILL.md" 2>/dev/null; then
+            echo "skill: from the base branch"
+          else
+            rm -rf .claude/skills/review-pr
+            mkdir -p .claude/skills
+            git -C pr-head archive HEAD .claude/skills/review-pr | tar -x -C .
+            echo "skill: introduced by this pull request (:warning: its instruction change is part of the diff)"
+          fi
+          test -f .claude/skills/review-pr/SKILL.md
+          # 2. The reviewed tree carries the base branch's instructions.
+          for path in REVIEW.md CLAUDE.md AGENTS.md custom-memory-engine/CLAUDE.md .claude; do
+            if git cat-file -e "HEAD:$path" 2>/dev/null; then
+              rm -rf "pr-head/${path:?}"
+              git archive HEAD "$path" | tar -x -C pr-head
+            fi
+          done
+          for path in REVIEW.md custom-memory-engine/CLAUDE.md; do
+            if [ -f "$path" ]; then diff -q "$path" "pr-head/$path"; fi
+          done
+
+      - name: Run the review
         id: claude-review
-        uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1
+        uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1.0.275
+        env:
+          # `--model` reads the environment, so the depth/cost trade-off is a repository variable rather than an edit to
+          # this file: unset means claude-opus-5-5; `claude-sonnet-5-5` is materially cheaper per review.
+          CLAUDE_REVIEW_MODEL: ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-opus-5-5' }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
+          prompt: >-
+            /review-pr
+            PR_NUMBER=${{ github.event.pull_request.number }}
+            BASE_REF=${{ github.event.pull_request.base.ref }}
+            HEAD_SHA=${{ github.event.pull_request.head.sha }}
+            The base branch is checked out at the workspace root and the pull request at ./pr-head.
+            Follow the skill exactly; it says which files to read from which checkout, and which instructions to read
+            from the base branch rather than from the pull request.
+          # `default`, not `auto`: the review job runs with a strict allow list, and every tool it needs is named below.
+          # The deny list is belt and braces for the one thing a review must never do: change the pull request, approve
+          # it, or merge it (V2-D57: no GitHub approval is ever fabricated to satisfy branch protection).
+          claude_args: |
+            --permission-mode default
+            --model ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-opus-5-5' }}
+            --add-dir pr-head
+            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh api:*),Bash(gh issue view:*),Bash(gh search:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git grep:*),Bash(git show-ref:*),Bash(git fetch:*)"
+            --disallowedTools "Edit,Write,NotebookEdit,mcp__github_file_ops,Bash(git push:*),Bash(git commit:*),Bash(git merge:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr review:*),Bash(gh pr edit:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md

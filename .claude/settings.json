@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(make check:*)",
+      "Bash(make lint:*)",
+      "Bash(make format:*)",
+      "Bash(make typecheck:*)",
+      "Bash(make test:*)",
+      "Bash(make help:*)",
+      "Bash(uv run --no-sync ruff check:*)",
+      "Bash(uv run --no-sync ruff format:*)",
+      "Bash(uv run --no-sync pyright:*)",
+      "Bash(uv run --no-sync pytest:*)",
+      "Bash(uv run --env-file .env pytest:*)",
+      "Bash(uv sync --frozen:*)",
+      "Bash(uv sync --locked:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh api repos/eMinders/ChronaMind:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./custom-memory-engine/.env)",
+      "Read(./custom-memory-engine/.env.*)",
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr close:*)",
+      "Bash(gh pr review:*)",
+      "Bash(gh release:*)",
+      "Bash(docker compose -p cme-verify down -v:*)",
+      "Bash(*--confirm-schema:*)"
+    ]
+  }
+}

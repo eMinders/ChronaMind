@@ -22,8 +22,13 @@ wheels/
 # Reports
 evals/reports/
 
-# IDE / Agent configs
-.claude/
+# IDE / Agent configs. The project's own Claude config is tracked (`.claude/settings.json` and `.claude/skills/`, which
+# the review workflow reads); everything else there is personal and stays local.
+.claude/*
+!.claude/settings.json
+!.claude/NOTICE.md
+!.claude/skills/
+!.claude/skills/**
 .cursor/
 .vscode/
 .agents/
