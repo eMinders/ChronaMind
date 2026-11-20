@@ -42,10 +42,11 @@ from custom_memory_engine.api.contract import (
     Tier,
     authorize,
 )
+from custom_memory_engine.api.refine import ResultSnapshot, ResultStore
 from custom_memory_engine.engine.channels import opens_contradiction
 from custom_memory_engine.model.association import ASSOCIATION_TYPES
 from custom_memory_engine.model.axes import LIFECYCLES, Lifecycle
-from custom_memory_engine.scope.access import ReadSet, authorize_write, row_visible
+from custom_memory_engine.scope.access import ReadSet, authorize_write, covers, row_visible
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
 from custom_memory_engine.scope.provenance import is_opaque_reference
 
@@ -55,10 +56,9 @@ INTERNAL_ERROR = "internal_error"
 # Names a request must never use to try to set who the caller is. (`grant_access` has a legitimate input called
 # `principal` - the grantee - so that name is validated like any other input instead.)
 RESERVED_ARGUMENTS = frozenset({"tier", "admin", "user_id", "caller", "ctx", "credential", "read_set"})
-#: Argument names that name an existing artifact, association, entity or result (single id each).
+#: Argument names that name an existing artifact, association, entity or grant (single id each).
 SINGLE_TARGETS = (
     "artifact_id",
-    "result_id",
     "association_id",
     "from",
     "to",
@@ -67,6 +67,9 @@ SINGLE_TARGETS = (
     "subject_entity",
     "procedure_id",
 )
+#: `result_id` names a prior **result**, not an artifact: it has no row, so it is resolved by the
+#: :class:`~custom_memory_engine.api.refine.ResultStore` and never by the artifact resolver (E-034, V2-D83).
+RESULT_TARGETS = ("result_id",)
 #: Target inputs a caller may omit: `assert`'s `subject_entity` names the entity a claim is about, and a claim about
 #: no entity is the v1 shape (`subject_key='self'`), so absence is legal and is not a `target_required` fault.
 OPTIONAL_TARGETS = frozenset({"subject_entity"})
@@ -189,6 +192,8 @@ class Call:
     contradiction_origin: Origin | None = None
     opens_contradiction: bool = False
     targets: Mapping[str, TargetInfo] = field(default_factory=dict)
+    #: The prior result a `refine` drills into, resolved from its handle by `targets_readable` before dispatch.
+    result: ResultSnapshot | None = None
 
 
 type Handler = Callable[[Call], Awaitable[object]]
@@ -305,10 +310,33 @@ def _target_ids(op: Operation, args: dict[str, object]) -> list[str]:
     return ids
 
 
+def _result_id(op: Operation, args: dict[str, object]) -> str | None:
+    """The result handle ``op`` names, if it names one: present, non-empty text (never resolved as an artifact)."""
+    if not any(name in op.inputs for name in RESULT_TARGETS):
+        return None
+    value = args.get("result_id")
+    if not isinstance(value, str) or not value:
+        raise _fail(op, "validation_error", "target_required")
+    return value
+
+
 async def _targets_readable(
     engine: Engine, ctx: CallerContext, op: Operation, args: dict[str, object], state: dict[str, object]
 ) -> None:
+    # A result handle is the one target that is not a row: it is resolved from the result store, and the snapshot it
+    # yields carries the read set, the intent and the candidate set the drill-down is confined to (E-034, V2-D83).
+    # Unknown, foreign and expired are one failed lookup and one answer (`forbidden`, T-11).
+    result_id = _result_id(op, args)
+    if result_id is not None:
+        snapshot = engine.resolve_result(ctx, result_id)
+        # A drill-down may run only while the caller still holds the read set the result was produced under, so a
+        # credential that has narrowed since is refused instead of silently reading less (E-034, V2-D83).
+        if snapshot is None or not covers(ctx.read_set, snapshot.read_set):
+            raise _fail(op, "forbidden")
+        state["result"] = snapshot
     ids = _target_ids(op, args)
+    if not ids:
+        return
     # An opaque provenance handle is never an identifier: answer exactly like an unknown id, with no lookup.
     if any(is_opaque_reference(i) for i in ids):
         raise _fail(op, "forbidden")
@@ -396,11 +424,15 @@ class Engine:
         principals: PrincipalRegistry | None = None,
         handlers: Mapping[str, Handler] | None = None,
         scope_reads: ScopeReadRecorder | None = None,
+        results: ResultStore | None = None,
     ) -> None:
         self.resolver = resolver
         self.methods = methods
         self.principals = principals
         self.scope_reads = scope_reads
+        #: The process-local handle map `query` issues into and `refine` resolves from (E-034, V2-D83). It lives on
+        #: the engine because the entry point is what turns a `result_id` into the snapshot a handler may act on.
+        self.results = results if results is not None else ResultStore()
         self._handlers: dict[str, Handler] = {}
         for name, handler in (handlers or {}).items():
             self.register(name, handler)
@@ -431,6 +463,14 @@ class Engine:
         if self.principals is None:
             return False
         return await self.principals.exists(principal)
+
+    def resolve_result(self, ctx: CallerContext, result_id: str) -> ResultSnapshot | None:
+        """The prior result ``result_id`` names *for this caller*, or ``None`` when it names nothing usable.
+
+        Unknown, another principal's and expired are deliberately one answer (``T-11``): the store cannot tell them
+        apart and neither can the caller.
+        """
+        return self.results.resolve(ctx.principal, result_id)
 
     async def _record_scope_read(self, ctx: CallerContext, spec: Operation, targets: Mapping[str, TargetInfo]) -> None:
         """``ARCHITECTURE_V2.md`` section 5 rule 6: log a read that reached outside the caller's own namespace.
@@ -486,6 +526,7 @@ class Engine:
                 state.get("contradiction_origin"),  # type: ignore[arg-type]
                 bool(state.get("opens_contradiction", False)),
                 dict(state.get("targets", {})),  # type: ignore[call-overload]
+                state.get("result"),  # type: ignore[arg-type]
             )
             result = await handler(call)
             # 5. Rule 6: a read that left the caller's namespace leaves one content-free `scope_read` row. It runs
