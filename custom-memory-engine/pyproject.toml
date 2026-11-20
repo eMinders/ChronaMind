@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Independent Custom Memory Engine decision contracts and compatibility verification"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "psycopg[binary,pool]==3.3.8",
+  "psycopg[binary,pool]==3.3.9",
   "pgvector==0.5.1",
   "pydantic==2.14.3",
   "tenacity==9.2.1",
@@ -13,7 +13,7 @@ dependencies = [
   "numpy==2.5.4",
   "scipy==1.18.1",
   "ijson==3.6.0",
-  "regex==2026.9.29",
+  "regex==2026.11.9",
 ]
 
 [project.optional-dependencies]
@@ -30,9 +30,9 @@ baselines = [
 [dependency-groups]
 dev = [
   "pytest==9.2.0",
-  "pytest-asyncio==1.4.1.post1",
+  "pytest-asyncio==1.5.0",
   "pytest-xdist==3.8.0",
-  "ruff==0.17.4",
+  "ruff==0.17.5",
   "pyright==1.1.414",
 ]
 
