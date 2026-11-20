@@ -2145,8 +2145,8 @@ already leak under that ablation); `reports/deletion/suite_d_dev_11ch_{P,A8}.jso
 ## V2-D85 — `V2-D57`'s review gate is executed by a repository-owned procedure, not by a stock plugin prompt
 
 **Context.** `V2-D57` makes the AI review the project's review gate but says nothing about *how* it runs, so it ran on
-the generic `code-review` plugin. Measured on this repository: 106 pull requests, 106 "No issues found" summaries and
-four inline comments. The plugin's own instructions explain the result — it stops when "Claude has already commented on
+the generic `code-review` plugin. Measured on this repository: across 106 pull requests, 107 summary comments — every
+one "No issues found" — and four inline comments. The plugin's own instructions explain the result — it stops when "Claude has already commented on
 this PR", so only the first push of a pull request was ever reviewed, and its bug agents are told to "focus only on the
 diff itself without reading extra context", which excludes exactly the defects `V2-D57`'s own rationale lists (an
 audit-key collision, a ledger reverted by merge order, a property test running 315 cases where its issue required

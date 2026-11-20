@@ -88,8 +88,8 @@ platform setting, not this policy, and no human approval is ever fabricated to s
 `.claude/skills/review-pr/SKILL.md`, the review-only rules in the repository-root `REVIEW.md`, and the engine context a
 reviewer has to read in `custom-memory-engine/CLAUDE.md`. The workflow `.github/workflows/claude-code-review.yml` runs
 it on every non-draft same-repository pull request, and `@claude review` runs it on demand (see
-`.github/workflows/README.md`). It replaced the stock `code-review` plugin, which over 106 pull requests posted 106
-"No issues found" summaries and four inline comments: the plugin stops a review once Claude has commented on a pull
+`.github/workflows/README.md`). It replaced the stock `code-review` plugin, which across 106 pull requests posted 107
+summary comments — every one "No issues found" — and four inline comments: the plugin stops a review once Claude has commented on a pull
 request, and its bug agents are told to read the diff and not the surrounding code — the opposite of step 2 above. The
 instruction files' references are checked by `tests/test_claude_integration.py`, so a dead `path::symbol` in the
 standard fails CI rather than misleading the next review.

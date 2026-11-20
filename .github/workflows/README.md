@@ -39,8 +39,8 @@ All three required gates must be green (or skipped by `changes` when no engine p
 ## The Claude review
 
 `.github/workflows/claude-code-review.yml` runs `.claude/skills/review-pr/SKILL.md`, a procedure this repository owns,
-rather than the stock `code-review` plugin. The plugin was measured on this repository: over 106 pull requests it
-posted 106 "No issues found" summaries and four inline comments, because its own instructions stop a review as soon as
+rather than the stock `code-review` plugin. The plugin was measured on this repository: across 106 pull requests it
+posted 107 summary comments, every one of them "No issues found", and four inline comments — because its own instructions stop a review as soon as
 Claude has commented on a PR and restrict its bug agents to the diff. The defects it was meant to catch (`#228`'s
 `SECURITY DEFINER` gate on a forgeable GUC, `#229`'s `get` bypassing `assemble`) were found by hand afterwards.
 
