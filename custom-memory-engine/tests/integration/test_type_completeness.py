@@ -33,6 +33,7 @@ from psycopg import AsyncConnection, sql
 from psycopg.errors import CheckViolation, RaiseException
 
 from custom_memory_engine.api.contract import OPERATIONS
+from custom_memory_engine.api.delete_handlers import register_delete_handlers
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
 from custom_memory_engine.api.infer_handlers import register_infer_handlers
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
@@ -41,7 +42,7 @@ from custom_memory_engine.api.outcome_handlers import register_outcome_handlers
 from custom_memory_engine.api.read_handlers import Artifact, CostReport, QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Receipt
 from custom_memory_engine.engine.channels import Verification, channel_of
-from custom_memory_engine.engine.deletion import delete_memory
+from custom_memory_engine.engine.deletion import DeletionReceipt, delete_memory
 from custom_memory_engine.engine.planning import STAGES
 from custom_memory_engine.engine.purge import PurgeReceipt
 from custom_memory_engine.grounding.sources import canonical_hash
@@ -635,7 +636,18 @@ async def test_link_entity_is_wired_through_engine_call_and_both_endpoints_must_
 def test_no_profile_specific_code_path_in_the_generic_engine_api() -> None:
     """Requirement 6: the handlers read a profile's DATA (kinds, retention); they never branch on which profile it is."""
     root = Path(__file__).resolve().parents[2] / "src" / "custom_memory_engine"
-    for relative in ("api/ingest_handlers.py", "api/handlers.py", "api/entry.py", "api/runtime.py", "engine/cost.py"):
+    for relative in (
+        "api/ingest_handlers.py",
+        "api/handlers.py",
+        "api/delete_handlers.py",
+        "api/entry.py",
+        "api/runtime.py",
+        "deletion/closure.py",
+        "deletion/rederive.py",
+        "deletion/scanner.py",
+        "engine/cost.py",
+        "engine/deletion.py",
+    ):
         assert find_profile_branching((root / relative).read_text(encoding="utf-8")) == [], relative
 
 
@@ -696,6 +708,33 @@ async def test_cost_is_wired_through_engine_call_for_all_tiers(database) -> None
             assert report.charged_calls == 0 and report.cost_usd == 0
 
 
+async def test_delete_is_wired_through_engine_call_for_tier_c_only(database) -> None:  # noqa: F811
+    """E-037 / E-039: ``delete`` is wired through ``Engine.call``, refused for Tier B, and removes the target."""
+    async with world(database) as (conn, engine, _schema):
+        await add_turn(conn)
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_ingest_handlers(
+            engine, runtime, profile_with("delete-e018", kinds=["episode"], retention={"episode": "durable"})
+        )
+        register_read_handlers(engine, runtime)
+        register_delete_handlers(engine, runtime)
+        assert "delete" not in engine.unwired_operations()
+        ep = await episode_through_the_api(conn, engine, key="e018-delete")
+        (mem_key,) = (await rows(conn, "SELECT memory_key FROM memory_version WHERE id = %s", (ep.id,)))[0]
+        with pytest.raises(EntryError) as denied:
+            await engine.call(
+                caller("alice", "B"), "delete", {"scope": "memory", "target_ref": str(mem_key), "deletion_epoch": None}
+            )
+        assert denied.value.code == "forbidden"
+        receipt = await engine.call(
+            caller("alice", "C"), "delete", {"scope": "memory", "target_ref": str(mem_key), "deletion_epoch": 1}
+        )
+        assert isinstance(receipt, DeletionReceipt) and receipt.deleted_versions == 1
+        with pytest.raises(EntryError) as gone:
+            await engine.call(caller("alice", "C"), "get", {"artifact_id": ep.id})
+        assert gone.value.code == "forbidden"
+
+
 async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_passes(database) -> None:  # noqa: F811
     async with world(database) as (conn, engine, _schema):
         del conn
@@ -705,10 +744,11 @@ async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_pass
         register_infer_handlers(engine, runtime, tau_confidence=0.90, tau_coverage=0.60)  # V2-D30 suggested values
         register_maintain_handlers(engine, runtime)
         register_outcome_handlers(engine, runtime)
+        register_delete_handlers(engine, runtime)
         unwired = set(engine.unwired_operations())
-        assert {"delete", "export"} <= unwired  # W3+ owners: E-037, A-015
-        # query/get/provenance (E-033), cost (E-036) and infer (C-021) are wired and exercised through Engine.call
-        assert not {"query", "get", "provenance", "cost", "infer"} & unwired
+        assert {"export"} <= unwired  # W3+ owner: A-015
+        # query/get/provenance (E-033), cost (E-036), delete (E-037) and infer (C-021) are wired via Engine.call
+        assert not {"query", "get", "provenance", "cost", "delete", "infer"} & unwired
         # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
         assert "create_scope" not in unwired
         # `purge_working` left it when E-026 wired it; it is exercised above through Engine.call only.

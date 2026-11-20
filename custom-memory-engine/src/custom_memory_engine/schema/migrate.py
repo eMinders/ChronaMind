@@ -43,6 +43,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (19, "019_subject_entity.sql"),
     (20, "020_outcome_stats.sql"),
     (21, "021_procedure_shape.sql"),
+    (22, "022_deletion_through_cognition.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -100,7 +101,17 @@ FUNCTIONS = (
     "enforce_entry_records",
     "guard_outcome_stats",  # migration 20 (E-027)
     "guard_procedure_shape",  # migration 21 (E-030): kind, immutability and the precondition grammar
+    "prevent_derivation_cycle",  # migration 22 (E-037): acyclic memory_derivation at write time (F9)
+    "delete_exclusive_turns",  # migration 22 (E-037): S-08 exclusive turn deletion inside a deletion transaction
+    "clear_retired_tombstone_content",  # migration 22 (E-037): V2-D50 rule 3 tombstone vector/shape removal
+    "deletion_in_this_transaction",  # migration 22 (E-037): the gate of the two helpers and the tombstone exception
 )
+# Parameterized SQL argument lists for non-zero-arg functions in FUNCTIONS so reset() drops them cleanly.
+FUNCTION_ARG_TYPES: Mapping[str, str] = {
+    "delete_exclusive_turns": "text, text[]",
+    "clear_retired_tombstone_content": "text, text[]",
+    "deletion_in_this_transaction": "text",
+}
 logger = structlog.get_logger(__name__)
 
 
@@ -493,7 +504,11 @@ class MigrationRunner:
                 )
                 await connection.execute(sql.SQL("DROP TABLE IF EXISTS {} RESTRICT").format(targets))
                 functions = sql.SQL(", ").join(
-                    sql.SQL("{}()").format(sql.Identifier(self.config.schema_name, name)) for name in FUNCTIONS
+                    sql.SQL("{}({})").format(
+                        sql.Identifier(self.config.schema_name, name),
+                        sql.SQL(cast(LiteralString, FUNCTION_ARG_TYPES.get(name, ""))),
+                    )
+                    for name in FUNCTIONS
                 )
                 await connection.execute(sql.SQL("DROP FUNCTION IF EXISTS {} RESTRICT").format(functions))
                 await connection.execute(

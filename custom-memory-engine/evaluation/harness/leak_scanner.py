@@ -1,26 +1,8 @@
-"""Seven-channel deletion leak scanner for the evaluation harness (#46 / RL-070).
+"""Deletion leak scanner probes for the evaluation harness (#46 / RL-070, E-037).
 
-Why this exists
----------------
-``custom_memory_engine.deletion.scanner`` defines all seven channels and ships
-database probes for channels 1, 2 and 4. Channels 3, 5, 6 and 7 cannot be
-answered by engine SQL: they depend on the embedding model, the assembled
-context, the generated answer, and whatever the process wrote to its logs. Until
-this module existed, a normal deletion could therefore report "zero leaks" while
-four channels had never been measured — the report said ``inconclusive``, but
-nothing in the repo produced the missing measurements.
-
-This module supplies them, so ``scan_deleted_key`` can return a fully measured
-seven-channel report. It deliberately separates two questions:
-
-* **Did the canary survive?** — the leak measurement, per channel.
-* **Did the harness notice?** — A8's ablation, which must trip on injected
-  leakage. A scanner never shown to detect a known leak proves nothing, so
-  ``verify_detection`` is a required part of the contract.
-
-The probes here observe a *target system* through the adapter protocol and a
-log-sink callback. They hold no credentials and never retry: a probe that
-silently retries can mask a timing-dependent leak.
+Supplies caller/harness probes for channels 3, 5, 6, 7, 1 (cache surface) and V2 cognition channels 8, 9 (rendered
+statements and bounds), and 11 (pre-deletion export snapshots), so ``scan_deleted_key`` can return a fully measured
+7-channel or 11-channel report without ever reporting an unmeasured channel as zero.
 """
 
 from __future__ import annotations
@@ -30,7 +12,8 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from custom_memory_engine.deletion.scanner import (
-    CHANNELS,
+    ALL_CHANNELS,
+    COGNITION_CHANNELS,
     ChannelProbe,
     DeletionScanReport,
     LeakChannel,
@@ -77,6 +60,24 @@ class VectorSearchSource(Protocol):
     def vector_hits(self, user_id: str, query: str, limit: int) -> Sequence[str]: ...
 
 
+class HypothesisSource(Protocol):
+    """Provides rendered hypothesis-channel items (channel 8)."""
+
+    def rendered_hypotheses(self, user_id: str) -> Sequence[str]: ...
+
+
+class AbstractionRenderSource(Protocol):
+    """Provides rendered abstraction statements including their rendered bounds (channel 9)."""
+
+    def rendered_abstractions(self, user_id: str) -> Sequence[str]: ...
+
+
+class ExportSnapshotSource(Protocol):
+    """Provides payloads of export snapshots still servable for a user (channel 11)."""
+
+    def servable_snapshots(self, user_id: str) -> Sequence[str]: ...
+
+
 type LogSink = Callable[[], Iterable[str]]
 
 
@@ -105,16 +106,12 @@ def _count_occurrences(haystacks: Iterable[str], canary: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Channel probes 3, 5, 6, 7
+# Channel probes 3, 5, 6, 7, 1 (cache) and V2 cognition channels 8, 9, 11
 # ---------------------------------------------------------------------------
 
 
 def vector_probe(source: VectorSearchSource, *, query: str, limit: int = 50) -> MeasuringProbe:
-    """Channel 3: the dense/vector channel must not return deleted content.
-
-    Marked complete: the vector channel has exactly one surface (its ranked
-    result set) once the source is supplied.
-    """
+    """Channel 3: the dense/vector channel must not return deleted content."""
     if limit < 1:
         raise LeakScannerError("positive_limit_required", "channel_3_vector_search")
 
@@ -167,18 +164,56 @@ def log_sink_probe(sink: LogSink) -> MeasuringProbe:
 
 
 def external_cache_probe(lookup: Callable[[str], Sequence[str]]) -> MeasuringProbe:
-    """Channel 1's cache surface: entries created before the epoch must be evicted.
-
-    The engine's SQL storage probe marks channel 1 incomplete precisely because
-    it cannot see an external cache. Supplying this probe completes it: the
-    channel is then reported complete only when the cache is also empty of the
-    canary.
-    """
+    """Channel 1's cache surface: entries created before the epoch must be evicted."""
 
     async def probe(context: ScanContext) -> ProbeMeasurement:
         canary = _require_canary(context.canary)
         entries = tuple(lookup(context.user_id))
         return ProbeMeasurement(_count_occurrences(entries, canary), complete=True)
+
+    return probe
+
+
+def hypothesis_rendering_probe(source: HypothesisSource) -> MeasuringProbe:
+    """Channel 8: rendered hypothesis-channel items must not retain deleted content."""
+
+    async def probe(context: ScanContext) -> ProbeMeasurement:
+        canary = _require_canary(context.canary)
+        items = tuple(source.rendered_hypotheses(context.user_id))
+        for item in items:
+            if not isinstance(item, str):
+                raise LeakScannerError("rendered_hypotheses_must_be_strings", "channel_8_hypothesis_rendering")
+        return ProbeMeasurement(_count_occurrences(items, canary), complete=True)
+
+    return probe
+
+
+def abstraction_bounds_probe(source: AbstractionRenderSource) -> MeasuringProbe:
+    """Channel 9's rendered surface: abstraction statements including their rendered bounds."""
+
+    async def probe(context: ScanContext) -> ProbeMeasurement:
+        canary = _require_canary(context.canary)
+        items = tuple(source.rendered_abstractions(context.user_id))
+        for item in items:
+            if not isinstance(item, str):
+                raise LeakScannerError(
+                    "rendered_abstractions_must_be_strings", "channel_9_abstraction_statements_and_bounds"
+                )
+        return ProbeMeasurement(_count_occurrences(items, canary), complete=True)
+
+    return probe
+
+
+def export_snapshot_probe(source: ExportSnapshotSource) -> MeasuringProbe:
+    """Channel 11: pre-deletion export snapshots must not be servable after deletion (F11)."""
+
+    async def probe(context: ScanContext) -> ProbeMeasurement:
+        canary = _require_canary(context.canary)
+        snapshots = tuple(source.servable_snapshots(context.user_id))
+        for item in snapshots:
+            if not isinstance(item, str):
+                raise LeakScannerError("export_snapshots_must_be_strings", "channel_11_export_snapshots")
+        return ProbeMeasurement(_count_occurrences(snapshots, canary), complete=True)
 
     return probe
 
@@ -195,6 +230,9 @@ def harness_probes(
     answer: tuple[AnswerSource, str] | None = None,
     logs: LogSink | None = None,
     cache: Callable[[str], Sequence[str]] | None = None,
+    hypotheses: HypothesisSource | None = None,
+    abstractions: AbstractionRenderSource | None = None,
+    export_snapshots: ExportSnapshotSource | None = None,
 ) -> dict[LeakChannel, ChannelProbe]:
     """Assemble the probes a caller has surfaces for, keyed by channel.
 
@@ -212,6 +250,12 @@ def harness_probes(
         probes["channel_7_application_logs"] = log_sink_probe(logs)
     if cache is not None:
         probes["channel_1_storage_index_queue_cache_scan"] = external_cache_probe(cache)
+    if hypotheses is not None:
+        probes["channel_8_hypothesis_rendering"] = hypothesis_rendering_probe(hypotheses)
+    if abstractions is not None:
+        probes["channel_9_abstraction_statements_and_bounds"] = abstraction_bounds_probe(abstractions)
+    if export_snapshots is not None:
+        probes["channel_11_export_snapshots"] = export_snapshot_probe(export_snapshots)
     return probes
 
 
@@ -231,14 +275,8 @@ async def verify_detection(
     probes: Mapping[LeakChannel, ChannelProbe],
     injected_channel: LeakChannel = "channel_7_application_logs",
 ) -> DetectionVerification:
-    """Prove the scanner reports a leak when one is present (A8 sanity check).
-
-    A deletion suite that only ever observes clean channels cannot distinguish a
-    complete purge from a broken probe. This injects a canary-bearing channel and
-    requires the report to name it. ``detected`` is False when the probe is
-    missing, unmeasured, or partial — all three are failures of detection.
-    """
-    if injected_channel not in CHANNELS:
+    """Prove the scanner reports a leak when one is present (A8 sanity check)."""
+    if injected_channel not in ALL_CHANNELS:
         raise LeakScannerError("unknown_deletion_channel", injected_channel)
 
     async def leaky(context: ScanContext) -> ProbeMeasurement:
@@ -246,7 +284,8 @@ async def verify_detection(
 
     combined: dict[LeakChannel, ChannelProbe] = dict(probes)
     combined[injected_channel] = leaky
-    report = await scan_deleted_key(context, combined)
+    target = ALL_CHANNELS if injected_channel in COGNITION_CHANNELS else None
+    report = await scan_deleted_key(context, combined, channels=target)
     finding = next((f for f in report.findings if f.channel == injected_channel), None)
     detected = finding is not None and finding.leaked is True
     return DetectionVerification(
@@ -256,7 +295,7 @@ async def verify_detection(
 
 @dataclass(frozen=True)
 class SevenChannelVerdict:
-    """A decision, not a report: deletion is clean only if all seven are measured."""
+    """A decision, not a report: deletion is clean only if every targeted channel is measured and zero."""
 
     clean: bool
     measured_channels: tuple[LeakChannel, ...]
@@ -271,12 +310,7 @@ class SevenChannelVerdict:
 
 
 def verdict(report: DeletionScanReport) -> SevenChannelVerdict:
-    """Classify a scan, failing closed on any unmeasured or partial channel.
-
-    The critical property: ``clean`` is True only for a *fully measured*,
-    zero-residual report. Treating "not measured" as "no leak" is the failure
-    mode this function exists to prevent.
-    """
+    """Classify a scan, failing closed on any unmeasured or partial channel."""
     measured: tuple[LeakChannel, ...] = tuple(f.channel for f in report.findings if f.measured)
     unmeasured: tuple[LeakChannel, ...] = tuple(f.channel for f in report.findings if not f.measured)
     leaking: tuple[LeakChannel, ...] = tuple(f.channel for f in report.findings if f.leaked is True)
@@ -287,17 +321,23 @@ def verdict(report: DeletionScanReport) -> SevenChannelVerdict:
 
 __all__ = [
     "CANARY_MIN_LENGTH",
+    "AbstractionRenderSource",
     "AnswerSource",
     "AssembledContextSource",
     "DetectionVerification",
+    "ExportSnapshotSource",
+    "HypothesisSource",
     "LeakScannerError",
     "LogSink",
     "MeasuringProbe",
     "SevenChannelVerdict",
     "VectorSearchSource",
+    "abstraction_bounds_probe",
     "answer_probe",
     "assembled_context_probe",
+    "export_snapshot_probe",
     "external_cache_probe",
+    "hypothesis_rendering_probe",
     "harness_probes",
     "log_sink_probe",
     "vector_probe",

@@ -51,7 +51,7 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `expire` | operation | `E-039`, `A-014` | admin-only; unwired: `A-014` lands it through `Engine.call` (§4.1) |
 | `rebuild_index` | operation | `E-039`, `A-014` | admin-only; unwired: `A-014` lands it through `Engine.call` (§4.1) |
 | `register_method` | operation | `E-039`, `E-014` | admin-only; `V2-D46` |
-| `delete` | operation | `E-039`, `E-037` | unwired: `E-037` lands it through `Engine.call` (§4.1) |
+| `delete` | operation | `E-039`, `E-037` | wired: `E-037` lands it through `Engine.call` (§4.1), with unbounded closure, two-phase ordering, 11 channels and T-29/S-08 |
 | `export` | operation | `E-039`, `A-015` | unwired: `A-015` lands it through `Engine.call` (§4.1) |
 | `create_scope` | operation | `E-039`, `E-040` | `V2-D46`; behaviour split from `E-011` at its closure (`V2-D63`); unwired: `E-040` lands it through `Engine.call` (§4.1) |
 | `grant_access` | operation | `E-039`, `E-011` | `V2-D46`, `V2-D36` |

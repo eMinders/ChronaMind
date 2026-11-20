@@ -245,7 +245,7 @@ async def test_rollback_restores_version_20_exactly_and_reapply_works(database) 
         )
     assert (await runner.status()).version == M21 - 1
     assert (await runner.apply()).action == "applied"
-    assert (await runner.status()).version == M21
+    assert (await runner.status()).version == migrate.VERSION
 
 
 async def test_rolling_back_with_stored_shapes_loses_them_but_not_the_procedures(database) -> None:  # noqa: F811

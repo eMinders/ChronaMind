@@ -114,14 +114,57 @@ def test_the_smallest_counterexample_for_dependents_first_classification() -> No
 
 
 def test_the_v1_depth_bound_does_not_reach_dependents_beyond_it() -> None:
-    """The real v1 closure function: a chain longer than the bound is only partly reached."""
+    """Explicit v1 bound (``max_depth=MAX_LINEAGE_DEPTH``) stops at 3; the V2 default is unbounded (``V2-D09``)."""
     chain = MAX_LINEAGE_DEPTH + 4
     edges = tuple((f"v{i}", f"v{i - 1}") for i in range(1, chain))
-    bounded = lineage_closure(("v0",), edges)
-    unbounded = lineage_closure(("v0",), edges, max_depth=chain)
+    bounded = lineage_closure(("v0",), edges, max_depth=MAX_LINEAGE_DEPTH)
+    unbounded = lineage_closure(("v0",), edges)
     assert len(bounded) == MAX_LINEAGE_DEPTH
     assert len(unbounded) == chain - 1
-    assert set(bounded) < set(unbounded), "the bound silently leaves deeper dependents out of the closure"
+    assert set(bounded) < set(unbounded), "the explicit v1 bound leaves deeper dependents out of the closure"
+
+
+def _classify_earlier_non_transitive_rule(
+    graph: Graph, seeds: frozenset[int], threshold: int, order: list[int]
+) -> dict[int, str]:
+    """The earlier draft rule (before r8 / V2-D50): kept a node ``alive`` whenever its direct sources survived."""
+    fate: dict[int, str] = {}
+    for node in order:
+        sources = graph[node]
+        if node in seeds:
+            fate[node] = "deleted"
+        elif not sources:
+            fate[node] = "alive"
+        else:
+            judged = tuple(s for s in sources if (fate[s] in SURVIVES if s in fate else s not in seeds))
+            if not judged:
+                fate[node] = "deleted"
+            elif len(judged) == len(sources):
+                fate[node] = "alive"
+            elif len(judged) >= threshold:
+                fate[node] = "rederived"
+            else:
+                fate[node] = "retired"
+    return fate
+
+
+def test_earlier_non_transitive_rule_leaves_698_alive_nodes_and_corrected_rule_leaves_0() -> None:
+    """Reproduces the exact ``698 -> 0`` model figure of ``DELETION_ORDER.md`` §3 (criterion 18)."""
+    before = after = 0
+    for size in (3, 4, 5):
+        order = list(range(size))
+        for graph in all_graphs(size):
+            for seed_mask in range(1, 2**size):
+                seeds = frozenset(i for i in range(size) if seed_mask >> i & 1)
+                for threshold in (1, 2):
+                    old_fate = _classify_earlier_non_transitive_rule(graph, seeds, threshold, order)
+                    new_fate, _ = classify(graph, seeds, threshold, order)
+                    for node in order:
+                        if old_fate[node] == "alive" and any(old_fate[a] != "alive" for a in closure(graph, node)):
+                            before += 1
+                        if new_fate[node] == "alive" and any(new_fate[a] != "alive" for a in closure(graph, node)):
+                            after += 1
+    assert (before, after) == (698, 0)
 
 
 def closure(graph: Graph, node: int) -> set[int]:

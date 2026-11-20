@@ -1,6 +1,22 @@
-"""Structured seven-channel deletion verification (Proposal §10.3, RL-070)."""
+"""Structured deletion verification across 7 v1 + 4 cognition channels (RL-070, E-037; ``ARCHITECTURE_V2.md`` §10.3).
 
-from collections.abc import Mapping
+``CHANNELS`` preserves the 7 v1 channels intact so all existing ``RL-070`` 7-channel ``ENFORCED`` tests stay untouched.
+``COGNITION_CHANNELS`` adds channels 8–11 for V2 deletion through cognition:
+
+* **Channel 8** (``channel_8_hypothesis_rendering``): hypothesis-channel rendering (``QueryResult.hypotheses``).
+* **Channel 9** (``channel_9_abstraction_statements_and_bounds``): abstraction statements **including their rendered
+  bounds** (engine DB ``memory_version``/``abstraction_stats`` supplemented with rendered channel output).
+* **Channel 10** (``channel_10_verification_records_and_methods``): ``verification`` records and ``method``
+  registry metadata/parameters.
+* **Channel 11** (``channel_11_export_snapshots``): export snapshots generated before the deletion (F11).
+
+``ALL_CHANNELS = (*CHANNELS, *COGNITION_CHANNELS)`` is the complete 11-channel surface. Unmeasured or partially
+measured channels are always reported as ``inconclusive`` (``measured=False`` / ``complete=False``), never as zero.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from re import fullmatch
 from typing import Literal, Protocol
@@ -18,6 +34,15 @@ CHANNELS = (
     "channel_7_application_logs",
 )
 
+COGNITION_CHANNELS = (
+    "channel_8_hypothesis_rendering",
+    "channel_9_abstraction_statements_and_bounds",
+    "channel_10_verification_records_and_methods",
+    "channel_11_export_snapshots",
+)
+
+ALL_CHANNELS = (*CHANNELS, *COGNITION_CHANNELS)
+
 type LeakChannel = Literal[
     "channel_1_storage_index_queue_cache_scan",
     "channel_2_lexical_search",
@@ -26,6 +51,10 @@ type LeakChannel = Literal[
     "channel_5_assembled_context",
     "channel_6_final_answer",
     "channel_7_application_logs",
+    "channel_8_hypothesis_rendering",
+    "channel_9_abstraction_statements_and_bounds",
+    "channel_10_verification_records_and_methods",
+    "channel_11_export_snapshots",
 ]
 
 
@@ -79,7 +108,7 @@ class ChannelFinding:
 
 @dataclass(frozen=True)
 class DeletionScanReport:
-    """Complete seven-channel scan outcome; unmeasured channels remain inconclusive."""
+    """Structured scan outcome across all targeted channels; unmeasured channels remain inconclusive."""
 
     deletion_epoch: int
     findings: tuple[ChannelFinding, ...]
@@ -99,13 +128,13 @@ def database_channel_probes(
     connection: AsyncConnection,
     *,
     schema_name: str = "cme_engine",
+    include_cognition: bool = False,
 ) -> dict[LeakChannel, ChannelProbe]:
-    """Create database probes for storage/index/queue and derived-memory channels.
+    """Create database probes for storage/index/queue, derived-memory and (optionally) cognition channels.
 
-    Channel 1 is marked partial unless a caller overrides it with a probe that also
-    checks its external cache. Vector search and channels 5–7 require caller-owned
-    probes because they depend on the embedding model and evaluation/application
-    stores outside this package.
+    Channel 1 is marked partial unless a caller supplements it with an external-cache probe.
+    When ``include_cognition=True``, adds database probes for channel 9 (marked partial until supplemented with a
+    rendered-abstraction/bounds probe) and channel 10 (``verification`` records and ``method`` metadata, complete).
     """
     if (
         not isinstance(schema_name, str)
@@ -119,6 +148,10 @@ def database_channel_probes(
     derivations = sql.Identifier(schema_name, "memory_derivation")
     jobs = sql.Identifier(schema_name, "job")
     audit = sql.Identifier(schema_name, "audit_event")
+    requests = sql.Identifier(schema_name, "deletion_request")
+    stats = sql.Identifier(schema_name, "abstraction_stats")
+    verifications = sql.Identifier(schema_name, "verification")
+    methods = sql.Identifier(schema_name, "method")
 
     async def storage_probe(context: ScanContext) -> ProbeMeasurement:
         canary_pattern = f"%{context.canary}%"
@@ -136,9 +169,11 @@ def database_channel_probes(
                       (SELECT count(*) FROM {j} WHERE user_id=%s AND
                         (payload::text ILIKE %s OR payload::text ILIKE %s)) +
                       (SELECT count(*) FROM {a} WHERE user_id=%s AND
-                        (details::text ILIKE %s OR memory_ref ILIKE %s))
+                        (details::text ILIKE %s OR memory_ref ILIKE %s)) +
+                      (SELECT count(*) FROM {r} WHERE user_id=%s AND
+                        (target_ref ILIKE %s))
                     """
-                ).format(v=versions, e=embeddings, x=evidence, j=jobs, a=audit),
+                ).format(v=versions, e=embeddings, x=evidence, j=jobs, a=audit, r=requests),
                 (
                     context.user_id,
                     context.memory_key,
@@ -154,6 +189,8 @@ def database_channel_probes(
                     f"%{context.memory_key}%",
                     context.user_id,
                     canary_pattern,
+                    canary_pattern,
+                    context.user_id,
                     canary_pattern,
                 ),
             )
@@ -199,15 +236,73 @@ def database_channel_probes(
             row = await cursor.fetchone()
         return int(row[0]) if row else 0
 
-    return {
+    probes: dict[LeakChannel, ChannelProbe] = {
         "channel_1_storage_index_queue_cache_scan": storage_probe,
         "channel_2_lexical_search": lexical_probe,
         "channel_4_derived_memory_lookup": derived_probe,
     }
 
+    if include_cognition:
+
+        async def abstraction_db_probe(context: ScanContext) -> ProbeMeasurement:
+            canary_pattern = f"%{context.canary}%"
+            async with connection.cursor(row_factory=tuple_row) as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                          (SELECT count(*) FROM {v} AS v
+                            WHERE v.user_id=%s AND v.kind = 'abstraction'
+                              AND v.content ILIKE %s) +
+                          (SELECT count(*) FROM {s} AS s JOIN {v} AS v ON v.id = s.version_id AND v.user_id = s.user_id
+                            WHERE s.user_id=%s AND v.lifecycle = 'retired' AND v.retirement_reason = 'source_deleted'
+                              AND (s.confidence IS NOT NULL OR s.support_count > 0 OR s.opportunity_count > 0))
+                        """
+                    ).format(v=versions, s=stats),
+                    (context.user_id, canary_pattern, context.user_id),
+                )
+                row = await cursor.fetchone()
+            return ProbeMeasurement(int(row[0]) if row else 0, complete=False)
+
+        async def verification_and_method_probe(context: ScanContext) -> ProbeMeasurement:
+            canary_pattern = f"%{context.canary}%"
+            async with connection.cursor(row_factory=tuple_row) as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                          (SELECT count(*) FROM {ver} AS ver
+                            WHERE ver.user_id=%s AND (
+                              ver.held_out_split_id ILIKE %s
+                              OR ver.negative_control_slice_id ILIKE %s
+                              OR ver.support_context_key ILIKE %s
+                              OR ver.held_out_context_key ILIKE %s
+                            )) +
+                          (SELECT count(*) FROM {m} AS m
+                            WHERE m.name ILIKE %s OR m.description ILIKE %s)
+                        """
+                    ).format(ver=verifications, m=methods),
+                    (
+                        context.user_id,
+                        canary_pattern,
+                        canary_pattern,
+                        canary_pattern,
+                        canary_pattern,
+                        canary_pattern,
+                        canary_pattern,
+                    ),
+                )
+                row = await cursor.fetchone()
+            return ProbeMeasurement(int(row[0]) if row else 0, complete=True)
+
+        probes["channel_9_abstraction_statements_and_bounds"] = abstraction_db_probe
+        probes["channel_10_verification_records_and_methods"] = verification_and_method_probe
+
+    return probes
+
 
 def _supplemented(storage: ChannelProbe, surface: ChannelProbe) -> ChannelProbe:
-    """Channel 1 = SQL storage + the caller's extra surface; complete when that surface is complete."""
+    """Combine a SQL storage probe with a caller's extra surface; complete when that surface is complete."""
 
     async def probe(context: ScanContext) -> ProbeMeasurement:
         stored, extra = await storage(context), await surface(context)
@@ -225,13 +320,13 @@ async def scan_deleted_key(
     *,
     connection: AsyncConnection | None = None,
     schema_name: str = "cme_engine",
+    channels: Sequence[LeakChannel] | None = None,
 ) -> DeletionScanReport:
-    """Run configured probes and return one structured finding for each of seven channels.
+    """Run configured probes and return one structured finding for each targeted channel.
 
-    Channels 1–4 can be backed by engine SQL/retrieval probes; channels 5–7 are
-    normally supplied by the evaluation harness. Missing probes are reported as
-    unmeasured, never as a successful zero-leak result. Probe errors are surfaced
-    as ``ScannerError`` rather than silently converted to a clean scan.
+    When ``channels`` is omitted and no probe names a cognition channel (8–11), scans the 7 v1 ``CHANNELS`` so
+    existing 7-channel callers keep exact compatibility. Passing ``channels=ALL_CHANNELS`` (or supplying any probe in
+    ``COGNITION_CHANNELS``) scans all 11 channels, reporting any missing channel as unmeasured, never zero.
     """
     if not isinstance(context.user_id, str) or not context.user_id.strip():
         raise ScannerError("nonblank_user_id_required", "channel_1_storage_index_queue_cache_scan")
@@ -245,24 +340,50 @@ async def scan_deleted_key(
         or context.deletion_epoch < 1
     ):
         raise ScannerError("positive_deletion_epoch_required", "channel_1_storage_index_queue_cache_scan")
-    configured = database_channel_probes(connection, schema_name=schema_name) if connection is not None else {}
+
     caller = dict(probes or {})
-    surface = caller.pop("channel_1_storage_index_queue_cache_scan", None)
+    unknown_caller = set(caller) - set(ALL_CHANNELS)
+    if unknown_caller:
+        raise ScannerError("unknown_deletion_channel", sorted(unknown_caller)[0])
+
+    if channels is not None:
+        unknown_target = set(channels) - set(ALL_CHANNELS)
+        if unknown_target:
+            raise ScannerError("unknown_deletion_channel", sorted(unknown_target)[0])
+        target_channels: tuple[LeakChannel, ...] = tuple(channels)
+    elif set(caller) & set(COGNITION_CHANNELS):
+        target_channels = ALL_CHANNELS
+    else:
+        target_channels = CHANNELS
+
+    wants_cognition = bool(set(target_channels) & set(COGNITION_CHANNELS))
+    configured = (
+        database_channel_probes(connection, schema_name=schema_name, include_cognition=wants_cognition)
+        if connection is not None
+        else {}
+    )
+    surface_ch1 = caller.pop("channel_1_storage_index_queue_cache_scan", None)
+    surface_ch9 = caller.pop("channel_9_abstraction_statements_and_bounds", None)
     configured.update(caller)
+
     storage = configured.get("channel_1_storage_index_queue_cache_scan")
-    if surface is not None:
+    if surface_ch1 is not None:
         # A caller's channel-1 probe (e.g. an external cache) supplements the SQL storage scan; it must
         # never replace it, or channel 1 would report "complete, zero" without scanning storage at all.
         configured["channel_1_storage_index_queue_cache_scan"] = (
-            surface if storage is None else _supplemented(storage, surface)
+            surface_ch1 if storage is None else _supplemented(storage, surface_ch1)
         )
-    unknown = set(configured) - set(CHANNELS)
-    if unknown:
-        raise ScannerError("unknown_deletion_channel", sorted(unknown)[0])
+
+    abs_db = configured.get("channel_9_abstraction_statements_and_bounds")
+    if surface_ch9 is not None:
+        # Channel 9 combines DB abstraction statements/bounds with rendered output; both must be clean for complete.
+        configured["channel_9_abstraction_statements_and_bounds"] = (
+            surface_ch9 if abs_db is None else _supplemented(abs_db, surface_ch9)
+        )
 
     findings: list[ChannelFinding] = []
-    for channel in CHANNELS:
-        probe = configured.get(channel)  # type: ignore[arg-type]
+    for channel in target_channels:
+        probe = configured.get(channel)
         if probe is None:
             findings.append(ChannelFinding(channel, False, None, False))
             continue
@@ -283,7 +404,9 @@ async def scan_deleted_key(
 
 
 __all__ = [
+    "ALL_CHANNELS",
     "CHANNELS",
+    "COGNITION_CHANNELS",
     "ChannelFinding",
     "ChannelProbe",
     "DeletionScanReport",
