@@ -114,7 +114,8 @@ def test_untrusted_and_automated_pull_requests_never_receive_the_token(review_wo
     guard = conditions.group(1)
     assert "github.event.pull_request.head.repo.full_name == github.repository" in guard, "no fork PRs"
     assert "!github.event.pull_request.draft" in guard, "no drafts"
-    assert "github.event.pull_request.user.login != 'dependabot[bot]'" in guard, "no Dependabot PRs, whoever re-runs them"
+    # The PR's *author*, not only the actor: a re-run by a maintainer does not make a Dependabot PR reviewable.
+    assert "github.event.pull_request.user.login != 'dependabot[bot]'" in guard, "no Dependabot PRs"
     assert "pull_request_target" not in review_workflow, "never that trigger: it runs untrusted code with secrets"
 
 

@@ -64,8 +64,9 @@ is shaped.
 - **A PR is not "CI green" until every required check reports.** `main` is protected: six required checks, up-to-date
   branches, conversation resolution.
 - **Do not merge.** The work is delivered as a pull request; merging is the owner's decision.
-- **Loaded skills**: the `*` skill set in `.claude/skills/` (e.g. `review-pr`) is repository-owned. Local personal
-  settings stay in `.claude/settings.local.json`, which is gitignored.
+- **Claude config**: `.claude/settings.json`, `.claude/NOTICE.md` and the repository-owned skills under `.claude/skills/`
+  (e.g. `review-pr`) are tracked and shared. Personal overrides go in the gitignored per-user settings file beside them,
+  which never ships and must not be cited as if it did.
 
 ## Reviewing
 
