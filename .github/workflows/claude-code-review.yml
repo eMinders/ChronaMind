@@ -77,8 +77,11 @@ jobs:
               git archive HEAD "$path" | tar -x -C pr-head
             fi
           done
-          diff -q REVIEW.md pr-head/REVIEW.md
-          diff -q custom-memory-engine/CLAUDE.md pr-head/custom-memory-engine/CLAUDE.md
+          # A file this pull request introduces does not exist on its base: verify only what base has. The skill is
+          # told to name that case in the review rather than treat it as a missing standard.
+          for path in REVIEW.md custom-memory-engine/CLAUDE.md; do
+            if [ -f "$path" ]; then diff -q "$path" "pr-head/$path"; fi
+          done
 
       - name: Run the review
         id: claude-review
