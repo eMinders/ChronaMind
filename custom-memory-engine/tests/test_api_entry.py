@@ -26,6 +26,7 @@ from custom_memory_engine.api.entry import (
     TargetInfo,
 )
 from custom_memory_engine.api.refine import ResultStore
+from custom_memory_engine.engine.channels import DEFAULT_CHANNEL_BUDGETS
 from custom_memory_engine.engine.planning import Intent
 from custom_memory_engine.model.axes import AxisError
 from custom_memory_engine.scope.access import ReadSet, Selector, resolve_read_set
@@ -165,7 +166,11 @@ def valid_arguments(op_name: str) -> dict[str, object]:
     if "result_id" in arguments:
         # a real, unforgeable handle from the shared store, issued under the read set `ctx()` builds
         arguments["result_id"] = RESULT_STORE.issue(
-            principal="alice", read_set=READ_SET, intent=RESULT_INTENT, candidates=()
+            principal="alice",
+            read_set=READ_SET,
+            intent=RESULT_INTENT,
+            budgets=DEFAULT_CHANNEL_BUDGETS,
+            candidates=(),
         )
     return arguments
 

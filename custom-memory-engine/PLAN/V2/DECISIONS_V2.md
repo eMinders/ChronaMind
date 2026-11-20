@@ -2048,7 +2048,9 @@ persisted, because a result is answer-context material and not a memory: there i
 `export`/`delete` should reach. A restart, a different worker, another principal or an expired entry are therefore
 **one failed lookup** and one answer, `forbidden`, indistinguishably (`THREAT_MODEL.md` T-11). The map records the
 principal, the **read set of the issuing call**, the planner intent (so a refine re-enters `E-031`'s planner, never
-the assembler), the candidate ids the result named, and the chain depth.
+the assembler), the **channel budgets the answer used** (a refine carries no `request`, so defaulting there would
+re-assemble to a different answer than the one being drilled into), the candidate ids the result named, and the
+chain depth.
 
 **Decision — contain the read set, do not re-resolve it.** `CallerContext.read_set` is derived per call from live
 grants, so "the same read set" cannot mean equality of two independently resolved sets. A refine is authorised only
@@ -2081,7 +2083,7 @@ and neither widens.
 **Evidence.** `api/refine.py` (store, interpreter), `engine/planning.py::refine_plan`,
 `api/read_handlers.py::ReadHandlers.refine`, `api/entry.py` (`_result_id`, `RESULT_TARGETS`,
 `Engine.resolve_result`). `tests/test_refine.py` (47 tests) covers the store, the vocabulary, `covers` and the plan.
-`tests/integration/test_refine_db.py` (9 tests) drives every acceptance row through `Engine.call`. Controls: allowing
+`tests/integration/test_refine_db.py` (13 tests) drives every acceptance row through `Engine.call`. Controls: allowing
 a widened read set to execute fails `test_a_widened_credential_does_not_widen_the_drill_down`; returning the
 unmodified result for an unrecognised instruction fails
 `test_an_unrecognised_instruction_is_a_static_error_never_the_unmodified_result`.

@@ -225,9 +225,10 @@ Drill-down on a prior result within the same read set; cannot widen it (`V2-D83`
 `result_id` (`res_` + 128 random bits) in a bounded, process-local, 15-minute handle map; the map is not a table
 (a result is answer-context material, not a memory), so a restart or a different worker answers `forbidden`
 exactly like an unknown handle — never with a wider result. The handle records the **read set of the call that
-produced the result**, and a refine executes under that set: a credential that has widened since changes nothing,
-and one that has narrowed is refused (`forbidden`), never silently redirected. The refine re-enters the planner with
-the recorded intent, cuts association expansion (following an edge would reach an artifact the result never
+produced the result**, with its intent and channel budgets, and a refine executes under that set: a credential that
+has widened since changes nothing, and one that has narrowed is refused (`forbidden`), never silently redirected. The
+refine re-enters the planner with the recorded intent, re-assembles with the recorded budgets, cuts association
+expansion (following an edge would reach an artifact the result never
 contained), and fetches only the result's own candidate ids, re-read from the database: a row deleted since the
 original query is absent, not resurrected.
 

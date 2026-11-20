@@ -19,6 +19,7 @@ from custom_memory_engine.api.refine import (
     ResultStore,
     parse_instruction,
 )
+from custom_memory_engine.engine.channels import ChannelBudgets
 from custom_memory_engine.engine.planning import (
     ASSOCIATION_EXPANSION,
     DEFAULT_HOP_BUDGET,
@@ -31,6 +32,7 @@ from custom_memory_engine.engine.planning import (
 from custom_memory_engine.scope.access import ReadEntry, ReadSet, Selector, covers, resolve_read_set
 
 INTENT = Intent(mode="current_state", limit=5)
+BUDGETS = ChannelBudgets(facts=64, hypotheses=64)
 NOW = datetime(2026, 3, 10, 12, 0, tzinfo=UTC)
 
 
@@ -61,8 +63,12 @@ class Clock:
 def test_a_handle_is_opaque_random_and_never_derivable_from_the_result() -> None:
     """Criterion 1: the id is a capability, not a digest of content or of the request."""
     store = ResultStore()
-    first = store.issue(principal="alice", read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1", "a2"))
-    second = store.issue(principal="alice", read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1", "a2"))
+    first = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1", "a2")
+    )
+    second = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1", "a2")
+    )
     assert first.startswith(RESULT_PREFIX) and len(first) == len(RESULT_PREFIX) + 32
     assert first != second, "two results with identical content must not share a handle"
     assert all(character in "0123456789abcdef" for character in first.removeprefix(RESULT_PREFIX))
@@ -72,12 +78,13 @@ def test_a_handle_is_opaque_random_and_never_derivable_from_the_result() -> None
 def test_resolving_a_handle_returns_what_the_drill_down_needs() -> None:
     store = ResultStore()
     held = alice("/u/alice/p/repo/")
-    handle = store.issue(principal="alice", read_set=held, intent=INTENT, candidates=("a1",), depth=2)
+    handle = store.issue(principal="alice", budgets=BUDGETS, read_set=held, intent=INTENT, candidates=("a1",), depth=2)
     snapshot = store.resolve("alice", handle)
     assert snapshot is not None
     assert snapshot.principal == "alice"
     assert snapshot.read_set == held
     assert snapshot.intent == INTENT
+    assert snapshot.budgets == BUDGETS, "a refine re-assembles with the answer's own budgets"
     assert snapshot.candidates == ("a1",)
     assert snapshot.depth == 2
 
@@ -104,7 +111,9 @@ def test_a_guessed_handle_names_nothing(guess: object) -> None:
 def test_a_foreign_handle_is_unknown_to_its_reader_and_to_nobody_else() -> None:
     """Criterion 5: another principal's handle answers exactly like a handle that was never issued."""
     store = ResultStore()
-    handle = store.issue(principal="alice", read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",))
+    handle = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",)
+    )
     assert store.resolve("bob", handle) is None
     assert store.resolve("alice", handle) is not None  # the owner still holds it: one lookup, one answer
 
@@ -112,7 +121,9 @@ def test_a_foreign_handle_is_unknown_to_its_reader_and_to_nobody_else() -> None:
 def test_an_expired_handle_is_dropped_not_merely_refused() -> None:
     clock = Clock()
     store = ResultStore(ttl=timedelta(minutes=5), clock=clock)
-    handle = store.issue(principal="alice", read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",))
+    handle = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",)
+    )
     clock.advance(timedelta(minutes=4, seconds=59))
     assert store.resolve("alice", handle) is not None
     clock.advance(timedelta(seconds=2))
@@ -123,7 +134,9 @@ def test_an_expired_handle_is_dropped_not_merely_refused() -> None:
 def test_the_store_is_bounded_and_evicts_the_oldest_handle_first() -> None:
     store = ResultStore(capacity=3)
     handles = [
-        store.issue(principal="alice", read_set=alice("/u/alice/"), intent=INTENT, candidates=(f"a{i}",))
+        store.issue(
+            principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=(f"a{i}",)
+        )
         for i in range(4)
     ]
     assert len(store) == 3
@@ -134,10 +147,16 @@ def test_the_store_is_bounded_and_evicts_the_oldest_handle_first() -> None:
 def test_issuing_while_full_drops_expired_entries_before_live_ones() -> None:
     clock = Clock()
     store = ResultStore(ttl=timedelta(minutes=1), capacity=2, clock=clock)
-    stale = store.issue(principal="alice", read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",))
-    fresh = store.issue(principal="alice", read_set=alice("/u/alice/"), intent=INTENT, candidates=("a2",))
+    stale = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",)
+    )
+    fresh = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a2",)
+    )
     clock.advance(timedelta(minutes=1, seconds=1))
-    newest = store.issue(principal="alice", read_set=alice("/u/alice/"), intent=INTENT, candidates=("a3",))
+    newest = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a3",)
+    )
     assert store.resolve("alice", stale) is None
     assert store.resolve("alice", fresh) is None  # expired as well; both were dropped, nothing was evicted live
     assert store.resolve("alice", newest) is not None
@@ -152,7 +171,7 @@ def test_the_store_refuses_a_configuration_that_could_not_be_bounded(ttl: timede
 def test_the_clock_must_be_timezone_aware() -> None:
     store = ResultStore(clock=lambda: datetime(2026, 3, 10, 12, 0))
     with pytest.raises(ValueError):
-        store.issue(principal="alice", read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",))
+        store.issue(principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",))
 
 
 # --- the instruction vocabulary ------------------------------------------------------------------------

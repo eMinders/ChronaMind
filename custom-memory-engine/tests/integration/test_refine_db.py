@@ -24,7 +24,7 @@ from custom_memory_engine.api.maintain_handlers import register_maintain_handler
 from custom_memory_engine.api.read_handlers import QueryResult, register_read_handlers
 from custom_memory_engine.api.refine import MAX_REFINE_DEPTH, ResultStore
 from custom_memory_engine.api.runtime import DbTargets, Receipt
-from custom_memory_engine.scope.access import Selector, resolve_read_set
+from custom_memory_engine.scope.access import ReadSet, Selector, resolve_read_set
 from tests.integration.test_api_wiring_structure import (
     T0,
     caller,
@@ -140,6 +140,81 @@ async def test_an_unrecognised_instruction_is_a_static_error_never_the_unmodifie
         assert bad_channel.code == "validation_error"
 
 
+async def test_an_injected_store_is_the_store_even_while_it_is_empty(database) -> None:  # noqa: F811
+    """A store is a seam: it may carry an injected clock or capacity, so an empty one must not be swapped out."""
+    async with world(database) as (_conn, engine, _schema):
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_ingest_handlers(engine, runtime, CODING_PROFILE)
+        injected = ResultStore()
+        register_read_handlers(engine, runtime, results=injected)
+        assert engine.results is injected, "issue and resolve must share one map, or every refine is refused"
+        await seed(engine, REPO_A, "a1", "observed event one")
+        prior = await answer(engine, reader("alice", REPO_A))
+        assert len(injected) == 1, "the injected store received the handle, and the entry point resolved it"
+        await refined(engine, reader("alice", REPO_A), prior, "mention observed")
+        assert len(injected) == 2
+
+
+async def test_a_refine_reassembles_with_the_budget_the_answer_used(database) -> None:  # noqa: F811
+    """Criterion 7: a drill-down returns a subset of the result it names, not a re-budgeted version of it."""
+    async with world(database) as (_conn, engine, _schema):
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_ingest_handlers(engine, runtime, CODING_PROFILE)
+        register_read_handlers(engine, runtime)
+        for index in range(4):
+            await seed(engine, REPO_A, f"a{index}", f"observed event number {index}")
+        prior = await answer(engine, reader("alice", REPO_A), {"budget": {"facts": 6}})
+        assert prior.coverage.facts.truncated > 0, "the small budget must truncate, or this test proves nothing"
+        narrowed = await refined(engine, reader("alice", REPO_A), prior, "mention observed")
+        assert ids(narrowed, "facts") <= ids(prior, "facts"), "a refine must not re-budget its way to more rows"
+
+
+async def test_a_narrowed_change_result_reports_only_the_keys_it_kept(database) -> None:  # noqa: F811
+    """Criterion 7: `changes` is narrowed with the channels, so a drill-down never reports a row it dropped."""
+    async with world(database) as (_conn, engine, _schema):
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_ingest_handlers(engine, runtime, CODING_PROFILE)
+        register_read_handlers(engine, runtime)
+
+        async def episode_at(when: datetime, key: str) -> str:
+            request = episode(REPO_A, key, f"observed event {key}")
+            request["event_time"] = when.isoformat()
+            receipt = await engine.call(caller("alice"), "ingest_episode", request)
+            assert isinstance(receipt, Receipt)
+            return receipt.id
+
+        # Both are new inside the window, so `change` reports one `added` key for each.
+        kept = await episode_at(T0 + timedelta(minutes=10), "keep")
+        dropped = await episode_at(T0 + timedelta(minutes=20), "drop")
+        prior = await answer(
+            engine,
+            reader("alice", REPO_A),
+            {
+                "mode": "change",
+                "window_start": (T0 - timedelta(hours=1)).isoformat(),
+                "window_end": (T0 + timedelta(hours=1)).isoformat(),
+            },
+        )
+        reported = {identifier for change in prior.changes for identifier in (*change.previous, *change.current)}
+        assert reported == {kept, dropped}
+        narrowed = await refined(engine, reader("alice", REPO_A), prior, f"artifact {kept}")
+        named = {identifier for change in narrowed.changes for identifier in (*change.previous, *change.current)}
+        assert named == {kept}, "the drill-down must not report the change it narrowed away"
+
+
+async def test_an_answer_with_nothing_read_still_carries_a_handle(database) -> None:  # noqa: F811
+    """Criterion 1: every answer path issues one, including the empty-read-set shortcut in `query`."""
+    async with world(database) as (_conn, engine, _schema):
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_read_handlers(engine, runtime)
+        refused = CallerContext.from_credential(
+            Credential("alice", "C", False), write_scope="/u/alice/", read_set=ReadSet((), ())
+        )
+        result = await answer(engine, refused)
+        assert result.result_id is not None
+        assert engine.resolve_result(refused, result.result_id) is not None
+
+
 # --- read-set containment ------------------------------------------------------------------------------
 
 
@@ -215,6 +290,11 @@ async def test_a_refine_chain_is_bounded(database) -> None:  # noqa: F811
             assert result.facts, depth
         exceeded = await forbidden(engine, reader("alice", REPO_A), "refine", refine_args(result, "mention observed"))
         assert (exceeded.code, exceeded.detail) == ("validation_error", "refine_depth_exceeded")
+        # the depth answer does not change with the instruction, so a malformed one at the bound is still the bound
+        malformed = await forbidden(
+            engine, reader("alice", REPO_A), "refine", {"result_id": result.result_id, "instruction": "explain"}
+        )
+        assert (malformed.code, malformed.detail) == ("validation_error", "refine_depth_exceeded")
 
 
 # --- channel membership, labels and bounds -------------------------------------------------------------

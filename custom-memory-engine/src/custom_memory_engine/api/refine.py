@@ -38,6 +38,7 @@ from datetime import UTC, datetime, timedelta
 from secrets import token_hex
 from typing import Literal
 
+from custom_memory_engine.engine.channels import ChannelBudgets
 from custom_memory_engine.engine.planning import Intent
 from custom_memory_engine.scope.access import ReadSet
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
@@ -136,13 +137,16 @@ class ResultSnapshot:
     """What a handle remembers about the ``query`` it names — and everything a refine is allowed to know.
 
     ``read_set`` is the read set of the **original** call, not the refining one (containment). ``intent`` is what the
-    planner was given, so a refine re-enters the planner instead of reaching into the assembler. ``candidates`` are
-    the ids the original result named: a refine may return a subset of them and nothing else.
+    planner was given, so a refine re-enters the planner instead of reaching into the assembler. ``budgets`` are the
+    token ceilings that answer used, because a refine has no ``request`` to read them from and defaulting would
+    re-assemble to a different answer than the one being drilled into. ``candidates`` are the ids the original
+    result named: a refine may return a subset of them and nothing else.
     """
 
     principal: str
     read_set: ReadSet
     intent: Intent
+    budgets: ChannelBudgets
     candidates: tuple[str, ...]
     expires_at: datetime
     depth: int = 0
@@ -197,6 +201,7 @@ class ResultStore:
         principal: str,
         read_set: ReadSet,
         intent: Intent,
+        budgets: ChannelBudgets,
         candidates: Sequence[str],
         depth: int = 0,
     ) -> str:
@@ -214,6 +219,7 @@ class ResultStore:
             principal=principal,
             read_set=read_set,
             intent=intent,
+            budgets=budgets,
             candidates=tuple(candidates),
             depth=depth,
             expires_at=now + self._ttl,

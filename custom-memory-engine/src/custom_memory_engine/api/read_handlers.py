@@ -1184,6 +1184,15 @@ class ReadHandlers:
                 )
                 for item in assembled.conflicts
             ]
+            changes: tuple[Change, ...] = ()
+            if plan.mode == CHANGE_MODE:
+                # `query` keeps the unfiltered diff it always reported: narrowing the views by post-retrieval
+                # filters would be a semantic change to `query` (W6). A *refine* narrows the report to its kept rows.
+                kept = {row.id for row in rows} if narrowing is not None else None
+                changes = diff_views(
+                    previous_view if kept is None else tuple(row for row in previous_view if row.id in kept),
+                    current_view if kept is None else tuple(row for row in current_view if row.id in kept),
+                )
             return QueryResult(
                 facts=facts,
                 hypotheses=hypotheses,
@@ -1192,7 +1201,7 @@ class ReadHandlers:
                 refused=[(item.artifact_id, item.reason) for item in assembled.refused],
                 coverage=assembled.coverage,
                 cost=assembled.cost,
-                changes=diff_views(previous_view, current_view) if plan.mode == CHANGE_MODE else (),
+                changes=changes,
             )
 
     async def query(self, call: Call) -> QueryResult:
@@ -1227,11 +1236,20 @@ class ReadHandlers:
             effective_read_set = call.ctx.read_set
         if mode == "audit_as_of" and call.ctx.tier != "C":
             raise EntryError("forbidden")  # checked before the empty-read-set shortcut, so it never answers
+        intent = self._intent_for(str(mode), request, limit, requested_path)
         if effective_read_set.empty:
-            return QueryResult(is_audit=mode == "audit_as_of")
+            # Nothing can be read, so nothing runs; the answer is still an answer and still gets a handle, so a
+            # caller can drill into it exactly like any other result (``_issue``: every answer path issues one).
+            return self._issue(
+                call,
+                read_set=effective_read_set,
+                intent=intent,
+                budgets=budgets,
+                result=QueryResult(is_audit=mode == "audit_as_of"),
+                depth=0,
+            )
         if len(effective_read_set.entries) > MAX_SELECTORS:
             raise EntryError("resource_limit", "too_many_selectors")
-        intent = self._intent_for(str(mode), request, limit, requested_path)
         with self.observer("plan"):
             try:
                 plan = plan_retrieval(intent, effective_read_set, planner=self.planner)
@@ -1239,7 +1257,7 @@ class ReadHandlers:
                 raise EntryError("validation_error", exc.code) from None
         self.recorder(plan)
         result = await self.execute_plan(call, plan, budgets=budgets)
-        return self._issue(call, read_set=effective_read_set, intent=intent, result=result, depth=0)
+        return self._issue(call, read_set=effective_read_set, intent=intent, budgets=budgets, result=result, depth=0)
 
     async def refine(self, call: Call) -> QueryResult:
         """Drill into a prior result, within its read set (``API_V2.md`` §4.2; ``E-034``, ``V2-D83``).
@@ -1256,12 +1274,14 @@ class ReadHandlers:
             # Unreachable through `Engine.call` (the condition resolves the handle first); a direct handler call has
             # no authorised result to drill into and must fail closed rather than fall back to a fresh query.
             raise EntryError("forbidden")
+        # Depth first: an exhausted chain cannot drill again whatever it asked for, so the answer does not depend on
+        # whether the instruction also happens to be malformed (one precedence, not two).
+        if snapshot.depth >= MAX_REFINE_DEPTH:
+            raise EntryError("validation_error", "refine_depth_exceeded")
         try:
             instruction = parse_instruction(call.arguments.get("instruction"))
         except InstructionError as exc:
             raise EntryError("validation_error", exc.code) from None
-        if snapshot.depth >= MAX_REFINE_DEPTH:
-            raise EntryError("validation_error", "refine_depth_exceeded")
         if not snapshot.candidates:
             # The prior question answered nothing, so there is nothing to narrow. No statement runs, and the chain
             # still returns a result of the same shape with a fresh handle instead of an error for asking exactly.
@@ -1269,6 +1289,7 @@ class ReadHandlers:
                 call,
                 read_set=snapshot.read_set,
                 intent=snapshot.intent,
+                budgets=snapshot.budgets,
                 result=QueryResult(is_audit=snapshot.intent.mode == "audit_as_of"),
                 depth=snapshot.depth + 1,
             )
@@ -1285,25 +1306,40 @@ class ReadHandlers:
         # credential still covers it, so this is a narrowing by construction: a widened credential changes nothing,
         # and provenance renders against the same set, keeping a foreign source opaque.
         recorded = replace(call, ctx=replace(call.ctx, read_set=snapshot.read_set))
-        result = await self.execute_plan(recorded, plan, narrowing=Narrowing(snapshot.candidates, instruction))
+        # The original answer's budgets, not this call's: a refine has no ``request`` to read them from, and
+        # defaulting would let a drill-down return rows the result it names never contained (or fewer of them).
+        result = await self.execute_plan(
+            recorded, plan, budgets=snapshot.budgets, narrowing=Narrowing(snapshot.candidates, instruction)
+        )
         return self._issue(
             call,
             read_set=snapshot.read_set,
             intent=snapshot.intent,
+            budgets=snapshot.budgets,
             result=result,
             depth=snapshot.depth + 1,
         )
 
-    def _issue(self, call: Call, *, read_set: ReadSet, intent: Intent, result: QueryResult, depth: int) -> QueryResult:
+    def _issue(
+        self,
+        call: Call,
+        *,
+        read_set: ReadSet,
+        intent: Intent,
+        budgets: ChannelBudgets,
+        result: QueryResult,
+        depth: int,
+    ) -> QueryResult:
         """Attach a fresh drill-down handle to ``result`` and return it (``E-034``).
 
-        Every answer path issues one, so a caller can always drill again; the handle records the read set and intent
-        of *this* call, which is what confines the next refine.
+        Every answer path issues one, so a caller can always drill again; the handle records the read set, the intent
+        and the channel budgets of *this* call, which is what confines and shapes the next refine.
         """
         result.result_id = self.results.issue(
             principal=call.ctx.principal,
             read_set=read_set,
             intent=intent,
+            budgets=budgets,
             candidates=_result_ids(result),
             depth=depth,
         )
@@ -1341,9 +1377,14 @@ def register_read_handlers(
     ``api/wiring.py`` is unchanged: the rule-based planner, no recording, no measurement. ``results`` defaults to the
     engine's own handle map, so a ``query`` and a later ``refine`` through the same engine see the same handles.
     """
-    handlers = ReadHandlers(
-        runtime, planner=planner, recorder=recorder, observer=observer, results=results or engine.results
-    )
+    # `is not None`, not `or`: a store is a seam (it may carry an injected clock or capacity), and an empty one is
+    # falsy, so `or` would silently swap it for the engine's own map.
+    store = results if results is not None else engine.results
+    # One map or none: `Engine.call` resolves a `result_id` through `engine.results` while the handler issues into
+    # whatever it was given, so a store that is not the engine's would split issue from resolve and refuse every
+    # refine on a handle the engine just minted.
+    engine.results = store
+    handlers = ReadHandlers(runtime, planner=planner, recorder=recorder, observer=observer, results=store)
     table: Mapping[str, Handler] = {
         "get": handlers.get,
         "query": handlers.query,
