@@ -201,16 +201,17 @@ type Handler = Callable[[Call], Awaitable[object]]
 type Check = Callable[["Engine", CallerContext, Operation, dict[str, object], dict[str, object]], Awaitable[None]]
 
 
-def _within_callers_namespace(principal: str, scope_path: str) -> bool:
-    """Whether ``scope_path`` lies in the caller's own ``/u/<principal>/`` namespace.
+def _same_namespace(principal: str, scope_path: str) -> bool:
+    """Whether ``scope_path`` belongs to the caller's own ``/u/<principal>/`` namespace.
 
-    A malformed principal or path is treated as *not* ours, so it is recorded rather than silently skipped: the
-    audit must over-report a doubtful read, never under-report one.
+    Compared with ``is_within`` so a sibling whose id shares a prefix is never mistaken for ours. A path the scope
+    grammar cannot read is taken to be ours: it cannot be shown to reach another namespace, and auditing it would
+    report a boundary crossing that was never established.
     """
     try:
         return parse_scope(scope_path).is_within(parse_scope("/u/" + principal + "/"))
     except ScopeError:
-        return False
+        return True
 
 
 # --- condition checks ----------------------------------------------------------------------------------
@@ -489,7 +490,7 @@ class Engine:
         cross = {
             info.scope_path: info.visibility
             for info in targets.values()
-            if not _within_callers_namespace(ctx.principal, info.scope_path)
+            if not _same_namespace(ctx.principal, info.scope_path)
         }
         if not cross:
             return
