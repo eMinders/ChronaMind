@@ -1,11 +1,13 @@
 """Integration tests for E-036: per-stage retrieval cost attribution and ``cost`` wired through ``Engine.call``.
 
 Timing tolerance (W5, criterion 10):
-The real wall-clock attribution tests inject a 50 ms delay into a single stage X and assert:
+The real wall-clock attribution tests inject a 200 ms delay into a single stage X and assert:
 
-* stage X records ``latency_ms >= 40.0`` (20% downward headroom for OS sleep granularity);
-* every other stage Y != X records ``latency_ms < 25.0`` (well above the < 5 ms uninjected cost on this small
-  fixture, with >= 15 ms separation so CI runner jitter does not flake).
+* stage X records ``latency_ms >= 160.0`` (20% downward headroom for OS sleep granularity; ``time.sleep`` never
+  returns early, so the bound only guards against a clock that under-reports);
+* every other stage Y != X records ``latency_ms < 100.0`` (20x the < 5 ms uninjected cost on this small fixture,
+  and >= 60 ms clear of the target bound). A 25 ms ceiling was observed to flake when the suite shared the
+  database with a concurrent run, so the margin is sized for a loaded runner, not an idle laptop.
 """
 
 from __future__ import annotations
@@ -51,10 +53,10 @@ T1 = T0 + timedelta(hours=2)
 SCOPE = "/u/alice/p/cost/"
 TURN_TEXT = "The user uses PostgreSQL with pgvector"
 
-# Non-flaky timing tolerances for the 50 ms injected-delay attribution proof (E-036 §5.3, criterion 10).
-INJECTED_DELAY_MS = 50.0
-MIN_ATTRIBUTED_MS = 40.0
-MAX_UNINJECTED_MS = 25.0
+# Non-flaky timing tolerances for the injected-delay attribution proof (E-036 §5.3, criterion 10).
+INJECTED_DELAY_MS = 200.0
+MIN_ATTRIBUTED_MS = 160.0
+MAX_UNINJECTED_MS = 100.0
 
 
 def _delay_observer(target_stage: str, delay_ms: float) -> StageObserver:
@@ -146,7 +148,7 @@ async def _seeded_world(
 
 @pytest.mark.parametrize("target_stage", STAGES)
 async def test_injected_delay_in_one_stage_appears_only_in_that_stage_bucket(database, target_stage: str) -> None:  # noqa: F811
-    """W5 / criterion 3: an injected 50 ms delay in stage X appears exclusively in stage X's bucket."""
+    """W5 / criterion 3: an injected delay in stage X appears exclusively in stage X's bucket."""
     async with _seeded_world(database, observer=_delay_observer(target_stage, INJECTED_DELAY_MS)) as (
         engine,
         _conn,

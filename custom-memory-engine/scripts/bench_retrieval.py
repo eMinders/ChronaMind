@@ -160,6 +160,13 @@ async def timed(coro_factory: Callable[[], Awaitable[object]], iterations: int) 
     return summarize(samples)
 
 
+def verify_frozen_baseline() -> None:
+    """Fail loudly if the E-002 figures above drift from the frozen ``retrieval_2000.json`` they are copied from."""
+    frozen = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    if frozen["dense"]["p50_ms"] != E002_DENSE_P50_MS or frozen["fused"]["p95_ms"] != E002_FUSED_P95_MS:
+        raise RuntimeError("e002_baseline_mismatch")
+
+
 async def benchmark_staged_report(
     connection: AsyncConnection,
     *,
@@ -363,6 +370,7 @@ async def main() -> int:
         results["temporal_scan"] = plan[0][0]["Plan"]
 
         if args.report:
+            verify_frozen_baseline()
             staged = await benchmark_staged_report(
                 connection, schema=schema, iterations=args.iterations, limit=args.limit
             )
