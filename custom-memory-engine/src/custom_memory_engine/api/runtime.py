@@ -20,6 +20,7 @@ from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.contract import Tier
 from custom_memory_engine.api.entry import CallerContext, TargetInfo
+from custom_memory_engine.engine.deletion import default_receipt_key
 from custom_memory_engine.model.axes import LIFECYCLES, Lifecycle
 from custom_memory_engine.scope.provenance import ProvenanceKey
 from custom_memory_engine.security import tenant_scope
@@ -50,7 +51,8 @@ class Runtime:
     schema_name: str = "cme_engine"
     provenance_key: ProvenanceKey = field(default_factory=lambda: ProvenanceKey(token_bytes(32)), repr=False)
     #: Keyed HMAC-SHA256 secret for ``deletion_request.target_ref`` digests (``T-29``, E-037).
-    deletion_key: bytes = field(default_factory=lambda: token_bytes(32), repr=False)
+    #: Defaults to the deployment key (``CME_DELETION_RECEIPT_KEY``) so replays match across processes and restarts.
+    deletion_key: bytes = field(default_factory=default_receipt_key, repr=False)
 
     @asynccontextmanager
     async def session(self, principal: str) -> AsyncIterator[AsyncConnection]:

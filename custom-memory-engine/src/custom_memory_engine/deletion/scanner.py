@@ -161,7 +161,7 @@ def database_channel_probes(
                     """
                     SELECT
                       (SELECT count(*) FROM {v} WHERE user_id=%s AND
-                        ((lifecycle IS DISTINCT FROM 'retired' AND memory_key=%s) OR content ILIKE %s)) +
+                        (memory_key=%s OR content ILIKE %s)) +
                       (SELECT count(*) FROM {e} AS e JOIN {v} AS v ON v.id=e.version_id
                         WHERE v.user_id=%s AND (v.memory_key=%s OR v.content ILIKE %s)) +
                       (SELECT count(*) FROM {x} AS x JOIN {v} AS v ON v.id=x.version_id
@@ -221,7 +221,7 @@ def database_channel_probes(
                       (SELECT count(*) FROM {d} AS d
                         JOIN {v} AS v ON v.id IN (d.derived_version_id, d.source_version_id)
                         WHERE d.user_id=%s AND v.user_id=%s
-                          AND ((v.lifecycle IS DISTINCT FROM 'retired' AND v.memory_key=%s) OR v.content ILIKE %s))
+                          AND (v.memory_key=%s OR v.content ILIKE %s))
                     """
                 ).format(v=versions, d=derivations),
                 (

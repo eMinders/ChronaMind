@@ -74,13 +74,21 @@ ARCHIVAL_GUARD_TRIGGERS = (
 
 RECEIPT_DIGEST_PREFIX = "hmac_sha256:"
 _RECEIPT_DOMAIN = "del-target-v1"
-# Deployment key from environment when configured; otherwise an ephemeral per-process 256-bit key (never a hardcoded
-# secret) so idempotent retries within one process/test run match without storing plaintext targets (T-29).
-_PROCESS_RECEIPT_KEY: bytes = (
-    os.environ["CME_DELETION_RECEIPT_KEY"].encode("utf-8")
-    if os.environ.get("CME_DELETION_RECEIPT_KEY")
-    else token_bytes(32)
-)
+RECEIPT_KEY_ENV = "CME_DELETION_RECEIPT_KEY"
+# Fallback when no deployment key is configured (tests, CI): an ephemeral per-process 256-bit key, never a hardcoded
+# secret. It keeps idempotent retries matching within one process; across restarts only a deployment key can.
+_PROCESS_RECEIPT_KEY: bytes = token_bytes(32)
+
+
+def default_receipt_key() -> bytes:
+    """The ``T-29`` receipt key: the deployment key in ``CME_DELETION_RECEIPT_KEY``, else the per-process key.
+
+    Read at call time, so every :class:`~custom_memory_engine.api.runtime.Runtime` and every direct
+    :func:`delete_memory` caller in one deployment computes the same digest for the same target, and an idempotent
+    replay after a restart still matches its original ``deletion_request`` row.
+    """
+    configured = os.environ.get(RECEIPT_KEY_ENV)
+    return configured.encode("utf-8") if configured else _PROCESS_RECEIPT_KEY
 
 
 def target_ref_digest(key: bytes, user_id: str, scope: DeletionScope, target_ref: str) -> str:
@@ -298,7 +306,7 @@ async def delete_memory(
     if isinstance(max_lock_retries, bool) or not isinstance(max_lock_retries, int) or max_lock_retries < 1:
         raise DeletionError("positive_lock_retries_required")
 
-    key = receipt_key if receipt_key is not None else _PROCESS_RECEIPT_KEY
+    key = receipt_key if receipt_key is not None else default_receipt_key()
     stored_target_ref = target_ref_digest(key, user_id, scope, target_ref)
 
     await _verify_user_context(connection, user_id)
@@ -433,9 +441,6 @@ async def _delete_memory_once(
                     discovered_scope_count=len(post_scopes),
                 )
                 raise _ClosureGrewError(post_scopes)
-
-            # Narrow session-local marker read by delete_exclusive_turns / clear_retired_tombstone_vectors (S-08).
-            await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '1', true)")
 
             if deletion_epoch is not None:
                 await cursor.execute(
@@ -596,6 +601,19 @@ async def _delete_memory_once(
                     (evicted_ids, user_id),
                 )
                 turn_ids = {str(row[0]) for row in await cursor.fetchall() if row[0]}
+            # S-08 candidates are the evidence turns of *physically deleted* versions only. A re-derived row loses its
+            # old evidence when it is rebuilt and a retired tombstone keeps its own, so neither is "the deleted
+            # artifact": counting their turns would erase sources that were never evidence of the deleted target.
+            exclusive_candidates: set[str] = set()
+            if plan.to_delete:
+                await cursor.execute(
+                    sql.SQL("SELECT DISTINCT turn_id FROM {e} WHERE version_id = ANY(%s) AND user_id = %s").format(
+                        e=evidence
+                    ),
+                    (list(plan.to_delete), user_id),
+                )
+                exclusive_candidates = {str(row[0]) for row in await cursor.fetchall() if row[0]}
+            if evicted_ids:
                 await cursor.execute(
                     "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid = %s::pg_catalog.regclass "
                     "AND attname = 'source_type' AND NOT attisdropped)",
@@ -614,6 +632,10 @@ async def _delete_memory_once(
                     external_exclusions = tuple(
                         ExternalExclusion(str(row[0]), str(row[1])) for row in await cursor.fetchall()
                     )
+
+            # Narrow transaction-local marker read by delete_exclusive_turns / clear_retired_tombstone_vectors (S-08,
+            # V2-D50 rule 3). Set only once Phase B is certain to run, and cleared again before this function returns.
+            await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '1', true)")
 
             # Phase B: defer archival/lifecycle constraint triggers so they judge the committed final state.
             await cursor.execute(sql.SQL("SET CONSTRAINTS {} DEFERRED").format(archival_guards))
@@ -703,13 +725,17 @@ async def _delete_memory_once(
             # so a turn shared only by co-deleted versions is now exclusive and removed, while any turn still cited
             # by a surviving version or running job is retained.
             deleted_turns = 0
-            if delete_exclusive_sources and turn_ids:
+            if delete_exclusive_sources and exclusive_candidates:
                 await cursor.execute(
                     sql.SQL("SELECT {fn}(%s, %s)").format(fn=exclusive_turns_fn),
-                    (user_id, sorted(turn_ids)),
+                    (user_id, sorted(exclusive_candidates)),
                 )
                 turn_row = await cursor.fetchone()
                 deleted_turns = int(turn_row[0]) if turn_row else 0
+
+            # Close the narrowed privilege path (S-08, V2-D50 rule 3) before returning: the marker is transaction-
+            # local, so without this reset it would stay set for the rest of a caller's enclosing transaction.
+            await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '', true)")
 
             # Retroactive check of every deferred archival/lifecycle trigger against the final state.
             await cursor.execute(sql.SQL("SET CONSTRAINTS {} IMMEDIATE").format(archival_guards))
@@ -791,8 +817,10 @@ __all__: Sequence[str] = (
     "ExternalExclusion",
     "MAX_LINEAGE_DEPTH",
     "RECEIPT_DIGEST_PREFIX",
+    "RECEIPT_KEY_ENV",
     "RetireHook",
     "delete_memory",
+    "default_receipt_key",
     "deletion_epoch",
     "target_ref_digest",
 )

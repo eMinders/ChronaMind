@@ -19,6 +19,7 @@ from custom_memory_engine.engine.deletion import DeletionError, DeletionReceipt,
 from custom_memory_engine.engine.transactions import AblationMode
 
 _VALID_SCOPES: frozenset[str] = frozenset({"memory", "topic", "all"})
+_RETRYABLE_CODES: frozenset[str] = frozenset({"closure_growth_retry_exhausted"})
 
 
 class DeleteHandlers:
@@ -75,6 +76,9 @@ class DeleteHandlers:
                     schema_name=self.runtime.schema_name,
                 )
         except (DeletionError, DeletionPolicyError, ReDerivationError) as exc:
+            # API_V2.md §4.8: closure growth past the bounded lock retries is a conflict the caller may retry.
+            if exc.code in _RETRYABLE_CODES:
+                raise EntryError("retryable_conflict", exc.code) from None
             raise EntryError("validation_error", exc.code) from None
 
 

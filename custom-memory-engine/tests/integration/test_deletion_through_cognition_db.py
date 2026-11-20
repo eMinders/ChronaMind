@@ -21,6 +21,7 @@ import structlog
 from psycopg import AsyncConnection, sql
 from psycopg.errors import InsufficientPrivilege, RaiseException
 
+from custom_memory_engine.api import delete_handlers
 from custom_memory_engine.api.delete_handlers import register_delete_handlers
 from custom_memory_engine.api.entry import CallerContext, Credential, EntryError
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
@@ -47,8 +48,10 @@ from custom_memory_engine.deletion.scanner import (
 from custom_memory_engine.engine.channels import stale_of
 from custom_memory_engine.engine.deletion import (
     RECEIPT_DIGEST_PREFIX,
+    RECEIPT_KEY_ENV,
     DeletionError,
     DeletionReceipt,
+    default_receipt_key,
     delete_memory,
     deletion_epoch,
     target_ref_digest,
@@ -1193,6 +1196,90 @@ async def test_s08_exclusive_evidence_turns_deleted_in_transaction_and_shared_tu
             await conn.execute("RESET ROLE")
             await conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
             await conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+
+
+async def test_s08_turns_of_rederived_dependents_are_never_exclusive_deletion_candidates(db) -> None:
+    """S-08: only turns cited by *deleted* versions are candidates; a re-derived dependent's own turn survives.
+
+    Re-deriving rebuilds the dependent row (its old evidence goes with it), so counting its turns as candidates would
+    erase a source that was never evidence of the deleted target.
+    """
+    _, schema = db
+    async with connect(db) as conn:
+        await _set_user(conn)
+        async with conn.transaction():
+            await _add_turn(conn, "t-seed", 2, "seed turn text")
+            await _add_turn(conn, "t-dep", 3, "dependent's own turn text")
+            await _add_claim(conn, "s-del", "deleted seed", turn_id="t-seed")
+            await _add_claim(conn, "s-keep", "kept source")
+            await _add_claim(conn, "dep", "derived from both", derived=True)
+            await conn.execute(
+                "INSERT INTO memory_derivation VALUES "
+                "('dep', 's-del', 'u1', 'consolidation'), ('dep', 's-keep', 'u1', 'consolidation')"
+            )
+            await conn.execute(
+                "INSERT INTO memory_evidence (version_id, turn_id, user_id, evidence_span, evidence_role) "
+                "VALUES ('dep', 't-dep', 'u1', 'own span', 'support')"
+            )
+        async with conn.transaction():
+            receipt = await delete_memory(
+                conn,
+                "u1",
+                target_ref="s-del",
+                rederivation_builder=_builder,
+                delete_exclusive_sources=True,
+                schema_name=schema,
+            )
+        assert (receipt.deleted_versions, receipt.rederived_dependents, receipt.deleted_turns) == (1, 1, 1)
+        cur = await conn.execute("SELECT id FROM turn WHERE id IN ('t-seed', 't-dep') ORDER BY id")
+        assert [row[0] for row in await cur.fetchall()] == ["t-dep"]
+
+
+async def test_deletion_marker_is_cleared_before_delete_returns(db) -> None:
+    """S-08 / V2-D50 rule 3: the narrowed-privilege marker does not outlive the deletion in its transaction."""
+    _, schema = db
+    async with connect(db) as conn:
+        await _set_user(conn)
+        async with conn.transaction():
+            await _add_claim(conn, "m-del", "to delete")
+        async with conn.transaction():
+            await delete_memory(conn, "u1", target_ref="m-del", schema_name=schema)
+            cur = await conn.execute("SELECT NULLIF(pg_catalog.current_setting('app.deletion_active', true), '')")
+            assert await cur.fetchone() == (None,)
+            with pytest.raises(InsufficientPrivilege):
+                async with conn.transaction():
+                    await conn.execute("SELECT delete_exclusive_turns('u1', ARRAY['t-base'])")
+
+
+def test_receipt_key_defaults_to_the_deployment_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T-29: with ``CME_DELETION_RECEIPT_KEY`` set, every Runtime and direct caller digests with the deployment key."""
+    monkeypatch.setenv(RECEIPT_KEY_ENV, "deployment-key-for-test")
+    assert default_receipt_key() == b"deployment-key-for-test"
+    assert Runtime(cast(AsyncConnection, None), "cme_rt_x").deletion_key == b"deployment-key-for-test"
+    monkeypatch.delenv(RECEIPT_KEY_ENV)
+    # Without a deployment key one process-wide ephemeral key is shared, so replays still match within the process.
+    assert default_receipt_key() == default_receipt_key()
+    assert Runtime(cast(AsyncConnection, None), "cme_rt_x").deletion_key == default_receipt_key()
+
+
+async def test_delete_maps_exhausted_closure_growth_retries_to_retryable_conflict(
+    wired_database,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """API_V2.md §4.8: exhausting the bounded lock retries is ``retryable_conflict``, not ``validation_error``."""
+
+    async def _exhausted(*_args: object, **_kwargs: object) -> DeletionReceipt:
+        raise DeletionError("closure_growth_retry_exhausted")
+
+    monkeypatch.setattr(delete_handlers, "delete_memory", _exhausted)
+    async with world(wired_database) as (_conn, engine, _schema):
+        assert isinstance(engine.resolver, DbTargets)
+        register_delete_handlers(engine, engine.resolver.runtime)
+        with pytest.raises(EntryError) as conflict:
+            await engine.call(
+                caller("alice", "C"), "delete", {"scope": "memory", "target_ref": "k", "deletion_epoch": 1}
+            )
+        assert conflict.value.code == "retryable_conflict"
 
 
 # ------------------------------------------------------------------ delete wired through Engine.call & migration 22
