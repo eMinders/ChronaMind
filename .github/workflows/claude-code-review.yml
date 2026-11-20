@@ -84,7 +84,22 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           ACTION: ${{ github.event.action }}
-        run: python3 .github/scripts/review_gate.py
+        run: |
+          # The gate decides whether a pull request gets reviewed, so it is policy code and comes from the base branch
+          # — a pull request must not be able to edit its own gate into skipping. The one exception is the pull request
+          # that introduces it, where the base has no copy; that copy is then part of the diff, like the skill's own
+          # bootstrap above. Neither copy present is not a reason to skip: it is a reason to review.
+          if ! git cat-file -e "HEAD:.github/scripts/review_gate.py" 2>/dev/null; then
+            { git -C pr-head archive HEAD .github/scripts | tar -x -C .; } || true
+            echo "gate: introduced by this pull request (:warning: its change is part of the diff)"
+          fi
+          if [ -f .github/scripts/review_gate.py ]; then
+            python3 .github/scripts/review_gate.py
+          else
+            echo "::warning::no review gate in the base branch or the pull request; reviewing without a tier"
+            printf 'review=true\ntier=unknown\nreason=gate_failed\nprevious_head_sha=\nprevious_base_sha=\n' \
+              >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Resolve the review standard from the base branch, not from the pull request
         if: steps.gate.outputs.review == 'true'

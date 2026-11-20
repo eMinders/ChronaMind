@@ -491,3 +491,23 @@ def test_the_documented_link_check_actually_catches_a_fabricated_owner(skill: st
         "the check must flag an owner that is not ours: it is the only thing between the reviewer and a link to "
         "someone else's code"
     )
+
+
+def test_the_gate_comes_from_the_base_branch_and_tolerates_its_own_introduction(review_workflow: str) -> None:
+    """The gate is policy code, so it is read from the base branch — but a PR that adds it has no base copy.
+
+    Both halves matter. Running a pull request's own edited gate would let a PR switch off its own review; failing on
+    the pull request that introduces it breaks the change that ships the gate (the first version of this workflow did
+    exactly that: `can't open file '.../review_gate.py'`). The existing skill bootstrap is the precedent, and the last
+    resort is still a review, never a skip.
+    """
+    job = _job(review_workflow, "claude-review")
+    pattern = r"(?ms)^      - name: Decide whether this push needs a review.*?\n        run: \|\n(.*?)^      - name: "
+    gate = re.search(pattern, job)
+    assert gate, "the gate step must have a script body"
+    body = gate.group(1)
+    assert 'git cat-file -e "HEAD:.github/scripts/review_gate.py"' in body, "the base copy is probed first"
+    assert "git -C pr-head archive HEAD .github/scripts" in body, "the introducing PR supplies the first copy"
+    assert "introduced by this pull request" in body, "and says whose copy ran"
+    assert "[ -f .github/scripts/review_gate.py ]" in body, "a missing gate must not fail the job"
+    assert "reason=gate_failed" in body and "review=true" in body, "no gate means a review, not a skip"
