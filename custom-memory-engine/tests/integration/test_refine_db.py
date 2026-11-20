@@ -24,7 +24,7 @@ from custom_memory_engine.api.maintain_handlers import register_maintain_handler
 from custom_memory_engine.api.read_handlers import QueryResult, register_read_handlers
 from custom_memory_engine.api.refine import MAX_REFINE_DEPTH, ResultStore
 from custom_memory_engine.api.runtime import DbTargets, Receipt
-from custom_memory_engine.scope.access import ReadSet, Selector, resolve_read_set
+from custom_memory_engine.scope.access import ReadSet, Selector, resolve, resolve_read_set
 from tests.integration.test_api_wiring_structure import (
     T0,
     caller,
@@ -33,6 +33,8 @@ from tests.integration.test_api_wiring_structure import (
     rows,
     world,
 )
+from tests.integration.test_change_mode_db import SCOPE, T2, scenario
+from tests.integration.test_change_mode_db import T0 as CHANGE_T0
 from tests.integration.test_purge_working_db import working_coding_profile
 from tests.integration.test_read_path_db import CODING_PROFILE, episode
 
@@ -248,6 +250,79 @@ async def test_a_narrowed_credential_is_refused_rather_than_silently_redirected(
         prior = await answer(engine, reader("alice"))  # recorded read set: /u/alice/
         narrowed = reader("alice", REPO_A)  # no longer covers /u/alice/
         error = await forbidden(engine, narrowed, "refine", refine_args(prior, "mention observed"))
+        assert (error.code, error.detail) == ("forbidden", None)
+
+
+async def test_a_narrowed_change_keeps_each_change_whole_with_its_original_outcome(database) -> None:  # noqa: F811
+    """Criterion 7: narrowing to one side of a `changed` key never re-labels it `added` or `removed`."""
+    async with scenario(database) as (engine, _conn, s):
+        prior = await engine.call(
+            caller("alice"),
+            "query",
+            {
+                "request": {
+                    "scope": SCOPE,
+                    "mode": "change",
+                    "window_start": CHANGE_T0.isoformat(),
+                    "window_end": T2.isoformat(),
+                }
+            },
+        )
+        assert isinstance(prior, QueryResult)
+        original = {(change.outcome, change.previous, change.current) for change in prior.changes}
+        assert ("changed", (s.residence_before,), (s.residence_after,)) in original, prior.changes
+        for side in (s.residence_before, s.residence_after):
+            narrowed = await refined(engine, caller("alice"), prior, f"artifact {side}")
+            reported = {(change.outcome, change.previous, change.current) for change in narrowed.changes}
+            assert reported == {("changed", (s.residence_before,), (s.residence_after,))}, (side, narrowed.changes)
+        # a refine that keeps everything reports exactly the diff it drills into
+        everything = await refined(engine, caller("alice"), prior, f"scope {SCOPE}")
+        assert {(c.outcome, c.previous, c.current) for c in everything.changes} == original
+
+
+async def test_a_grant_change_between_the_calls_neither_widens_nor_survives_a_revocation(database) -> None:  # noqa: F811
+    """Criteria 3 and 4 with a real credential change: the read set is re-resolved from live grants on each call.
+
+    The read path answers from the caller's own rows (RLS), so this asserts on the read set each drill-down executes
+    under, which is what a grant changes: never the live one when it is wider, and no drill-down once it is narrower.
+    """
+    async with world(database) as (conn, engine, _schema):
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_read_handlers(engine, runtime)
+        selectors = [Selector.of("/u/bob/"), Selector.of("/u/alice/", {"project", "shared"})]
+
+        async def bob() -> CallerContext:
+            read_set = await resolve(conn, "bob", selectors, schema_name=runtime.schema_name)
+            credential = Credential("bob", "C", False)
+            return CallerContext.from_credential(credential, write_scope="/u/bob/", read_set=read_set)
+
+        def paths(ctx: CallerContext, result: QueryResult) -> set[str]:
+            assert result.result_id is not None
+            snapshot = engine.resolve_result(ctx, result.result_id)
+            assert snapshot is not None
+            return {entry.path for entry in snapshot.read_set.entries}
+
+        # widened: before the grant alice's namespace is denied, so the result's read set does not hold it
+        before_ctx = await bob()
+        before = await answer(engine, before_ctx)
+        assert paths(before_ctx, before) == {"/u/bob/"}
+        grant = await engine.call(
+            caller("alice"), "grant_access", {"scope": "/u/alice/", "principal": "bob", "idempotency_key": "g"}
+        )
+        assert isinstance(grant, str)
+        widened_ctx = await bob()
+        assert "/u/alice/" in {entry.path for entry in widened_ctx.read_set.entries}, "the grant really widened bob"
+        widened = await refined(engine, widened_ctx, before, "scope /u/bob/")
+        assert paths(widened_ctx, widened) == {"/u/bob/"}, "a later grant must not widen the drill-down"
+
+        # narrowed: a result produced under the grant is refused once the grant is revoked
+        granted_ctx = await bob()
+        granted = await answer(engine, granted_ctx)
+        assert paths(granted_ctx, granted) == {"/u/bob/", "/u/alice/"}
+        await engine.call(caller("alice"), "revoke_access", {"grant_id": grant})
+        revoked_ctx = await bob()
+        assert "/u/alice/" not in {entry.path for entry in revoked_ctx.read_set.entries}
+        error = await forbidden(engine, revoked_ctx, "refine", refine_args(granted, "scope /u/bob/"))
         assert (error.code, error.detail) == ("forbidden", None)
 
 

@@ -107,7 +107,8 @@ def parse_instruction(value: object) -> Instruction:
     """Parse one instruction, or raise a static :class:`InstructionError`.
 
     An absent or blank instruction is ``instruction_required``; an operator no rule understands, a missing argument,
-    an unknown channel or a malformed scope is ``instruction_unrecognised``. There is no default operator and no
+    a multi-word argument to an operator other than ``mention``, an unknown channel or a malformed scope is
+    ``instruction_unrecognised``. There is no default operator and no
     "return the result unchanged" path: an unrecognised drill-down is an error, not a no-op (requirement 3).
     """
     if not isinstance(value, str) or not value.strip():
@@ -115,6 +116,11 @@ def parse_instruction(value: object) -> Instruction:
     operator, _, argument = value.strip().partition(" ")
     argument = argument.strip()
     if not argument:
+        raise InstructionError(INSTRUCTION_UNRECOGNISED)
+    # An id, a channel name and a canonical path are single tokens: whitespace inside one means a second operator or a
+    # stray word, and silently matching nothing would be indistinguishable from a real empty drill-down. Only
+    # ``mention`` takes free text.
+    if operator.casefold() != "mention" and len(argument.split()) != 1:
         raise InstructionError(INSTRUCTION_UNRECOGNISED)
     match operator.casefold():
         case "artifact":

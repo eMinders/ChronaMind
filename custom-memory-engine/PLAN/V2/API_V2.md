@@ -236,7 +236,7 @@ A refine applies **one** rule-based narrowing operator per call, matched exhaust
 
 | Instruction | Keeps |
 |---|---|
-| `artifact <id>` | that artifact only |
+| `artifact <id>` | that artifact only (one token) |
 | `channel <facts\|hypotheses\|procedures\|conflicts>` | items `channel_of` routes to that channel |
 | `mention <text>` | items whose content contains the text (case-insensitive) |
 | `scope <path>` | items at or inside the canonical path |

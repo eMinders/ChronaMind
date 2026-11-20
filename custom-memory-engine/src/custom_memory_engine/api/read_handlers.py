@@ -1186,13 +1186,16 @@ class ReadHandlers:
             ]
             changes: tuple[Change, ...] = ()
             if plan.mode == CHANGE_MODE:
-                # `query` keeps the unfiltered diff it always reported: narrowing the views by post-retrieval
-                # filters would be a semantic change to `query` (W6). A *refine* narrows the report to its kept rows.
-                kept = {row.id for row in rows} if narrowing is not None else None
-                changes = diff_views(
-                    previous_view if kept is None else tuple(row for row in previous_view if row.id in kept),
-                    current_view if kept is None else tuple(row for row in current_view if row.id in kept),
-                )
+                # `query` keeps the unfiltered diff it always reported (W6). A *refine* keeps only the changes that
+                # touch a row it kept, each **whole and with its original outcome**: diffing the narrowed views
+                # instead would re-key the report, so narrowing to one side of a `changed` key would misreport it as
+                # `added` or `removed`, a change the drilled-into result never contained.
+                changes = diff_views(previous_view, current_view)
+                if narrowing is not None:
+                    kept = {row.id for row in rows}
+                    changes = tuple(
+                        change for change in changes if kept.intersection((*change.previous, *change.current))
+                    )
             return QueryResult(
                 facts=facts,
                 hypotheses=hypotheses,

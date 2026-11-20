@@ -2066,7 +2066,9 @@ from the re-read, never resurrected.
 `scope <path>` (canonical path, at or inside). `channel` is answered by `channel_of` on the same tuple assembly
 uses, so narrowing can never move an artifact between channels. The filter runs **before** assembly, so coverage and
 cost describe the narrowed candidates and a kept abstraction keeps its label, support summary and bound (`I14`).
-Anything else — absent, blank, unknown operator, missing argument, unknown channel, malformed path — is
+A narrowed `change` result keeps each change that touches a kept row whole, with its original outcome.
+Anything else — absent, blank, unknown operator, missing argument, a multi-word argument to any operator but
+`mention`, unknown channel, malformed path — is
 `validation_error` with a static detail (`instruction_required` / `instruction_unrecognised`), never a silent no-op
 returning the unmodified result. A chain is bounded at `MAX_REFINE_DEPTH = 4`; the fifth answers
 `validation_error/refine_depth_exceeded`.

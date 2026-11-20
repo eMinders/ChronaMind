@@ -206,6 +206,9 @@ def test_every_instruction_operator_has_one_documented_spelling(text: str, opera
         "artifact   ",
         "channel colours",  # not one of the four channels
         "channel facts, hypotheses",  # one operator per instruction
+        "artifact a1 channel facts",  # two operators: an id is one token, never a silent empty match
+        "artifact a1 a2",
+        "scope /u/alice/ /u/bob/",
         "scope alice",  # not a canonical path
         "mention",
     ],
