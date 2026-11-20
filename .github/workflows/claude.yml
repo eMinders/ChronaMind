@@ -125,6 +125,7 @@ jobs:
             This is a full review requested by a maintainer: cover the whole pull request, not only its last commit.
           claude_args: |
             --permission-mode default
+            --model ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5-5' }}
             --add-dir pr-head
             --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh api:*),Bash(gh issue view:*),Bash(gh search:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git grep:*),Bash(git show-ref:*),Bash(git fetch:*)"
             --disallowedTools "Edit,Write,NotebookEdit,mcp__github_file_ops,Bash(git push:*),Bash(git commit:*),Bash(git merge:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr review:*),Bash(gh pr edit:*)"
