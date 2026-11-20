@@ -57,7 +57,7 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `grant_access` | operation | `E-039`, `E-011` | `V2-D46`, `V2-D36` |
 | `revoke_access` | operation | `E-039`, `E-011` | |
 | `stats` | operation | `E-039`, `C-010` | unwired: `C-010` lands it through `Engine.call` (§4.1) |
-| `cost` | operation | `E-039`, `E-036` | unwired: `E-036` lands it through `Engine.call` (§4.1) |
+| `cost` | operation | `E-039`, `E-036` | wired: `E-036` lands it through `Engine.call` (§4.1), with per-stage `QueryCost` and caller-scoped windowed `CostReport` |
 | `M1` | migration | `E-010` | |
 | `M2` | migration | `E-011` | |
 | `M3` | migration | `E-012` | |

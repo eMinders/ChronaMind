@@ -44,6 +44,7 @@ from custom_memory_engine.api.contract import (
 )
 from custom_memory_engine.api.refine import ResultSnapshot, ResultStore
 from custom_memory_engine.engine.channels import opens_contradiction
+from custom_memory_engine.engine.cost import CostStore
 from custom_memory_engine.model.association import ASSOCIATION_TYPES
 from custom_memory_engine.model.axes import LIFECYCLES, Lifecycle
 from custom_memory_engine.scope.access import ReadSet, authorize_write, covers, row_visible
@@ -425,6 +426,7 @@ class Engine:
         handlers: Mapping[str, Handler] | None = None,
         scope_reads: ScopeReadRecorder | None = None,
         results: ResultStore | None = None,
+        costs: CostStore | None = None,
     ) -> None:
         self.resolver = resolver
         self.methods = methods
@@ -433,6 +435,8 @@ class Engine:
         #: The process-local handle map `query` issues into and `refine` resolves from (E-034, V2-D83). It lives on
         #: the engine because the entry point is what turns a `result_id` into the snapshot a handler may act on.
         self.results = results if results is not None else ResultStore()
+        #: The process-local cost store `query`/`refine` record into and `cost` reports from (E-036).
+        self.costs = costs if costs is not None else CostStore()
         self._handlers: dict[str, Handler] = {}
         for name, handler in (handlers or {}).items():
             self.register(name, handler)
