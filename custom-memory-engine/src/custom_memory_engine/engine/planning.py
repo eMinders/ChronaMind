@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
@@ -426,6 +426,26 @@ def plan_retrieval(intent: Intent, read_set: ReadSet, *, planner: Planner | None
     return (planner if planner is not None else RuleBasedPlanner()).plan(intent, read_scopes(read_set))
 
 
+def refine_plan(prior: Plan, *, candidates: int) -> Plan:
+    """The plan one ``refine`` executes: the prior plan, narrowed (``E-034``, ``V2-D83``).
+
+    A refine asks the **same question** of the **same read set**; the instruction narrows what of the answer is kept,
+    and the candidate restriction travels with the execution. Exactly two things change in the plan:
+
+    * ``expansion`` becomes ``none`` with a zero hop budget — following an association would reach an artifact the
+      prior result never contained, and that is a widening, not a drill-down;
+    * ``rows`` becomes the number of candidate ids, so the id-restricted statement fetches the prior result rather
+      than a page of the read set.
+
+    Everything else — mode, route, filters, scopes, instants, request scope — is the prior plan's, because a
+    drill-down may not change the question. Pure, no I/O, deterministic (``E-031``), so a recorded refine plan
+    replays.
+    """
+    if isinstance(candidates, bool) or not isinstance(candidates, int) or candidates < 1:
+        raise PlanningError(PLAN_INTENT_REFUSED)
+    return replace(prior, expansion="none", hop_budget=0, rows=candidates)
+
+
 #: How a plan reaches ``E-036``. The default is a no-op: nothing is logged or stored unless a caller asks. A plan
 #: holds scope paths and ids, so it must not be written to ``audit_event.details`` (``RL-072``: no locator in an audit
 #: detail), which is why this is a callable the handler owns rather than an audit row.
@@ -469,4 +489,5 @@ __all__ = [
     "observe_nothing",
     "read_scopes",
     "record_nothing",
+    "refine_plan",
 ]
