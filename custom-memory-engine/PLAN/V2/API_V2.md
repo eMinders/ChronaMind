@@ -221,8 +221,31 @@ as Tier B, or a scope outside the read set),
 `resource_limit` (more than 16 selectors, or a `change` view exceeding `limit`).
 
 **`refine(ctx, result_id, instruction: str) → QueryResult`**
-Drill-down on a prior result within the same read set; cannot widen it. *Errors:* `forbidden` (unknown or
-foreign `result_id`), `validation_error`.
+Drill-down on a prior result within the same read set; cannot widen it (`V2-D83`). A result carries an opaque
+`result_id` (`res_` + 128 random bits) in a bounded, process-local, 15-minute handle map; the map is not a table
+(a result is answer-context material, not a memory), so a restart or a different worker answers `forbidden`
+exactly like an unknown handle — never with a wider result. The handle records the **read set of the call that
+produced the result**, and a refine executes under that set: a credential that has widened since changes nothing,
+and one that has narrowed is refused (`forbidden`), never silently redirected. The refine re-enters the planner with
+the recorded intent, cuts association expansion (following an edge would reach an artifact the result never
+contained), and fetches only the result's own candidate ids, re-read from the database: a row deleted since the
+original query is absent, not resurrected.
+
+A refine applies **one** rule-based narrowing operator per call, matched exhaustively and never by a model:
+
+| Instruction | Keeps |
+|---|---|
+| `artifact <id>` | that artifact only |
+| `channel <facts\|hypotheses\|procedures\|conflicts>` | items `channel_of` routes to that channel |
+| `mention <text>` | items whose content contains the text (case-insensitive) |
+| `scope <path>` | items at or inside the canonical path |
+
+Narrowing filters the candidate rows **before** assembly, so coverage and cost describe the narrowed answer
+honestly, channel membership is `channel_of`'s unchanged answer, and each kept abstraction keeps its label, support
+summary and bound. A chain is bounded at four refines: the handle records its depth and the fifth answers
+`validation_error/refine_depth_exceeded`. *Errors:* `forbidden` (unknown, foreign, expired, or a handle whose
+recorded read set the caller no longer holds), `validation_error` (`instruction_required`,
+`instruction_unrecognised`, `refine_depth_exceeded`).
 
 **`get(ctx, artifact_id) → Artifact`** and **`provenance(ctx, artifact_id, depth?) → ProvenanceView`**
 Return one artifact or its provenance. Provenance depth defaults to 1 and is bounded at 8; traversal stops at the
