@@ -65,7 +65,44 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Decide whether this push needs a review, and at which tier
+        # Two decisions, taken before the model is paid for (`.github/scripts/review_gate.py`, unit-tested in
+        # `custom-memory-engine/tests/test_review_gate.py`):
+        #   tier   read from the review history on the PR, not inferred from the shape of the diff. A base branch that
+        #          advances moves the diff range, and a reviewer that infers its tier from the diff then calls itself a
+        #          first review, re-reports nothing and leaves its own threads open (the canary did exactly this).
+        #   cost   a push that changes no tree (an empty commit, a rebase onto the same tree) is skipped before the
+        #          action mints a token. `synchronize` fires on the push, so the reviewed head is the only baseline that
+        #          answers this, and it is read from the previous summary comment.
+        # The gate is a decision, not a filter: any tree change is reviewable here, including PLAN/, .github/ and the
+        # instruction files. An allow list of "code" paths is how a governance change gets skipped as a docs change.
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ACTION: ${{ github.event.action }}
+        run: |
+          # The gate decides whether a pull request gets reviewed, so it is policy code and comes from the base branch
+          # — a pull request must not be able to edit its own gate into skipping. The one exception is the pull request
+          # that introduces it, where the base has no copy; that copy is then part of the diff, like the skill's own
+          # bootstrap above. Neither copy present is not a reason to skip: it is a reason to review.
+          if ! git cat-file -e "HEAD:.github/scripts/review_gate.py" 2>/dev/null; then
+            { git -C pr-head archive HEAD .github/scripts | tar -x -C .; } || true
+            echo "gate: introduced by this pull request (:warning: its change is part of the diff)"
+          fi
+          if [ -f .github/scripts/review_gate.py ]; then
+            python3 .github/scripts/review_gate.py
+          else
+            echo "::warning::no review gate in the base branch or the pull request; reviewing without a tier"
+            printf 'review=true\ntier=unknown\nreason=gate_failed\nprevious_head_sha=\nprevious_base_sha=\n' \
+              >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Resolve the review standard from the base branch, not from the pull request
+        if: steps.gate.outputs.review == 'true'
         # Three copies coexist, and each has one job:
         #   workspace root  the base branch's instructions, trusted. The action itself restores `CLAUDE.md`, `AGENTS.md`
         #                   and `.claude/` here, and a `/skill-name` prompt resolves its SKILL.md from here too.
@@ -100,6 +137,7 @@ jobs:
 
       - name: Run the review
         id: claude-review
+        if: steps.gate.outputs.review == 'true'
         uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1.0.275
         env:
           # `--model` reads the environment, so the depth/cost trade-off is a repository variable rather than an edit to
@@ -111,11 +149,19 @@ jobs:
           prompt: >-
             /review-pr
             PR_NUMBER=${{ github.event.pull_request.number }}
+            REPOSITORY=${{ github.repository }}
             BASE_REF=${{ github.event.pull_request.base.ref }}
+            BASE_SHA=${{ github.event.pull_request.base.sha }}
             HEAD_SHA=${{ github.event.pull_request.head.sha }}
+            REVIEW_TIER=${{ steps.gate.outputs.tier }}
+            REVIEW_REASON=${{ steps.gate.outputs.reason }}
+            PREVIOUS_BASE_SHA=${{ steps.gate.outputs.previous_base_sha }}
+            PREVIOUS_HEAD_SHA=${{ steps.gate.outputs.previous_head_sha }}
             The base branch is checked out at the workspace root and the pull request at ./pr-head.
-            Follow the skill exactly; it says which files to read from which checkout, and which instructions to read
-            from the base branch rather than from the pull request.
+            REPOSITORY is the canonical owner/name: every repository URL you write comes from it, and no other
+            owner or name may appear in a link.
+            Follow the skill exactly; it says which files to read from which checkout, which instructions to read from
+            the base branch rather than from the pull request, and what REVIEW_TIER requires of you.
           # `default`, not `auto`: the review job runs with a strict allow list, and every tool it needs is named below.
           # The deny list is belt and braces for the one thing a review must never do: change the pull request, approve
           # it, or merge it (V2-D57: no GitHub approval is ever fabricated to satisfy branch protection).

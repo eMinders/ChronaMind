@@ -18,7 +18,7 @@ Two projects live in this repository with separate interpreters, linters, locks 
 
 | Level | Meaning in this repository |
 |---|---|
-| 🔴 **Important** | A wrong result, a lost or leaked row, a violated guarantee, a broken contract, or a duplicate side effect that a caller will actually reach. **Anything that makes a persisted guarantee untrue** is this level, however small the diff. |
+| 🔴 **Important** | A wrong result, a lost or leaked row, a violated guarantee, a broken contract, or a duplicate side effect that a caller will actually reach. **Anything that makes a persisted guarantee untrue** is this level, however small the diff. A violation that no caller can reach *today* is still this level when the guarantee is one the project states — say that it is latent. |
 | 🟡 **Nit** | Worth fixing, not blocking: a misleading name, a missing `raise ... from None`, a stale reference in a comment. |
 | 🟣 **Pre-existing** | A real defect in code this pull request did not introduce. Report it once, at most, and say it is out of scope — or say nothing. Never let it decide the verdict. |
 
@@ -45,6 +45,37 @@ authorisation" is not a finding; "`get` builds its rows without `assemble`, so `
 
 **Say so when you could not verify something.** A gap in the review is honest; a silent gap reads as a pass. If a check
 needed a database, a network call or a run you could not make, list it under "Not verified" in the summary.
+
+## Reachability before severity
+
+A severity is a claim about what a caller can do, so for a finding about a guard — authorisation, isolation, tenancy, a
+`SECURITY DEFINER` function, a session GUC, an audit, a constraint, a trigger — establish reachability **before** you
+write the sentence that sets the severity:
+
+1. **Trace the path** from the entry point to the effect: `Engine.call` (`api/entry.py`) dispatches every operation, so a
+   handler or a helper is on a path, not at its start.
+2. **List the guards upstream**, and say which one stops the input: an earlier return, a validation (`parse_scope`,
+   `authorize_write`), a visibility rule (`row_visible`), a `CHECK`, a trigger, the runtime role's grant, a constraint on
+   the column. "Nothing stops it" is a claim that also needs checking.
+3. **Classify it**: *reachable today* (name the input and the path), *latent* (name the guard that refuses it first), or
+   *unverified* (name what would settle it). A contract violation is a finding either way; an exploit is a separate
+   claim and needs a path.
+4. **Then calibrate.** A latent violation of a stated guarantee is 🔴, because the guard above it is a second line of
+   defence rather than a licence to remove the first — but the finding must *say* it is latent, and must not describe a
+   leak, an unauthorised read or live impact that the trace did not establish.
+
+Write the verdict into the finding as a line beginning `**Reachability:**`. This is what separates a finding from an
+atmosphere, and it is the one step the automated review got wrong on a real defect:
+
+> **Reported:** a scope path the grammar cannot parse now counts as the caller's own, so `Engine._record_scope_read`
+> drops it and a cross-tenant read is no longer audited — *a granted read of another tenant's row goes unrecorded*.
+>
+> **Reachability:** latent. `row_visible` parses the same path and refuses the read first, so no reader reaches such a
+> row today, and `app_user.id` is constrained to a valid scope segment, so the caller half cannot be forged either. The
+> contract violation is real (rule 6 is documented as fail-closed); the exploit was not.
+
+The first paragraph is the finding. The second is what stopped it from being a false accusation — the severity did not
+change, but the sentence a reader acts on did.
 
 ## Investigate the change, not only the diff
 
@@ -120,7 +151,9 @@ pass is always 🔴.
 
 A review of later commits is **stricter than the first one**: report only regressions introduced since the previous
 review, plus any earlier Important finding that is still not fixed. Stay silent on nits. When you judge an earlier
-finding fixed, resolve its thread rather than posting a new comment saying it is fixed.
+finding fixed, resolve its thread rather than posting a new comment saying it is fixed — and only after re-reading the
+code, not the push's description. A tier reported as `first review` on a pull request that already has one is itself a
+miss: the earlier findings are still yours, whether or not the diff range still contains them.
 
 ---
 

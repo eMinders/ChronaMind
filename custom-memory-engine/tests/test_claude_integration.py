@@ -186,8 +186,11 @@ def test_a_review_runs_only_when_the_service_is_not_enabled(review_workflow: str
 
 
 def test_a_concurrency_group_cancels_a_superseded_review(review_workflow: str, assistant_workflow: str) -> None:
+    # Comments may sit between `concurrency:` and its keys; the group and the cancellation are what matter.
     for text in (review_workflow, assistant_workflow):
-        assert re.search(r"(?m)^concurrency:\n  group:", text)
+        block = re.search(r"(?ms)^concurrency:\n((?:  #.*\n)*  group: .*?\n(?:.*?\n)*?)\S", text)
+        assert block, "each workflow must declare a concurrency group"
+        assert re.search(r"(?m)^  group:", block.group(0))
         assert "cancel-in-progress: true" in text
         assert "timeout-minutes:" in text
 
@@ -371,3 +374,215 @@ def test_the_skill_reports_its_own_uncertainty_and_resolves_dead_threads(skill: 
     """A reviewer that cannot say "I could not check this" is read as a green light it never gave."""
     assert re.search(r"(?i)could not (verify|check)|not verified|unverified", skill)
     assert re.search(r"(?i)resolv", skill), "a fixed finding must not stay open on the next review"
+
+
+# --- the four things the canary showed the reviewer getting wrong (`.github/workflows/README.md`) -----------
+
+
+def test_the_reviewer_is_given_the_canonical_identity_and_may_not_invent_one(
+    skill: str, review_workflow: str, assistant_workflow: str
+) -> None:
+    """A review cited `HussainAlmutawa/ChronaMind`: a recalled owner, on a repository that is not ours.
+
+    A wrong link does not just fail to help — it turns a correct finding into something that looks fabricated, because
+    the reader follows it to code that is not under review. So the identity is passed in, and it is the only source.
+    """
+    for workflow, name in ((review_workflow, "claude-code-review.yml"), (assistant_workflow, "claude.yml")):
+        assert "REPOSITORY=${{ github.repository }}" in workflow, f"{name} must pass the canonical identity"
+    assert "$GITHUB_REPOSITORY" in skill, "the skill needs a fallback when the invocation predates it"
+    assert re.search(r"(?i)the only source of any URL", skill)
+    assert re.search(r"(?i)never (write|invent|infer).{0,80}from memory", skill), "identity is read, not recalled"
+    assert "omit the link" in skill, "an unverifiable identity must drop the link, not guess one"
+    assert "grep -o" in skill, "the links must be checked against the identity before posting"
+    # The placeholder the old text used is what let a model fill it from memory.
+    assert "github.com/<owner>/<repo>" not in skill
+    assert "<owner>/<repo>" not in skill
+
+
+def test_the_review_is_told_its_tier_rather_than_inferring_it(skill: str, review_workflow: str) -> None:
+    """The canary's second review called itself a first review once the base branch moved the diff range."""
+    job = _job(review_workflow, "claude-review")
+    for output in ("tier", "previous_head_sha", "previous_base_sha", "reason"):
+        assert f"steps.gate.outputs.{output}" in job, output
+    assert "REVIEW_TIER=" in job and "PREVIOUS_HEAD_SHA=" in job
+    assert re.search(r"(?i)do not re-derive the tier", skill), "the tier is an input, not a conclusion"
+    for tier in ("first review", "re-review", "unknown"):
+        assert tier in skill, tier
+    assert re.search(r"(?i)earlier findings exist even when the diff", skill), (
+        "the failure was reporting nothing because the earlier finding left the diff range"
+    )
+    assert re.search(r"(?i)history incomplete", skill), "an unreadable record is a state, not a silent first review"
+
+
+def test_the_skill_resolves_its_own_threads_only_after_verifying_the_fix(skill: str) -> None:
+    """The canary verified its fix and left the 🔴 thread open, so conversation resolution still blocked the PR."""
+    assert "resolveReviewThread" in skill, "the mutation must be named, not left to be improvised"
+    assert "reviewThreads" in skill and "comment matching" not in skill
+    assert re.search(r"(?i)match a thread by its body", skill), "associate by content, never by position or a guess"
+    assert "THREAD_ID" in skill
+    # The four states the owner needs to tell apart, and no shortcut between them.
+    for state in ("reported", "fix observed", "fix verified", "thread resolved"):
+        assert state in skill, state
+    assert re.search(r"(?i)require .{0,40}isResolved.{0,10}true", skill), "GitHub must confirm it"
+    assert re.search(r"(?i)resolution failed", skill), "a refused mutation must be reported, not glossed over"
+    assert re.search(r"(?i)author\.login.{0,80}claude", skill), "only this reviewer's threads are its own to resolve"
+    assert re.search(r"(?i)another reviewer|a human", skill)
+    assert re.search(r"(?i)only after verifying|after you have verified|verify it in the code", skill)
+    # A review may not resolve on the strength of a push description, and may not claim what it did not get.
+    assert re.search(r"(?i)not resolved because the push", skill)
+
+
+def test_the_review_analyses_reachability_before_it_sets_a_severity(skill: str) -> None:
+    """The canary found a real contract violation and described it as a live cross-tenant leak.
+
+    The finding was right; the exploit was not — `row_visible` refused the input first. Both documents must require the
+    trace, and neither may let it become a reason to stop reporting: a latent violation is still 🔴.
+    """
+    standard = ROOT_REVIEW.read_text(encoding="utf-8")
+    assert "## Reachability before severity" in standard
+    for term in ("reachable today", "latent", "unverified", "**Reachability:**"):
+        assert term in standard, term
+    assert re.search(r"(?i)still (this level|🔴)", standard) or "is still 🔴" in standard, (
+        "the analysis must not weaken the reviewer into silence"
+    )
+    assert "**Reachability:**" in skill
+    for step in ("guards upstream", "latent", "unverified"):
+        assert re.search(rf"(?i){step}", skill), step
+    # The trace starts at the entry point, not at the handler: a helper is only reachable through it.
+    assert "Engine.call" in skill and re.search(r"(?i)entry point", skill)
+    assert re.search(r"(?i)on a path, not at its start", skill)
+    assert re.search(r"(?i)never assert a leak", skill), "no impact claim without a path"
+
+
+def test_a_push_that_changes_no_tree_is_skipped_before_the_action_runs(review_workflow: str) -> None:
+    """The canary's empty commit cost a full run and posted nothing."""
+    job = _job(review_workflow, "claude-review")
+    gate = re.search(r"(?ms)^      - name: .*\n        id: gate\n(.*?)^      - name: ", job)
+    assert gate, "the gate must run as its own step"
+    assert ".github/scripts/review_gate.py" in gate.group(1)
+    assert "python3 " in gate.group(1), "no extra dependency: the gate is stdlib Python"
+    # It must be a decision *before* the expensive step, and the skip must be explained rather than silent.
+    assert job.index("id: gate") < job.index("Run the review")
+    gate_source = (REPO / ".github" / "scripts" / "review_gate.py").read_text(encoding="utf-8")
+    assert "no_reviewable_changes" in gate_source, "the skip reason is machine-readable, not prose"
+    assert "GITHUB_STEP_SUMMARY" in gate_source, "a skipped run must say why, on the run's own page"
+    assert re.search(r"(?i)not silent|::notice::", gate_source)
+    # The gate does not filter by path: a governance change is reviewable here.
+    assert "PLAN/" in gate_source or "allow list" in gate_source
+
+
+def test_the_documented_link_check_actually_catches_a_fabricated_owner(skill: str) -> None:
+    """The P0 the canary produced: a finding linked to `HussainAlmutawa/ChronaMind`, an owner nobody chose.
+
+    The skill tells the reviewer to extract every `github.com/<owner>/<name>` from the body it is about to post, and to
+    keep exactly one, its own. That instruction is only worth the pattern it names, so the pattern is taken *out of the
+    skill* and run here against a body that contains the real repository and the fabricated one.
+    """
+    pattern = re.search(r"grep -o '([^']+)'", skill)
+    assert pattern, "the skill must document a concrete check for the links it is about to post"
+    extract = re.compile(pattern.group(1))
+
+    canonical = "eMinders/ChronaMind"
+    sha = "d98f1b934dc21ab8fe56d485726b4a2a80fd4262"
+    good = (
+        f"🔴 **Finding.** See https://github.com/{canonical}/blob/{sha}/custom-memory-engine/src/x.py#L1-L2 and "
+        f"[/custom-memory-engine/PLAN/V2/ARCHITECTURE_V2.md](https://github.com/{canonical}/blob/{sha}/PLAN.md)."
+    )
+    assert set(extract.findall(good)) == {f"github.com/{canonical}"}, "a correct review must pass the check"
+
+    fabricated = good + " Compare https://github.com/HussainAlmutawa/ChronaMind/blob/" + sha + "/x.py#L3."
+    found = set(extract.findall(fabricated))
+    assert len(found) == 2, found
+    assert found - {f"github.com/{canonical}"} == {"github.com/HussainAlmutawa/ChronaMind"}, (
+        "the check must flag an owner that is not ours: it is the only thing between the reviewer and a link to "
+        "someone else's code"
+    )
+
+
+def test_the_gate_comes_from_the_base_branch_and_tolerates_its_own_introduction(review_workflow: str) -> None:
+    """The gate is policy code, so it is read from the base branch — but a PR that adds it has no base copy.
+
+    Both halves matter. Running a pull request's own edited gate would let a PR switch off its own review; failing on
+    the pull request that introduces it breaks the change that ships the gate (the first version of this workflow did
+    exactly that: `can't open file '.../review_gate.py'`). The existing skill bootstrap is the precedent, and the last
+    resort is still a review, never a skip.
+    """
+    job = _job(review_workflow, "claude-review")
+    pattern = r"(?ms)^      - name: Decide whether this push needs a review.*?\n        run: \|\n(.*?)^      - name: "
+    gate = re.search(pattern, job)
+    assert gate, "the gate step must have a script body"
+    body = gate.group(1)
+    assert 'git cat-file -e "HEAD:.github/scripts/review_gate.py"' in body, "the base copy is probed first"
+    assert "git -C pr-head archive HEAD .github/scripts" in body, "the introducing PR supplies the first copy"
+    assert "introduced by this pull request" in body, "and says whose copy ran"
+    assert "[ -f .github/scripts/review_gate.py ]" in body, "a missing gate must not fail the job"
+    assert "reason=gate_failed" in body and "review=true" in body, "no gate means a review, not a skip"
+
+
+def test_the_bot_cannot_cancel_the_run_it_just_started(assistant_workflow: str) -> None:
+    """The action posts an acknowledgement comment as it starts, and that comment re-enters this workflow.
+
+    With one shared group per pull request, that comment cancelled the run which had just posted it: #233, `claude`
+    job "Claude Code is working…" at 10:07:11Z, `The operation was canceled` at 10:07:27Z, and the assistant never
+    answered. A run started by a bot must therefore land in a group that collides with nothing, while a human's second
+    `@claude review` must still supersede their first.
+    """
+    group = re.search(r"(?ms)^concurrency:\n(?:  #.*\n)*  group: >-\n(.*?)^  cancel-in-progress:", assistant_workflow)
+    assert group, "the concurrency block must keep its group and cancel-in-progress"
+    body = group.group(1)
+    assert "cancel-in-progress: true" in assistant_workflow
+    assert "claude[bot]" in body, "the bot actor must be recognised"
+    assert "github.run_id" in body, "a bot-started run needs a group of its own, or it cancels the real one"
+    # Human requests keep the behaviour that matters: a newer review request supersedes an older one.
+    assert "startsWith(github.event.comment.body, '@claude review')" in body
+    assert "'review'" in body and "'assist'" in body
+
+
+def test_the_reviewer_checks_the_token_may_resolve_before_it_tries(skill: str) -> None:
+    """`resolveReviewThread` needs `Contents: write`, not `pull_requests: write`, on a GitHub App installation token.
+
+    Several projects learned this from live refusals (`Resource not accessible by integration`) after requesting the
+    permission everyone expects. The App token this action mints does ask for `contents: write` as well, so resolution
+    should be permitted — but "should be" is not a basis for writing "resolved", so the skill reads `viewerCanResolve`,
+    the token's own answer, and refuses to claim a resolution it has not got.
+    """
+    assert "viewerCanResolve" in skill, "the query must ask whether this identity may resolve"
+    assert re.search(r"(?i)contents: write", skill), "the permission that actually gates the mutation must be named"
+    assert re.search(r"(?i)not permitted", skill), "a refusal has a state of its own, not a silent skip"
+    assert re.search(r"(?i)Resource not accessible", skill)
+
+
+def test_a_workflow_change_is_reported_as_unreviewable_and_points_at_the_way_that_works(skill: str) -> None:
+    """`claude-review` cannot review a pull request that edits its own workflow, and nothing local can change that.
+
+    The action's OIDC exchange refuses a workflow file that differs from the default branch's, so the job goes green
+    with the review skipped — the dangerous shape of failure, where green means "not reviewed". The documented path is
+    the on-demand job: `issue_comment` runs the default branch's workflow, so it reviews any pull request.
+    """
+    assert re.search(r"(?i)edits `.github/workflows/claude-code-review\.yml` gets no automatic review", skill)
+    assert re.search(r"(?i)@claude review", skill), "the fallback must be named where the gap is explained"
+    assert re.search(r"(?i)default branch.s workflow", skill), "and why it works"
+
+
+def test_the_on_demand_review_can_actually_check_out_the_pull_request(assistant_workflow: str) -> None:
+    """The documented fallback for a workflow-changing PR had never run, and could not: `git init` has no remote.
+
+    The job did `git init --quiet pr-head` and then `git -C pr-head fetch origin "$HEAD_SHA"` — against a repository
+    that `git init` had just created without one, so it died with `exit 128` ("Could not read from remote
+    repository") before the review step. Its first live attempt was #233 at 2026-11-21T10:27Z. That matters beyond the
+    bug: this is the only path that reviews a pull request which edits the review workflow, so a broken fallback leaves
+    such a change reviewed by nobody.
+    """
+    job = _job(assistant_workflow, "review")
+    checkout = re.search(r"(?ms)^      - name: Checkout the pull request beside it.*?(?=^      - name: )", job)
+    assert checkout, "the review job must check out the pull request"
+    step = checkout.group(0)
+    assert "uses: actions/checkout@" in step, "use the action the automatic review uses, which authenticates the fetch"
+    assert "path: pr-head" in step
+    assert "ref: ${{ steps.pr.outputs.head_sha }}" in step
+    assert "repository: ${{ steps.pr.outputs.head_repo }}" in step, "a fork's head is not in this repository"
+    assert "persist-credentials: false" in step
+    # Named in the step's explanation on purpose; what must not exist is a shell step, where a remote-less fetch lived.
+    assert "run:" not in step, "the checkout is the action's job, not a shell script that has to invent a remote"
+    # The head repository has to be resolved for that to be possible.
+    assert '"head_repo=" + .head.repo.full_name' in job
