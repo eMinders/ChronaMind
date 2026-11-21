@@ -80,9 +80,9 @@ so in the review body and stop: the working tree alone cannot tell what the pull
 ## 3. Decide what this pull request is, and what it can therefore make untrue
 
 Plan first, in three lines you can point at: what this change claims, which guarantees it can make untrue, and the
-three files you will read line by line. Then classify it below: every row is a proof obligation, and skipping the row you
-landed in is the failure this review exists to prevent. `REVIEW.md`, "How a review proceeds", has the order and the
-domains; a large diff is worked down that list, not read top to bottom.
+three files you will read line by line. Then classify it below — every row is a proof obligation, and skipping the row
+you landed in is the failure this review prevents. `REVIEW.md`, "How a review proceeds", has the order and the domains;
+a large diff is worked down that list, not read top to bottom.
 
 | The change touches | It can make untrue | Read, and check |
 |---|---|---|
@@ -136,12 +136,12 @@ For each candidate finding, before posting:
   verified*. A maintainer re-runs with `CLAUDE_REVIEW_MODEL=claude-opus-5-5`. Never switch models yourself.
 - **Write the evidence.** The six parts of `REVIEW.md`'s evidence bar — location, trigger, wrong behaviour, consequence,
   the safeguard that misses it, the correction — then a `**Fix:**` line. All six, or it is not a finding.
-- **Say how sure you are.** `**Basis:** proven` when you traced it to the code; `**Basis:** suspected` with what would
-  settle it when you did not. A suspicion dressed as a proof is the one error that costs a reviewer its credibility.
+- **Say how sure you are.** `**Basis:** proven` when traced to the code; `**Basis:** suspected` with what would settle
+  it when not. A suspicion dressed as a proof is what costs a reviewer its credibility.
 - **Then delete it** if `REVIEW.md`'s "Do not report" list covers it: CI's own business, pre-existing and untouched,
   fixed later in the diff, another finding's root cause, style, or a "missing test" with no named failure mode.
-- **Calibrate** by `REVIEW.md`'s table: 🔴 is a wrong result, a lost or leaked row, a broken contract, a repeatable
-  duplicate effect, or a guarantee that is now false. Merely possible or dependent on a superuser is not.
+- **Calibrate** by `REVIEW.md`'s table: 🔴 is a wrong result, a lost or leaked row, a broken contract, a repeated
+  duplicate effect, or a guarantee now false. Merely possible, or needing a superuser, is not.
 
 ### Reachability, before severity
 
@@ -176,15 +176,13 @@ thread open. If `PREVIOUS_HEAD_SHA` is set, earlier findings exist even when the
 
 ### 6.1 Read what you said last time
 
-```bash
-gh pr view "$PR_NUMBER" --comments       # earlier summaries: Base, Head, findings, gaps
-git log --oneline --no-decorate "$PREVIOUS_HEAD_SHA..$HEAD_SHA" 2>/dev/null || true
-```
+`gh pr view "$PR_NUMBER" --comments` lists the earlier summaries (Base, Head, findings, gaps);
+`git log --oneline --no-decorate "$PREVIOUS_HEAD_SHA..$HEAD_SHA"` shows the push.
 
-- A **new** Important finding: report it — including a regression introduced *while* fixing an earlier finding, so read
+- A **new** Important finding: report it — including a regression introduced *while* fixing an earlier one, so read
   the fix's new lines, not just the old complaint.
 - An earlier Important finding **still present**: say so at the line as it is now, unsoftened.
-- An earlier finding **fixed**: verify it in the code, not the push's description, then resolve (§6.2).
+- An earlier finding **fixed**: verify it in the code, not the push's description, then name it (§6.2).
 - No nits unless one is severe. If the tree is identical to `PREVIOUS_HEAD_SHA`, say `No code changed since the review
   at <sha>` and stop (the gate skips that first; on-demand runs can still reach it).
 
@@ -194,34 +192,31 @@ A finding is not resolved because the push says so. Four states, one at a time:
 
 **reported** (comment exists, thread open) → **fix observed** (the diff since `PREVIOUS_HEAD_SHA` touches the line)
 → **fix verified** (reading `pr-head/<path>` shows the behaviour asked for, and any test it asked for exists and would
-fail on the old code) → **thread resolved** (GitHub confirms).
+fail on the old code) → **named for resolution** (the step after this one resolves it and reports `isResolved: true`).
 
 Find the thread by its content, never by position or a guessed id:
 
 ```bash
 OWNER="${REPOSITORY%/*}"; NAME="${REPOSITORY#*/}"
 gh api graphql -f query='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){
-  reviewThreads(first:100){nodes{id isResolved viewerCanResolve path line comments(first:10){nodes{databaseId author{login} body}}}}}}}' \
+  reviewThreads(first:100){nodes{id isResolved path line comments(first:10){nodes{author{login} body}}}}}}}' \
   -F o="$OWNER" -F n="$NAME" -F p="$PR_NUMBER" \
   --jq '.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved|not)'
 ```
 
-`viewerCanResolve` is the token's own answer: read it first. It is `false` without `Contents: write`, which is what
-`resolveReviewThread` requires (`pull_requests: write` alone returns `Resource not accessible by integration`). If false,
-resolve nothing, report `thread open: not permitted (no Contents: write)` and carry on: the finding is still verified, and
-a human resolves it.
+**You do not resolve it; you name it.** `resolveReviewThread` needs `Contents: write`; this session's token lacks it
+(`viewerCanResolve: false`; `pull_requests: write` alone returns `Resource not accessible by integration`). A step after
+the review holds the permission, reads your marker, re-checks the thread is yours and open, resolves it and reports
+`isResolved: true`. End the summary with this line, naming only threads whose fix you verified:
 
-Match a thread by its body (the sentence you wrote, or its `path::symbol`) and its `path`. A thread is yours only when
-the `author.login` is `claude` or `claude[bot]` (REST says the first, GraphQL the second); anyone else's is not yours.
+    <!-- resolve-threads: PRRT_kwDOVGQehs66NM66 -->
 
-```bash
-gh api graphql -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{id isResolved}}}' -F t="$THREAD_ID"
-```
-
-Require `thread.isResolved: true` before writing "resolved" anywhere. If the mutation fails — permission, HTTP, a dead
-id — report `thread open: resolution failed (<error>)` and list it as **fix verified, thread open**. A claimed resolution
-GitHub did not confirm is worse than an open thread: branch protection requires conversations resolved, so it decides
-whether the owner can merge.
+- Match a thread by its body (the sentence you wrote) and its `path`, never by position; and only when the
+  `author.login` is `claude` or `claude[bot]` (REST says the first, GraphQL the second). Anyone else's is not yours.
+- Naming a thread you did not verify resolves a conversation nobody checked: the one thing this marker must never
+  carry, and worse than leaving the thread open.
+- If the step cannot resolve it (already resolved, not yours, an API error) the thread stays open and the owner
+  resolves it; `Earlier findings` says so — `not permitted` is a state, not a silent skip.
 
 ### 6.3 Say it, explicitly
 
@@ -271,8 +266,8 @@ If there are none: `No blocking findings.` — never "no issues found".
 - The specific claims you could not check, and what would check them (a database, a migration run, a benchmark).
 
 ### Earlier findings
-Re-review only: one line per earlier finding in the states §6.2 defines — `thread resolved` / `fix verified, thread open
-(<why>)` / `open`.
+Re-review only: one line per earlier finding in the states §6.2 defines — `fix verified, named for resolution` /
+`fix verified, thread open (<why>)` / `open`.
 ```
 
 **Say what you did not check.** A review that lists its gaps is honest; one presented as complete is a green light it

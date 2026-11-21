@@ -70,24 +70,28 @@ never approves, never merges and never pushes — those tools are denied in `cla
 protection requirement or substitute for a human decision. It complements the deterministic gates; it does not replace
 them, and a clean review is not proof of correctness.
 
-**The one write it performs** is resolving its own review threads, and only after verifying the fix and getting
-`isResolved: true` back. Measured, not assumed: the mutation is gated on the token's **Contents: write**. A token holding
-`pull_requests: write` alone is refused with `Resource not accessible by integration`, and so is the read-only grant this
-job used to carry (`github/gh-aw#35726`, `oven-sh/bun#36959` and `#40468`, and a live refusal on #236: the reviewer
-verified its own finding, tried to resolve, and reported `thread open: not permitted (no Contents: write)`). So both
-review jobs grant `contents: write` — the single elevated permission, for that single mutation — and the surrounding
-controls are what keep it narrow:
+**The one write it performs** is resolving its own review threads, and the reviewer does not perform it itself.
 
-- every checkout sets `persist-credentials: false`, so git itself holds no credential;
-- `git push`, `git commit`, `git merge`, `gh pr merge`, `gh pr close`, `gh pr review` and `gh pr edit` are denied;
-- every REST write verb (`gh api -X …`, `gh api --method …`) is denied, so GraphQL — the mutation and nothing else —
-  is the only way this job can change anything.
+Measured twice (#236, #238): the model's `viewerCanResolve` is `false`, because that token is the Claude App
+installation's and `resolveReviewThread` is gated on **Contents: write** — `pull_requests: write` alone returns
+`Resource not accessible by integration` (`github/gh-aw#35726`, `oven-sh/bun#36959` and `#40468`). The job's own
+`GITHUB_TOKEN` does hold it: a probe workflow resolved a real thread with it and got `isResolved: true`. So the decision
+stays with the reviewer and the mutation happens one layer down:
 
-**If resolution still fails**, the manual action is on the App installation, not in this repository: the Claude GitHub
-App (app settings → Permissions & events) must grant *Contents: Read and write*, and the installation must include this
-repository. The reviewer does not depend on it: it reads `viewerCanResolve` first and, when false, reports `thread open:
-not permitted` and leaves the thread alone. A human then resolves it — which is what branch protection's required
-conversation resolution asks for anyway, and what #236 needed before it could merge.
+1. after verifying a fix, the review ends its summary with `<!-- resolve-threads: PRRT_… -->`, naming **only** the
+   threads it verified;
+2. a step after the review (`.github/scripts/resolve_threads.py`, policy code from the base branch like the gate) reads
+   that comment, refuses any id that is not an unresolved thread of this reviewer's, resolves the rest with
+   `secrets.GITHUB_TOKEN`, and prints `isResolved: true` per thread;
+3. a refusal is a warning on the run and an open thread, never a failed review — the findings are already posted.
+
+`contents: write` is therefore the one elevated grant on both review jobs, and the controls keep it narrow: every
+checkout sets `persist-credentials: false`, `git push`/`commit`/`merge`, `gh pr merge`/`close`/`review`/`edit` are
+denied, and every REST write verb (`gh api -X …`, `gh api --method …`) is denied, leaving the mutation and nothing else.
+
+**If resolution still fails** — the installation revokes Contents: write, or an id is not this reviewer's — the thread
+stays open, `Earlier findings` says `fix verified, thread open (<why>)`, and a human resolves it, which is what branch
+protection's required conversation resolution asks for anyway (#236 needed exactly that).
 
 **A pull request that edits `claude-code-review.yml` (or `claude.yml`) gets no automatic review, and its
 `claude-review` check is green.** That is not a policy here but a platform rule: the action's OIDC exchange is refused

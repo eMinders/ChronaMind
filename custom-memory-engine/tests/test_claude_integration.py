@@ -431,22 +431,38 @@ def test_the_review_is_told_its_tier_rather_than_inferring_it(skill: str, review
     assert re.search(r"(?i)history incomplete", skill), "an unreadable record is a state, not a silent first review"
 
 
-def test_the_skill_resolves_its_own_threads_only_after_verifying_the_fix(skill: str) -> None:
-    """The canary verified its fix and left the 🔴 thread open, so conversation resolution still blocked the PR."""
-    assert "resolveReviewThread" in skill, "the mutation must be named, not left to be improvised"
-    assert "reviewThreads" in skill and "comment matching" not in skill
+def test_the_skill_names_the_threads_it_verified_and_never_resolves_them_itself(skill: str) -> None:
+    """The canary verified its fix and left the 🔴 thread open, so conversation resolution still blocked the PR.
+
+    Measured twice (#236, #238): the model's token cannot run `resolveReviewThread` — it is the App installation's, and
+    `resolveReviewThread` needs Contents: write. Pretending otherwise leaves threads open; mutating from the model with
+    a widened token is worse. So the reviewer *names* the threads whose fix it verified, in a marker, and a job step
+    holding the permission performs the mutation after re-checking authorship.
+    """
+    assert "resolveReviewThread" in skill, "the mechanism must be named, not improvised"
+    assert "reviewThreads" in skill
     assert re.search(r"(?i)match a thread by its body", skill), "associate by content, never by position or a guess"
-    assert "THREAD_ID" in skill
-    # The four states the owner needs to tell apart, and no shortcut between them.
-    for state in ("reported", "fix observed", "fix verified", "thread resolved"):
+    assert "<!-- resolve-threads:" in skill, "the seam the step reads"
+    assert "author" in skill and "claude[bot]" in skill, "only this reviewer's threads are its own"
+    # The four states, and no shortcut between them.
+    for state in ("reported", "fix observed", "fix verified", "named for resolution"):
         assert state in skill, state
-    assert re.search(r"(?i)require .{0,40}isResolved.{0,10}true", skill), "GitHub must confirm it"
-    assert re.search(r"(?i)resolution failed", skill), "a refused mutation must be reported, not glossed over"
-    assert re.search(r"(?i)author\.login.{0,80}claude", skill), "only this reviewer's threads are its own to resolve"
-    assert re.search(r"(?i)another reviewer|a human", skill)
-    assert re.search(r"(?i)only after verifying|after you have verified|verify it in the code", skill)
-    # A review may not resolve on the strength of a push description, and may not claim what it did not get.
-    assert re.search(r"(?i)not resolved because the push", skill)
+    assert re.search(r"(?i)isResolved.{0,12}true", skill), "GitHub must confirm it"
+    assert re.search(r"(?i)not permitted", skill), "a refusal is a state, not a silent skip"
+    assert re.search(r"(?i)only threads whose fix you verified", skill)
+    assert re.search(r"(?i)not resolved because the push", skill), "a push description is not a fix"
+    # It must not instruct the model to run the mutation it cannot run.
+    assert "mutation($t:ID!)" not in skill, "the model cannot mutate: that was the bug, not the design"
+
+
+def test_the_workflow_resolves_what_the_review_named(review_workflow: str, assistant_workflow: str) -> None:
+    """The step exists in both review paths, after the review, and cannot fail the job that posted findings."""
+    for workflow, job_name in ((review_workflow, "claude-review"), (assistant_workflow, "review")):
+        job = _job(workflow, job_name)
+        assert ".github/scripts/resolve_threads.py" in job, job_name
+        assert job.index("Run the review") < job.index("Resolve the threads this review verified"), job_name
+        assert "always()" in job, "a review that failed to post still leaves nothing to resolve, but must not abort"
+        assert "secrets.GITHUB_TOKEN" in job
 
 
 def test_the_review_analyses_reachability_before_it_sets_a_severity(skill: str) -> None:
@@ -565,8 +581,8 @@ def test_the_reviewer_checks_the_token_may_resolve_before_it_tries(skill: str) -
     """
     assert "viewerCanResolve" in skill, "the query must ask whether this identity may resolve"
     assert re.search(r"(?i)contents: write", skill), "the permission that actually gates the mutation must be named"
+    assert re.search(r"(?i)Resource not accessible", skill), "the refusal is quoted, not paraphrased"
     assert re.search(r"(?i)not permitted", skill), "a refusal has a state of its own, not a silent skip"
-    assert re.search(r"(?i)Resource not accessible", skill)
 
 
 def test_a_workflow_change_is_reported_as_unreviewable_and_points_at_the_way_that_works(skill: str) -> None:
