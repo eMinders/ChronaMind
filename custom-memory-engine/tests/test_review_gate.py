@@ -64,7 +64,7 @@ def _comment(login: str, body: str) -> dict[str, object]:
 # --- the tier: what the canary got wrong -----------------------------------------------------------------
 
 
-def test_a_first_review_is_not_a_re_review() -> None:
+def test_a_first_review_is_not_a_re_review() -> None:  # canary: a test-only change is a reviewable change
     decision = gate.classify(action="opened", history=_history(), head_sha=HEAD, base_sha=BASE, changed=None)
     assert (decision.review, decision.tier, decision.reason) == (True, "first review", "no_earlier_review")
 

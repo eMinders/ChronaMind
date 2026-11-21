@@ -115,3 +115,5 @@ diff <(python3 validation/cp_bounds.py) validation/cp_bounds.output.txt
 ```
 
 See [verification results and limitations](evidence/VERIFICATION.md).
+
+<!-- canary: a documentation-only change must still be reviewed. -->
