@@ -216,7 +216,8 @@ the review holds the permission, reads your marker, re-checks the thread is your
 - Naming a thread you did not verify resolves a conversation nobody checked: the one thing this marker must never
   carry, and worse than leaving the thread open.
 - If the step cannot resolve it (already resolved, not yours, an API error) the thread stays open and the owner
-  resolves it; `Earlier findings` says so — `not permitted` is a state, not a silent skip.
+  resolves it; `Earlier findings` says so — `not permitted` is a state, not a silent skip. Nothing verified: omit the
+  marker rather than leave it empty.
 
 ### 6.3 Say it, explicitly
 

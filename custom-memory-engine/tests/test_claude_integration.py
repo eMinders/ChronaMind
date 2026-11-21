@@ -455,6 +455,22 @@ def test_the_skill_names_the_threads_it_verified_and_never_resolves_them_itself(
     assert "mutation($t:ID!)" not in skill, "the model cannot mutate: that was the bug, not the design"
 
 
+def test_the_on_demand_review_is_told_its_tier_rather_than_guessing(assistant_workflow: str) -> None:
+    """It called itself a first review on #238, a pull request with three earlier ones — a comment carries no tier."""
+    job = _job(assistant_workflow, "review")
+    assert "review_gate.py" in job, "the same gate answers the same question on both paths"
+    assert job.index("review_gate.py") < job.index("Run the review"), "decided before the model is paid for"
+    for passed in ("tier }}", "previous_head_sha }}"):
+        assert f"steps.gate.outputs.{passed}" in job, passed
+    assert "REVIEW_TIER=${{ steps.gate.outputs.tier }}" in job
+    assert "Classify yourself whether this is a first review" not in job, "the guess is what failed"
+
+
+def test_a_review_with_nothing_verified_omits_the_marker(skill: str) -> None:
+    """`<!-- resolve-threads: -->` is a marker that names nothing; the model wrote one on #238."""
+    assert re.search(r"(?i)omit\s+the\s+marker", skill)
+
+
 def test_the_workflow_resolves_what_the_review_named(review_workflow: str, assistant_workflow: str) -> None:
     """The step exists in both review paths, after the review, and cannot fail the job that posted findings."""
     for workflow, job_name in ((review_workflow, "claude-review"), (assistant_workflow, "review")):

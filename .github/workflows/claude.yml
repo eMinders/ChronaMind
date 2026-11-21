@@ -128,6 +128,26 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Decide the tier from the pull request's history
+        # An `issue_comment` payload carries no tier, so the on-demand review used to infer one — and on #238 it called
+        # itself a first review on a pull request that already had three. The gate answers the same question here as it
+        # does for an automatic run, from the review history, before the model is paid for. It never skips this path:
+        # a maintainer asked for a review, so `review` is ignored and only the tier and the previous shas are used.
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          ACTION: issue_comment
+        run: |
+          if [ -f .github/scripts/review_gate.py ]; then
+            python3 .github/scripts/review_gate.py
+          else
+            printf 'tier=unknown\nreason=gate_failed\nprevious_head_sha=\nprevious_base_sha=\n' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run the review
         id: claude-review
         uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1.0.275
@@ -140,11 +160,14 @@ jobs:
             BASE_REF=${{ steps.pr.outputs.base_ref }}
             BASE_SHA=${{ steps.pr.outputs.base_sha }}
             HEAD_SHA=${{ steps.pr.outputs.head_sha }}
+            REVIEW_TIER=${{ steps.gate.outputs.tier }}
+            REVIEW_REASON=${{ steps.gate.outputs.reason }}
+            PREVIOUS_BASE_SHA=${{ steps.gate.outputs.previous_base_sha }}
+            PREVIOUS_HEAD_SHA=${{ steps.gate.outputs.previous_head_sha }}
             The base branch is checked out at the workspace root and the pull request at ./pr-head.
             REPOSITORY is the canonical owner/name: every repository URL you write comes from it.
             This is a full review requested by a maintainer: cover the whole pull request, not only its last commit.
-            Classify yourself whether this is a first review or a re-review, and say so, since a comment event carries
-            no tier.
+            REVIEW_TIER was decided from this pull request's history before you ran; follow it.
           claude_args: |
             --permission-mode default
             --model ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5-5' }}
