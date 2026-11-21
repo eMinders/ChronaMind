@@ -142,10 +142,10 @@ async def purge_working(
     Guarantee (``V2-D10``, ``I10``): the purge never removes answerability. It deletes only episodes that
     :func:`plan_purge` releases; every other row of every table is left exactly as it was.
 
-    The candidates are locked ``FOR UPDATE`` before their citations are read. A concurrent write that would cite one
-    of them (an ``infer`` naming it as a source) either commits first, and its citation then retains the episode, or
-    waits for the purge and then finds its source gone. Nothing is marked or deferred: the purge, its scope event and
-    the receipt are one transaction, so no intermediate state is observable.
+    The candidates are locked ``FOR SHARE`` before their citations are read. A shared lock is enough here: the purge
+    only reads these rows to decide what to release, and the citation scan below is what actually retains a row, so
+    holding an exclusive lock on every candidate of every working episode was needless contention on a hot path.
+    Nothing is marked or deferred: the purge, its scope event and the receipt are one transaction.
     """
     target = parse_scope(scope)
     await _verify(connection, user_id)
@@ -154,7 +154,7 @@ async def purge_working(
         await cursor.execute(
             sql.SQL(
                 "SELECT id FROM {v} WHERE user_id = %s AND kind = 'episode' AND retention = 'working' "
-                "AND pg_catalog.starts_with(scope_path, %s) ORDER BY id FOR UPDATE"
+                "AND pg_catalog.starts_with(scope_path, %s) ORDER BY id FOR SHARE"
             ).format(v=versions),
             (user_id, target.text),
         )
