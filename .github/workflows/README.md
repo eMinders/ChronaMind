@@ -71,18 +71,23 @@ protection requirement or substitute for a human decision. It complements the de
 them, and a clean review is not proof of correctness.
 
 **The one write it performs** is resolving its own review threads, and only after verifying the fix and getting
-`isResolved: true` back. No `permissions:` change is involved: the action mints an App token by OIDC exchange, and that
-installation — not the job's `GITHUB_TOKEN`, which stays read-only — is the identity that already posts the comments.
+`isResolved: true` back. Measured, not assumed: the mutation is gated on the token's **Contents: write**. A token holding
+`pull_requests: write` alone is refused with `Resource not accessible by integration`, and so is the read-only grant this
+job used to carry (`github/gh-aw#35726`, `oven-sh/bun#36959` and `#40468`, and a live refusal on #236: the reviewer
+verified its own finding, tried to resolve, and reported `thread open: not permitted (no Contents: write)`). So both
+review jobs grant `contents: write` — the single elevated permission, for that single mutation — and the surrounding
+controls are what keep it narrow:
 
-What that identity needs is more specific than it looks: `resolveReviewThread` is gated on **Contents: write**, not on
-`pull_requests: write` (a token holding only the latter is refused with `Resource not accessible by integration`; see
-`github/gh-aw#35726`, `oven-sh/bun#36959` and the note in the `zuke-build/zuke#634` thread). The action's default token
-request already asks for `contents: write`, `pull_requests: write` and `issues: write`
-(`src/github/token.ts` at the pinned SHA), so this repository's installation should already qualify. The skill does not
-rely on that: it reads `viewerCanResolve` first and, when it is false, reports `thread open: not permitted (no Contents:
-write)` and leaves the thread alone. **If resolution fails in practice**, the manual action is on the App installation,
-not in this repository: the Claude GitHub App (app settings → Permissions & events) must grant
-*Contents: Read and write* for the installing account, and the installation must include this repository.
+- every checkout sets `persist-credentials: false`, so git itself holds no credential;
+- `git push`, `git commit`, `git merge`, `gh pr merge`, `gh pr close`, `gh pr review` and `gh pr edit` are denied;
+- every REST write verb (`gh api -X …`, `gh api --method …`) is denied, so GraphQL — the mutation and nothing else —
+  is the only way this job can change anything.
+
+**If resolution still fails**, the manual action is on the App installation, not in this repository: the Claude GitHub
+App (app settings → Permissions & events) must grant *Contents: Read and write*, and the installation must include this
+repository. The reviewer does not depend on it: it reads `viewerCanResolve` first and, when false, reports `thread open:
+not permitted` and leaves the thread alone. A human then resolves it — which is what branch protection's required
+conversation resolution asks for anyway, and what #236 needed before it could merge.
 
 **A pull request that edits `claude-code-review.yml` (or `claude.yml`) gets no automatic review, and its
 `claude-review` check is green.** That is not a policy here but a platform rule: the action's OIDC exchange is refused

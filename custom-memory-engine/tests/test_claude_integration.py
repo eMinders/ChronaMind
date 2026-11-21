@@ -140,12 +140,18 @@ def test_the_reviewed_tree_carries_the_base_branch_instructions(review_workflow:
     assert 'git archive HEAD "$path" | tar -x -C pr-head' in job
 
 
-def test_the_review_holds_a_read_only_token_and_cannot_merge(review_workflow: str) -> None:
+def test_the_review_holds_one_narrow_write_and_cannot_merge(review_workflow: str) -> None:
+    """`contents: write` is the price of resolving a thread; everything that could push, merge or approve stays denied.
+
+    Measured on #236: the reviewer verified its own finding, tried to resolve it and was refused —
+    `resolveReviewThread` is gated on Contents: write, not on pull_requests: write. The grant is therefore one
+    permission wide, and the deny list is what stops it becoming a licence to change the repository.
+    """
     job = _job(review_workflow, "claude-review")
     permissions = re.search(r"(?ms)^    permissions:\n((?:      [a-z-]+: \w+\n)+)", job)
     assert permissions
     granted = dict(re.findall(r"([a-z-]+): (\w+)", permissions.group(1)))
-    assert granted == {"contents": "read", "pull-requests": "read", "issues": "read", "id-token": "write"}, granted
+    assert granted == {"contents": "write", "pull-requests": "read", "issues": "read", "id-token": "write"}, granted
     # Nothing in this job's own steps may approve or merge: AI review is a gate on the owner's behalf (V2-D57), and
     # V2-D57 forbids fabricating a GitHub approval to satisfy branch protection. The deny list below is where those
     # commands are named, so they are stripped before this check.
@@ -154,9 +160,14 @@ def test_the_review_holds_a_read_only_token_and_cannot_merge(review_workflow: st
     assert disallowed.group(1).startswith(
         "Edit,Write,NotebookEdit,mcp__github_file_ops,Bash(git push:*),Bash(git commit:*),Bash(git merge:*)"
     )
-    body = review_workflow.replace(disallowed.group(0), "")
+    # Comments explain which commands are denied; only executable lines can run one.
+    body = "\n".join(line for line in review_workflow.splitlines() if not line.strip().startswith("#"))
+    body = body.replace(disallowed.group(0), "")
     for forbidden in ("gh pr merge", "gh pr review", "git push", "--approve"):
         assert forbidden not in body, forbidden
+    # The write is for one GraphQL mutation; every REST write verb is denied, so nothing else changes through it.
+    for denied in ("Bash(gh api -X:*)", "Bash(gh api --method:*)"):
+        assert denied in disallowed.group(1), denied
 
 
 def test_the_reviewer_is_denied_every_tool_that_could_change_the_pull_request(review_workflow: str) -> None:
