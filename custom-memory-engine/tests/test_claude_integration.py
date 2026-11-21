@@ -562,3 +562,27 @@ def test_a_workflow_change_is_reported_as_unreviewable_and_points_at_the_way_tha
     assert re.search(r"(?i)edits `.github/workflows/claude-code-review\.yml` gets no automatic review", skill)
     assert re.search(r"(?i)@claude review", skill), "the fallback must be named where the gap is explained"
     assert re.search(r"(?i)default branch.s workflow", skill), "and why it works"
+
+
+def test_the_on_demand_review_can_actually_check_out_the_pull_request(assistant_workflow: str) -> None:
+    """The documented fallback for a workflow-changing PR had never run, and could not: `git init` has no remote.
+
+    The job did `git init --quiet pr-head` and then `git -C pr-head fetch origin "$HEAD_SHA"` — against a repository
+    that `git init` had just created without one, so it died with `exit 128` ("Could not read from remote
+    repository") before the review step. Its first live attempt was #233 at 2026-11-21T10:27Z. That matters beyond the
+    bug: this is the only path that reviews a pull request which edits the review workflow, so a broken fallback leaves
+    such a change reviewed by nobody.
+    """
+    job = _job(assistant_workflow, "review")
+    checkout = re.search(r"(?ms)^      - name: Checkout the pull request beside it.*?(?=^      - name: )", job)
+    assert checkout, "the review job must check out the pull request"
+    step = checkout.group(0)
+    assert "uses: actions/checkout@" in step, "use the action the automatic review uses, which authenticates the fetch"
+    assert "path: pr-head" in step
+    assert "ref: ${{ steps.pr.outputs.head_sha }}" in step
+    assert "repository: ${{ steps.pr.outputs.head_repo }}" in step, "a fork's head is not in this repository"
+    assert "persist-credentials: false" in step
+    # Named in the step's explanation on purpose; what must not exist is a shell step, where a remote-less fetch lived.
+    assert "run:" not in step, "the checkout is the action's job, not a shell script that has to invent a remote"
+    # The head repository has to be resolved for that to be possible.
+    assert '"head_repo=" + .head.repo.full_name' in job

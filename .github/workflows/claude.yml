@@ -99,7 +99,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '"base_ref=" + .base.ref,
-            "base_sha=" + .base.sha, "head_sha=" + .head.sha' >> "$GITHUB_OUTPUT"
+            "base_sha=" + .base.sha, "head_sha=" + .head.sha, "head_repo=" + .head.repo.full_name' >> "$GITHUB_OUTPUT"
 
       - name: Checkout the base branch (the standard, and the repo the action expects)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,16 +109,22 @@ jobs:
           persist-credentials: false
 
       - name: Checkout the pull request beside it (the code under review)
-        # The base ref is the working tree because a comment does not name a trusted ref; the pull request is fetched
-        # only into `pr-head` (docs/security.md, "Which files come from the base branch on pull requests"). A fork works
-        # here, because a maintainer asked for the review explicitly.
-        env:
-          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
-        run: |
-          git init --quiet pr-head
-          git -C pr-head fetch --no-tags --depth=200 origin "$HEAD_SHA"
-          git -C pr-head checkout --quiet FETCH_HEAD
-          git -C pr-head log --oneline -1
+        # The base ref is the working tree, because a comment does not name a trusted ref; the pull request goes only
+        # into `pr-head` (docs/security.md, "Which files come from the base branch on pull requests"). A fork works
+        # here, because a maintainer asked for the review explicitly, so the head is read from the repository the pull
+        # request actually came from rather than assumed to be this one.
+        #
+        # This used to be three `git` lines beginning with `git init pr-head`, which creates a repository with no
+        # remote — so `git fetch origin` failed with exit 128 and the job died before the review: it had never once
+        # run (the first attempt, #233 at 10:27Z, failed exactly there). `actions/checkout` is what the automatic
+        # review uses, and it authenticates the fetch itself.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.pr.outputs.head_repo }}
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: pr-head
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Run the review
         id: claude-review
