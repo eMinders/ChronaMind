@@ -465,6 +465,16 @@ def test_the_workflow_resolves_what_the_review_named(review_workflow: str, assis
         assert "secrets.GITHUB_TOKEN" in job
 
 
+def test_the_two_checks_a_condensation_must_not_drop(skill: str) -> None:
+    """#238 tightened prose and dropped both; nothing failed, so nothing stopped it. A test pins them now.
+
+    The first version of this assertion was `"$GITHUB_REPOSITORY" in skill`, which the *derivation* sentence also
+    satisfied — so it could not tell the guard was gone. The review of #238 said exactly that.
+    """
+    assert '[ "$REPOSITORY" = "${GITHUB_REPOSITORY:-$REPOSITORY}" ]' in skill, "the identity-mismatch guard"
+    assert re.search(r"(?i)would\s+fail on the old code", skill), "a fix is verified against the code, not the push"
+
+
 def test_the_review_analyses_reachability_before_it_sets_a_severity(skill: str) -> None:
     """The canary found a real contract violation and described it as a live cross-tenant leak.
 

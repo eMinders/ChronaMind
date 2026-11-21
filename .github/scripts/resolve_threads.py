@@ -72,11 +72,18 @@ def own_claims(comments: Iterable[Mapping[str, Any]], since: str | None = None) 
 
     ``since`` is an ISO-8601 timestamp: a marker left by an earlier run was already acted on, and re-acting on it would
     resolve a thread this run never verified.
+
+    A login alone is not enough. `claude` is a legal human username, and a marker in such an account's comment would
+    otherwise resolve threads on the bot's behalf, so REST's ``user.type`` must say ``Bot`` when it is present (GraphQL
+    payloads omit it, and the pull-request check below still requires a review thread of that author).
     """
     claims: list[str] = []
     for comment in comments:
         user = comment.get("user") or {}
         if str(user.get("login", "")).lower() not in OWN_AUTHORS:
+            continue
+        kind = str(user.get("type") or "")
+        if kind and kind.lower() != "bot":
             continue
         if since and str(comment.get("created_at") or "") < since:
             continue

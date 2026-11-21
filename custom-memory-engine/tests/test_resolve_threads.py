@@ -94,6 +94,14 @@ def test_only_this_reviewers_comment_can_claim_a_thread() -> None:
     assert resolver.own_claims([_comment("claude[bot]", BODY), _comment("claude", BODY)]) == [THREAD, THREAD]
 
 
+def test_a_human_account_with_the_bots_name_cannot_claim_a_thread() -> None:
+    """`claude` is a legal username. The login matches; the account type does not, and that is what decides."""
+    human = {"user": {"login": "claude", "type": "User"}, "body": BODY, "created_at": "2026-11-21T12:00:00Z"}
+    bot = {"user": {"login": "claude[bot]", "type": "Bot"}, "body": BODY, "created_at": "2026-11-21T12:00:00Z"}
+    assert resolver.own_claims([human]) == []
+    assert resolver.own_claims([bot]) == [THREAD]
+
+
 def test_a_marker_from_an_earlier_run_is_ignored_when_a_start_time_is_given() -> None:
     """A stale marker would resolve a thread this run never looked at."""
     old = _comment("claude[bot]", BODY, created="2026-11-21T10:00:00Z")
@@ -160,6 +168,7 @@ def test_the_mutation_is_reported_only_when_github_confirms_it(monkeypatch) -> N
 
 def test_a_failed_api_call_is_reported_and_never_raises(monkeypatch, capsys) -> None:
     """A refusal is a warning on the run; the findings are already posted."""
+
     class Result:
         returncode = 1
         stdout = ""
