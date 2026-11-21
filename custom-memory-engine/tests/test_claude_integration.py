@@ -628,7 +628,8 @@ def test_the_summary_is_posted_from_a_heredoc_because_writing_a_file_is_denied(
     assert "--body-file -" in skill, "the summary must be read from stdin"
     assert "<<'BODY'" in skill, "a quoted heredoc keeps markdown out of the shell's hands"
     assert not re.search(r"(?i)write it to a file", skill), "a file is not available here"
-    assert "Write" in _job(review_workflow, "claude-review")
+    # Denied, not merely named: the tool list, not any mention of the word.
+    assert "Edit,Write,NotebookEdit" in _job(review_workflow, "claude-review")
 
 
 def test_the_reviewer_declares_its_basis_and_escalates_rather_than_guessing(skill: str) -> None:
