@@ -48,14 +48,14 @@ they come from the **base branch only**. A change to them is itself part of the 
 BASE_REF="${BASE_REF:-main}"                 # passed in by the workflow; otherwise the PR's base
 BASE="origin/$BASE_REF"
 
-git show "$BASE:REVIEW.md"                                     # the review standard
+git show "$BASE:REVIEW.md"                                    # the review standard
 git show "$BASE:CLAUDE.md"                                    # which project is which
 git show "$BASE:AGENTS.md" 2>/dev/null                        # the application's rules (app/ only)
 git show "$BASE:custom-memory-engine/CLAUDE.md"                # engine rules and authority order
 ```
 
-Read all of them before forming an opinion: `REVIEW.md` is the standard, and `custom-memory-engine/CLAUDE.md` is the
-project half — authority order, the invariants actually enforced, the things that bite.
+Read all of them before forming an opinion: `REVIEW.md` is the standard; the engine's `CLAUDE.md` is the project half —
+authority order, invariants, what bites.
 
 **When a pull request introduces or changes one of those files**, the base branch has no copy of it, or an older one,
 and `git show "$BASE:REVIEW.md"` fails or returns the previous text. That is not a reason to stop: read it from
@@ -120,9 +120,9 @@ Work outwards from the changed lines. For each behaviour the diff changes, in th
    `app.deletion_active`, `app.clock`), any new table, column or function: does the runtime role's exact grant cover it,
    and is `EXECUTE` revoked from `PUBLIC` where it must be? An ordinary session can set a GUC; a gate made only of GUCs
    is no gate (`#228`).
-7. **The test's teeth.** For a fix: would the new test fail against the parent commit? If you cannot tell, say so, or
-   reconstruct it with `git stash`/`git checkout "$BASE" -- <path>` **read-only** — never leave the tree modified.
-   For a guard: is there a control proving the attack succeeds without it?
+7. **The test's teeth.** For a fix: would the new test fail against the parent commit? The checkouts are read-only and
+   only `git show`/`diff`/`log`/`grep` are permitted, so reconstruct it from `git show "$BASE:<path>"`. If that is not
+   enough, say so. For a guard: is there a control proving the attack succeeds without it?
 8. **The sequence.** If another open branch touches the same files, `gh pr list --state open`, then ask whether the merge
    order changes the result: a ledger reverted by merge order is a defect no single green PR can show.
 
@@ -132,9 +132,8 @@ Changes of 200+ added or removed lines: do steps 1–4 for **every** behaviour i
 
 For each candidate finding, before posting:
 
-- **Reproduce it if you can.** Read the path end to end; where cheap and safe, run it (`uv run --no-sync pytest -q <test>`
-  inside `custom-memory-engine/`, `git show` of the parent). Never run a command that mutates the repository, the database
-  or the pull request.
+- **Reproduce it by reading.** No database, no test runner, no writes — follow the path in the source, `git show` the
+  parent, and list under *Not verified* what a run would settle. A refused command is not a check you made.
 - **Write the evidence.** The six parts of `REVIEW.md`'s evidence bar — location, trigger, wrong behaviour, consequence,
   the safeguard that misses it, the correction. All six, or it is not a finding.
 - **Then delete it** if `REVIEW.md`'s "Do not report" list covers it: CI's own business, pre-existing and untouched,
@@ -167,7 +166,7 @@ refuses it first>`, or `unverified: <what would settle it>` — and the summary 
 
 - `first review` — the whole procedure; nothing earlier to honour.
 - `re-review` — §6.1–6.3, in order.
-- `unknown` — the history could not be read: establish it yourself (§6.1) and say what you concluded, and why.
+- `unknown` — the history could not be read: establish it yourself (§6.1), say what you concluded and why.
 
 **Do not re-derive the tier from the diff.** That is how the canary failed: after a fix push its base had advanced, the
 earlier finding fell outside `BASE...pr-head`, and the second review announced `Tier: first review`, leaving its own 🔴
@@ -176,7 +175,7 @@ thread open. If `PREVIOUS_HEAD_SHA` is set, earlier findings exist even when the
 ### 6.1 Read what you said last time
 
 ```bash
-gh pr view "$PR_NUMBER" --comments          # previous summaries: Base, Head, findings, what you could not verify
+gh pr view "$PR_NUMBER" --comments       # earlier summaries: Base, Head, findings, gaps
 git log --oneline --no-decorate "$PREVIOUS_HEAD_SHA..$HEAD_SHA" 2>/dev/null || true   # what the push actually did
 ```
 
@@ -225,7 +224,7 @@ conversation is closed when it is not, and branch protection requires conversati
 
 ### 6.3 Say it, explicitly
 
-`Tier` and `Earlier findings` in the summary (§7): the tier you ran as, and one line per finding.
+`Tier` and `Earlier findings` in the summary (§7): the tier you ran as, one line per finding.
 
 ## 7. Post it
 
@@ -237,8 +236,8 @@ Inline comments are the findings. One per root cause, at the line concerned:
   `$(git rev-parse HEAD)` inside a URL renders as plain text.
 - Never post a committable suggestion for a multi-file change, a schema change, or anything needing a test as well.
 
-Then one summary comment with `gh pr comment`, in this shape — headings exactly as written, because it is parsed by
-scripts and by the next review:
+Then one summary: write it to a file, post it with `gh pr comment --body-file`. A one-line `--body` string arrives
+flattened — on #235 the headings were lost and the gate saw no review at all. Headings exactly as written:
 
 ```markdown
 ## Code review

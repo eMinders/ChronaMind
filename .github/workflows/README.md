@@ -113,6 +113,27 @@ Owner) is a different, deeper product with a check run, inline findings and its 
 this repository, set the repository variable **`CLAUDE_REVIEW_MODE=native`** and the Action job skips before minting a
 token. Nothing in this repository can read or change that setting, so it is an administrator action, not a file.
 
+**Where the baseline comes from.** The gate decides "is this push worth a review?" from two things, in this order,
+because the first is exact and the second cannot be broken by anything the model writes:
+
+1. **The previous summary comment**: `Base:` and `Head:` as markdown fields, or the same two names inside a sentence. The
+   loose form exists because the first live run of the finished reviewer posted its summary as a single flattened
+   paragraph — no heading, no bold — after which the strict parse reported *no earlier review*: a re-review announced
+   itself as a first review (the #231 failure, reintroduced by formatting) and no empty push could ever be skipped.
+2. **GitHub's timeline** (`GET /issues/{n}/timeline`): `committed` events carry every pushed sha, `reviewed` events carry
+   the `commit_id` the review was submitted against. The reviewer does not write these.
+
+The timeline recovers the **tier** but never the base commit, and a baseline with no base licenses no skip — a base that
+moved changes what the pull request means even when its own tree did not. So a timeline-only baseline reviews and says
+`history_incomplete` while doing it. Conservative on purpose: the alternative to a decision is a review, never a skip.
+
+Replay it read-only against any pull request:
+
+```bash
+REPOSITORY=eMinders/ChronaMind PR_NUMBER=235 HEAD_SHA=<sha> BASE_SHA=<sha> ACTION=synchronize \
+  GH_TOKEN=$(gh auth token) python3 .github/scripts/review_gate.py
+```
+
 **Verifying the reviewer.** A green run proves nothing about detection. After any change to `REVIEW.md`, the skill or
 the workflow, open a throwaway PR with a planted defect (delete a guard from a migration trigger, bypass `assemble` on a
 read path) and confirm the review reports it inline and cites the mechanism. The gate can be replayed read-only against
