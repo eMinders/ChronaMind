@@ -184,16 +184,20 @@ jobs:
         # App-installation token does not have (measured: `viewerCanResolve: false` on #236 and #238, reported honestly
         # as `thread open: not permitted`), while this job's own token does. The seam is a marker in the summary naming
         # only the threads whose fix the review verified; `.github/scripts/resolve_threads.py` checks authorship and
-        # resolves nothing else. Policy code, so it comes from the base branch, exactly as the gate does.
+        # resolves nothing else.
+        #
+        # Base branch only, with **no** fallback to the pull request's copy — unlike the gate, which must fail open
+        # because a review is the safe default. Resolution is the opposite: a thread left open is what a human would see
+        # anyway, so the safe default is to resolve nothing, and a pull request never gets to run its own resolver with
+        # a write-scoped token.
         if: always() && steps.gate.outputs.review == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if ! git cat-file -e "HEAD:.github/scripts/resolve_threads.py" 2>/dev/null; then
-            { git -C pr-head archive HEAD .github/scripts | tar -x -C .; } || true
-            echo "resolve: introduced by this pull request"
-          fi
-          [ -f .github/scripts/resolve_threads.py ] || exit 0
+          [ -f .github/scripts/resolve_threads.py ] || {
+            echo "resolve: no .github/scripts/resolve_threads.py on the base branch; nothing to do"
+            exit 0
+          }
           SINCE="$(cat /tmp/review-started-at.txt 2>/dev/null || true)" python3 .github/scripts/resolve_threads.py

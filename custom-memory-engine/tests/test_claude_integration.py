@@ -479,6 +479,10 @@ def test_the_workflow_resolves_what_the_review_named(review_workflow: str, assis
         assert job.index("Run the review") < job.index("Resolve the threads this review verified"), job_name
         assert "always()" in job, "a review that failed to post still leaves nothing to resolve, but must not abort"
         assert "secrets.GITHUB_TOKEN" in job
+    # The gate fails open (a review is the safe default); resolution fails closed, so a pull request never supplies the
+    # script that runs with a write-scoped token.
+    resolve_step = _job(review_workflow, "claude-review").split("Resolve the threads this review verified")[1]
+    assert "pr-head archive" not in resolve_step
 
 
 def test_the_two_checks_a_condensation_must_not_drop(skill: str) -> None:
