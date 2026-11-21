@@ -142,9 +142,10 @@ async def purge_working(
     Guarantee (``V2-D10``, ``I10``): the purge never removes answerability. It deletes only episodes that
     :func:`plan_purge` releases; every other row of every table is left exactly as it was.
 
-    The candidates are locked ``FOR UPDATE`` before their citations are read. A concurrent write that would cite one
-    of them (an ``infer`` naming it as a source) either commits first, and its citation then retains the episode, or
-    waits for the purge and then finds its source gone. Nothing is marked or deferred: the purge, its scope event and
+    The candidates are locked ``FOR UPDATE`` before their citations are read: it is the exclusive lock that makes the
+    guarantee below true, because a shared one is compatible with the ``FOR KEY SHARE`` a foreign-key check takes. A
+    concurrent write that would cite one of them (an ``infer`` naming it as a source) either commits first, and its
+    citation then retains the episode, or waits for the purge and then finds its source gone. Nothing is marked or deferred: the purge, its scope event and
     the receipt are one transaction, so no intermediate state is observable.
     """
     target = parse_scope(scope)
