@@ -327,10 +327,17 @@ def _platform_gap(decision: Decision, repository: str, pull_request: str) -> str
     if not edited:
         return None
     return (
-        f"this pull request edits {', '.join(f'`{p}`' for p in edited)}, so the action will skip and no automatic "
-        "review will run; ask for one with a `@claude review` comment, which reviews through the default branch's "
-        "workflow"
+        f"this pull request edits {_and_list(edited)}, so the action will skip and no automatic review will run; ask "
+        "for one with a `@claude review` comment, which reviews through the default branch's workflow"
     )
+
+
+def _and_list(items: Sequence[str]) -> str:
+    """`a`, `a and b`, `a, b and c` — a sentence, not a comma splice."""
+    quoted = [f"`{item}`" for item in items]
+    if len(quoted) == 1:
+        return quoted[0]
+    return f"{', '.join(quoted[:-1])} and {quoted[-1]}"
 
 
 def _summary(

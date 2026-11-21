@@ -495,6 +495,11 @@ def test_a_pull_request_that_edits_the_review_workflow_is_flagged_as_unreviewabl
     assert "No automatic review for this pull request" in summary
     assert "@claude review" in summary
     assert "claude-code-review.yml" in summary
+    # A sentence, not a comma splice: this text is read by a maintainer under a green check.
+    assert "claude.yml, so the action" not in summary
+    assert gate._and_list(["a"]) == "`a`"
+    assert gate._and_list(["a", "b"]) == "`a` and `b`"
+    assert gate._and_list(["a", "b", "c"]) == "`a`, `b` and `c`"
 
 
 def test_a_pull_request_that_does_not_edit_the_workflow_gets_no_such_warning(
