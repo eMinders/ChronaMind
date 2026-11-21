@@ -190,6 +190,28 @@ def fetch_history(repository: str, pull_request: str) -> History:
     return read_history(comments)
 
 
+def fetch_changed_files(repository: str, pull_request: str) -> list[str] | None:
+    """The paths the pull request changes, or ``None`` when the API will not say.
+
+    From the API rather than from `git diff`: the base and head are separate checkouts, so the base clone need not hold
+    the head commit. Used only to warn about the one platform limitation below, never to decide whether to review.
+    """
+    result = _run(["gh", "api", f"repos/{repository}/pulls/{pull_request}/files", "--paginate"])
+    if result.returncode != 0:
+        return None
+    try:
+        entries = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(entries, list):
+        return None
+    return [str(entry["filename"]) for entry in entries if isinstance(entry, dict) and "filename" in entry]
+
+
+#: The workflow whose content must match the default branch for the action to mint a token at all.
+REVIEW_WORKFLOW_PATHS = (".github/workflows/claude-code-review.yml", ".github/workflows/claude.yml")
+
+
 def _present(sha: str) -> bool:
     return _run(["git", "cat-file", "-e", f"{sha}^{{commit}}"]).returncode == 0
 
@@ -263,6 +285,7 @@ def _decide(env: Mapping[str, str]) -> int:
 
     previous = history.record
     print(decision.description)
+    platform_gap = _platform_gap(decision, repository, pull_request)
     _publish(
         env,
         {
@@ -272,7 +295,7 @@ def _decide(env: Mapping[str, str]) -> int:
             "previous_head_sha": previous.head_sha if previous else "",
             "previous_base_sha": previous.base_sha if previous else "",
         },
-        summary=_summary(decision, repository, pull_request, head_sha, base_sha, previous),
+        summary=_summary(decision, repository, pull_request, head_sha, base_sha, previous, platform_gap),
     )
     if not decision.review:
         # Not silent: the run graph shows the skipped step, and this annotation is what explains it.
@@ -280,11 +303,44 @@ def _decide(env: Mapping[str, str]) -> int:
             f"::notice::No reviewable changes since {previous.head_sha if previous else 'the last review'}; "
             f"the expensive review step is skipped."
         )
+    if platform_gap:
+        print(f"::warning::{platform_gap}")
     return 0
 
 
+def _platform_gap(decision: Decision, repository: str, pull_request: str) -> str | None:
+    """Warn when this pull request changes the review workflow, which the action cannot review.
+
+    The action mints its token through an OIDC exchange that GitHub refuses unless the running workflow file is
+    *identical to the default branch's* (`src/github/token.ts`, `workflow_not_found_on_default_branch`). So a pull
+    request that edits `.github/workflows/claude-code-review.yml` is never reviewed automatically — the job goes green
+    with the action skipped. Nothing in this workflow can lift that, and buying around it by weakening the check is not
+    an option, so the reviewer has to be asked for by a maintainer: the `@claude review` job runs on an `issue_comment`
+    event, whose workflow *is* the default branch's, so it reviews any pull request including this one.
+    """
+    if not decision.review:
+        return None
+    changed = fetch_changed_files(repository, pull_request)
+    if changed is None:
+        return None
+    edited = sorted(set(changed) & set(REVIEW_WORKFLOW_PATHS))
+    if not edited:
+        return None
+    return (
+        f"this pull request edits {', '.join(f'`{p}`' for p in edited)}, so the action will skip and no automatic "
+        "review will run; ask for one with a `@claude review` comment, which reviews through the default branch's "
+        "workflow"
+    )
+
+
 def _summary(
-    decision: Decision, repository: str, pull_request: str, head_sha: str, base_sha: str, previous: Record | None
+    decision: Decision,
+    repository: str,
+    pull_request: str,
+    head_sha: str,
+    base_sha: str,
+    previous: Record | None,
+    platform_gap: str | None = None,
 ) -> str:
     lines = [
         f"### Claude review: {decision.tier}",
@@ -294,10 +350,12 @@ def _summary(
     ]
     if previous is not None:
         lines.append(f"- Last reviewed: `{previous.head_sha}` on base `{previous.base_sha}`")
+    if platform_gap:
+        lines += ["", f"> **No automatic review for this pull request.** {platform_gap[0].upper()}{platform_gap[1:]}."]
     if not decision.review:
         lines += [
             "",
-            f"Nothing changed in the tree since the review at `{previous.head_sha if previous else 'an earlier review'}`"
+            f"Nothing changed in the tree since `{previous.head_sha if previous else 'the last review'}`"
             " and the base branch is the same, so there is nothing new to read. Push a commit that changes the tree to"
             " trigger a review, or ask for one with `@claude review`.",
         ]

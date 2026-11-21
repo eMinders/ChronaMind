@@ -12,7 +12,9 @@ skill writes to the one this script parses.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import json
 import re
 import subprocess
 import sys
@@ -391,3 +393,147 @@ def test_the_gate_skips_only_when_it_has_a_baseline_and_the_tree_is_identical(
     outputs = _write_outputs(tmp_path, _event(), monkeypatch)
     assert (outputs["review"], outputs["reason"]) == ("false", "no_reviewable_changes")
     assert outputs["previous_head_sha"] == OLDER
+
+
+# --- end to end, as the workflow runs it: real git, a stub `gh`, the real script ---------------------------
+
+_STUB_GH = """#!/bin/sh
+# A stand-in for `gh`, so the gate's real command paths run without a network or a token.
+case "$*" in
+  *"/issues/"*"/comments"*) cat "$STUB_COMMENTS" ;;
+  *"/pulls/"*"/files"*)     cat "$STUB_FILES" ;;
+  *)                        echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+"""
+
+
+def _run_gate(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    comments: list[dict[str, object]],
+    files: list[str] | None = None,
+    action: str = "synchronize",
+    base: str = "b" * 40,
+) -> tuple[dict[str, str], str]:
+    """Run the script the way the workflow does: as a subprocess, with `gh` on PATH and outputs to files."""
+    stub_dir = repo / "stub"
+    stub_dir.mkdir(exist_ok=True)
+    stub = stub_dir / "gh"
+    stub.write_text(_STUB_GH, encoding="utf-8")
+    stub.chmod(0o755)
+    (repo / "comments.json").write_text(json.dumps(comments), encoding="utf-8")
+    (repo / "files.json").write_text(json.dumps([{"filename": f} for f in (files or [])]), encoding="utf-8")
+
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True)
+    out, summary = repo / "out", repo / "summary"
+    env = {
+        "PATH": f"{stub_dir}:/usr/bin:/bin",
+        "STUB_COMMENTS": str(repo / "comments.json"),
+        "STUB_FILES": str(repo / "files.json"),
+        "REPOSITORY": "eMinders/ChronaMind",
+        "PR_NUMBER": "1",
+        "HEAD_SHA": head.stdout.strip(),
+        "BASE_SHA": base,
+        "ACTION": action,
+        "GITHUB_OUTPUT": str(out),
+        "GITHUB_STEP_SUMMARY": str(summary),
+    }
+    monkeypatch.chdir(repo)
+    completed = subprocess.run([sys.executable, str(GATE)], env=env, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    outputs = dict(line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines() if "=" in line)
+    return outputs, summary.read_text(encoding="utf-8")
+
+
+def test_an_identical_tree_push_writes_review_false_end_to_end(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The canary's exact push, through the script the workflow runs rather than through `classify`.
+
+    The reviewed head is the current head, and the tree is identical, so the gate must answer "do not review" — and it
+    must do that *before* the review step, which is what `steps.gate.outputs.review == 'true'` gates. That the action
+    is never invoked (and so no token is minted) follows from the workflow, pinned separately below.
+    """
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True).stdout
+    outputs, summary = _run_gate(
+        repo, monkeypatch, comments=[_comment("claude[bot]", _summary("b" * 40, head.strip()))]
+    )
+    assert (outputs["review"], outputs["reason"], outputs["tier"]) == ("false", "no_reviewable_changes", "re-review")
+    assert "skip" in summary.lower() and "nothing new to read" in summary.lower(), summary
+
+
+def test_a_push_that_changes_the_tree_writes_review_true_end_to_end(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other side of the same comparison: a one-line edit must be reviewed, at the re-review tier."""
+    previous = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True)
+    (repo / "a.txt").write_text("changed\n", encoding="utf-8")
+    _git(repo, "commit", "--quiet", "-am", "a change")
+    outputs, _ = _run_gate(
+        repo, monkeypatch, comments=[_comment("claude", _summary("b" * 40, previous.stdout.strip()))]
+    )
+    assert (outputs["review"], outputs["reason"]) == ("true", "push_changed_the_tree")
+    assert outputs["previous_head_sha"] == previous.stdout.strip()
+
+
+def test_a_pull_request_that_edits_the_review_workflow_is_flagged_as_unreviewable(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The action skips when the running workflow file differs from the default branch's, and says nothing.
+
+    That gap is why a workflow change cannot be reviewed automatically. The gate cannot lift the platform rule, so it
+    reports it and names the path that works: `@claude review`, an `issue_comment` event whose workflow *is* the
+    default branch's. Silence here is how a workflow change ships reviewed by nobody.
+    """
+    outputs, summary = _run_gate(
+        repo,
+        monkeypatch,
+        comments=[],
+        files=[".github/workflows/claude-code-review.yml", "REVIEW.md"],
+        action="opened",
+    )
+    assert outputs["review"] == "true", "the gate still decides to review; the platform is what skips"
+    assert "No automatic review for this pull request" in summary
+    assert "@claude review" in summary
+    assert "claude-code-review.yml" in summary
+
+
+def test_a_pull_request_that_does_not_edit_the_workflow_gets_no_such_warning(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No false alarm on the ordinary case, or the warning becomes noise nobody reads."""
+    _, summary = _run_gate(repo, monkeypatch, comments=[], files=["custom-memory-engine/src/x.py"], action="opened")
+    assert "No automatic review" not in summary
+
+
+def test_an_unreadable_file_list_does_not_block_the_review(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The warning is an extra; the decision must not depend on it."""
+    stub_dir = repo / "stub2"
+    stub_dir.mkdir()
+    stub = stub_dir / "gh"
+    stub.write_text('#!/bin/sh\ncase "$*" in *"/comments"*) echo "[]" ;; *) exit 1 ;; esac\n', encoding="utf-8")
+    stub.chmod(0o755)
+    env = {
+        "PATH": f"{stub_dir}:/usr/bin:/bin",
+        "REPOSITORY": "eMinders/ChronaMind",
+        "PR_NUMBER": "1",
+        "HEAD_SHA": "a" * 40,
+        "BASE_SHA": "b" * 40,
+        "ACTION": "opened",
+        "GITHUB_OUTPUT": str(repo / "out2"),
+        "GITHUB_STEP_SUMMARY": str(repo / "sum2"),
+    }
+    monkeypatch.chdir(repo)
+    completed = subprocess.run([sys.executable, str(GATE)], env=env, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+    assert "review=true" in (repo / "out2").read_text(encoding="utf-8")
+
+
+def test_the_gate_script_is_python_312_compatible() -> None:
+    """The runner's `python3` is 3.12, while the root project's Ruff targets 3.14 and rewrites code as such.
+
+    Ruff 0.17 with a 3.14 target strips the parentheses from `except (A, B, C):` — valid 3.14 (PEP 758), a SyntaxError
+    on 3.12. This exact slip happened while writing the gate, and the failure mode is a red job on every pull request.
+    """
+    source = GATE.read_text(encoding="utf-8")
+    ast.parse(source, feature_version=(3, 12))
+    assert "def " in source

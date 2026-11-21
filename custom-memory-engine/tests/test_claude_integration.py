@@ -186,8 +186,11 @@ def test_a_review_runs_only_when_the_service_is_not_enabled(review_workflow: str
 
 
 def test_a_concurrency_group_cancels_a_superseded_review(review_workflow: str, assistant_workflow: str) -> None:
+    # Comments may sit between `concurrency:` and its keys; the group and the cancellation are what matter.
     for text in (review_workflow, assistant_workflow):
-        assert re.search(r"(?m)^concurrency:\n  group:", text)
+        block = re.search(r"(?ms)^concurrency:\n((?:  #.*\n)*  group: .*?\n(?:.*?\n)*?)\S", text)
+        assert block, "each workflow must declare a concurrency group"
+        assert re.search(r"(?m)^  group:", block.group(0))
         assert "cancel-in-progress: true" in text
         assert "timeout-minutes:" in text
 
@@ -443,8 +446,11 @@ def test_the_review_analyses_reachability_before_it_sets_a_severity(skill: str) 
         "the analysis must not weaken the reviewer into silence"
     )
     assert "**Reachability:**" in skill
-    for step in ("guards upstream", "reached", "latent"):
+    for step in ("guards upstream", "latent", "unverified"):
         assert re.search(rf"(?i){step}", skill), step
+    # The trace starts at the entry point, not at the handler: a helper is only reachable through it.
+    assert "Engine.call" in skill and re.search(r"(?i)entry point", skill)
+    assert re.search(r"(?i)on a path, not at its start", skill)
     assert re.search(r"(?i)never assert a leak", skill), "no impact claim without a path"
 
 
@@ -511,3 +517,48 @@ def test_the_gate_comes_from_the_base_branch_and_tolerates_its_own_introduction(
     assert "introduced by this pull request" in body, "and says whose copy ran"
     assert "[ -f .github/scripts/review_gate.py ]" in body, "a missing gate must not fail the job"
     assert "reason=gate_failed" in body and "review=true" in body, "no gate means a review, not a skip"
+
+
+def test_the_bot_cannot_cancel_the_run_it_just_started(assistant_workflow: str) -> None:
+    """The action posts an acknowledgement comment as it starts, and that comment re-enters this workflow.
+
+    With one shared group per pull request, that comment cancelled the run which had just posted it: #233, `claude`
+    job "Claude Code is working…" at 10:07:11Z, `The operation was canceled` at 10:07:27Z, and the assistant never
+    answered. A run started by a bot must therefore land in a group that collides with nothing, while a human's second
+    `@claude review` must still supersede their first.
+    """
+    group = re.search(r"(?ms)^concurrency:\n(?:  #.*\n)*  group: >-\n(.*?)^  cancel-in-progress:", assistant_workflow)
+    assert group, "the concurrency block must keep its group and cancel-in-progress"
+    body = group.group(1)
+    assert "cancel-in-progress: true" in assistant_workflow
+    assert "claude[bot]" in body, "the bot actor must be recognised"
+    assert "github.run_id" in body, "a bot-started run needs a group of its own, or it cancels the real one"
+    # Human requests keep the behaviour that matters: a newer review request supersedes an older one.
+    assert "startsWith(github.event.comment.body, '@claude review')" in body
+    assert "'review'" in body and "'assist'" in body
+
+
+def test_the_reviewer_checks_the_token_may_resolve_before_it_tries(skill: str) -> None:
+    """`resolveReviewThread` needs `Contents: write`, not `pull_requests: write`, on a GitHub App installation token.
+
+    Several projects learned this from live refusals (`Resource not accessible by integration`) after requesting the
+    permission everyone expects. The App token this action mints does ask for `contents: write` as well, so resolution
+    should be permitted — but "should be" is not a basis for writing "resolved", so the skill reads `viewerCanResolve`,
+    the token's own answer, and refuses to claim a resolution it has not got.
+    """
+    assert "viewerCanResolve" in skill, "the query must ask whether this identity may resolve"
+    assert re.search(r"(?i)contents: write", skill), "the permission that actually gates the mutation must be named"
+    assert re.search(r"(?i)not permitted", skill), "a refusal has a state of its own, not a silent skip"
+    assert re.search(r"(?i)Resource not accessible", skill)
+
+
+def test_a_workflow_change_is_reported_as_unreviewable_and_points_at_the_way_that_works(skill: str) -> None:
+    """`claude-review` cannot review a pull request that edits its own workflow, and nothing local can change that.
+
+    The action's OIDC exchange refuses a workflow file that differs from the default branch's, so the job goes green
+    with the review skipped — the dangerous shape of failure, where green means "not reviewed". The documented path is
+    the on-demand job: `issue_comment` runs the default branch's workflow, so it reviews any pull request.
+    """
+    assert re.search(r"(?i)edits `.github/workflows/claude-code-review\.yml` gets no automatic review", skill)
+    assert re.search(r"(?i)@claude review", skill), "the fallback must be named where the gap is explained"
+    assert re.search(r"(?i)default branch.s workflow", skill), "and why it works"

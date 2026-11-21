@@ -70,11 +70,27 @@ never approves, never merges and never pushes — those tools are denied in `cla
 protection requirement or substitute for a human decision. It complements the deterministic gates; it does not replace
 them, and a clean review is not proof of correctness.
 
-The one write it performs is resolving its own review threads, after verifying the fix and only when GitHub confirms it.
-That needs no `permissions:` change here: the action authenticates as the Claude GitHub App through OIDC, and that
-installation — not the job's `GITHUB_TOKEN`, which stays read-only — is the identity that also posts the comments. If
-the API refuses the mutation, the review says so and leaves the thread open; it never reports a resolution it did not
-get.
+**The one write it performs** is resolving its own review threads, and only after verifying the fix and getting
+`isResolved: true` back. No `permissions:` change is involved: the action mints an App token by OIDC exchange, and that
+installation — not the job's `GITHUB_TOKEN`, which stays read-only — is the identity that already posts the comments.
+
+What that identity needs is more specific than it looks: `resolveReviewThread` is gated on **Contents: write**, not on
+`pull_requests: write` (a token holding only the latter is refused with `Resource not accessible by integration`; see
+`github/gh-aw#35726`, `oven-sh/bun#36959` and the note in the `zuke-build/zuke#634` thread). The action's default token
+request already asks for `contents: write`, `pull_requests: write` and `issues: write`
+(`src/github/token.ts` at the pinned SHA), so this repository's installation should already qualify. The skill does not
+rely on that: it reads `viewerCanResolve` first and, when it is false, reports `thread open: not permitted (no Contents:
+write)` and leaves the thread alone. **If resolution fails in practice**, the manual action is on the App installation,
+not in this repository: the Claude GitHub App (app settings → Permissions & events) must grant
+*Contents: Read and write* for the installing account, and the installation must include this repository.
+
+**A pull request that edits `claude-code-review.yml` (or `claude.yml`) gets no automatic review, and its
+`claude-review` check is green.** That is not a policy here but a platform rule: the action's OIDC exchange is refused
+unless the running workflow file is byte-identical to the default branch's, so the action exits "skipped" and the job
+passes. Nothing in this repository can lift it, and buying around it by weakening the check is not an option. So the
+gate prints a warning and a step-summary notice naming the workflow, and the review is requested explicitly with a
+`@claude review` comment: that job runs on `issue_comment`, whose workflow *is* the default branch's, and reviews any
+pull request including the one that changes the workflow.
 
 **Cost.** Each run is billed to the subscription behind `CLAUDE_CODE_OAUTH_TOKEN` and consumes GitHub Actions
 minutes. Three things bound it, none of them a model downgrade:
@@ -83,7 +99,9 @@ minutes. Three things bound it, none of them a model downgrade:
   recorded in its summary, and skips before the action mints a token. It does not filter by path: a change to `PLAN/V2/`,
   `.github/` or an instruction file is reviewable here, so any tree change is reviewed and an allow list would be the way
   a governance change gets skipped as a docs change. A skipped run says so in the step summary, with the sha it compared.
-- **A superseded review is cancelled**, by a concurrency group keyed on the PR, and every job has a timeout.
+- **A superseded review is cancelled**, by a concurrency group keyed on the PR, and every job has a timeout. A run
+  started by a bot lands in a group of its own: the action posts an acknowledgement comment as it starts, and that
+  comment used to re-enter the same concurrency group and cancel the run that had just posted it.
 - **The model is a repository variable**, `CLAUDE_REVIEW_MODEL` (default `claude-sonnet-5-5`; `claude-opus-5-5` buys
   depth at a materially higher cost per review).
 
@@ -103,7 +121,26 @@ any past PR, which is how its tier and skip decisions were checked without a liv
 ```bash
 REPOSITORY=eMinders/ChronaMind PR_NUMBER=<n> HEAD_SHA=<sha> BASE_SHA=<sha> ACTION=synchronize \
   python3 .github/scripts/review_gate.py
-``` The instruction files' own references are
+```
+
+**A controlled canary, and the rules that keep it safe.** Detection is the one property a green run cannot show, so it is
+tested by planting a defect. This is the procedure the reviewer was last validated with, and it is the only thing that
+proves a change to `REVIEW.md`, the skill or this workflow has not cost a finding:
+
+1. Branch from `main` and plant **one** semantic defect tied to a real invariant, of the kind CI cannot see — no syntax
+   error, no failing test, no lint. Verify that by mutation first: with the defect in place the full suite and every
+   static gate must still pass, or the canary tests CI rather than the reviewer.
+2. Write the expected finding down **before** pushing — location, trigger, wrong behaviour, consequence, the safeguard
+   that misses it, the fix, and the severity you expect — and keep it outside the repository. A record written
+   afterwards only describes what happened.
+3. Push the defect only, and open a normal pull request marked do-not-merge. It must not touch `.github/workflows/`,
+   `REVIEW.md` or `.claude/`: a change to those is exactly what the platform will not review (above), so such a canary
+   would test nothing.
+4. Compare against the record: was it detected, at the right location, with the right mechanism and a calibrated
+   severity? Then push the fix and check the *re-review* — `Tier: re-review`, the finding reported fixed, its thread
+   resolved, and nothing repeated.
+5. Close it unmerged and delete the branch. A canary is evidence about the reviewer and is never a change: it must not
+   reach `main`, and it must not leave a defect behind. The instruction files' own references are
 checked on every run: `tests/test_claude_integration.py` holds them to `scripts/check_evidence.py`, and pins the
 workflow's triggers, permissions, deny list and base-branch checkout.
 

@@ -22,7 +22,16 @@ on:
     types: [submitted]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '@claude review') && 'review' || 'assist' }}
+  # A run must be cancelled by a *superseding request*, never by the bot's own work. The action posts an
+  # acknowledgement comment as it starts; that comment is an `issue_comment` event like any other, so it used to join
+  # this group and cancel the run that had just posted it — `claude` job "Claude Code is working…" at 10:07:11Z, run
+  # cancelled at 10:07:27Z, on #233. A run started by the bot therefore gets a group of its own (it is skipped by the
+  # job's `if` anyway), and only a human's comment can supersede a human's request.
+  group: >-
+    ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{
+      contains(fromJSON('["claude[bot]","github-actions[bot]"]'), github.actor) && format('bot-{0}', github.run_id) ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '@claude review') && 'review' || 'assist')
+    }}
   cancel-in-progress: true
 
 jobs:
