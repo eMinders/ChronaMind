@@ -11,6 +11,15 @@ Two decisions, and both are the ones the canary got wrong (`.github/workflows/RE
   and post nothing. `synchronize` fires on the push, so the only way to know is to compare the pushed commit with the
   one that was actually reviewed — which is what the previous summary comment records.
 
+Both originally read a summary comment that matched the template in the skill *exactly*. On the first live run of the
+finished reviewer it did not: the model posted the same content as one flattened paragraph, `Code review. Base <sha>,
+Head <sha>. …`, with no heading and no bold field names. The gate then saw no earlier review at all — so a re-review
+announced itself as a first review (the failure of #231, reintroduced by a formatting difference) and no empty push
+could ever be skipped. Trusting a model's formatting for a **policy** decision is the mistake: the tier is now also read
+from GitHub's own event stream, which the model does not write (`.github/workflows/README.md`, "Where the baseline comes
+from"). The summary is parsed first because it is exact, and the timeline is the fallback that keeps the tier right when
+the prose is not.
+
 Both are pure functions of the event payload, the review history and a `git diff`, so both are unit-tested in
 `custom-memory-engine/tests/test_review_gate.py` without a network, a token or a runner.
 
@@ -38,6 +47,11 @@ OWN_AUTHORS = frozenset({"claude", "claude[bot]"})
 REVIEW_HEADING = "## Code review"
 _BASE_SHA = re.compile(r"\*\*Base:\*\*\s*`([0-9a-f]{7,40})`")
 _HEAD_SHA = re.compile(r"\*\*Head:\*\*\s*`([0-9a-f]{7,40})`")
+#: The same two fields written as prose (`Base 615ad97…, Head 6cfac7e…`) — the shape a model produces when it builds one
+#: long `--body` string instead of passing a file. A full 40-character sha is required, so a short hex word in a finding
+#: ("a 7-character prefix") cannot be mistaken for one of these.
+_BASE_ANY = re.compile(r"\bBase\b[^\n]{0,16}?\b([0-9a-f]{40})\b")
+_HEAD_ANY = re.compile(r"\bHead\b[^\n]{0,16}?\b([0-9a-f]{40})\b")
 
 #: What the gate decided, and why. `reason` is machine-readable; the description is for the person reading the run.
 REVIEW = "review"
@@ -90,7 +104,7 @@ def parse_record(body: str) -> Record | None:
     An incomplete summary (a run killed mid-comment, a hand-written comment that quoted the heading) yields ``None``
     rather than a guess: a half-parsed record would compare the wrong commits, and skipping on it would hide a change.
     """
-    base, head = _BASE_SHA.search(body), _HEAD_SHA.search(body)
+    base, head = _BASE_SHA.search(body) or _BASE_ANY.search(body), _HEAD_SHA.search(body) or _HEAD_ANY.search(body)
     if base is None or head is None:
         return None
     return Record(base_sha=base.group(1), head_sha=head.group(1))
@@ -107,7 +121,10 @@ def own_review_bodies(comments: Iterable[Mapping[str, Any]]) -> list[str]:
         user = comment.get("user") or {}
         login = str(user.get("login", "")).lower()
         body = str(comment.get("body") or "")
-        if login in OWN_AUTHORS and REVIEW_HEADING in body:
+        # The heading promised by the skill, *or* a body that still names both commits: the live reviewer flattened one
+        # summary into a single paragraph (`Code review. Base <sha>, Head <sha>. …`) and the heading test alone threw
+        # away the only record of what it had read.
+        if login in OWN_AUTHORS and (REVIEW_HEADING in body or parse_record(body) is not None):
             bodies.append(body)
     return bodies
 
@@ -126,6 +143,44 @@ def read_history(comments: Iterable[Mapping[str, Any]]) -> History:
         if record is not None:
             return History(available=True, earlier_review=True, record=record)
     return History(available=True, earlier_review=True, record=None)
+
+
+def read_timeline(events: Iterable[Mapping[str, Any]]) -> History | None:
+    """The same history, read from GitHub's event stream — the path that does not depend on how the summary was written.
+
+    Two event kinds matter, and both are GitHub's own record rather than the model's prose:
+
+    * ``committed``, which carries the sha of each commit as it reaches the pull request;
+    * ``reviewed`` / ``commented`` by this reviewer, in order.
+
+    The head a review read is therefore the last commit to arrive before that review's event. A ``reviewed`` event
+    carries ``commit_id`` outright, which is exact — it is the commit the review object was submitted against — and it
+    is preferred. ``None`` means the stream says nothing about this reviewer.
+
+    The base commit is *not* in the timeline, so a record recovered here carries ``base_sha=""``. The caller treats that
+    as an unknown baseline and reviews: a tier is recoverable without the base, a *skip* is not, and a gate that guessed
+    the base could skip a review whose base had moved.
+    """
+    last_commit: str | None = None
+    record: Record | None = None
+    for event in events:
+        kind = str(event.get("event") or "")
+        if kind == "committed":
+            sha = str(event.get("sha") or "")
+            if sha:
+                last_commit = sha
+            continue
+        if kind not in {"reviewed", "commented"}:
+            continue
+        user = event.get("user") or {}
+        if str(user.get("login", "")).lower() not in OWN_AUTHORS:
+            continue
+        head = str(event.get("commit_id") or last_commit or "")
+        if head:
+            record = Record(base_sha="", head_sha=head)
+    if record is None:
+        return None
+    return History(available=True, earlier_review=True, record=record)
 
 
 def classify(
@@ -158,6 +213,9 @@ def classify(
         return Decision(review=True, tier=tier, reason="history_incomplete")
     # The reviewed baseline is a pair. A base that has advanced changes what `BASE...pr-head` means, so the merged tree
     # is a different thing to review even when the pushed tree is identical.
+    if not history.record.base_sha:
+        # Recovered from the timeline: the head is known and the base is not. Correct tier, no skip.
+        return Decision(review=True, tier=tier, reason="history_incomplete")
     if history.record.base_sha != base_sha:
         return Decision(review=True, tier=tier, reason="base_advanced")
     if history.record.head_sha == head_sha:
@@ -176,18 +234,37 @@ def _run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
-def fetch_history(repository: str, pull_request: str) -> History:
-    """Read the pull request's comments; an unreadable history is reported as unavailable, never as empty."""
-    result = _run(["gh", "api", "--paginate", f"repos/{repository}/issues/{pull_request}/comments"])
+def _api_list(repository: str, path: str, what: str) -> list[Any] | None:
+    """One paginated REST list, or ``None`` (with a logged reason) when it cannot be read."""
+    result = _run(["gh", "api", "--paginate", f"repos/{repository}/{path}"])
     if result.returncode != 0:
-        print(f"::warning::could not read review history: {result.stderr.strip()[:400]}")
-        return History(available=False, earlier_review=False, record=None)
+        print(f"::warning::could not read {what}: {result.stderr.strip()[:400]}")
+        return None
     try:
-        comments = json.loads(result.stdout)
+        payload = json.loads(result.stdout)
     except json.JSONDecodeError:
-        print("::warning::review history was not JSON")
+        print(f"::warning::{what} was not JSON")
+        return None
+    return payload if isinstance(payload, list) else None
+
+
+def fetch_history(repository: str, pull_request: str) -> History:
+    """Read the review history: the summary comments first, GitHub's event stream when they do not answer.
+
+    The comments are authoritative because they carry the *base* as well as the head. The timeline is the fallback, and
+    it is what keeps the tier right when the summary is written in a shape this script does not recognise — a formatting
+    difference must never turn a re-review into a first review again (see the module docstring).
+    """
+    comments = _api_list(repository, f"issues/{pull_request}/comments", "review history")
+    if comments is None:
         return History(available=False, earlier_review=False, record=None)
-    return read_history(comments)
+    history = read_history(comments)
+    if history.earlier_review:
+        return history
+    events = _api_list(repository, f"issues/{pull_request}/timeline", "the pull request timeline")
+    if events is None:
+        return history
+    return read_timeline(events) or history
 
 
 def fetch_changed_files(repository: str, pull_request: str) -> list[str] | None:

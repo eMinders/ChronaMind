@@ -241,8 +241,72 @@ def test_a_human_comment_that_quotes_the_heading_is_not_a_record() -> None:
     assert (history.earlier_review, history.record) == (False, None)
 
 
-def test_a_comment_without_the_heading_is_not_a_record() -> None:
-    assert gate.read_history([_comment("claude[bot]", f"**Base:** `{BASE}` · **Head:** `{HEAD}`")]).record is None
+def test_a_bot_comment_without_the_heading_but_with_both_commits_is_still_a_record() -> None:
+    """The live reviewer wrote exactly this on #235: the template's *content*, flattened into one paragraph.
+
+    Requiring the heading threw that away, so the gate saw no earlier review at all — and a re-review announced itself
+    as a first review. A body that still names both commits is a record whatever its shape; only a body that names
+    neither is not.
+    """
+    flattened = (
+        "Code review. Base 615ad97999e75ffb562e298c0b235e0dca972959, Head "
+        "6cfac7e31b8887659bd735e06b0684a47664c443. Reviewed 1 file, +5/-5. Tier: first review."
+    )
+    history = gate.read_history([_comment("claude[bot]", flattened)])
+    assert history.earlier_review is True
+    assert history.record == gate.Record(
+        base_sha="615ad97999e75ffb562e298c0b235e0dca972959", head_sha="6cfac7e31b8887659bd735e06b0684a47664c443"
+    )
+
+
+def test_a_bot_comment_that_names_neither_commit_is_not_a_record() -> None:
+    """Prose is not a record. Only this reviewer's own summaries count, and only when they say what was read."""
+    assert gate.read_history([_comment("claude", "No blocking findings.")]).record is None
+
+
+def test_a_short_hex_string_in_prose_is_not_mistaken_for_a_commit() -> None:
+    """The loose patterns need a full sha: a finding quoting a 7-character prefix is prose, not a baseline."""
+    assert gate.parse_record("## Code review\n\nline 157, prefix 6cfac7e, Base b)") is None
+
+
+def test_the_timeline_recovers_the_tier_when_the_summary_is_unreadable() -> None:
+    """GitHub's event stream is the fallback: the model does not write it, so a format change cannot break it."""
+    events = [
+        {"event": "committed", "sha": OLDER},
+        {"event": "reviewed", "commit_id": OLDER, "user": {"login": "claude"}},
+        {"event": "commented", "user": {"login": "claude[bot]"}, "body": "one flattened paragraph"},
+    ]
+    history = gate.read_timeline(events)
+    assert history is not None
+    assert (history.earlier_review, history.record) == (True, gate.Record(base_sha="", head_sha=OLDER))
+
+
+def test_the_timeline_falls_back_to_the_last_commit_when_a_summary_only_review_has_no_commit_id() -> None:
+    """A review with no inline findings has no ``reviewed`` event; the commit that arrived before its summary is it."""
+    events = [
+        {"event": "committed", "sha": OLDER_BASE},
+        {"event": "committed", "sha": HEAD},
+        {"event": "commented", "user": {"login": "claude[bot]"}, "body": "No blocking findings."},
+    ]
+    history = gate.read_timeline(events)
+    assert history is not None and history.record is not None
+    assert history.record.head_sha == HEAD
+
+
+def test_another_authors_review_event_is_not_this_reviewers_history() -> None:
+    events = [
+        {"event": "committed", "sha": OLDER},
+        {"event": "reviewed", "commit_id": OLDER, "user": {"login": "elewashy"}},
+        {"event": "commented", "user": {"login": "elewashy"}, "body": "@claude review"},
+    ]
+    assert gate.read_timeline(events) is None
+
+
+def test_a_timeline_record_never_licenses_a_skip() -> None:
+    """The base is not in the timeline. A recovered head is enough for the tier and not enough to skip a review."""
+    history = gate.History(available=True, earlier_review=True, record=gate.Record(base_sha="", head_sha=HEAD))
+    decision = gate.classify(action="synchronize", history=history, head_sha=HEAD, base_sha=BASE, changed=False)
+    assert decision == gate.Decision(review=True, tier=gate.RE_REVIEW, reason="history_incomplete")
 
 
 def test_an_incomplete_summary_leaves_the_baseline_unknown_but_the_tier_a_re_review() -> None:
@@ -253,6 +317,9 @@ def test_an_incomplete_summary_leaves_the_baseline_unknown_but_the_tier_a_re_rev
 
 def test_a_record_round_trips_through_the_summary_format() -> None:
     assert gate.parse_record(_summary(OLDER_BASE, OLDER)) == gate.Record(base_sha=OLDER_BASE, head_sha=OLDER)
+    # The skill must also say *how* to post it: a one-line `--body` string is what flattened the live summary on #235.
+    skill = REVIEW_SKILL.read_text(encoding="utf-8")
+    assert "--body-file" in skill
 
 
 # --- the tree comparison, against a real repository -------------------------------------------------------

@@ -48,14 +48,14 @@ they come from the **base branch only**. A change to them is itself part of the 
 BASE_REF="${BASE_REF:-main}"                 # passed in by the workflow; otherwise the PR's base
 BASE="origin/$BASE_REF"
 
-git show "$BASE:REVIEW.md"                                     # the review standard
+git show "$BASE:REVIEW.md"                                    # the review standard
 git show "$BASE:CLAUDE.md"                                    # which project is which
 git show "$BASE:AGENTS.md" 2>/dev/null                        # the application's rules (app/ only)
 git show "$BASE:custom-memory-engine/CLAUDE.md"                # engine rules and authority order
 ```
 
-Read all of them before forming an opinion: `REVIEW.md` is the standard, and `custom-memory-engine/CLAUDE.md` is the
-project half — authority order, the invariants actually enforced, the things that bite.
+Read all of them before forming an opinion: `REVIEW.md` is the standard; the engine's `CLAUDE.md` is the project half —
+authority order, invariants, what bites.
 
 **When a pull request introduces or changes one of those files**, the base branch has no copy of it, or an older one,
 and `git show "$BASE:REVIEW.md"` fails or returns the previous text. That is not a reason to stop: read it from
@@ -167,7 +167,7 @@ refuses it first>`, or `unverified: <what would settle it>` — and the summary 
 
 - `first review` — the whole procedure; nothing earlier to honour.
 - `re-review` — §6.1–6.3, in order.
-- `unknown` — the history could not be read: establish it yourself (§6.1) and say what you concluded, and why.
+- `unknown` — the history could not be read: establish it yourself (§6.1), say what you concluded and why.
 
 **Do not re-derive the tier from the diff.** That is how the canary failed: after a fix push its base had advanced, the
 earlier finding fell outside `BASE...pr-head`, and the second review announced `Tier: first review`, leaving its own 🔴
@@ -176,7 +176,7 @@ thread open. If `PREVIOUS_HEAD_SHA` is set, earlier findings exist even when the
 ### 6.1 Read what you said last time
 
 ```bash
-gh pr view "$PR_NUMBER" --comments          # previous summaries: Base, Head, findings, what you could not verify
+gh pr view "$PR_NUMBER" --comments       # earlier summaries: Base, Head, findings, gaps
 git log --oneline --no-decorate "$PREVIOUS_HEAD_SHA..$HEAD_SHA" 2>/dev/null || true   # what the push actually did
 ```
 
@@ -225,7 +225,7 @@ conversation is closed when it is not, and branch protection requires conversati
 
 ### 6.3 Say it, explicitly
 
-`Tier` and `Earlier findings` in the summary (§7): the tier you ran as, and one line per finding.
+`Tier` and `Earlier findings` in the summary (§7): the tier you ran as, one line per finding.
 
 ## 7. Post it
 
@@ -237,8 +237,8 @@ Inline comments are the findings. One per root cause, at the line concerned:
   `$(git rev-parse HEAD)` inside a URL renders as plain text.
 - Never post a committable suggestion for a multi-file change, a schema change, or anything needing a test as well.
 
-Then one summary comment with `gh pr comment`, in this shape — headings exactly as written, because it is parsed by
-scripts and by the next review:
+Then one summary: write it to a file, post it with `gh pr comment --body-file`. A one-line `--body` string arrives
+flattened — on #235 the headings were lost and the gate saw no review at all. Headings exactly as written:
 
 ```markdown
 ## Code review
