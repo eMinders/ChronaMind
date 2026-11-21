@@ -50,6 +50,12 @@ def assistant_workflow() -> str:
 
 
 @pytest.fixture(scope="module")
+def standard() -> str:
+    """The repository review standard, read from the working tree."""
+    return (REPO / "REVIEW.md").read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
 def skill() -> str:
     return REVIEW_SKILL.read_text(encoding="utf-8")
 
@@ -425,22 +431,68 @@ def test_the_review_is_told_its_tier_rather_than_inferring_it(skill: str, review
     assert re.search(r"(?i)history incomplete", skill), "an unreadable record is a state, not a silent first review"
 
 
-def test_the_skill_resolves_its_own_threads_only_after_verifying_the_fix(skill: str) -> None:
-    """The canary verified its fix and left the 🔴 thread open, so conversation resolution still blocked the PR."""
-    assert "resolveReviewThread" in skill, "the mutation must be named, not left to be improvised"
-    assert "reviewThreads" in skill and "comment matching" not in skill
+def test_the_skill_names_the_threads_it_verified_and_never_resolves_them_itself(skill: str) -> None:
+    """The canary verified its fix and left the 🔴 thread open, so conversation resolution still blocked the PR.
+
+    Measured twice (#236, #238): the model's token cannot run `resolveReviewThread` — it is the App installation's, and
+    `resolveReviewThread` needs Contents: write. Pretending otherwise leaves threads open; mutating from the model with
+    a widened token is worse. So the reviewer *names* the threads whose fix it verified, in a marker, and a job step
+    holding the permission performs the mutation after re-checking authorship.
+    """
+    assert "resolveReviewThread" in skill, "the mechanism must be named, not improvised"
+    assert "reviewThreads" in skill
     assert re.search(r"(?i)match a thread by its body", skill), "associate by content, never by position or a guess"
-    assert "THREAD_ID" in skill
-    # The four states the owner needs to tell apart, and no shortcut between them.
-    for state in ("reported", "fix observed", "fix verified", "thread resolved"):
+    assert "<!-- resolve-threads:" in skill, "the seam the step reads"
+    assert "author" in skill and "claude[bot]" in skill, "only this reviewer's threads are its own"
+    # The four states, and no shortcut between them.
+    for state in ("reported", "fix observed", "fix verified", "named for resolution"):
         assert state in skill, state
-    assert re.search(r"(?i)require .{0,40}isResolved.{0,10}true", skill), "GitHub must confirm it"
-    assert re.search(r"(?i)resolution failed", skill), "a refused mutation must be reported, not glossed over"
-    assert re.search(r"(?i)author\.login.{0,80}claude", skill), "only this reviewer's threads are its own to resolve"
-    assert re.search(r"(?i)another reviewer|a human", skill)
-    assert re.search(r"(?i)only after verifying|after you have verified|verify it in the code", skill)
-    # A review may not resolve on the strength of a push description, and may not claim what it did not get.
-    assert re.search(r"(?i)not resolved because the push", skill)
+    assert re.search(r"(?i)isResolved.{0,12}true", skill), "GitHub must confirm it"
+    assert re.search(r"(?i)not permitted", skill), "a refusal is a state, not a silent skip"
+    assert re.search(r"(?i)only threads whose fix you verified", skill)
+    assert re.search(r"(?i)not resolved because the push", skill), "a push description is not a fix"
+    # It must not instruct the model to run the mutation it cannot run.
+    assert "mutation($t:ID!)" not in skill, "the model cannot mutate: that was the bug, not the design"
+
+
+def test_the_on_demand_review_is_told_its_tier_rather_than_guessing(assistant_workflow: str) -> None:
+    """It called itself a first review on #238, a pull request with three earlier ones — a comment carries no tier."""
+    job = _job(assistant_workflow, "review")
+    assert "review_gate.py" in job, "the same gate answers the same question on both paths"
+    assert job.index("review_gate.py") < job.index("Run the review"), "decided before the model is paid for"
+    for passed in ("tier }}", "previous_head_sha }}"):
+        assert f"steps.gate.outputs.{passed}" in job, passed
+    assert "REVIEW_TIER=${{ steps.gate.outputs.tier }}" in job
+    assert "Classify yourself whether this is a first review" not in job, "the guess is what failed"
+
+
+def test_a_review_with_nothing_verified_omits_the_marker(skill: str) -> None:
+    """`<!-- resolve-threads: -->` is a marker that names nothing; the model wrote one on #238."""
+    assert re.search(r"(?i)omit\s+the\s+marker", skill)
+
+
+def test_the_workflow_resolves_what_the_review_named(review_workflow: str, assistant_workflow: str) -> None:
+    """The step exists in both review paths, after the review, and cannot fail the job that posted findings."""
+    for workflow, job_name in ((review_workflow, "claude-review"), (assistant_workflow, "review")):
+        job = _job(workflow, job_name)
+        assert ".github/scripts/resolve_threads.py" in job, job_name
+        assert job.index("Run the review") < job.index("Resolve the threads this review verified"), job_name
+        assert "always()" in job, "a review that failed to post still leaves nothing to resolve, but must not abort"
+        assert "secrets.GITHUB_TOKEN" in job
+    # The gate fails open (a review is the safe default); resolution fails closed, so a pull request never supplies the
+    # script that runs with a write-scoped token.
+    resolve_step = _job(review_workflow, "claude-review").split("Resolve the threads this review verified")[1]
+    assert "pr-head archive" not in resolve_step
+
+
+def test_the_two_checks_a_condensation_must_not_drop(skill: str) -> None:
+    """#238 tightened prose and dropped both; nothing failed, so nothing stopped it. A test pins them now.
+
+    The first version of this assertion was `"$GITHUB_REPOSITORY" in skill`, which the *derivation* sentence also
+    satisfied — so it could not tell the guard was gone. The review of #238 said exactly that.
+    """
+    assert '[ "$REPOSITORY" = "${GITHUB_REPOSITORY:-$REPOSITORY}" ]' in skill, "the identity-mismatch guard"
+    assert re.search(r"(?i)would\s+fail on the old code", skill), "a fix is verified against the code, not the push"
 
 
 def test_the_review_analyses_reachability_before_it_sets_a_severity(skill: str) -> None:
@@ -559,8 +611,8 @@ def test_the_reviewer_checks_the_token_may_resolve_before_it_tries(skill: str) -
     """
     assert "viewerCanResolve" in skill, "the query must ask whether this identity may resolve"
     assert re.search(r"(?i)contents: write", skill), "the permission that actually gates the mutation must be named"
+    assert re.search(r"(?i)Resource not accessible", skill), "the refusal is quoted, not paraphrased"
     assert re.search(r"(?i)not permitted", skill), "a refusal has a state of its own, not a silent skip"
-    assert re.search(r"(?i)Resource not accessible", skill)
 
 
 def test_a_workflow_change_is_reported_as_unreviewable_and_points_at_the_way_that_works(skill: str) -> None:
@@ -608,3 +660,51 @@ def test_the_review_always_posts_a_summary_whatever_the_pull_request_state(skill
     assert re.search(r"(?i)always post the summary, whatever the state", skill)
     assert re.search(r"(?i)no longer actionable", skill), "the merged/closed case has to say what it read"
     assert re.search(r"(?i)posts nothing cannot be told\s+from one that never ran", skill)
+
+
+def test_the_summary_is_posted_from_a_heredoc_because_writing_a_file_is_denied(
+    skill: str, review_workflow: str
+) -> None:
+    """`Write` is denied in this job, so an instruction to "put it in a file" is an instruction it cannot follow.
+
+    Measured on #235's fix push: the skill said `gh pr comment --body-file <path>`, the model tried to write the file,
+    the tool was denied, it was refused seven times and the run ended with no comment at all
+    (`permission_denials_count: 7`). A heredoc needs no write and keeps the newlines, which is what the record needs.
+    """
+    assert "--body-file -" in skill, "the summary must be read from stdin"
+    assert "<<'BODY'" in skill, "a quoted heredoc keeps markdown out of the shell's hands"
+    assert not re.search(r"(?i)write it to a file", skill), "a file is not available here"
+    # Denied, not merely named: the tool list, not any mention of the word.
+    assert "Edit,Write,NotebookEdit" in _job(review_workflow, "claude-review")
+
+
+def test_the_reviewer_declares_its_basis_and_escalates_rather_than_guessing(skill: str) -> None:
+    """A suspicion and a proof must not look the same, and depth the model lacks is asked for, never invented."""
+    assert "**Basis:** proven" in skill and "**Basis:** suspected" in skill
+    assert "escalate: opus" in skill
+    assert "CLAUDE_REVIEW_MODEL=claude-opus-5-5" in skill, "the reader needs the exact command"
+    assert re.search(r"(?i)never switch models yourself", skill)
+
+
+def test_the_review_is_planned_before_it_is_written(skill: str, standard: str) -> None:
+    """Sonnet needs a sequence more than a longer checklist: orient, rank, read deep, then the cheap checks."""
+    assert re.search(r"(?i)^Plan first, in three lines", skill, re.MULTILINE)
+    assert "How a review proceeds" in standard
+    for step in ("Orient before judging", "Rank the files by what they can break", "Declare the coverage"):
+        assert step in standard, step
+
+
+def test_the_standard_covers_the_domains_a_reviewer_is_asked_about(standard: str) -> None:
+    """Correctness is not the only axis, and the ones that are missing from a checklist are the ones missed in code."""
+    for domain in ("Correctness", "Security", "Integrity and failure", "Concurrency", "Performance", "Compatibility"):
+        assert domain in standard, domain
+
+
+def test_a_consequence_must_name_the_constraint_that_would_stop_it(standard: str) -> None:
+    """The one thing the reviewer got wrong on a finding that was right: what the database does about it.
+
+    `#235` said a weaker purge lock would lose a citation silently; a restrictive foreign key makes that DELETE abort.
+    Both are serious. Only one is what the code does.
+    """
+    assert "A consequence is a claim about a constraint" in standard
+    assert re.search(r"(?i)restrictive\s+foreign\s+key", standard)
