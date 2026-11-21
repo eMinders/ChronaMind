@@ -50,6 +50,12 @@ def assistant_workflow() -> str:
 
 
 @pytest.fixture(scope="module")
+def standard() -> str:
+    """The repository review standard, read from the working tree."""
+    return (REPO / "REVIEW.md").read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
 def skill() -> str:
     return REVIEW_SKILL.read_text(encoding="utf-8")
 
@@ -608,3 +614,50 @@ def test_the_review_always_posts_a_summary_whatever_the_pull_request_state(skill
     assert re.search(r"(?i)always post the summary, whatever the state", skill)
     assert re.search(r"(?i)no longer actionable", skill), "the merged/closed case has to say what it read"
     assert re.search(r"(?i)posts nothing cannot be told\s+from one that never ran", skill)
+
+
+def test_the_summary_is_posted_from_a_heredoc_because_writing_a_file_is_denied(
+    skill: str, review_workflow: str
+) -> None:
+    """`Write` is denied in this job, so an instruction to "put it in a file" is an instruction it cannot follow.
+
+    Measured on #235's fix push: the skill said `gh pr comment --body-file <path>`, the model tried to write the file,
+    the tool was denied, it was refused seven times and the run ended with no comment at all
+    (`permission_denials_count: 7`). A heredoc needs no write and keeps the newlines, which is what the record needs.
+    """
+    assert "--body-file -" in skill, "the summary must be read from stdin"
+    assert "<<'BODY'" in skill, "a quoted heredoc keeps markdown out of the shell's hands"
+    assert not re.search(r"(?i)write it to a file", skill), "a file is not available here"
+    assert "Write" in _job(review_workflow, "claude-review")
+
+
+def test_the_reviewer_declares_its_basis_and_escalates_rather_than_guessing(skill: str) -> None:
+    """A suspicion and a proof must not look the same, and depth the model lacks is asked for, never invented."""
+    assert "**Basis:** proven" in skill and "**Basis:** suspected" in skill
+    assert "escalate: opus" in skill
+    assert "CLAUDE_REVIEW_MODEL=claude-opus-5-5" in skill, "the reader needs the exact command"
+    assert re.search(r"(?i)never switch models yourself", skill)
+
+
+def test_the_review_is_planned_before_it_is_written(skill: str, standard: str) -> None:
+    """Sonnet needs a sequence more than a longer checklist: orient, rank, read deep, then the cheap checks."""
+    assert re.search(r"(?i)^Plan first, in three lines", skill, re.MULTILINE)
+    assert "How a review proceeds" in standard
+    for step in ("Orient before judging", "Rank the files by what they can break", "Declare the coverage"):
+        assert step in standard, step
+
+
+def test_the_standard_covers_the_domains_a_reviewer_is_asked_about(standard: str) -> None:
+    """Correctness is not the only axis, and the ones that are missing from a checklist are the ones missed in code."""
+    for domain in ("Correctness", "Security", "Integrity and failure", "Concurrency", "Performance", "Compatibility"):
+        assert domain in standard, domain
+
+
+def test_a_consequence_must_name_the_constraint_that_would_stop_it(standard: str) -> None:
+    """The one thing the reviewer got wrong on a finding that was right: what the database does about it.
+
+    `#235` said a weaker purge lock would lose a citation silently; a restrictive foreign key makes that DELETE abort.
+    Both are serious. Only one is what the code does.
+    """
+    assert "A consequence is a claim about a constraint" in standard
+    assert re.search(r"(?i)restrictive\s+foreign\s+key", standard)

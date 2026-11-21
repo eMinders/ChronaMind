@@ -105,6 +105,50 @@ So, before writing the verdict:
 Changes of 200+ added or removed lines: take each behaviour the diff changes and search outside the diff for every
 other place that assumes the old behaviour.
 
+## How a review proceeds
+
+A review is a sequence, not a scan. Work in this order and the depth lands where the risk is:
+
+1. **Orient before judging.** Two sentences on what the change does, from the code: the subsystem, the contract it
+   sits in, what it replaces. If you cannot write them, you have not read enough to review it.
+2. **Rank the files by what they can break**, not by size: a guard, a schema, a migration, the dispatch entry point,
+   a register, a test, a document. That ranking is also your coverage statement.
+3. **Read the top of the ranking whole**, not in hunks: a hunk hides the context that decides whether it is wrong.
+4. **Trace each changed behaviour** outwards: caller, twin, register, failure path, privilege boundary.
+5. **Declare the coverage.** Files read in full, skimmed, or not opened. A diff too large for the attention available
+   is *reported*, never silently half-read.
+
+## What to look for
+
+Each is a question about the change, not a checklist:
+
+- **Correctness.** The edge case the author did not have in mind, the empty and boundary value, the second call, the
+  retry, the row that already exists: a behaviour change with no test that tells old from new.
+- **Security.** Who can now do what they could not: a guard, an authorisation branch, a `SECURITY DEFINER` function, a
+  session GUC, a grant, a `CHECK`, a trigger, a log line carrying content it should not.
+- **Integrity and failure.** What happens at `COMMIT`, on a retry, on a partial failure: does the transaction abort
+  where it should, or leave a row that half-states something?
+- **Concurrency.** Two transactions on one row, scope or closure: does the lock mode or the isolation level still exclude
+  the interleaving the guarantee assumes? A weaker lock is a finding though no test can see it (`purge_working`'s
+  `FOR UPDATE` → `FOR SHARE`, #235).
+- **Performance.** A query per loop iteration, an unbounded scan, a lock held longer than the work: say the order of
+  magnitude, not "slow".
+- **Compatibility and migrations.** A changed operation, error code, condition or default changes every caller; a
+  migration changes every environment that already ran. Is the rollback real?
+- **Tests.** A test that would fail without the change; a control proving the attack succeeds without the guard; an
+  assertion weakened, skipped or deleted to go green (always 🔴).
+- **Simplicity.** A second way to do what the repository already does, a parameter that is always one value, an
+  abstraction with one caller: say it once, as non-blocking, when it materially shortens the code.
+
+## A consequence is a claim about a constraint
+
+Before writing what a defect *does*, find what the database or the type system does about it — the restrictive foreign
+key, the `CHECK`, the trigger, the `NOT NULL`, the early return. "Silently lost" is true only when nothing refuses it.
+
+Measured on #235: the review said a weaker purge lock would "cascade away a just-committed citation", losing
+answerability silently. The finding was right, the sentence wrong: `memory_derivation.source_version_id` is a restrictive
+foreign key, so that `DELETE` aborts loudly. Both are serious; only one is true.
+
 ## Documents are code here
 
 `PLAN/V2/` is the implementation plan and it is enforced by scripts that run in CI. A review of a documentation change
