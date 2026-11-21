@@ -1,5 +1,8 @@
 name: Claude Code
 
+# A canary edit: any change to this file makes the action skip itself by workflow validation, which is what the gate's
+# warning and the `@claude review` fallback exist for.
+
 # Two on-demand jobs, with two different trigger phrases, because they are two different agents:
 #
 #   @chronamind …        the interactive assistant: answers in an issue or PR, and can implement a change on a branch.
