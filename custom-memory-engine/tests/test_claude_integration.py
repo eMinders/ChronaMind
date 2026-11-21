@@ -586,3 +586,14 @@ def test_the_on_demand_review_can_actually_check_out_the_pull_request(assistant_
     assert "run:" not in step, "the checkout is the action's job, not a shell script that has to invent a remote"
     # The head repository has to be resolved for that to be possible.
     assert '"head_repo=" + .head.repo.full_name' in job
+
+
+def test_the_review_always_posts_a_summary_whatever_the_pull_request_state(skill: str) -> None:
+    """An on-demand run read #233, spent 17 turns and $0.328, and posted nothing at all: no summary, no inline comment.
+
+    It could not be told from a run that never happened, which is the failure this whole integration exists to remove —
+    and the pull request being merged is the reason a reader would most need telling. So the summary is unconditional.
+    """
+    assert re.search(r"(?i)always post the summary, whatever the state", skill)
+    assert re.search(r"(?i)no longer actionable", skill), "the merged/closed case has to say what it read"
+    assert re.search(r"(?i)posts nothing cannot be told\s+from one that never ran", skill)
