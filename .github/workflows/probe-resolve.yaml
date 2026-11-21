@@ -1,0 +1,21 @@
+name: probe-resolve
+# Disposable: measures whether a *job* token holding `contents: write` can run `resolveReviewThread`, to separate the
+# permission model from the Claude App installation's own grants. Deleted with its branch.
+on:
+  pull_request:
+    paths: [".github/probe/*"]
+permissions:
+  contents: write
+  pull-requests: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Resolve a verified review thread with the job token
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          THREAD: PRRT_kwDOVGQehs66VoOt
+        run: |
+          echo "token permissions:"; gh api -i repos/$GITHUB_REPOSITORY 2>/dev/null | grep -i "^x-accepted\|permissions" || true
+          gh api graphql -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{id isResolved}}}' -F t="$THREAD" --jq '.data.resolveReviewThread.thread'
