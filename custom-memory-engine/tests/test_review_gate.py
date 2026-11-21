@@ -302,6 +302,21 @@ def test_another_authors_review_event_is_not_this_reviewers_history() -> None:
     assert gate.read_timeline(events) is None
 
 
+def test_an_unreadable_timeline_is_unknown_history_not_a_first_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The comments do not answer and the fallback fails: that is an unreadable history, not a first review.
+
+    A transient 500 on the timeline call, on a pull request whose summary was unrecognisable, used to return
+    `earlier_review=False` — so the tier went back to `first review`, which is the #231 failure surviving an API error.
+    """
+    monkeypatch.setattr(gate, "_api_list", lambda repository, path, what: [] if "comments" in path else None)
+    history = gate.fetch_history("o/r", "1")
+    assert (history.available, history.earlier_review) == (False, False)
+    decision = gate.classify(action="synchronize", history=history, head_sha=HEAD, base_sha=BASE, changed=False)
+    assert decision == gate.Decision(review=True, tier=gate.UNKNOWN, reason="history_unavailable")
+
+
 def test_a_timeline_record_never_licenses_a_skip() -> None:
     """The base is not in the timeline. A recovered head is enough for the tier and not enough to skip a review."""
     history = gate.History(available=True, earlier_review=True, record=gate.Record(base_sha="", head_sha=HEAD))

@@ -120,9 +120,9 @@ Work outwards from the changed lines. For each behaviour the diff changes, in th
    `app.deletion_active`, `app.clock`), any new table, column or function: does the runtime role's exact grant cover it,
    and is `EXECUTE` revoked from `PUBLIC` where it must be? An ordinary session can set a GUC; a gate made only of GUCs
    is no gate (`#228`).
-7. **The test's teeth.** For a fix: would the new test fail against the parent commit? If you cannot tell, say so, or
-   reconstruct it with `git stash`/`git checkout "$BASE" -- <path>` **read-only** — never leave the tree modified.
-   For a guard: is there a control proving the attack succeeds without it?
+7. **The test's teeth.** For a fix: would the new test fail against the parent commit? The checkouts are read-only and
+   only `git show`/`diff`/`log`/`grep` are permitted, so reconstruct it from `git show "$BASE:<path>"`. If that is not
+   enough, say so. For a guard: is there a control proving the attack succeeds without it?
 8. **The sequence.** If another open branch touches the same files, `gh pr list --state open`, then ask whether the merge
    order changes the result: a ledger reverted by merge order is a defect no single green PR can show.
 
@@ -132,9 +132,8 @@ Changes of 200+ added or removed lines: do steps 1–4 for **every** behaviour i
 
 For each candidate finding, before posting:
 
-- **Reproduce it if you can.** Read the path end to end; where cheap and safe, run it (`uv run --no-sync pytest -q <test>`
-  inside `custom-memory-engine/`, `git show` of the parent). Never run a command that mutates the repository, the database
-  or the pull request.
+- **Reproduce it by reading.** No database, no test runner, no writes — follow the path in the source, `git show` the
+  parent, and list under *Not verified* what a run would settle. A refused command is not a check you made.
 - **Write the evidence.** The six parts of `REVIEW.md`'s evidence bar — location, trigger, wrong behaviour, consequence,
   the safeguard that misses it, the correction. All six, or it is not a finding.
 - **Then delete it** if `REVIEW.md`'s "Do not report" list covers it: CI's own business, pre-existing and untouched,

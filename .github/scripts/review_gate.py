@@ -263,7 +263,10 @@ def fetch_history(repository: str, pull_request: str) -> History:
         return history
     events = _api_list(repository, f"issues/{pull_request}/timeline", "the pull request timeline")
     if events is None:
-        return history
+        # Not "no earlier review": the comments did not answer and neither did the timeline, so this is an unreadable
+        # history, which `classify` turns into an unknown tier and a review. Reporting a first review here would let a
+        # transient 500 re-create the #231 failure — the summary was unrecognisable *and* the fallback failed.
+        return History(available=False, earlier_review=False, record=None)
     return read_timeline(events) or history
 
 
