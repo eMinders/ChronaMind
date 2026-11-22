@@ -25,7 +25,8 @@ Distinct from v1's `RL-*` and from ablation names `A1`–`A10`, which remain in 
 | **W1** | Substrate v2: axes, lifecycle, scope, association | G0b | **G1** type-completeness | §4 |
 | **W2** | Generality proof (coding-agent profile) | G1 | **G2** zero-fork dual-profile | §5 |
 | **W3** | Procedures, staged retrieval, channels, **deletion-through-cognition** | G2 | **G3** channel + deletion integrity | §6 |
-| **W4** | Measurement instruments (abstraction **and** user model) | G3 | **G4** null-suite floor; **G4b** instrument validity | §7 |
+| **W3.5** | **Semantic & retrieval stabilization** *(new; see §6.1)* | G3 | **G3.5** relevance, multilingual, quarantine | §6.1 |
+| **W4** | Measurement instruments (abstraction **and** user model) | G3.5 | **G4** null-suite floor; **G4b** instrument validity | §7 |
 | **W5** | Cognition runtime **and** evolving user model | G4, G4b | **G5** abstraction precision; **G5b** personalization utility | §8 |
 | **W6** | Verification economics, meta-memory, substrate experiments | G5, G5b | **G6** frontier + `H1`–`H4` | §9 |
 | **W7** | Profiles, applications, packaging | G6 | **G7** app on public API only | §10 |
@@ -430,16 +431,62 @@ they are say so in place.
 | Extended Suite `D` reports zero leaks on 11 channels, measured distinguished from unmeasured | **met** | `reports/deletion/suite_d_dev_11ch_P.json`: `leaking_scenarios = 0/20`, `incomplete_measurements = 0`, all 11 channels at `0`, `channels` names the targeted set; `A8` run beside it |
 | Scenario-level CP bound ≤ `u*` | **deferred to the confirmatory phase** (owner `R-010`, gate `G-TS`, #76) | `dev` has `N = 20` → `cp_upper_97_5 = 0.168433`; `u* = 0.10` needs `N_D >= 36`, which the frozen `test` split meets (`N = 50`, `0.071122`) and no W3 run may read before `G-TS` (`V2-D42`). `V2-D84` records why eleven channels do not change `N_D` and why the `dev` run is the mechanism check, not the confirmatory claim — the same basis `G2` was signed off on |
 | A positive control leaks **through an abstraction** | **met** | `suite_d_dev_11ch_A8.json` leaks on `channel_8_hypothesis_rendering` (80) beside the v1 channels; `test_eleven_channel_scan_clean_on_v2_deletion_and_a8_leaks_through_abstraction` also leaks on channel 9 through a verified abstraction; channel 7's probe is proven by its own positive control (`§4.4(a)`) |
-| Retrieval P95 at v1 scale within 2× of the 27 ms reference | **met** | `reports/benchmarks/retrieval_stages_2000.json`: staged end-to-end P95 **11.82 ms** against the 53.98 ms (2 × 26.99) limit, instrumentation overhead `+0.97 %` P50 |
+| Retrieval P95 at v1 scale within 2× of the 27 ms reference | **met**, re-baselined by `W3.5` | `reports/benchmarks/retrieval_stages_2000.json` recorded 11.82 ms P95 for a `query` that performed no vector search, no lexical search and no ranking (`V2-D86`); `reports/benchmarks/retrieval_hybrid_2000.json` re-measures the **hybrid** path at **38.39 ms** P95 (lexical-only 24.61 ms) against the same 53.98 ms limit, with `charged_calls = 0` |
 
 **Not claimed.** The confirmatory CP bound is *not* met on the frozen `dev` split and is not presented as met; it is the
 number the confirmatory run must produce after `G-TS`, and `E-022`'s split gate refuses to load that split today.
 Channels 9–11 record zero under the suite's `A8` ablation because no scenario carries an abstraction, verification
 record or export snapshot for the canary — measured, controls beside the probes, never cited as a leak.
 
-**W3 is closed.** Work moves to W4 (§7). `E-039` (#97) stays open on criterion 5 until the remaining 7 unwired
+**W3 is closed.** Work moves to W3.5 (§6.1). `E-039` (#97) stays open on criterion 5 until the remaining 7 unwired
 operations land, all of them in W4/W5/W7; no W3 obligation is carried forward except the confirmatory CP bound row
 above, which belongs to the measurement phase by `V2-D42` and `V2-D84`.
+
+---
+
+## 6.1 W3.5 — Semantic & retrieval stabilization (`E-040`, `E-041`, `E-042`)
+
+**Why this wave exists and why it sits here.** G3 signed off a substrate whose governance was verified and whose read
+and write paths could not use it: `query` never read the request's text (`V2-D86`), `assert` disabled conflict
+detection, facets and non-turn grounding (`V2-D87`), storage was English-locked, and the semantic layer the engine
+needed was documented as an unspecified external callable. Every W4 instrument would have measured that: a null-suite
+floor over an abstraction pipeline built on a recency scan, and a W5 cognition runtime proposing patterns from a corpus
+no human phrasing could enter. So the wave is a **bridge, not a feature**: it makes the already-verified substrate
+usable, and it adds no new invariant.
+
+**What it does not reopen.** RLS, the temporal exclusion, the four channels, provenance, the deletion closure and the
+statistical programme are untouched. `I1′`–`I17` keep their status; the two phases that change the schema are additive
+and their rollbacks restore the previous catalog fingerprint exactly (`schema/README.md`, migrations 23–24).
+
+| ID | Task | Notes | Effort |
+|---|---|---|---|
+| `E-040` | **Multilingual storage substrate** (migration 23): `content_fts_simple` (a `to_tsvector` generated column in the `simple` configuration) + `pg_trgm` GIN, and the `halfvec` embedding slots 768/1024/1536/3072 with one partial HNSW index each | `'english'` stemming does not merely fail on Arabic or CJK, it discards the morphology; a 384-wide `vector` column cannot hold a multilingual embedder. Slots, not a "configurable" column: HNSW is one fixed width, and a typmod-free `vector` cannot carry an HNSW index at all. **Done:** `schema/023_multilingual_index.sql`; `tests/integration/test_migration_m23.py` | M |
+| `E-044` | **Slot-aware exclusion key and open semantic vocabulary** (migration 24): `semantic_slot`, `cardinality_hint`, `authority_rank` (generated), `no_bitemporal_overlap` on `COALESCE(semantic_slot, predicate_key)` | **Done:** `schema/024_semantic_slot.sql`; `tests/integration/test_migration_m24.py` (23 checks) | M |
+| `E-041` | **Hybrid read path** (`V2-D86`): `Intent.text`, `Plan.recall`/`query_digest`, `engine.hybrid` (dense + `'simple'` lexical + trigram + RRF + reranker seam), `execute_plan` id-restricted fetch, embedding persistence in the right slot | **Done:** `engine/hybrid.py`; `api/read_handlers.py`; `tests/test_hybrid.py`; `tests/integration/test_hybrid_recall_db.py`. **Remaining:** `resolve_mention` wired into the write path (`V2-D90`'s last criterion) | M |
+| `E-042` | **Semantic understanding layer** (`V2-D88`–`V2-D91`): contracts, grounding, authority, slots, temporal validation, cascaded entity resolution, three-stage conflict, two-lane ingestor | **Done:** `semantic/` (9 modules) and its test suite. No provider SDK enters the engine; every model-shaped capability is an injected protocol | L |
+| `E-045` | **Write-path repair** (`V2-D87`): `assert` accepts `cardinality`, `semantic_slot`, `um_facet`, `assertion_mode`; non-turn evidence accepted and quarantined; third-party mode holds instead of rejecting | **Done:** `api/ingest_handlers.py`, `api/contract.py`, `engine/gate.py`, `engine/ingest.py`, `engine/transactions.py`; `PLAN/V2/API_V2.md` §4.3 | M |
+| `E-046` | **Engine-side HTTP host** (`V2-D93`): `POST /v1/call {operation, arguments}` → `Engine.call`, tier from the bearer token and never from the body, the seven static codes mapped to statuses without identifiers or content, a bounded body, unauthenticated content-free `/healthz`, and a `refute` handler so the lifecycle has no unreachable state | **Landed.** `host/` (credentials, service, app), `api/wiring.wire_engine` (one wiring call, with `UNWIRED_OPERATIONS` naming what is missing and why), `api/lifecycle_handlers.py`, `scripts/run_host.py`; `tests/integration/test_host_e2e_db.py` (18 tests: real uvicorn on a real socket, real database, tier-from-token, no cross-caller leakage on a pooled connection) | M |
+| `E-047` | **Asynchronous slow lane** (`V2-D96`): `claim_one` → model call outside any transaction → `complete_one`, with `recover_stale` for an expired lease and `MAX_ATTEMPTS` then `dead_letter` | **Landed.** `semantic/slow_lane.py` (claim/complete/recover), `semantic.ingestor.apply_extraction` (the pure-database half), `scripts/run_worker.py`; `tests/integration/test_slow_lane_db.py` (8 tests, real queue) | M |
+| `E-043` | **Honest re-baseline of the G3 latency figure**: the 11.82 ms P95 measured a recency scan; publish the hybrid figure with the arms named, and record which arms ran | **Done:** `scripts/bench_hybrid.py` → `reports/benchmarks/retrieval_hybrid_2000.json`. Measured: recency 10.16 ms P95 (the old figure, reproduced), lexical-only 24.61 ms P95, hybrid 38.39 ms P95 — still inside G3's 53.98 ms limit, and `charged_calls = 0`. Rules of measurement in `reports/benchmarks/README.md` | S |
+
+**G3.5 (relevance, multilingual, quarantine) — the exit gate.** Four falsifiable criteria, each with a test that fails
+without the change:
+
+1. **A relevance query returns the matching memory rather than the newest ones.** `test_hybrid_recall_db.py::test_a_relevance_query_returns_the_matching_memory_rather_than_the_newest_ones`
+   seeds the match first and four decoys after it: the old path returns decoys, the new one returns the match, and the
+   same request without `text` still returns the recency page.
+2. **A non-English memory is found by a non-English query**, and a code-switched memory by a query in either of its
+   languages (`::test_an_arabic_query_finds_an_arabic_memory_through_the_language_agnostic_lexical_arm`,
+   `::test_a_mixed_script_conversation_is_searchable_from_either_language`).
+3. **A paraphrase with no shared token is found only by the dense arm**, proving the arm exists and is wired
+   (`::test_the_dense_arm_bridges_wording_a_lexical_arm_cannot`).
+4. **A third-party claim cannot be presented as fact and is not lost**: `test_api_wiring_ingest.py::test_third_party_evidence_is_accepted_and_quarantined_rather_than_refused`
+   asserts the row is stored `contested` with `assertion_mode = 'third_party'` and `authority_rank = 3`.
+
+Plus two structural criteria: relevance never widens what a caller may read
+(`::test_relevance_cannot_return_another_users_memory_however_well_it_matches`,
+`::test_a_scope_outside_the_read_set_still_refuses_even_with_a_perfect_match`), and both migrations roll back to the
+byte-identical previous catalog fingerprint (`test_migration_m23.py`, `test_migration_m24.py`).
 
 ---
 
@@ -466,6 +513,11 @@ difference between a research contribution and a demo.
 | `UM-002` | **User-model metrics** `UM1`–`UM10` defined once in code, with hand-computed reference cases | `USER_MODEL.md` §5.2 | L |
 | `UM-003` | **Personalization baselines**: `X-nomodel`, `X-static`, `X-asserted-only`, `X-frozen` | Each isolates one claim | M |
 | `C-016` | **Hand-annotated calibration set** (dev only) for statement quality | Judged separately from statistical validity | M |
+| `UM-016` | **Linguistic realism track** *(new, `V2-D88`)*: every `own_P`/`own_U` scenario rendered in three paraphrased registers, an Arabic register, and a code-switched register, from the same latent rule | The W5 cognition runtime must be measured on language a person could actually produce. A generator that emits one canonical phrasing per event measures a pattern-matcher, not a memory engine: the 2026 reference engines that look strong on `own_P`-shaped suites fail on paraphrased dialogue, and MIRIX's own code comments record a `-7.7` QA regression from naive merging. The F1 claim is "on natural language", so the instrument must contain some |
+| `SD-009` | **Sparsity calibration for real users** *(new, `V2-D92`)*: `SD-003`'s hierarchical pooling, a **stated-preference fast path** (`assert`-written single-valued claims are evidence of themselves, not samples of a latent process), and **tiered trust** (`provisional` / `verified`) calibrated so 3–10 recurring observations produce a usable, honestly-labelled model | `V2-D19`'s `o >= 36` zero-counter opportunity bound is correct for a *statistical* claim and starves a real PDT user, whose preferences recur 3–10 times. Tiering is not a weakening of the bound: `verified` keeps `confidence_lower >= τ` exactly as `V2-D19` demands, and `provisional` is a *rendering* label that `UM-011` already distinguishes and that the channel router already keeps out of `facts`. What must be measured is that the provisional tier's precision is honestly reported, not that it reaches τ | L |
+
+**G4 entry requires G3.5** (`ROADMAP_V2.md` §6.1): the instruments measure a pipeline whose read and write paths have
+been shown to work, not one that discards the question.
 
 **G4 (null-suite floor).** On the null suite, false-abstraction rate at
 `confidence_lower ≥ τ` is ≤ 5% (scenario level, finite-sample binomial upper bound
@@ -477,8 +529,9 @@ W5 must not start.
 **G4b (instrument validity).** `UM-002`'s reference cases pass; `UM-001` reproduces its
 latent structure from its own event stream under an oracle solver (proving the suite is
 solvable); `X-static` and `X-frozen` produce the *expected* failure signatures (they must
-fail `UM2`/`UM3` specifically, not pass by accident). **An instrument that cannot
-discriminate its baselines is not an instrument.**
+fail `UM2`/`UM3` specifically, not pass by accident), and `UM-016`'s paraphrased and multilingual registers change no
+latent structure (the oracle solver reports the same rule at every register, or the renderer is defective).
+**An instrument that cannot discriminate its baselines is not an instrument.**
 
 ---
 
@@ -486,19 +539,22 @@ discriminate its baselines is not an instrument.**
 
 | ID | Task | Notes | Effort |
 |---|---|---|---|
-| `C-020` | **Candidate generation operators**: entity-cooccurrence, temporal-window, scope-conditioned, procedure-similarity | Cheap, replayable, no LLM | L |
+| `C-020` | **Candidate generation: semantic clustering → LLM hypothesis proposal → blind LLM evidence scoring**, over grounded turns and claims, handing `(s, k, u)` counts to `C-021`. The deterministic operators (entity-cooccurrence, temporal-window, scope-conditioned, procedure-similarity) are retained as **recall arms**, not as the proposer *(amended by `V2-D92`)* | Non-LLM co-occurrence finds patterns in a synthetic discrete-predicate stream and is blind to a paraphrased preference: "I hate morning standups" and "don't book me anything before 10am" share no entity and no window. Quipu's `patterns.zig` (propose → blind score → exact statistical test) is the proven shape, and ChronaMind's `(s, k, u)` ledger is a *stronger* verifier than Quipu's. The LLM proposes; the statistics admit | L |
 | `C-021` | **Statistical verifier**: ledger counting, partially identified CP-bound admission, dependence correction, multiplicity control across operators, refutation attempts (`STATISTICS.md` §2–§5) | Uses `SD-002`–`SD-008` | L |
 | `C-022` | **Statement renderer**: LLM renders a verified relation into prose; the engine attaches the bound | Rendering cannot alter the predicate | M |
 | `C-023` | **Reflection scheduler**: triggers (new-data volume, staleness, contradiction), budget, backoff, always-valid looks | Prevents unbounded cost | M |
 | `C-026` | **Refutation path**: `refute(abstraction, counter_evidence)` → recovery or retirement, fully recorded | First-class, not an afterthought | M |
 | `C-027` | **Cognition cost accounting**: tokens + latency per abstraction produced | Feeds G6 frontier | M |
 | `UM-010` | **User-model inference** (`C-024` renamed, now explicitly required): preferences, goals, constraints, context, decision patterns as abstractions with the full ledger | **Not de-scopeable** (see §12) | L |
-| `UM-011` | **Facet routing + trust ladder**: `provisional` → form only; `verified` → recommendations; `verified ∧ unexpired ∧ provenance-rendered` → decision support | `USER_MODEL.md` §4 | M |
+| `UM-011` | **Facet routing + trust ladder**: `provisional` → form only; `verified` → recommendations; `verified ∧ unexpired ∧ provenance-rendered` → decision support. Facets are now actually **written** (`V2-D87`), so this has data to route | `USER_MODEL.md` §4; thresholds calibrated by `SD-009` | M |
 | `UM-012` | **Sticky dissent**: user rejection → the `dissent` operation (`inferred → retired`, `reason='user_dissent'`, `V2-D46`) + `NEGATIVE_CONSTRAINT(predicate, scope, method_family)`; scheduler consults it before proposing; lifting requires new grounded evidence and is recorded | Safety-critical; `UM8` must be 0 (`V2-D33`) | M |
 | `UM-015` | **`X-nosticky` variant** + dissent-persistence test across `K = 7` scheduler cycles | Needed for `S18`; without it the mechanism is unproven | M |
 | `UM-013` | **Facet decay**: half-life per facet, `stale` transition, re-verification rather than silent renewal | "Evolving" requires expiry | M |
 | `UM-014` | **Protected-attribute deny-list** + conformance test | Sensitive-attribute inference is refused, not discouraged | M |
 | `C-025` | **Contradiction watcher**: `contradicts` associations → automatic retirement/confirmation prompts | Keeps abstractions honest over time | M |
+
+**G5 entry requires G3.5 and G4/G4b**, and `C-020`'s proposer must be the semantic one (`V2-D92`): a precision claim
+about paraphrased, multilingual input cannot be earned by a candidate generator that cannot read the input.
 
 **G5 entry requires gate G-TS (`V2-D42`, r7):** J5 frozen-split integrity and coverage
 (`scripts/check_test_split_gate.py`, CI) plus a signed `PilotFreeze` (J7/J8) and a one-shot

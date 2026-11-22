@@ -8,10 +8,14 @@ harness freeze extraction once (RL-032).
 
 Checks, in order, each recording a ``MEMORY_CONFLICT`` reason code:
 
-1. ``evidence`` — the candidate's evidence spans must occur in user-authored turns.
+1. ``evidence`` — every **turn** span must occur in a user-authored turn, and a non-turn source must be
+   structurally complete. Before W3.5 this check was turn-only, which made a claim resting on a tool result, a file or
+   a fetched document unrepresentable however well it was cited.
 2. ``assertion_mode`` — only ``asserted`` may become active; ``planned`` routes to
-   ``plans_to``; ``hedged``/``hypothetical`` hold; ``quoted``/``third_party``/
-   ``joking`` are rejected.
+   ``plans_to``; ``hedged``/``hypothetical`` hold; ``third_party`` holds too (W3.5:
+   a claim attributed to a source the engine did not hear it from is a hypothesis
+   awaiting adjudication, and rejecting it would destroy evidence a user pasted);
+   ``quoted``/``joking`` are rejected because they assert nothing.
 3. ``instruction_screen`` — persistent behavioral directives are rejected.
 4. ``conflict`` — relation against existing current beliefs decides commit style.
 5. ``confidence`` — numeric thresholding applies only when calibration is enabled.
@@ -54,6 +58,12 @@ class GateInput:
     assertion_mode: AssertionMode = "asserted"
     predicate_key: str = ""
     confidence: float | None = None
+    #: One entry per ``evidence_spans`` item: the declared ``source_type`` of that source, or ``None`` for a v1 writer
+    #: whose evidence is a turn. A non-turn source is grounded structurally -- the schema requires a reference, a span
+    #: and a content hash -- so it has no turn to look for, and demanding one would refuse every citation of a tool's
+    #: output. What stops such a claim from being presented as fact is the authority ladder and the assertion mode,
+    #: not this check.
+    evidence_source_types: tuple[str | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -92,12 +102,34 @@ def instruction_screen(content: str) -> bool:
     return any(pattern in normalized for pattern in _INSTRUCTION_PATTERNS)
 
 
-def evidence_supported(spans: Sequence[str], turns: Sequence[tuple[str, str]]) -> bool:
-    """Every span must appear verbatim in at least one user-authored turn."""
-    user_turns = [content for role, content in turns if role == "user"]
-    if not spans or not user_turns:
+def evidence_supported(
+    spans: Sequence[str],
+    turns: Sequence[tuple[str, str]],
+    source_types: Sequence[str | None] = (),
+) -> bool:
+    """Whether the cited evidence can carry a claim.
+
+    Every span whose source is a **turn** (or whose type is unknown, which is the v1 shape) must appear verbatim in at
+    least one user-authored turn -- the check v1 shipped, unchanged for the case it was written for. A span whose
+    source is ``external``/``tool``/``file``/``event`` is grounded by its citation: the schema refuses one without a
+    reference, a span and a well-formed content hash, and :mod:`semantic.grounding` verifies the quote against the
+    captured text at ingestion. Requiring a user turn for such a source would make non-chat evidence unusable, which is
+    the defect ``V2-D87`` removes.
+    """
+    if not spans:
         return False
-    return all(any(span and span in content for content in user_turns) for span in spans)
+    types = tuple(source_types) if source_types else tuple(None for _ in spans)
+    if len(types) != len(spans):
+        return False
+    user_turns = [content for role, content in turns if role == "user"]
+    for span, source_type in zip(spans, types, strict=True):
+        if source_type is not None and source_type != "turn":
+            if not span:
+                return False  # a non-turn citation still needs its span; the schema agrees
+            continue
+        if not user_turns or not any(span and span in content for content in user_turns):
+            return False
+    return True
 
 
 def classify_assertion(mode: AssertionMode) -> GateDecision | None:
@@ -108,6 +140,12 @@ def classify_assertion(mode: AssertionMode) -> GateDecision | None:
         return GateDecision("accept", "planned_routed_to_plans_to", ("assertion_mode",), "active", PLANS_TO_PREDICATE)
     if mode in ("hedged", "hypothetical"):
         return GateDecision("hold", f"{mode}_requires_confirmation", ("assertion_mode",), "conflict_pending")
+    if mode == "third_party":
+        # `V2-D87`: third-party evidence is quarantined, not discarded. A held row is `contested`, which the channel
+        # router sends to `conflicts` -- so a claim resting only on a web page, a tool's output or a file can never be
+        # presented as a fact, and the evidence is still there for a Tier C adjudication. The authority ladder
+        # (`semantic.authority`) is what stops it superseding a user's own belief in the meantime.
+        return GateDecision("hold", "third_party_requires_adjudication", ("assertion_mode",), "conflict_pending")
     return GateDecision("reject", "non_user_assertion", ("assertion_mode",), "rejected")
 
 
@@ -126,7 +164,7 @@ def evaluate(
 
     if "evidence" in enabled:
         checked.append("evidence")
-        if not evidence_supported(candidate.evidence_spans, candidate.evidence_turns):
+        if not evidence_supported(candidate.evidence_spans, candidate.evidence_turns, candidate.evidence_source_types):
             return GateDecision("reject", "unconfirmed_assistant_claim", tuple(checked), "rejected")
 
     if "assertion_mode" in enabled:
@@ -215,22 +253,29 @@ async def existing_relation(
     subject_key: str,
     predicate_key: str,
     candidate_content: str,
+    semantic_slot: str | None = None,
     schema_name: str = "cme_engine",
 ) -> tuple[ConflictRelation | None, str | None]:
     """Cheap deterministic conflict lookup over current single-valued beliefs.
 
-    Returns ``(relation, existing_version_id)``. Exact normalized content is a
-    ``duplicate``; other overlaps are left ``None`` for an injected model
-    classifier (or for the transactional supersession path) to decide.
+    Returns ``(relation, existing_version_id)``. Exact normalized content is a ``duplicate``; other overlaps are left
+    ``None`` for the open-ended three-stage resolution (``semantic.conflict``) or the transactional supersession path
+    to decide.
+
+    The lookup is scoped by ``COALESCE(semantic_slot, predicate_key)`` -- migration 24's exclusion key -- so it finds
+    exactly the beliefs the constraint considers exclusive. Before that key the lookup was ``(subject_key,
+    predicate_key)`` only, which with one generic predicate meant every single-valued claim about a person compared
+    against every other one.
     """
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
                 "SELECT id, content FROM {v} WHERE user_id = %s AND subject_key = %s AND predicate_key = %s "
+                "AND COALESCE(semantic_slot, predicate_key) = COALESCE(%s, predicate_key) "
                 "AND single_valued = true AND status = 'active' AND upper_inf(recorded_range) "
                 "ORDER BY lower(event_range) DESC, id LIMIT 5"
             ).format(v=sql.Identifier(schema_name, "memory_version")),
-            (user_id, subject_key, predicate_key),
+            (user_id, subject_key, predicate_key, semantic_slot),
         )
         rows = await cursor.fetchall()
     normalized = " ".join(candidate_content.lower().split())

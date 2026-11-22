@@ -32,19 +32,28 @@ from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Receipt, Rejected, Runtime, new_id, now, remember, replayed
+from custom_memory_engine.engine.gate import AssertionMode as AssertMode
 from custom_memory_engine.engine.ingest import apply_candidate
 from custom_memory_engine.engine.procedure_shape import ProcedureShape, ProcedureShapeError, parse_shape, record_shape
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, commit_initial_version
 from custom_memory_engine.grounding.sources import canonical_hash
-from custom_memory_engine.model.axes import Kind, Retention
+from custom_memory_engine.model.axes import FACETS, Kind, Retention
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
+from custom_memory_engine.semantic.slots import SlotError, normalize_slot
 
 # V2-D41 + V2-D66: tool/file/event are the coding-profile source types; turn and external are the W1 originals.
 _SOURCE_TYPES = ("turn", "external", "tool", "file", "event")
 # Kinds that the assert / ingest_artifact path accepts.  Abstractions come from `infer` (C-021).
 _ASSERTABLE_KINDS = frozenset({"claim", "procedure"})
+#: The roles a non-`turn` source may declare (see :func:`_source`). Deliberately the same vocabulary as a turn's role:
+#: one ladder, expressed either by a cited row or by the application's own record of who spoke.
+_EVIDENCE_ROLES = frozenset({"user", "assistant", "system"})
 _CONTENT_LIMIT = 20_000
+#: The closed structural vocabularies a claim may declare (``semantic.contracts``). Restated as tuples here so a bad
+#: value is a static ``validation_error`` before any statement runs.
+_ASSERTION_MODES = ("asserted", "hedged", "hypothetical", "planned", "quoted", "third_party", "joking")
+_CARDINALITIES = ("single", "multi", "event")
 
 
 def _text(value: object, field: str, *, limit: int = 512) -> str:
@@ -90,7 +99,24 @@ def _scope_path(raw: object, user: str) -> str | None:
     return path.text
 
 
+def _choice(value: object, field: str, allowed: Sequence[str], default: str | None) -> str | None:
+    """One value of a closed vocabulary, or the caller's default when absent. Anything else is a static refusal."""
+    if value is None:
+        return default
+    if not isinstance(value, str) or value not in allowed:
+        raise EntryError("validation_error", f"{field}_invalid")
+    return value
+
+
 def _source(raw: object) -> Mapping[str, object]:
+    """Validate a ``SourceRef``.
+
+    A non-``turn`` source may declare ``role``: ``user``, ``assistant`` or ``system``. It exists for the one case the
+    engine cannot see by itself -- an application that keeps its own transcript and cites *that* as the evidence (the
+    ChronaMind app's session log, ``V2-D93``). Without it every such claim would be quarantined as third-party, which
+    would make the engine unusable for the only deployment it has. A ``turn`` source may **not** declare a role: there
+    the role is a column of the row being cited, and a caller-supplied copy of it would be a second source of truth.
+    """
     if not isinstance(raw, Mapping):
         raise EntryError("validation_error", "source_invalid")
     if raw.get("type") not in _SOURCE_TYPES:
@@ -99,6 +125,12 @@ def _source(raw: object) -> Mapping[str, object]:
     digest = raw.get("content_hash")
     if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise EntryError("validation_error", "content_hash_invalid")
+    role = raw.get("role")
+    if role is not None:
+        if raw.get("type") == "turn":
+            raise EntryError("validation_error", "source_role_not_allowed_for_turn")
+        if role not in _EVIDENCE_ROLES:
+            raise EntryError("validation_error", "source_role_invalid")
     return raw
 
 
@@ -299,8 +331,18 @@ class IngestHandlers:
         event_range: object,
         entity_id: object = None,
         shape_fields: tuple[object, object] = (None, None),
+        *,
+        semantic_options: Mapping[str, object] | None = None,
     ) -> Receipt | Rejected:
         user, key = call.ctx.principal, _text(call.arguments.get("idempotency_key"), "idempotency_key", limit=256)
+        options = semantic_options or {}
+        assertion_mode = _choice(options.get("assertion_mode"), "assertion_mode", _ASSERTION_MODES, "asserted")
+        cardinality = _choice(options.get("cardinality"), "cardinality", _CARDINALITIES, "multi")
+        um_facet = _choice(options.get("um_facet"), "um_facet", FACETS, None)
+        try:
+            semantic_slot = normalize_slot(options.get("semantic_slot"))
+        except SlotError as error:
+            raise EntryError("validation_error", error.code) from None
         # `subject_entity` (E-024): the entity this claim is about. Optional: absent keeps the v1 shape
         # (`subject_key='self'`), and `targets_readable` has already proved the entity is in the caller's read set.
         if entity_id is not None and (not isinstance(entity_id, str) or not entity_id.strip()):
@@ -329,10 +371,14 @@ class IngestHandlers:
         sources = [_source(item) for item in evidence]
         for source in sources:
             self._require_source_type(source["type"])
-        if any(source["type"] != "turn" for source in sources):
-            # An external/tool/file/event reference carries a hash, not the captured text: nothing to ground a span.
-            raise EntryError("validation_error", "external_evidence_cannot_be_grounded")
         spans = [_text(source.get("span"), "source_span") for source in sources]
+        # `V2-D87`: third-party evidence is accepted and structurally quarantined. A claim resting only on sources the
+        # engine did not hear from the user cannot be *asserted* as fact -- the caller's mode is overridden, not
+        # trusted, because presenting retrieved text as truth is what the channel router exists to prevent. A source
+        # that declares `role` is the exception: the application is saying who spoke (`V2-D93`), the only way a
+        # deployment with its own transcript can assert the user's own words.
+        if all(source["type"] != "turn" and source.get("role") is None for source in sources):
+            assertion_mode = "third_party"
         scope = _scope_path(call.arguments.get("scope"), user)
         start, end = (None, None)
         if event_range is not None:
@@ -342,12 +388,12 @@ class IngestHandlers:
         async with self.runtime.session(user) as connection:
             if (found := await replayed(self.runtime, connection, user, "assert", key)) is not None:
                 return await _original_answer(self.runtime, connection, user, found, "asserted")
-            turn_ids = [str(source["ref"]) for source in sources]
-            turns = await _turns(self.runtime, connection, user, turn_ids)
+            turn_ids = [str(source["ref"]) for source in sources if source["type"] == "turn"]
+            turns = await _turns(self.runtime, connection, user, turn_ids) if turn_ids else {}
             if any(turn_id not in turns for turn_id in turn_ids):
                 raise EntryError("forbidden")  # a missing turn and another user's turn are the same answer
             for source in sources:
-                if source["content_hash"] != canonical_hash(turns[str(source["ref"])][1]):
+                if source["type"] == "turn" and source["content_hash"] != canonical_hash(turns[str(source["ref"])][1]):
                     raise EntryError("validation_error", "content_hash_mismatch")
             version_id, recorded = new_id("v"), await now(connection)
             # layer: procedures and claims both use the semantic layer (the axes trigger allows 'procedure' as an
@@ -361,20 +407,34 @@ class IngestHandlers:
                 subject_key=subject_key,
                 subject_entity_id=subject_entity_id,
                 predicate_key="statement",
-                single_valued=False,
+                semantic_slot=semantic_slot,
+                cardinality_hint=cardinality,
+                um_facet=um_facet,
+                # `single_valued` is what switches the conflict pipeline on: only a single-valued claim can supersede
+                # another, and only it is exclusive within its slot (migration 24). `multi` keeps the pre-W3.5 shape.
+                single_valued=cardinality == "single",
                 content=content,
                 valid_from=start or recorded,
                 valid_until=end,
                 valid_from_basis="explicit" if start else "inferred",
+                assertion_mode=cast(AssertMode, assertion_mode),
                 layer="semantic",
                 evidence=tuple(
-                    EvidenceInput(turn_id=turn_id, evidence_span=span)
-                    for turn_id, span in zip(turn_ids, spans, strict=True)
+                    EvidenceInput(turn_id=str(source["ref"]), evidence_span=span)
+                    if source["type"] == "turn"
+                    else EvidenceInput(
+                        source_type=cast("Literal['external', 'tool', 'file', 'event']", source["type"]),
+                        source_ref=str(source["ref"]),
+                        content_hash=str(source["content_hash"]),
+                        evidence_span=span,
+                    )
+                    for source, span in zip(sources, spans, strict=True)
                 ),
             )
             await apply_candidate(
                 connection,
                 candidate,
+                # every turn cited, as `(role, content)`: the gate's span check needs the text of each
                 evidence_turns=[turns[turn_id] for turn_id in dict.fromkeys(turn_ids)],
                 schema_name=self.runtime.schema_name,
             )
@@ -393,21 +453,27 @@ class IngestHandlers:
 
     async def assert_(self, call: Call) -> Receipt | Rejected:
         return await self._assert(
-            call, _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT),
-            call.arguments.get("evidence"), call.arguments.get("event_range"),
+            call,
+            _text(call.arguments.get("content"), "content", limit=_CONTENT_LIMIT),
+            call.arguments.get("evidence"),
+            call.arguments.get("event_range"),
             call.arguments.get("subject_entity"),
             (call.arguments.get("preconditions"), call.arguments.get("steps")),
-        )  # fmt: skip
+            semantic_options=call.arguments,
+        )
 
     async def ingest_artifact(self, call: Call) -> Receipt | Rejected:
         candidate = call.arguments.get("candidate")
         if not isinstance(candidate, Mapping):
             raise EntryError("validation_error", "candidate_invalid")
         return await self._assert(
-            call, _text(candidate.get("content"), "content", limit=_CONTENT_LIMIT),
-            call.arguments.get("evidence"), candidate.get("event_range"),
+            call,
+            _text(candidate.get("content"), "content", limit=_CONTENT_LIMIT),
+            call.arguments.get("evidence"),
+            candidate.get("event_range"),
             shape_fields=(candidate.get("preconditions"), candidate.get("steps")),
-        )  # fmt: skip
+            semantic_options={**call.arguments, **candidate},
+        )
 
 
 def register_ingest_handlers(engine: Engine, runtime: Runtime, profile: Profile | None = None) -> IngestHandlers:

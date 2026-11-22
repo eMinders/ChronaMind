@@ -59,9 +59,24 @@ def test_assertion_modes_route_to_their_declared_outcomes() -> None:
         held = evaluate(candidate(assertion_mode=mode))
         assert (held.decision, held.status) == ("hold", "conflict_pending")
 
-    for mode in ("quoted", "third_party", "joking"):
+    for mode in ("quoted", "joking"):
         rejected = evaluate(candidate(assertion_mode=mode))
         assert (rejected.decision, rejected.reason_code) == ("reject", "non_user_assertion")
+
+
+def test_a_third_party_claim_is_held_for_adjudication_rather_than_discarded() -> None:
+    """`V2-D87`: quarantined, not destroyed.
+
+    A claim resting on a source the engine did not hear it from cannot be presented as fact, and rejecting it would
+    throw away evidence a user pasted. Holding it makes it `contested`, which the channel router sends to `conflicts`,
+    where an adjudication can resolve it.
+    """
+    held = evaluate(candidate(assertion_mode="third_party"))
+    assert (held.decision, held.reason_code, held.status) == (
+        "hold",
+        "third_party_requires_adjudication",
+        "conflict_pending",
+    )
 
 
 def test_instruction_injection_is_rejected() -> None:

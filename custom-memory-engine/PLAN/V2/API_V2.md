@@ -50,7 +50,8 @@ The table is the **complete** enumeration: `tests/test_api_contract.py` holds it
 ## 2. Shared types
 
 ```text
-SourceRef      { type: 'turn'|'tool'|'file'|'paper'|'event'|'external', ref: str, span?: str, content_hash: str }
+SourceRef      { type: 'turn'|'tool'|'file'|'paper'|'event'|'external', ref: str, span?: str, content_hash: str,
+                 role?: 'user'|'assistant'|'system' }
 ScopeSelector  exact(path) | subtree(path) | with_visibility(path, {project, shared})      # section 6
 QueryRequest   { text, intent?, mode: current_state|historical_as_of|historical_window|change|audit_as_of,
                  scope?, target_time?, belief_time?, window_start?, window_end?,
@@ -278,7 +279,7 @@ channel gets its own reported budget; it does not retire or silently replace `re
 
 ### 4.3 Write (grounded)
 
-**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key, subject_entity?, preconditions?: Precondition[], steps?: str[]) → Receipt | rejected`**
+**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key, subject_entity?, preconditions?: Precondition[], steps?: str[], assertion_mode?, cardinality?, semantic_slot?, um_facet?) → Receipt | rejected`**
 A grounded statement through the grounding policy. **`evidence` must be non-empty for Tier B and Tier C
 alike** (TB3). An optional `subject_entity` names an entity in the same scope as the claim; the claim's subject and
 entity remain scope-local. Result lifecycle: `asserted` or `contested`. *Errors:* `validation_error` (no evidence, bad
@@ -289,6 +290,39 @@ fields inside `candidate`. Passing either for any other kind is `validation_erro
 (`procedure_shape_requires_a_procedure`), and a malformed one is `validation_error` with the parser's code; neither is
 `forbidden`, and the error contract above is otherwise unchanged. `get` and `query` return both on a procedure
 artifact. The engine never executes a step; `engine/procedure_matching.py` answers applicability only.
+
+**Semantic write options (`W3.5`, `V2-D87`).** Four optional arguments carry what semantic extraction produces, and each
+is a closed or normalized value the engine validates before any statement runs:
+
+* `cardinality` (`single` | `multi` | `event`, default `multi`) decides `single_valued`. Only a single-valued claim can
+  supersede another and only it is exclusive within its slot, so this is the argument that switches the conflict
+  pipeline on. Omitting it keeps the pre-W3.5 multi-valued shape, so an existing caller's writes are unchanged.
+* `semantic_slot` is the open grouping key (migration 24) that says what the claim is about without a catalog. It is
+  normalized once (`semantic.slots.normalize_slot`: NFKC, casefold, separator collapse, edge punctuation stripped) and
+  the schema enforces the same rule. Two single-valued claims in different slots are two facts and neither supersedes
+  the other.
+* `um_facet` tags an artifact as part of the evolving user model (`preference` | `goal` | `constraint` | `context` |
+  `decision_pattern` | `meta_preference`). Before `W3.5` the column was read and never written.
+* `assertion_mode` is the caller's pragmatics. `asserted` may become active; `planned` routes to `plans_to`;
+  `hedged`, `hypothetical` and `third_party` are **held** (`contested`, routed to `conflicts`) rather than rejected;
+  `quoted` and `joking` are rejected because they assert nothing.
+
+**Non-turn evidence (`V2-D87`).** `evidence` may cite `external`, `tool`, `file` or `event` sources, each with its
+`content_hash`; the row stores the declared type, its reference and that hash. A claim whose every source is
+non-turn **and declares no role** is forced to `assertion_mode = third_party` whatever the caller asked for —
+presenting retrieved text as fact is precisely what the channel router exists to prevent — and the deterministic
+authority ladder
+(`semantic.authority`: `USER > SYSTEM > ASSISTANT > THIRD_PARTY`, derived from `source_type`/`evidence_role`) is what
+stops such a claim superseding one resting on the user's own words. A refused supersession is *recorded*
+(`memory_conflict.reason_code = 'authority_quarantine'`), never silently dropped.
+
+**`role` on a non-turn source (`V2-D96`, `V2-D93`).** An application that keeps its own transcript — the ChronaMind app's
+session log is the one deployment this engine has — cites its own record of who spoke, not a `turn` row the engine never
+saw. Without `role` on such a source every claim it makes would be quarantined as third-party, which would make the
+engine unusable for that deployment; with it, the claim is classified exactly as a `turn` source would be. A **`turn`
+source may not carry `role`**: there the role is a column of the row being cited, and a caller-supplied copy would be a
+second source of truth. An undeclared `role` is `validation_error: source_role_invalid`; a `role` on a `turn` source is
+`validation_error: source_role_not_allowed_for_turn`.
 
 **`retract_own(ctx, artifact_id, reason) → Receipt`**
 Moves an artifact to `retired` (recorded-time close). Tier B: only artifacts **its own method produced**. Tier C:

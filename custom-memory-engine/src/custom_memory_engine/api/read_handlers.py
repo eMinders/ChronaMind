@@ -99,10 +99,13 @@ from custom_memory_engine.engine.cost import (
     StageSpan,
 )
 from custom_memory_engine.engine.expansion import expand_associations
+from custom_memory_engine.engine.hybrid import Recall, RecallError, RecallQuery, hybrid_recall
 from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
 from custom_memory_engine.engine.planning import (
     ASSOCIATION_EXPANSION,
     CHANGE_MODE,
+    HYBRID_RECALL,
+    MAX_QUERY_TEXT,
     PROCEDURE_APPLICABILITY,
     Intent,
     Plan,
@@ -114,6 +117,7 @@ from custom_memory_engine.engine.planning import (
     StageObserver,
     observe_nothing,
     plan_retrieval,
+    query_digest,
     record_nothing,
     refine_plan,
 )
@@ -359,6 +363,15 @@ def _channel_for(
         )
     except ChannelError:
         return None
+
+
+def _text_or_none(value: object) -> str | None:
+    """A request's ``text`` as ``str``, or ``None`` when absent. Non-string values are a type error, not a coercion."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise EntryError("validation_error", "text_invalid")
+    return value
 
 
 def _result_ids(result: QueryResult) -> tuple[str, ...]:
@@ -897,6 +910,41 @@ class ReadHandlers:
         raw = request.get(field)
         return None if raw is None else self._parse_instant(raw, field)
 
+    def _recall_query_for(self, request: Mapping[str, object]) -> RecallQuery | None:
+        """The relevance query a request asks for, or ``None`` when it asks only for a temporal read (``V2-D86``).
+
+        ``text`` is the caller's own words. ``embedding``/``embedding_model`` are the caller's own vector for the dense
+        arm: the engine never loads a model, so a request that supplies text and no vector gets the two lexical arms
+        (``'simple'`` full-text and trigram, both language-agnostic) rather than a silent fallback to recency. A
+        malformed vector is refused instead of dropped -- a caller who sent one believes it was used.
+        """
+        text = request.get("text")
+        if text is None:
+            if request.get("embedding") is not None or request.get("embedding_model") is not None:
+                raise EntryError("validation_error", "text_required_for_embedding")
+            return None
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_QUERY_TEXT:
+            raise EntryError("validation_error", "text_invalid")
+        if "\x00" in text:
+            # PostgreSQL text cannot hold a NUL byte, so a query containing one would surface as an internal error from
+            # the driver rather than as the validation refusal it is. Refused here, where the code is static.
+            raise EntryError("validation_error", "text_invalid")
+        raw_embedding = request.get("embedding")
+        embedding: tuple[float, ...] | None = None
+        if raw_embedding is not None:
+            if not isinstance(raw_embedding, Sequence) or isinstance(raw_embedding, str | bytes):
+                raise EntryError("validation_error", "embedding_invalid")
+            embedding = tuple(raw_embedding)  # type: ignore[arg-type]
+        model = request.get("embedding_model")
+        try:
+            return RecallQuery(
+                text=text,
+                embedding=embedding,
+                embedding_model=model if isinstance(model, str) else None,
+            )
+        except RecallError as exc:
+            raise EntryError("validation_error", exc.code) from None
+
     def _intent_for(self, mode: str, request: Mapping[str, object], limit: int, scope: str | None) -> Intent:
         """Derive the planner's :class:`Intent` from the request's own fields (``E-031`` §5.1: no second vocabulary).
 
@@ -929,8 +977,43 @@ class ReadHandlers:
                 window_start=start,
                 window_end=end,
                 scope=scope,
+                text=_text_or_none(request.get("text")),
             )
         except PlanningError as exc:
+            raise EntryError("validation_error", exc.code) from None
+
+    async def _recall(
+        self,
+        connection: AsyncConnection,
+        plan: Plan,
+        temporal: TemporalQuery,
+        read_filter: sql.Composable,
+        read_parameters: Mapping[str, object],
+        recall_query: RecallQuery | None,
+    ) -> Recall | None:
+        """The plan's hybrid recall, or ``None`` when the plan is the recency scan.
+
+        The plan carries a **digest** of the question, never the question. A hybrid plan replayed with a different
+        text is refused rather than silently ranked by it, which is what makes a recorded plan name the question it
+        answered (``V2-D86``) without putting caller content in a value a recorder may persist.
+        """
+        if plan.recall != HYBRID_RECALL:
+            return None
+        if recall_query is None:
+            raise EntryError("validation_error", "plan_query_missing")
+        try:
+            if plan.query_digest != query_digest(recall_query.text):
+                raise EntryError("validation_error", "plan_query_mismatch")
+            return await hybrid_recall(
+                connection,
+                temporal,
+                read_filter,
+                read_parameters,
+                recall_query,
+                limit=plan.rows,
+                schema_name=self.runtime.schema_name,
+            )
+        except RecallError as exc:
             raise EntryError("validation_error", exc.code) from None
 
     @staticmethod
@@ -1030,6 +1113,7 @@ class ReadHandlers:
         *,
         budgets: ChannelBudgets | None = None,
         narrowing: Narrowing | None = None,
+        recall_query: RecallQuery | None = None,
         _collector: StageCollector | None = None,
         _operation: CostOperation = "query",
     ) -> QueryResult:
@@ -1039,7 +1123,10 @@ class ReadHandlers:
 
         * ``candidate_generation`` -- in: the plan's filters and row limit; out: ``ScopedRow``s. The temporal
           predicate, the typed-artifact guard and the read predicate run in **one** statement before ``LIMIT``, so the
-          limit counts rows the caller may read (``V2-D73``).
+          limit counts rows the caller may read (``V2-D73``). When the plan's ``recall`` is ``hybrid`` (``V2-D86``) the
+          candidate set is first ranked by relevance to ``recall_query`` and the same statement then fetches exactly
+          those ids, so relevance decides the **order** of authorized rows and never their membership; a relevance
+          query that matches nothing answers nothing rather than falling back to recency.
         * ``expansion`` -- in: candidate rows; out: those rows followed by the reached rows in minimum-hop order.
           The temporal and read predicates run before each reached row enters the next hop (``V2-D76``).
         * ``filter_rerank`` -- in: rows; out: rows that pass the ``V2-D45`` re-check and, on an answer route, the
@@ -1121,14 +1208,36 @@ class ReadHandlers:
                         rows = current_view + tuple(row for row in previous_view if row.id not in current_ids)
                     else:
                         tquery = self._temporal_query_for(plan, user, reference_time)
-                        rows = await fetch_scoped_rows(
-                            connection,
-                            tquery,
-                            read_filter,
-                            read_parameters,
-                            limit=plan.rows,
-                            schema_name=self.runtime.schema_name,
+                        recall = await self._recall(
+                            connection, plan, tquery, read_filter, read_parameters, recall_query
                         )
+                        if recall is None:
+                            rows = await fetch_scoped_rows(
+                                connection,
+                                tquery,
+                                read_filter,
+                                read_parameters,
+                                limit=plan.rows,
+                                schema_name=self.runtime.schema_name,
+                            )
+                        elif not recall.ordered:
+                            # A relevance query with no match is an answer, not an error and not a recency dump.
+                            rows = ()
+                        else:
+                            # The ids are composed into the *filter*, beside the temporal and read predicates and
+                            # before LIMIT, so the fetcher cannot return a row the recall did not authorize even if
+                            # the two statements were to disagree about what is current.
+                            rank_filter = sql.SQL("({}) AND m.id = ANY(%(recall_ids)s)").format(read_filter)
+                            fetched = await fetch_scoped_rows(
+                                connection,
+                                tquery,
+                                rank_filter,
+                                {**read_parameters, "recall_ids": list(recall.ordered)},
+                                limit=len(recall.ordered),
+                                schema_name=self.runtime.schema_name,
+                            )
+                            position = {version_id: index for index, version_id in enumerate(recall.ordered)}
+                            rows = tuple(sorted(fetched, key=lambda row: position.get(row.id, len(position))))
                     if span is not None:
                         span.candidates_out = len(rows)
                 with self._stage(collector, "expansion") as span:
@@ -1389,6 +1498,11 @@ class ReadHandlers:
             raise EntryError("validation_error", "mode_invalid")
         if "reference_time" in request:
             raise EntryError("validation_error", "reference_time_is_the_engine_clock")  # I4
+        if request.get("text") is not None and mode in (CHANGE_MODE, "audit_as_of"):
+            # `V2-D86`: neither mode ranks. A diff must report every authorized row and an audit must report a past
+            # belief unchanged, so a question supplied to either is refused rather than quietly ignored -- a caller who
+            # sent one believes it was used.
+            raise EntryError("validation_error", "text_unsupported_for_mode")
         scope = request.get("scope")
         requested_path: str | None = None
         if scope is not None:
@@ -1405,6 +1519,7 @@ class ReadHandlers:
             effective_read_set = call.ctx.read_set
         if mode == "audit_as_of" and call.ctx.tier != "C":
             raise EntryError("forbidden")  # checked before the empty-read-set shortcut, so it never answers
+        recall_query = self._recall_query_for(request)
         intent = self._intent_for(str(mode), request, limit, requested_path)
         if effective_read_set.empty:
             # Nothing can be read, so nothing runs; the answer is still an answer and still gets a handle, so a
@@ -1430,7 +1545,14 @@ class ReadHandlers:
             if span is not None:
                 span.candidates_out = len(plan.scopes)
         self.recorder(plan)
-        result = await self.execute_plan(call, plan, budgets=budgets, _collector=collector, _operation="query")
+        result = await self.execute_plan(
+            call,
+            plan,
+            budgets=budgets,
+            recall_query=recall_query,
+            _collector=collector,
+            _operation="query",
+        )
         if result.stage_costs is not None:
             self.costs.record(call.ctx.principal, result.stage_costs)
         return self._issue(call, read_set=effective_read_set, intent=intent, budgets=budgets, result=result, depth=0)

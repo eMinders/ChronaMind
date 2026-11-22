@@ -116,7 +116,7 @@ OPERATIONS: tuple[Operation, ...] = (
     _op("provenance", "Read", "BC", ("artifact_id", "depth"), "ProvenanceView", conditions=("targets_readable",)),
     _op("assert", "Write (grounded)", "BC",
         ("scope", "kind", "content", "evidence", "event_range", "idempotency_key", "subject_entity", "preconditions",
-         "steps"),
+         "steps", "assertion_mode", "cardinality", "semantic_slot", "um_facet"),
         "Receipt | rejected", ("rejected",), ("scope_writable", "evidence_required", "targets_readable"),
         creates=frozenset({"asserted", "contested"})),
     _op("retract_own", "Write (grounded)", "BC", ("artifact_id", "reason"), "Receipt", ("precondition_failed",),

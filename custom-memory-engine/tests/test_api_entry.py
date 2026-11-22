@@ -114,6 +114,11 @@ VALUES: dict[str, object] = {
     "content": "x",
     "event_time": None,
     "event_range": None,
+    # the semantic write options (`V2-D87`); `None` is the documented default for each
+    "assertion_mode": None,
+    "cardinality": None,
+    "semantic_slot": None,
+    "um_facet": None,
     "request": {},
     "result_id": "",  # replaced by a real handle in `valid_arguments` (E-034)
     "instruction": "x",

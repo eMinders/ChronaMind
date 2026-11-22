@@ -36,7 +36,7 @@ from app.core.observability import (
     langfuse_init,
 )
 from app.services.database import database_service
-from app.services.memory import memory_service
+from app.services.memory_engine import memory_engine
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -70,16 +70,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("graph_pre_warm_failed", error=str(e))
 
-    # Pre-warm mem0 AsyncMemory: initializes pgvector connection and schema check
-    # so the first search() cache miss or add() doesn't pay the ~130ms cold-init cost
+    # Pre-warm the memory engine client (`V2-D93`): one health probe, so the first turn does not pay connection setup.
     try:
-        await memory_service.initialize()
+        await memory_engine.initialize()
     except Exception as e:
-        logger.exception("memory_service_pre_warm_failed", error=str(e))
+        logger.exception("memory_engine_pre_warm_failed", error=str(e))
 
     yield
 
     # Cleanup on shutdown
+    await memory_engine.aclose()
     await cache_service.close()
     if agent._connection_pool:
         await agent._connection_pool.close()

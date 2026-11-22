@@ -53,7 +53,7 @@ from app.schemas import (
     Message,
 )
 from app.services.llm import llm_service
-from app.services.memory import memory_service
+from app.services.memory_engine import memory_engine
 from app.utils import (
     dump_messages,
     extract_text_content,
@@ -313,7 +313,7 @@ class LangGraphAgent:
                 # Run state check and memory search concurrently to save 200-500ms
                 state, relevant_memory = await asyncio.gather(
                     graph.aget_state(config),
-                    memory_service.search(user_id, messages[-1].content),
+                    memory_engine.search(user_id, messages[-1].content),
                 )
 
                 if state.next:
@@ -337,7 +337,7 @@ class LangGraphAgent:
                     return [Message(role="assistant", content=str(interrupt_value))]
 
                 openai_msgs = cast(list[dict], convert_to_openai_messages(response["messages"]))
-                asyncio.create_task(memory_service.add(user_id, openai_msgs, config.get("metadata")))
+                asyncio.create_task(memory_engine.add(user_id, openai_msgs, config.get("metadata")))
                 return self.__process_messages(response["messages"])
         except GraphInterrupt:
             state = await graph.aget_state(config)
@@ -394,7 +394,7 @@ class LangGraphAgent:
                 # Run state check and memory search concurrently to save 200-500ms
                 state, relevant_memory = await asyncio.gather(
                     graph.aget_state(config),
-                    memory_service.search(user_id, messages[-1].content),
+                    memory_engine.search(user_id, messages[-1].content),
                 )
 
                 if state.next:
@@ -426,7 +426,7 @@ class LangGraphAgent:
                     yield str(interrupt_value)
                 elif state.values and "messages" in state.values:
                     openai_msgs = cast(list[dict], convert_to_openai_messages(state.values["messages"]))
-                    asyncio.create_task(memory_service.add(user_id, openai_msgs, config.get("metadata")))
+                    asyncio.create_task(memory_engine.add(user_id, openai_msgs, config.get("metadata")))
         except GraphInterrupt:
             state = await graph.aget_state(config)
             interrupt_value = state.tasks[0].interrupts[0].value if state.tasks else "Waiting for input."

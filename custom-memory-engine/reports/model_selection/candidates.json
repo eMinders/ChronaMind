@@ -1,0 +1,50 @@
+[
+  {
+    "model": "claude-haiku-5-5",
+    "tasks": {
+      "extraction_ar": {
+        "passed": 4,
+        "attempts": 4,
+        "rate": 1.0,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 5,
+        "failures": []
+      },
+      "extraction_en": {
+        "passed": 6,
+        "attempts": 6,
+        "rate": 1.0,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 11,
+        "failures": []
+      },
+      "extraction_mixed": {
+        "passed": 2,
+        "attempts": 3,
+        "rate": 0.667,
+        "json_errors": 1,
+        "quote_grounded": 0,
+        "quotes_offered": 4,
+        "failures": [
+          "mix_switch:model_output_not_json"
+        ]
+      },
+      "schema": {
+        "passed": 3,
+        "attempts": 3,
+        "rate": 1.0,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 0,
+        "failures": []
+      }
+    },
+    "p50_ms": 6983.9,
+    "p95_ms": 13072.3,
+    "prompt_tokens": 10501,
+    "completion_tokens": 9140,
+    "errors": []
+  }
+]

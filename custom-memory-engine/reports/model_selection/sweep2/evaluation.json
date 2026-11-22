@@ -1,0 +1,240 @@
+{
+  "endpoint": "https://api.pateway.ai/v1",
+  "timestamp": "2026-11-22T00:14:57Z",
+  "cases": 21,
+  "tasks": [
+    "extraction_en",
+    "extraction_ar",
+    "extraction_mixed",
+    "schema",
+    "adjudication",
+    "query_rewrite"
+  ],
+  "candidates": [
+    {
+      "model": "claude-haiku-5-5",
+      "tasks": {
+        "adjudication": {
+          "passed": 4,
+          "attempts": 6,
+          "rate": 0.667,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "adj_contradiction:said_update",
+            "adj_ar_contradiction:said_update"
+          ]
+        },
+        "extraction_ar": {
+          "passed": 3,
+          "attempts": 4,
+          "rate": 0.75,
+          "json_errors": 1,
+          "quote_grounded": 0,
+          "quotes_offered": 3,
+          "failures": [
+            "ar_allergy:model_output_not_json"
+          ]
+        },
+        "extraction_en": {
+          "passed": 5,
+          "attempts": 6,
+          "rate": 0.833,
+          "json_errors": 1,
+          "quote_grounded": 1,
+          "quotes_offered": 6,
+          "failures": [
+            "en_employer:model_output_not_json"
+          ]
+        },
+        "extraction_mixed": {
+          "passed": 2,
+          "attempts": 3,
+          "rate": 0.667,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 5,
+          "failures": [
+            "mix_switch:no_claims_array"
+          ]
+        },
+        "query_rewrite": {
+          "passed": 0,
+          "attempts": 2,
+          "rate": 0.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "rw_en:no_target_overlap",
+            "rw_ar:no_target_overlap"
+          ]
+        },
+        "schema": {
+          "passed": 3,
+          "attempts": 3,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": []
+        }
+      },
+      "p50_ms": 7627.4,
+      "p95_ms": 12797.9,
+      "prompt_tokens": 18810,
+      "completion_tokens": 12282,
+      "errors": []
+    },
+    {
+      "model": "gpt-6.2-sol",
+      "tasks": {
+        "adjudication": {
+          "passed": 4,
+          "attempts": 6,
+          "rate": 0.667,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "adj_contradiction:said_update",
+            "adj_ar_contradiction:said_update"
+          ]
+        },
+        "extraction_ar": {
+          "passed": 4,
+          "attempts": 4,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 1,
+          "quotes_offered": 4,
+          "failures": []
+        },
+        "extraction_en": {
+          "passed": 6,
+          "attempts": 6,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 1,
+          "quotes_offered": 8,
+          "failures": []
+        },
+        "extraction_mixed": {
+          "passed": 2,
+          "attempts": 3,
+          "rate": 0.667,
+          "json_errors": 0,
+          "quote_grounded": 1,
+          "quotes_offered": 8,
+          "failures": [
+            "mix_switch:missing_deadline"
+          ]
+        },
+        "query_rewrite": {
+          "passed": 0,
+          "attempts": 2,
+          "rate": 0.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "rw_en:no_target_overlap",
+            "rw_ar:no_target_overlap"
+          ]
+        },
+        "schema": {
+          "passed": 3,
+          "attempts": 3,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": []
+        }
+      },
+      "p50_ms": 7828.7,
+      "p95_ms": 14630.2,
+      "prompt_tokens": 142751,
+      "completion_tokens": 4355,
+      "errors": []
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "tasks": {
+        "adjudication": {
+          "passed": 4,
+          "attempts": 6,
+          "rate": 0.667,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "adj_contradiction:said_update",
+            "adj_ar_contradiction:said_update"
+          ]
+        },
+        "extraction_ar": {
+          "passed": 4,
+          "attempts": 4,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 1,
+          "quotes_offered": 5,
+          "failures": []
+        },
+        "extraction_en": {
+          "passed": 5,
+          "attempts": 6,
+          "rate": 0.833,
+          "json_errors": 0,
+          "quote_grounded": 1,
+          "quotes_offered": 7,
+          "failures": [
+            "en_employer:no_claims_array"
+          ]
+        },
+        "extraction_mixed": {
+          "passed": 1,
+          "attempts": 3,
+          "rate": 0.333,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 2,
+          "failures": [
+            "mix_switch:no_claims_array",
+            "mix_code:no_claims_array"
+          ]
+        },
+        "query_rewrite": {
+          "passed": 0,
+          "attempts": 2,
+          "rate": 0.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "rw_en:no_target_overlap",
+            "rw_ar:no_target_overlap"
+          ]
+        },
+        "schema": {
+          "passed": 3,
+          "attempts": 3,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": []
+        }
+      },
+      "p50_ms": 5329.1,
+      "p95_ms": 15173.4,
+      "prompt_tokens": 18927,
+      "completion_tokens": 10377,
+      "errors": []
+    }
+  ],
+  "embedding_probe": {},
+  "embeddings_note": "The provider's `/embeddings` route is probed, not assumed: a model that appears in `/models` is not evidence that embeddings are served. Where it is unavailable the deployment embeds locally (`integrations.onnx_embedder`) so the dense arm stays measurable."
+}

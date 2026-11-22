@@ -281,10 +281,6 @@ async def test_assert_refuses_what_it_cannot_ground_or_support(database) -> None
     async with world(database) as (conn, engine, _):
         await with_turn(conn, engine)
         cases = {
-            "external_only": (
-                claim(evidence=[EXTERNAL], idempotency_key="e1"),
-                ("validation_error", "external_evidence_cannot_be_grounded"),
-            ),
             "empty_evidence": (claim(evidence=[], idempotency_key="e2"), ("validation_error", "evidence_required")),
             "abstraction": (
                 claim(kind="abstraction", idempotency_key="e3"),
@@ -313,7 +309,76 @@ async def test_assert_refuses_what_it_cannot_ground_or_support(database) -> None
             claim(evidence=[turn_source("x", turn_id="bobs-turn")], idempotency_key="e8"),
         )
         assert missing.code == "forbidden"
+
         assert await rows(conn, "SELECT count(*) FROM memory_version") == [(0,)]
+
+
+async def test_third_party_evidence_is_accepted_and_quarantined_rather_than_refused(database) -> None:  # noqa: F811
+    """`V2-D87`: a claim resting only on a source the engine did not hear from the user becomes a hypothesis.
+
+    Before W3.5 the handler refused this with `external_evidence_cannot_be_grounded`, so a user who pasted a document
+    could not record what it said. It is now stored -- with its declared source type, reference and hash -- as
+    `contested`, which the channel router sends to `conflicts`. The assertion mode is overridden rather than trusted:
+    a caller cannot ask for retrieved text to be presented as fact.
+    """
+    async with world(database) as (conn, engine, _):
+        await with_turn(conn, engine)
+        receipt = await engine.call(
+            caller("alice"),
+            "assert",
+            claim(evidence=[EXTERNAL], idempotency_key="e1", assertion_mode="asserted"),
+        )
+        assert isinstance(receipt, Receipt)
+        assert receipt.effect == "contested"
+        assert await rows(conn, "SELECT assertion_mode, lifecycle FROM memory_version") == [
+            ("third_party", "contested")
+        ]
+        assert await rows(conn, "SELECT source_type FROM memory_evidence") == [("external",)]
+        # the third-party rank is structural, not declared: migration 24 derives it from the source type
+        assert await rows(conn, "SELECT authority_rank FROM memory_evidence") == [(3,)]
+
+
+async def test_a_single_valued_claim_in_a_slot_supersedes_and_a_different_slot_does_not(database) -> None:  # noqa: F811
+    """`V2-D87`: the two things the public write path could not do before this phase.
+
+    `cardinality='single'` switches the conflict pipeline on, and `semantic_slot` says what the claim is about without
+    a catalog: a correction of the residence supersedes the previous residence, while a preference about an editor is a
+    different fact and leaves it alone.
+    """
+    async with world(database) as (conn, engine, _):
+        await with_turn(conn, engine)
+        first = await engine.call(
+            caller("alice"),
+            "assert",
+            claim(
+                content="I live in Berlin",
+                evidence=[turn_source("I am vegetarian")],
+                idempotency_key="c1",
+                cardinality="single",
+                semantic_slot="residence",
+                um_facet="context",
+            ),
+        )
+        assert isinstance(first, Receipt) and first.effect == "asserted"
+        other = await engine.call(
+            caller("alice"),
+            "assert",
+            claim(
+                content="My favourite editor is Neovim",
+                evidence=[turn_source("I am vegetarian")],
+                idempotency_key="c2",
+                cardinality="single",
+                semantic_slot="preferred_editor",
+                um_facet="preference",
+            ),
+        )
+        assert isinstance(other, Receipt) and other.effect == "asserted"
+        # neither superseded the other: two slots, two facts
+        assert await rows(conn, "SELECT count(*) FROM memory_version WHERE status = 'active'") == [(2,)]
+        assert await rows(conn, "SELECT id, semantic_slot, cardinality_hint, um_facet FROM memory_version ORDER BY id")
+        assert {
+            (facet, slot) for facet, slot in await rows(conn, "SELECT um_facet, semantic_slot FROM memory_version")
+        } == {("context", "residence"), ("preference", "preferred_editor")}
 
 
 async def test_what_assert_wrote_can_be_adjudicated_and_retracted_through_the_same_door(database) -> None:  # noqa: F811

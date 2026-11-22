@@ -19,6 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, f
 from rich.console import Console
 
 SCHEMA_SQL = Path(__file__).with_name("001_full_schema.sql")
+#: Extensions the engine needs, created in ``public`` before the managed schema exists. Every one of them is a
+#: dependency of a shipped migration (``vector``/``btree_gist`` of 1, ``pg_trgm`` of 23), and none of them belongs to
+#: the managed schema: an extension installed inside it would break clean reset and enter the catalog fingerprint.
+EXTENSIONS: tuple[str, ...] = ("vector", "btree_gist", "pg_trgm")
 # Ordered, append-only. A shipped entry is never edited or removed: its source checksum
 # is recorded at apply time and any later change is reported as drift (MA-016 X1).
 MIGRATIONS: tuple[tuple[int, str], ...] = (
@@ -44,6 +48,8 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (20, "020_outcome_stats.sql"),
     (21, "021_procedure_shape.sql"),
     (22, "022_deletion_through_cognition.sql"),
+    (23, "023_multilingual_index.sql"),
+    (24, "024_semantic_slot.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -431,16 +437,23 @@ class MigrationRunner:
         _, base_filename, source, checksum = sources[0]
         # Install shared extensions before making the managed schema the creation
         # target. They never belong to, or get erased by, clean reset.
-        for extension in ("vector", "btree_gist"):
+        #
+        # `pg_trgm` is here for the same reason as `vector` and `btree_gist`, and migration 23 depends on it: the
+        # migration runs with the managed schema first on `search_path`, so an extension it created itself would land
+        # *inside* the schema -- where `reset`'s `DROP SCHEMA ... RESTRICT` refuses to run and where the catalog
+        # fingerprint would start carrying another project's functions. Bootstrapping it here keeps every extension in
+        # `public`, which is what the postcondition below asserts.
+        for extension in EXTENSIONS:
             await connection.execute(
                 sql.SQL("CREATE EXTENSION IF NOT EXISTS {} WITH SCHEMA public").format(sql.Identifier(extension))
             )
         cursor = await connection.execute(
             """SELECT e.extname,n.nspname FROM pg_catalog.pg_extension e
                JOIN pg_catalog.pg_namespace n ON n.oid=e.extnamespace
-               WHERE e.extname IN ('vector','btree_gist') ORDER BY e.extname"""
+               WHERE e.extname = ANY(%s) ORDER BY e.extname""",
+            (list(EXTENSIONS),),
         )
-        if await cursor.fetchall() != [("btree_gist", "public"), ("vector", "public")]:
+        if await cursor.fetchall() != [(name, "public") for name in sorted(EXTENSIONS)]:
             raise MigrationError("extensions_must_be_in_public")
         await connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(self.config.schema_name)))
         await connection.execute(

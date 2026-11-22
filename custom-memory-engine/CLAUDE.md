@@ -39,15 +39,28 @@ Frozen and checksum-bound (`validation/document_hashes.txt`): `Graduation_Projec
 `PLAN/` outside `V2/`, `PROJECT_ROADMAP.md`, `REFACTORING.md` and `Graduation_Project_Proposal.md`'s phase plan are the
 **superseded v1** record: history, never instruction for new work.
 
-## Where the state is today (verified on `main`, 2026-11-20)
+## Where the state is today (verified on `main`, 2026-11-21)
 
-- Waves **W0–W3 complete**; gate **G3** signed off. W4 and later are **not authorised**: no task outside the current
-  wave starts without the Project Owner's instruction (`PLAN/V2/APPROVAL.md`, `ROADMAP_V2.md` §4.1 "Scope protection").
-- **22 of 29** contract operations dispatch through `Engine.call`; the remaining 7 (`verify`, `refute`, `dissent`,
-  `stats`, `expire`, `rebuild_index`, `export`) answer `forbidden` with `operation_not_wired`. `ROADMAP_V2.md` §4.1
-  owns that register; `E-039` owns the door, never the behaviour.
-- **Migrations 1–22** are applied and registered (`schema/migrate.py::MIGRATIONS`). `022` is the newest.
-- The full suite is ~4,035 passed / ~21 skipped on the default install, with PostgreSQL 16.15 + pgvector 0.8.7.
+- Waves **W0–W3 complete**; gate **G3** signed off. **W3.5** (`E-040`–`E-045`) landed on 2026-11-21 as the review's
+  bridge: the read path ranks the caller's text, the write path records facets/cardinality/slots and accepts non-turn
+  evidence, and `src/custom_memory_engine/semantic/` is the semantic layer. W4 and later are **not authorised**: no task
+  outside the current wave starts without the Project Owner's instruction (`PLAN/V2/APPROVAL.md`, `ROADMAP_V2.md` §4.1
+  "Scope protection"). The component map that decided what was reused, adapted, replaced or deferred is
+  [`PLAN/V2/COMPONENT_MAP.md`](PLAN/V2/COMPONENT_MAP.md).
+- **23 of 29** contract operations dispatch through `Engine.call`; the remaining 6 (`verify`, `dissent`, `stats`,
+  `expire`, `rebuild_index`, `export`) answer `forbidden` with `operation_not_wired`, each with its reason in
+  `api/wiring.UNWIRED_OPERATIONS`. `refute` landed with `E-046` (`V2-D96`), which also added `api/wiring.wire_engine`
+  (the one call that registers **every** handler) and the HTTP host (`host/`): a deployment no longer hand-orders
+  `register_*` calls and no longer needs its own transport.
+- **The asynchronous lane exists** (`E-047`, `V2-D96`): `semantic/slow_lane.py` claims a queued extraction in one
+  transaction, the model runs with **no transaction open**, and `complete_one` writes the result in a second. The queue
+  itself (`D-18`) predates this; `scripts/run_worker.py` is the loop.
+- **Models are chosen by measurement** (`V2-D94`, `reports/model_selection/README.md`): extraction on `gpt-6.2-sol`,
+  adjudication on `claude-haiku-5-5`, embeddings **locally** (the provider serves no `/embeddings`).
+- **Migrations 1–24** applied and registered (`schema/migrate.py::MIGRATIONS`); `024` is the newest. The suite is
+  **4,400+ passed / 21 skipped** against PostgreSQL 16.15 + pgvector 0.8.7 + `pg_trgm`; the three extensions are
+  bootstrapped into `public` by `migrate.EXTENSIONS`, so the catalog fingerprint never carries another project's
+  functions.
 
 ## How it runs
 
@@ -81,13 +94,43 @@ Frozen and checksum-bound (`validation/document_hashes.txt`): `Graduation_Projec
   application's do not apply (`PLAN/INDEPENDENCE_BOUNDARY.md` §4, and the root `pyproject.toml` excludes this directory).
   `tests/engine_source_identity.py` pins the engine's own identity.
 
+## The semantic layer (`src/custom_memory_engine/semantic/`)
+
+Added by `W3.5` (`V2-D88`–`V2-D91`). It sits **above** the entry point and outside every invariant: it turns language
+into the candidates `api.ingest_handlers` / `engine.ingest.apply_candidate` already accept, and every row it writes goes
+through them. Removing the package degrades the engine to what it was before, it does not leave a hole in the ledger.
+
+| module | owner of | what must stay true |
+|---|---|---|
+| `contracts.py` | the typed boundary and the three protocols (`StructuredExtractor`, `RelationAdjudicator`, `Embedder`) | imports **no** provider SDK; the closed enumerations equal their canonical homes (`tests/test_semantic_contracts.py` pins them) |
+| `grounding.py` | quote exists, specifics appear | folds NFC + whitespace runs only — never case, never diacritics; a one-character quote is refused |
+| `authority.py` | `USER > SYSTEM > ASSISTANT > THIRD_PARTY` | its Python twin must equal migration 24's generated `authority_rank`; a weaker source never supersedes a stronger one |
+| `slots.py` | one normalization of an open slot key | must equal the schema `CHECK` (`memory_version_semantic_slot_check`) |
+| `temporal.py` | bounds are aware, ordered, anchored, non-empty | only `planned` may begin after the utterance |
+| `entities.py` | cascaded mention resolution and creation | a merge needs an exact/alias/trigram match or an adjudicated one; ambiguity is `unresolved`, never a guess, and an abstention never creates a duplicate (`V2-D95`) |
+| `conflict.py` | recall → adjudicate → commit | the GiST constraint gets the last word; a hallucinated id inserts |
+| `ingestor.py` | the two lanes | one clock tick per transaction (`allocate_clock` allocates once); a refusal is a typed outcome, never a silent drop; `apply_extraction` is the pure-database half a worker calls (`E-047`) |
+| `slow_lane.py` | claim → model → complete | the model call happens **outside** any transaction; a lease expires in `next_run_at`; `MAX_ATTEMPTS` then `dead_letter` |
+
+**Two traps specific to this layer.** `halfvec` rejects PostgreSQL's `{...}` array literal, so a vector always goes
+through `engine.hybrid.vector_literal` (`[...]`); psycopg's `list` adapter works for the legacy 384 slot and fails for
+every multilingual one. And `similarity()` lives in whichever schema `pg_trgm` was installed into — never spell it
+`pg_catalog.similarity`; use `engine.hybrid.trgm_schema`.
+
+## The integrations layer (`src/custom_memory_engine/integrations/`, `V2-D94`)
+
+The only place a provider, a model id or a wire protocol exists; `tests/test_integrations.py` scans `src/` for model
+names. `wire.py` holds the shared primitives, `openai_compatible.py`/`anthropic_messages.py` are the two wire shapes,
+`provider.client_for` picks by family (override wins), `onnx_embedder.py` runs a pinned ONNX model.
+
+**The trap.** One protocol per family: Claude on `/v1/messages`, GPT on `/v1/chat/completions`, the other answering
+`400 protocol_mismatch`. A cross-protocol retry would double-bill and hide it; family guess + `CME_LLM_PROTOCOL`.
+
 ## Things that will bite you
 
-1. **A fix without a control is not a fix.** This project's review standard treats a stated guarantee as unproven until
-   a mutation shows its test fails without it. Every bug fix lands with a test that fails against the unmodified code;
-   every guard lands with a test asserting its refusal *and* a positive control showing the same canary is visible to a
-   connection that bypasses the guard. `#229` is the exemplar: nine new regressions, eight of which fail on the parent
-   commit.
+1. **A fix without a control is not a fix.** A stated guarantee is unproven until a mutation shows its test fails
+   without it: every bug fix lands with a test that fails against the unmodified code, and every guard with a refusal
+   *and* a positive control. `#229` is the exemplar: nine regressions, eight failing on the parent commit.
 2. **Two implementations of one rule.** The SQL guard and its Python twin are kept equal deliberately —
    `engine/procedure_shape.py` against migration 21's `guard_procedure_shape`,
    `scope/access.py::rls_read_using` against migration 11's `*_scope_read` policy, `model/axes.py::LEGAL_LIFECYCLE`

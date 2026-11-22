@@ -78,6 +78,10 @@ AUDIT_DETAIL_KEYS = frozenset(
         "verification_reasons",
         # lifecycle retirements through the API (E-039): a static reason code, never free text
         "reason_code",
+        # C-026 refutation (E-046): two counts. The counter-evidence *refs* are deliberately not audited -- a ref can
+        # be a path or a URL, and `audit_event` outlives deletion (V2-D54).
+        "counter_evidence_supplied",
+        "counter_evidence_linked",
         # procedure outcome feedback (E-027): a boolean that an episode was cited, never the episode's id (a locator)
         "episode_referenced",
         # cross-scope reads (E-011): counts only, never a path or a principal

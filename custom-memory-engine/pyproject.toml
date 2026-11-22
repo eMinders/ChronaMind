@@ -26,6 +26,15 @@ baselines = [
   "qdrant-client==1.20.0",
   "openai==2.7.1",
 ]
+host = [
+  "httpx==0.28.1",
+  "starlette==1.10.0",
+  "uvicorn==0.54.0",
+]
+embeddings = [
+  "onnxruntime==1.31.0",
+  "tokenizers==0.23.3",
+]
 
 [dependency-groups]
 dev = [
@@ -34,6 +43,11 @@ dev = [
   "pytest-xdist==3.8.0",
   "ruff==0.17.5",
   "pyright==1.1.414",
+  "starlette>=1.10.0",
+  "uvicorn>=0.54.0",
+  "httpx>=0.28.1",
+  "onnxruntime>=1.31.0",
+  "tokenizers>=0.23.3",
 ]
 
 [build-system]
