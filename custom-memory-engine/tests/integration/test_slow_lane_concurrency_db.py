@@ -230,7 +230,7 @@ async def test_recover_stale_dead_letters_jobs_at_max_attempts(database) -> None
             sql.SQL(
                 "UPDATE {} SET status = 'running', attempts = %s, "
                 "next_run_at = pg_catalog.now() - interval '1 hour', "
-                'payload = \'{{"secret": "payload"}}\'::jsonb '
+                'payload = \'{{"secret": "payload"}}\'::jsonb '  # pragma: allowlist secret
                 "WHERE id = 'j-dead'"
             ).format(sql.Identifier(r.schema, "job")),
             (MAX_ATTEMPTS,),

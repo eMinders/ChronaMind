@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Execute the deployment artefacts instead of only reading them (#253). CI's `deploy-smoke` job runs exactly this.
 #
-#   CME_TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5433/db deploy/ci_smoke.sh   # from custom-memory-engine/
+#   CME_TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5433/db deploy/ci_smoke.sh   # from custom-memory-engine/  # pragma: allowlist secret
 #
 # Needs: docker with the compose plugin, systemd-analyze, uv with the engine synced, and a PostgreSQL + pgvector server
 # at CME_TEST_DATABASE_URL reachable from this host (the containers use the host network, so 127.0.0.1 means the same
@@ -42,7 +42,7 @@ PROJECT="cme-deploysmoke-${SUFFIX}"
 PRINCIPAL="deploysmoke"
 # Not a credential: the provider is never dialled. Present so the image's missing-variable check can prove it is never
 # echoed back.
-SMOKE_API_KEY="smoke-not-a-credential-${SUFFIX}"
+SMOKE_API_KEY="smoke-not-a-credential-${SUFFIX}"  # pragma: allowlist secret
 WORK="$(mktemp -d)"
 COMPOSE=(docker compose -p "$PROJECT" -f deploy/compose.worker.yaml -f "$WORK/compose.smoke.yaml" --env-file "$WORK/worker.env")
 REQUIRED_VARS=(CME_DATABASE_URL CME_RUNTIME_ROLE CME_WORKER_USERS CME_LLM_BASE_URL CME_LLM_API_KEY CME_EXTRACTOR_MODEL)

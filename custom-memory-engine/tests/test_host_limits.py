@@ -240,6 +240,7 @@ def test_settings_from_environment_parses_limits_and_never_leaks_secrets() -> No
     assert parsed.inflight_acquire_timeout == 0.1
 
     with pytest.raises(EntryError) as missing:
-        settings_from_environment({"CME_DATABASE_URL": "postgresql://secret-user:secret-pass@127.0.0.1:5432/db"})
+        dsn = "postgresql://secret-user:secret-pass@127.0.0.1:5432/db"  # pragma: allowlist secret
+        settings_from_environment({"CME_DATABASE_URL": dsn})
     assert (missing.value.code, missing.value.detail) == ("validation_error", "cme_runtime_role_required")
     assert "secret-pass" not in str(missing.value)

@@ -1104,7 +1104,7 @@ async def test_t29_receipt_stores_keyed_hmac_digest_not_plaintext_and_supports_i
     _, schema = db
     key_a = b"deployment-key-alpha-32bytes!!!!"
     key_b = b"deployment-key-bravo-32bytes!!!!"
-    secret_topic = "medical-diagnosis-secret"
+    secret_topic = "medical-diagnosis-secret"  # pragma: allowlist secret
     assert target_ref_digest(key_a, "u1", "memory", secret_topic) != target_ref_digest(
         key_b, "u1", "memory", secret_topic
     )
