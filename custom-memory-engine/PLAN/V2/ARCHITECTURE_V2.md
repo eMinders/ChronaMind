@@ -410,11 +410,11 @@ operation a tier needs appears here, and nothing outside it exists.**
 | Class | Operations | Tier B | Tier C | Notes |
 |---|---|---|---|---|
 | **Ingest** | `ingest_episode`, `ingest_artifact` | ✓ | ✓ | Writes always land in an explicit scope; the caller is authorized for it. |
-| **Read** | `query`, `refine`, `get`, `provenance` | ✓ | ✓ | Channel-separated; provenance never widens the read set. |
+| **Read** | `query`, `refine`, `get`, `provenance`, `constraints` | ✓ | ✓ | Channel-separated; provenance never widens the read set. `constraints` lists the caller's own negative constraints, ids and element names only. |
 | **Write (grounded)** | `assert`, `retract_own` | ✓ | ✓ | Grounded writes go through the *grounding* policy; Tier B asserting about the world is allowed only with source evidence, which is what stops it inventing facts. |
 | **Write (inferred)** | `infer`, `verify`, `refute` | ✓ | — | Soundness policy. `verify`/`refute` accept only the artifact's own method lineage. |
 | **Structure** | `link`, `unlink`, `create_entity`, `link_entity`, `record_outcome` | ✓ | ✓ | `record_outcome` is retrospective only; no execution. A Tier B `contradicts` link never demotes a grounded artifact (`V2-D48`). |
-| **Adjudicate** | `adjudicate`, `dissent` | — | ✓ | User/system correction of `contested` items. **Deliberately not available to Tier B**: a reflection service must not be able to silence a conflict by adjudicating it. |
+| **Adjudicate** | `adjudicate`, `dissent`, `lift` | — | ✓ | User/system correction of `contested` items. **Deliberately not available to Tier B**: a reflection service must not be able to silence a conflict by adjudicating it, nor lift a user's dissent. |
 | **Maintain** | `purge_working`, `expire`, `rebuild_index`, `register_method` | — | ✓ | Administrative: admin role within Tier C (`V2-D47`); `purge_working` is scope-scoped and audited; the method registry is append-only. |
 | **Delete** | `delete` | **—** | ✓ | Tier B can never delete. It can only `retract_own` artifacts whose method it produced. |
 | **Export** | `export` | — | ✓ | User-facing data export; excludes content whose deletion is pending. |
@@ -482,6 +482,57 @@ flowchart LR
 > placement, and it is satisfied by applying the predicate **earliest**, in the same statement as the read predicate
 > and before `LIMIT` (`V2-D73` decision 3). "Recency/usage" cannot live in stage 4 either: `V2-D75` decision 3 places
 > it after routing, which is stage 5.
+
+### 9.0 What stage 2 actually does (r19, `V2-D86`)
+
+The diagram's stage 2 names four candidate sources and the shipped code used one of them: an `ORDER BY recorded_range
+DESC` scan. Exact ranking was left to a v1 module (`engine/retrieval.py`) that the V2 path never called, and
+`memory_embedding` was written by nothing. Stage 2 is therefore specified here rather than left to the diagram:
+
+| sub-stage | what runs | why it is here |
+|---|---|---|
+| filter | compiled temporal predicate ∧ typed-artifact guard ∧ the caller's read predicate, **one statement, before `LIMIT`** | `V2-D73` decision 3: the limit must count rows the caller may read, and the temporal predicate is a filter, never a score |
+| arms | dense cosine in the version's embedding slot (HNSW, `halfvec`); full-text over a `to_tsvector` generated column in the `simple` configuration; `pg_trgm` substring on the longest query token | three arms with incomparable score scales, each covering a case the others do not: paraphrase, lexicon, spelling |
+| fuse | Reciprocal Rank Fusion, `k = 60` | rank-based, so no normalisation is needed between cosine distance, `ts_rank_cd` and trigram similarity |
+| fetch | the fused ids composed into the **same** statement's filter (`m.id = ANY(…)`) beside the temporal and read predicates, then re-ordered by fused rank | relevance decides the *order* of authorized rows, never their membership; a second, unscoped statement could return a row recall never authorized |
+| optional | a caller-supplied reranker over the fused page | a cross-encoder is deterministic code over fixed weights; **no generative model is on this path** (`charged_calls = 0`) |
+
+Two consequences worth naming, because both are load-bearing rather than incidental:
+
+* **A relevance query that matches nothing answers nothing.** There is no fallback to recency. A page of unrelated
+  memories presented as an answer is a wrong answer that looks like a right one, and the previous behaviour (a recency
+  dump regardless of the question) is exactly the defect this correction removes.
+* **`change` and `audit_as_of` cannot be ranked.** A diff must report every authorized row and an audit must report a
+  past belief unchanged, so a question supplied to either mode is refused (`text_unsupported_for_mode`) rather than
+  silently ignored.
+
+The plan records the recall mode and a **digest** of the question, never the question: a plan is a value a recorder may
+hold, and a query is caller content (`RL-072`). A hybrid plan replayed with a different text is refused
+(`validation_error/plan_query_mismatch`) rather than ranked by it.
+
+### 9.0b Where semantic understanding happens (`V2-D88`)
+
+Stage 2 and the write path consume *structured* claims; nothing in the engine reads a sentence. That reading happens in
+`src/custom_memory_engine/semantic/`, above the entry point and outside every invariant in §11, and its output enters
+through the same two doors every other write uses (`api.ingest_handlers`, `engine.ingest.apply_candidate`):
+
+```mermaid
+flowchart LR
+    T["turn / tool output / file / event (any language)"] --> F["FAST LANE<br/>persist turn + episode (ms, no model)"]
+    F --> X["structured extraction<br/>(injected: StructuredExtractor)"]
+    X --> G["deterministic grounding<br/>quote + specifics"]
+    G --> A["derived authority<br/>USER > SYSTEM > ASSISTANT > THIRD_PARTY"]
+    A --> TM["temporal validation against the turn's instant"]
+    TM --> S["slot normalization (one form)"]
+    S --> C["3-stage conflict<br/>recall → adjudicate → deterministic commit"]
+    C --> W["governed write<br/>apply_candidate / stage_candidate"]
+    W --> DB[("Postgres: RLS · GiST exclusion · provenance · channels")]
+```
+
+The division of labour is the whole design and is recorded in `V2-D88`: the model produces *semantics* (claims,
+entities, modality, relative time, the open slot); deterministic code produces every *check* (quote exists, specifics
+appear, authority, temporal legality, one slot spelling); the database produces every *guarantee* (§11). A model that
+is wrong is therefore detectable rather than trusted — which is the strongest claim this architecture makes.
 
 ### 9.1 The four channels (resolves the overlap between lifecycle and channel)
 
@@ -633,7 +684,7 @@ inference confidence, which is a consistency the first draft lacked.
 | I13 | `verified ∧ deleted-source` is unreachable after any committing transaction. | Deletion procedure ordering (§10) + invariant test |
 | I14 | Every rendered abstraction carries a bound; no API path renders an abstraction as a bare proposition. | Assembly contract + channel-integrity fuzz (`E-035`) |
 | I15 | Counter-support is *searched and recorded* (opportunity ledger present, `refutation_attempts` recorded); it is never required to be non-empty. | Conformance test + `STATISTICS.md` §2.2 |
-| I16 | A user denial is sticky: a refuted user-model element cannot be re-inferred over the same predicate/scope without new grounded evidence. | Negative-constraint table + `UM8` test |
+| I16 | A user denial is sticky: a refuted user-model element cannot be re-inferred over the same predicate/scope without new grounded evidence. | Negative-constraint table + `lift` (`V2-D105`) + `UM8` test |
 | I17 | Cross-scope provenance is opaque: a provenance reference to an unreadable scope exposes no content and no existence oracle. | Scope tests + `I7` extension |
 
 ---

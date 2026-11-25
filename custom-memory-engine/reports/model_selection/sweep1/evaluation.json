@@ -1,0 +1,238 @@
+{
+  "endpoint": "https://api.pateway.ai/v1",
+  "timestamp": "2026-11-22T00:02:09Z",
+  "cases": 21,
+  "tasks": [
+    "extraction_en",
+    "extraction_ar",
+    "extraction_mixed",
+    "schema",
+    "adjudication",
+    "query_rewrite"
+  ],
+  "candidates": [
+    {
+      "model": "claude-haiku-5-5",
+      "tasks": {
+        "adjudication": {
+          "passed": 4,
+          "attempts": 6,
+          "rate": 0.667,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "adj_contradiction:said_update",
+            "adj_ar_contradiction:said_update"
+          ]
+        },
+        "extraction_ar": {
+          "passed": 3,
+          "attempts": 4,
+          "rate": 0.75,
+          "json_errors": 1,
+          "quote_grounded": 0,
+          "quotes_offered": 3,
+          "failures": [
+            "ar_residence:model_output_not_json"
+          ]
+        },
+        "extraction_en": {
+          "passed": 6,
+          "attempts": 6,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 1,
+          "quotes_offered": 10,
+          "failures": []
+        },
+        "extraction_mixed": {
+          "passed": 2,
+          "attempts": 3,
+          "rate": 0.667,
+          "json_errors": 1,
+          "quote_grounded": 0,
+          "quotes_offered": 6,
+          "failures": [
+            "mix_switch:model_output_not_json"
+          ]
+        },
+        "query_rewrite": {
+          "passed": 0,
+          "attempts": 2,
+          "rate": 0.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "rw_en:no_target_token",
+            "rw_ar:no_target_token"
+          ]
+        },
+        "schema": {
+          "passed": 3,
+          "attempts": 3,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": []
+        }
+      },
+      "p50_ms": 6388.9,
+      "p95_ms": 11259.4,
+      "prompt_tokens": 13943,
+      "completion_tokens": 10301,
+      "errors": []
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "tasks": {
+        "adjudication": {
+          "passed": 4,
+          "attempts": 6,
+          "rate": 0.667,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "adj_contradiction:said_update",
+            "adj_ar_contradiction:said_update"
+          ]
+        },
+        "extraction_ar": {
+          "passed": 4,
+          "attempts": 4,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 5,
+          "failures": []
+        },
+        "extraction_en": {
+          "passed": 5,
+          "attempts": 6,
+          "rate": 0.833,
+          "json_errors": 0,
+          "quote_grounded": 1,
+          "quotes_offered": 7,
+          "failures": [
+            "en_employer:no_claims_array"
+          ]
+        },
+        "extraction_mixed": {
+          "passed": 1,
+          "attempts": 3,
+          "rate": 0.333,
+          "json_errors": 1,
+          "quote_grounded": 0,
+          "quotes_offered": 5,
+          "failures": [
+            "mix_arabizi:model_output_not_json",
+            "mix_switch:missing_deadline"
+          ]
+        },
+        "query_rewrite": {
+          "passed": 0,
+          "attempts": 2,
+          "rate": 0.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "rw_en:no_target_token",
+            "rw_ar:no_target_token"
+          ]
+        },
+        "schema": {
+          "passed": 3,
+          "attempts": 3,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": []
+        }
+      },
+      "p50_ms": 5504.7,
+      "p95_ms": 12389.9,
+      "prompt_tokens": 13943,
+      "completion_tokens": 11427,
+      "errors": []
+    },
+    {
+      "model": "gpt-6.2-sol",
+      "tasks": {
+        "adjudication": {
+          "passed": 4,
+          "attempts": 6,
+          "rate": 0.667,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "adj_contradiction:said_update",
+            "adj_ar_contradiction:said_update"
+          ]
+        },
+        "extraction_ar": {
+          "passed": 4,
+          "attempts": 4,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 1,
+          "quotes_offered": 4,
+          "failures": []
+        },
+        "extraction_en": {
+          "passed": 6,
+          "attempts": 6,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 2,
+          "quotes_offered": 8,
+          "failures": []
+        },
+        "extraction_mixed": {
+          "passed": 2,
+          "attempts": 3,
+          "rate": 0.667,
+          "json_errors": 0,
+          "quote_grounded": 1,
+          "quotes_offered": 8,
+          "failures": [
+            "mix_switch:missing_deadline"
+          ]
+        },
+        "query_rewrite": {
+          "passed": 0,
+          "attempts": 2,
+          "rate": 0.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": [
+            "rw_en:no_target_token",
+            "rw_ar:no_target_token"
+          ]
+        },
+        "schema": {
+          "passed": 3,
+          "attempts": 3,
+          "rate": 1.0,
+          "json_errors": 0,
+          "quote_grounded": 0,
+          "quotes_offered": 0,
+          "failures": []
+        }
+      },
+      "p50_ms": 7815.7,
+      "p95_ms": 11428.8,
+      "prompt_tokens": 139535,
+      "completion_tokens": 3932,
+      "errors": []
+    }
+  ],
+  "embedding_probe": {},
+  "embeddings_note": "The provider's `/embeddings` route is probed, not assumed: a model that appears in `/models` is not evidence that embeddings are served. Where it is unavailable the deployment embeds locally (`integrations.onnx_embedder`) so the dense arm stays measurable."
+}

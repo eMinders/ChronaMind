@@ -23,7 +23,7 @@ Every function requires a caller-owned READ COMMITTED transaction with a matchin
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, LiteralString, cast
 
 import structlog
 from psycopg import AsyncConnection, sql
@@ -40,6 +40,7 @@ from custom_memory_engine.engine.gate import (
     existing_relation,
     record_decision,
 )
+from custom_memory_engine.engine.hybrid import RecallError, slot_for_dimension, vector_literal
 from custom_memory_engine.engine.transactions import (
     AblationMode,
     CandidateVersionInput,
@@ -204,6 +205,7 @@ async def apply_candidate(
             assertion_mode=candidate.assertion_mode,
             predicate_key=candidate.predicate_key,
             confidence=candidate.confidence,
+            evidence_source_types=tuple(evidence.source_type or "turn" for evidence in candidate.evidence),
         )
     elif gate_input.version_id != candidate.version_id or gate_input.user_id != candidate.user_id:
         raise IngestError("gate_input_identity_mismatch")
@@ -217,6 +219,7 @@ async def apply_candidate(
             subject_key=candidate.subject_key,
             predicate_key=candidate.predicate_key,
             candidate_content=candidate.content,
+            semantic_slot=candidate.semantic_slot,
             schema_name=schema_name,
         )
         relation = found or ("update" if existing_version_id else "unrelated")
@@ -286,6 +289,7 @@ async def apply_candidate(
                 subject_key=target.subject_key,
                 predicate_key=target.predicate_key,
                 candidate_content=target.content,
+                semantic_slot=target.semantic_slot,
                 schema_name=schema_name,
             )
         if open_belief_id is not None:
@@ -372,23 +376,33 @@ async def attach_embedding(
     embedding_model: str,
     schema_name: str = "cme_engine",
 ) -> None:
-    """Persist one dense vector for a version, replacing any prior vector for that model.
+    """Persist one dense vector for a version, in the slot its width belongs to (migration 23, ``V2-D86``).
 
-    The dense channel in ``retrieval.rank_versions`` reads exactly this table, so a
-    committed candidate without a row here is retrievable only lexically. The caller
-    owns embeddings (the engine never loads a model) and passes the frozen model id.
+    The dense arm of hybrid recall reads exactly this table, so a committed candidate without a row here is retrievable
+    only by the lexical arms. The caller owns embeddings -- the engine never loads a model -- and passes the frozen
+    model id and a vector whose width the schema can index. A width with no slot is refused here rather than stored as
+    a row no search will ever find.
     """
     if not isinstance(embedding_model, str) or not embedding_model.strip():
         raise IngestError("nonblank_embedding_model_required")
-    if len(embedding) != 384:
-        raise IngestError("embedding_dimension_mismatch")
+    try:
+        column, slot_type = slot_for_dimension(len(embedding))
+    except RecallError:
+        raise IngestError("embedding_dimension_mismatch") from None
     await _verify_context(connection, user_id)
+    slot = sql.Identifier(column)
     await connection.execute(
         sql.SQL(
-            "INSERT INTO {e} (version_id, embedding_model, user_id, embedding) VALUES (%s, %s, %s, %s) "
-            "ON CONFLICT (version_id, embedding_model) DO UPDATE SET embedding = EXCLUDED.embedding"
-        ).format(e=sql.Identifier(schema_name, "memory_embedding")),
-        (version_id, embedding_model, user_id, list(embedding)),
+            "INSERT INTO {e} (version_id, embedding_model, user_id, {slot}) "
+            "VALUES (%s, %s, %s, %s::{slot_type}({dimensions})) "
+            "ON CONFLICT (version_id, embedding_model) DO UPDATE SET {slot} = EXCLUDED.{slot}"
+        ).format(
+            e=sql.Identifier(schema_name, "memory_embedding"),
+            slot=slot,
+            slot_type=sql.SQL(cast(LiteralString, slot_type)),
+            dimensions=sql.Literal(len(embedding)),
+        ),
+        (version_id, embedding_model, user_id, vector_literal(embedding)),
     )
 
 

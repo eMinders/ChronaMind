@@ -24,6 +24,9 @@ NON_AUDIT_JSONB = {
     # audit row; the content guard therefore does not apply to them.
     ("engine/procedure_shape.py", "preconditions_json"),
     ("engine/procedure_shape.py", "steps_json"),
+    # E-038/F11: the export manifest's own `artifact_ids` column -- the ids the caller could read, stored in
+    # `export_snapshot` under their RLS so the manifest can be verified against its digest. Not an audit row.
+    ("engine/export.py", "list(ids)"),
 }
 
 # The detail shape of every engine audit event, as written today.

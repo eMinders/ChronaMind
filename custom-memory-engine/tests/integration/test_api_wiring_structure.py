@@ -14,7 +14,7 @@ import pytest
 from psycopg import AsyncConnection, sql
 
 from custom_memory_engine.api import handlers as handlers_module
-from custom_memory_engine.api.contract import Tier
+from custom_memory_engine.api.contract import OPERATIONS, Tier
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
 from custom_memory_engine.api.handlers import register_structure_handlers
 from custom_memory_engine.api.runtime import DbMethods, DbTargets, ForeignKeyPrincipals, Receipt, Runtime
@@ -130,7 +130,9 @@ async def forbidden(engine: Engine, ctx: CallerContext, operation: str, argument
 async def test_exactly_these_operations_are_wired_and_the_rest_stay_closed(database) -> None:  # noqa: F811
     async with world(database) as (_, engine, _schema):
         assert WIRED.isdisjoint(engine.unwired_operations())
-        assert len(engine.unwired_operations()) == 29 - len(WIRED)
+        # counted from the contract, not written down: a hardcoded total silently stops meaning anything the moment
+        # an operation is added, which is exactly when this assertion is supposed to be re-read
+        assert len(engine.unwired_operations()) == len(OPERATIONS) - len(WIRED)
         error = await forbidden(engine, caller("alice"), "cost", {"window": None})  # unwired: fail closed
         assert (error.code, error.detail) == ("forbidden", "operation_not_wired")
 

@@ -116,7 +116,7 @@ OPERATIONS: tuple[Operation, ...] = (
     _op("provenance", "Read", "BC", ("artifact_id", "depth"), "ProvenanceView", conditions=("targets_readable",)),
     _op("assert", "Write (grounded)", "BC",
         ("scope", "kind", "content", "evidence", "event_range", "idempotency_key", "subject_entity", "preconditions",
-         "steps"),
+         "steps", "assertion_mode", "cardinality", "semantic_slot", "um_facet"),
         "Receipt | rejected", ("rejected",), ("scope_writable", "evidence_required", "targets_readable"),
         creates=frozenset({"asserted", "contested"})),
     _op("retract_own", "Write (grounded)", "BC", ("artifact_id", "reason"), "Receipt", ("precondition_failed",),
@@ -143,10 +143,21 @@ OPERATIONS: tuple[Operation, ...] = (
         ("targets_readable",), transitions=frozenset({("contested", "asserted"), ("contested", "retired")})),
     _op("dissent", "Adjudicate", "C", ("artifact_id", "note"), "Receipt", ("precondition_failed",),
         ("targets_readable",), transitions=frozenset({("inferred", "retired")})),
+    # `V2-D105`: the undo `I16` describes — a denied element reopens *on new grounded evidence*, and nothing else lifts
+    # it. No lifecycle transition: it changes a constraint, not a belief. `targets_readable` covers the evidence (an
+    # artifact id), so an unreadable ground is `forbidden` *before* the handler runs, like every other target input.
+    # The constraint is the caller's own row under RLS; another principal's is refused like a missing one.
+    _op("lift", "Adjudicate", "C", ("constraint_id", "evidence_artifact_id", "note"), "Receipt",
+        ("precondition_failed",), ("targets_readable",)),
+    _op("constraints", "Read", "BC", ("include_lifted",), "ConstraintList"),
     _op("purge_working", "Maintain", "C", ("scope",), "PurgeReceipt", conditions=("scope_writable",), deletes=True,
         admin_only=True),
-    _op("expire", "Maintain", "C", ("scope", "as_of"), "Receipt", conditions=("scope_writable",), deletes=True,
-        admin_only=True),
+    # `deletes=False` (V2-D97): expiry stamps `abstraction_stats.expires_at` and derives the `expired` stale cause. It
+    # destroys nothing, so declaring a deletion would be a guarantee nothing enforces.
+    # `precondition_failed` is declared because the caller's `as_of` can be refused as an unmet precondition
+    # (`V2-D97`): a timestamp in the future is well formed and still not a legal observation of the clock.
+    _op("expire", "Maintain", "C", ("scope", "as_of"), "ExpiryReceipt", ("precondition_failed",),
+        ("scope_writable",), admin_only=True),
     _op("rebuild_index", "Maintain", "C", ("index",), "JobId", admin_only=True),
     _op("register_method", "Maintain", "C", ("name", "version", "params_schema_hash", "description",
         "idempotency_key"), "MethodId", ("precondition_failed",), admin_only=True),
@@ -178,6 +189,8 @@ _TARGET_INPUTS = frozenset(
         "subject_entity",
         "procedure_id",
         "sources",
+        # `V2-D105`: a lift's ground is an artifact of the caller's, and it is checked like every other named artifact
+        "evidence_artifact_id",
     }
 )
 

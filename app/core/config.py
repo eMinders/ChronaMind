@@ -167,6 +167,14 @@ class Settings:
         self.LLM_TOTAL_TIMEOUT = int(os.getenv("LLM_TOTAL_TIMEOUT", "60"))
 
         # Long term memory Configuration
+        #
+        # `MEMORY_ENGINE_URL` selects the ChronaMind memory engine (`app/services/memory_engine.py`, `V2-D93`). Empty
+        # means no long-term memory at all: the legacy `mem0ai` client is being retired, and an unconfigured deployment
+        # must not silently fall back to a store that cannot supersede, cannot erase and cannot separate channels.
+        self.MEMORY_ENGINE_URL = os.getenv("MEMORY_ENGINE_URL", "")
+        self.MEMORY_ENGINE_TOKEN = os.getenv("MEMORY_ENGINE_TOKEN", "")
+        # The mem0 settings remain only for the legacy client, which `tests/test_memory_engine_boundary.py` proves is
+        # no longer on the agent's path.
         self.LONG_TERM_MEMORY_MODEL = os.getenv("LONG_TERM_MEMORY_MODEL", "gpt-5-nano")
         self.LONG_TERM_MEMORY_EMBEDDER_MODEL = os.getenv("LONG_TERM_MEMORY_EMBEDDER_MODEL", "text-embedding-3-small")
         self.LONG_TERM_MEMORY_COLLECTION_NAME = os.getenv("LONG_TERM_MEMORY_COLLECTION_NAME", "longterm_memory")

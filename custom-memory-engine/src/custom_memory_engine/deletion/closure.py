@@ -265,6 +265,30 @@ async def invalidate_cache_entries(cache: CacheInvalidator, user_id: str, deleti
         raise CacheInvalidationError("cache_epoch_invalidation_failed") from exc
 
 
+async def current_deletion_epoch(
+    connection: AsyncConnection,
+    user_id: str,
+    *,
+    schema_name: str = "cme_engine",
+) -> int:
+    """The user's committed deletion epoch, or ``0`` when no deletion has happened.
+
+    One definition of "how stale is this observation", used by every operation that captures a view and must later
+    refuse it if a deletion has intervened (``F5``/``F11``): ``MAX`` over the append-only request log, which is what
+    ``delete`` increments. Zero is a real value -- "nothing has been deleted yet" -- so it is never confused with a
+    missing row.
+    """
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL("SELECT COALESCE(MAX(deletion_epoch), 0) FROM {r} WHERE user_id = %s").format(
+                r=sql.Identifier(schema_name, "deletion_request")
+            ),
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
 async def require_current_deletion_epoch(
     connection: AsyncConnection,
     user_id: str,
@@ -362,15 +386,7 @@ class ExportSnapshotStore:
         schema_name: str = "cme_engine",
     ) -> tuple[str, ...]:
         """Payloads of snapshots still servable for ``user_id`` at the current deletion epoch (channel 11 surface)."""
-        async with connection.cursor(row_factory=tuple_row) as cursor:
-            await cursor.execute(
-                sql.SQL("SELECT COALESCE(MAX(deletion_epoch), 0) FROM {r} WHERE user_id = %s").format(
-                    r=sql.Identifier(schema_name, "deletion_request")
-                ),
-                (user_id,),
-            )
-            row = await cursor.fetchone()
-        current = int(row[0]) if row else 0
+        current = await current_deletion_epoch(connection, user_id, schema_name=schema_name)
         return tuple(
             snap.payload
             for snap in self._snapshots.values()
@@ -391,6 +407,7 @@ __all__ = [
     "NodeFate",
     "StaleDeletionEpoch",
     "classify_deletion_closure",
+    "current_deletion_epoch",
     "guard_verification_commit",
     "invalidate_cache_entries",
     "lineage_closure",

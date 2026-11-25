@@ -52,6 +52,7 @@ AUDIT_DETAIL_KEYS = frozenset(
         "re_derived_versions",
         "retired_dependents",  # E-037 (V2-D50): count of dependents tombstoned by source deletion
         "deleted_turns",  # E-037 (S-08): count of exclusive evidence turns deleted in-transaction
+        "deleted_entities",  # V2-D108: count of orphaned entities erased by the deletion (never a name)
         "purged_jobs",
         # working-memory purge (E-026): the scope event records how many episodes went and how many stayed as evidence
         "purged_episodes",
@@ -78,8 +79,19 @@ AUDIT_DETAIL_KEYS = frozenset(
         "verification_reasons",
         # lifecycle retirements through the API (E-039): a static reason code, never free text
         "reason_code",
+        # a lifted dissent (V2-D105): the constraint's id, which is an identifier, and the method *family*, which is a
+        # registered name whose versions share it. Both are code-shaped, so neither can carry a memory's text.
+        "method_family",
+        # C-026 refutation (E-046): two counts. The counter-evidence *refs* are deliberately not audited -- a ref can
+        # be a path or a URL, and `audit_event` outlives deletion (V2-D54).
+        "counter_evidence_supplied",
+        "counter_evidence_linked",
         # procedure outcome feedback (E-027): a boolean that an episode was cited, never the episode's id (a locator)
         "episode_referenced",
+        # abstraction expiry (V2-D97): two counts. The window itself is not audited -- it is a policy value, and the
+        # recommendation is a scope event about a scope, not a record of which beliefs expired.
+        "expired",
+        "considered",
         # cross-scope reads (E-011): counts only, never a path or a principal
         "selector_count",
         "cross_scope_count",

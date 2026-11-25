@@ -162,6 +162,11 @@ class InferHandlers:
             )
             if not assessment.creation.allowed:
                 return Rejected(assessment.creation.reasons[0])
+            # I16, the reader half of `dissent`: a constraint the user recorded is consulted before anything is
+            # written, so the same element cannot be silently re-learned. Refused as a recorded `Rejected` rather than
+            # an error, exactly like a soundness refusal: the call was well formed, the answer is "no".
+            if await self._blocked(connection, user, scope, method):
+                return Rejected("negative_constraint_active")
             if not await self._all_own(connection, user, sources):
                 # a derivation is same-tenant (migration 4): a source readable through a grant cannot be derived from
                 raise EntryError("forbidden")
@@ -194,6 +199,27 @@ class InferHandlers:
             await self._stamp(connection, call, version_id)
             await remember(self.runtime, connection, user, "infer", key, version_id)
             return await self._receipt(connection, user, version_id)
+
+    async def _blocked(self, connection: AsyncConnection, user: str, scope: str, method: MethodRef) -> bool:
+        """Whether an un-lifted ``negative_constraint`` blocks this element (``I16``).
+
+        The key is ``(scope, predicate, method family)`` and the family is the method's *name*: ``infer`` writes
+        ``predicate_key='statement'`` (``V2-D43`` defers the optional predicate), so a dissent against any version of
+        this method in this scope blocks the next one. Read here, in the same transaction as the write, so a dissent
+        committed a moment earlier is visible to the next inference rather than to the one after it.
+        """
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT EXISTS (SELECT 1 FROM {c} AS c"
+                    " JOIN {m} AS m ON m.id = %s AND m.name = c.method_family"
+                    " WHERE c.user_id = %s AND c.scope_path = %s AND c.predicate_key = 'statement'"
+                    " AND c.lifted_at IS NULL)"
+                ).format(c=self.runtime.table("negative_constraint"), m=self.runtime.table("method")),
+                (method.method_id, user, scope),
+            )
+            row = await cursor.fetchone()
+        return bool(row is not None and row[0])
 
     async def _promote_sources(self, connection: AsyncConnection, user: str, sources: Sequence[str]) -> None:
         """The promotion event of ``V2-D70``: durable knowledge must not rest on sources that expire.

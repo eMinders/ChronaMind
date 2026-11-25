@@ -116,3 +116,85 @@ def test_six_memos_and_reference_links() -> None:
             if "://" in target or target.startswith("#"):
                 continue
             assert (path.parent / target.split("#")[0]).exists(), (path, target)
+
+
+# ----------------------------------------------------------------- I12: no model on a guarantee-bearing path (E-025)
+
+#: Provider SDKs and model runtimes. None may be imported anywhere in the engine: the wire protocols are spoken by
+#: `integrations/` over plain `httpx`, and local models run through `onnxruntime`, which is a numeric runtime, not a
+#: provider. An SDK would bring a vendor's client, its retries and its telemetry into the process.
+PROVIDER_SDKS = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "cohere",
+        "mistralai",
+        "google",
+        "vertexai",
+        "litellm",
+        "langchain",
+        "langchain_core",
+        "langchain_openai",
+        "llama_index",
+        "transformers",
+        "sentence_transformers",
+        "torch",
+        "boto3",
+    }
+)
+ENGINE = ROOT / "src" / "custom_memory_engine"
+
+
+def test_no_provider_sdk_is_imported_anywhere_in_the_engine() -> None:
+    for path in sorted(ENGINE.rglob("*.py")):
+        violations = find_forbidden_imports(path.read_text(encoding="utf-8"), PROVIDER_SDKS)
+        assert not violations, f"provider SDK import {violations} in {path.relative_to(ROOT)}"
+
+
+def _module_level_imports(source: str) -> list[str]:
+    """Imports executed when the module is imported: the module body and its ``if``/``try`` blocks, not functions."""
+    names: list[str] = []
+
+    def visit(statements: list[ast.stmt]) -> None:
+        for node in statements:
+            if isinstance(node, ast.Import):
+                names.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names.append(node.module)
+            elif isinstance(node, ast.If | ast.Try):
+                visit(node.body)
+                visit(node.orelse)
+                for handler in getattr(node, "handlers", []):
+                    visit(handler.body)
+
+    visit(ast.parse(source).body)
+    return names
+
+
+def test_no_engine_module_depends_on_the_integrations_at_import_time() -> None:
+    """``I12``'s dependency direction: the engine takes injected adapters and never imports them.
+
+    Two composition roots build adapters from the environment — ``host.service`` and ``worker.loop`` — and they do it
+    *inside* their ``*_from_environment`` functions, so importing the engine (or the host, or the worker loop) loads no
+    adapter, no HTTP client and no model. A module-level import here would make every guarantee-bearing path depend on
+    a provider being importable.
+    """
+    offenders = []
+    for path in sorted(ENGINE.rglob("*.py")):
+        if "integrations" in path.relative_to(ENGINE).parts:
+            continue
+        for name in _module_level_imports(path.read_text(encoding="utf-8")):
+            if name.startswith("custom_memory_engine.integrations"):
+                offenders.append(f"{path.relative_to(ROOT)}: {name}")
+    assert not offenders, offenders
+
+
+def test_the_sdk_scan_and_the_import_time_scan_catch_what_they_claim_to() -> None:
+    assert find_forbidden_imports("import openai\n", PROVIDER_SDKS) == ["openai"]
+    assert find_forbidden_imports("from anthropic import Anthropic\n", PROVIDER_SDKS) == ["anthropic"]
+    assert find_forbidden_imports('importlib.import_module("google.genai")\n', PROVIDER_SDKS) == ["google.genai"]
+    assert _module_level_imports("from custom_memory_engine.integrations import x\n") == [
+        "custom_memory_engine.integrations"
+    ]
+    assert _module_level_imports("def f():\n    from custom_memory_engine.integrations import x\n") == []
+    assert _module_level_imports("try:\n    import a\nexcept ImportError:\n    import b\n") == ["a", "b"]

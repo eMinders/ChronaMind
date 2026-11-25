@@ -39,25 +39,39 @@ Frozen and checksum-bound (`validation/document_hashes.txt`): `Graduation_Projec
 `PLAN/` outside `V2/`, `PROJECT_ROADMAP.md`, `REFACTORING.md` and `Graduation_Project_Proposal.md`'s phase plan are the
 **superseded v1** record: history, never instruction for new work.
 
-## Where the state is today (verified on `main`, 2026-11-20)
+## Where the state is today (verified on `main`, 2026-11-21)
 
-- Waves **W0–W3 complete**; gate **G3** signed off. W4 and later are **not authorised**: no task outside the current
-  wave starts without the Project Owner's instruction (`PLAN/V2/APPROVAL.md`, `ROADMAP_V2.md` §4.1 "Scope protection").
-- **22 of 29** contract operations dispatch through `Engine.call`; the remaining 7 (`verify`, `refute`, `dissent`,
-  `stats`, `expire`, `rebuild_index`, `export`) answer `forbidden` with `operation_not_wired`. `ROADMAP_V2.md` §4.1
-  owns that register; `E-039` owns the door, never the behaviour.
-- **Migrations 1–22** are applied and registered (`schema/migrate.py::MIGRATIONS`). `022` is the newest.
-- The full suite is ~4,035 passed / ~21 skipped on the default install, with PostgreSQL 16.15 + pgvector 0.8.7.
+- Waves **W0–W3 complete**, gate **G3** signed off; **W3.5** (`E-040`–`E-045`) and **W3.6** (`E-046`–`E-052`) landed. W4
+  and later are **not authorised** without the Project Owner's instruction (`PLAN/V2/APPROVAL.md`, `ROADMAP_V2.md` §4.1).
+  The component map is [`PLAN/V2/COMPONENT_MAP.md`](PLAN/V2/COMPONENT_MAP.md).
+- **All 31** contract operations dispatch through `Engine.call`; `api/wiring.UNWIRED_OPERATIONS` is **empty** and
+  asserted. `E-048` (`V2-D97`) wired `stats`, `verify` (`I11`), `dissent`, `expire`, `rebuild_index` and `export`
+  (migration 25, an epoch-bound manifest); `E-053` (`V2-D105`) added `lift` (reopen a dissent on *grounded* evidence;
+  deleting that evidence re-blocks) and `constraints`, so `I16` is `ENFORCED`. `refute` and `host/` landed in `E-046`.
+- **The engine owns the query embedding** (`V2-D98`): `ReadHandlers` takes the deployment's `Embedder`, so a client sends
+  text and gets hybrid recall; `assert`/`ingest_episode` embed the document with the same model, and the dense arm joins
+  on `embedding_model`. A model failure degrades to the lexical arms and `QueryResult.arms` says which ran.
+- **The worker is engine code** (`custom_memory_engine.worker`, `V2-D106`); `scripts/run_worker.py` is only the
+  process. Every model call — extraction, embedding, both adjudicators — runs with **no transaction open**:
+  `semantic/judgements.py` dry-runs the write to collect its questions, then writes with replay adapters.
+  Every slow-lane transaction runs under `CME_RUNTIME_ROLE`; the turn and the deletion epoch are read together and a
+  stale epoch dead-letters the job (`F5`). Tested in-process and as a real child with SIGTERM/SIGKILL/restart.
+- **Models are chosen by measurement** (`V2-D102`, `reports/model_selection/README.md`): extraction **and** adjudication
+  on `gpt-6.2-sol` (29/30 extraction, 13/14 adjudication, 100% quote grounding, zero JSON failures), with
+  `claude-haiku-5-5` the documented latency fallback; embeddings **locally** (`bge-m3` ONNX), because the provider serves
+  no `/embeddings`. Read path: an optional **relevance judge** (`bge-reranker-v2-m3` ONNX, `V2-D104`) gates the fused
+  page at a measured floor; no-match false positives 0.125 → 0. BM25 and order-only reranking stay rejected.
+- **Migrations 1–28** applied and registered; rollbacks 25/26 refuse to discard data unless
+  `SET LOCAL cme.rollback_discard` names it. `027` erases orphaned entities; `028` lets a manifest cascade with its user. The suite is **4,520+ passed / 21 skipped** against PostgreSQL 16.15 + pgvector 0.8.7 + `pg_trgm`; the three extensions are
+  bootstrapped into `public` by `migrate.EXTENSIONS`, so the catalog fingerprint never carries another project's
+  functions.
 
 ## How it runs
 
 - **One door.** `api/entry.py::Engine.call` authorises, validates argument names against `api/contract.py`'s 29
-  operations, enforces every declared condition code (`CONDITION_CHECKS`, in `CONDITION_ORDER`), dispatches to a
-  registered handler, and maps every failure to the seven static codes of `API_V2.md` §1.1. `internal_error` is the
-  last resort, carries no message, and is returned only by `Engine.call` (`V2-D58`). Handlers are wired by
-  `api/handlers.py`, `api/ingest_handlers.py`, `api/read_handlers.py`, `api/infer_handlers.py`,
-  `api/outcome_handlers.py`, `api/maintain_handlers.py`, `api/delete_handlers.py`; `api/wiring.py::build_engine` is the
-  one composition a deployment uses.
+  operations, enforces every declared condition code (`CONDITION_CHECKS`, in `CONDITION_ORDER`), dispatches, and maps
+  every failure to the seven static codes of `API_V2.md` §1.1. `internal_error` carries no message and is returned only
+  by `Engine.call` (`V2-D58`). `api/wiring.py::wire_engine` is the one composition a deployment uses.
 - **One tenant boundary.** Every statement a handler runs goes through `api/runtime.py::Runtime.session`, which enters
   `security/scoping.py::tenant_scope`: `SET LOCAL ROLE` to the restricted role plus `set_config('app.user_id', …, true)`,
   in one transaction, on an idle connection. Row-level security then decides what the caller can see, so an id it may
@@ -67,11 +81,9 @@ Frozen and checksum-bound (`validation/document_hashes.txt`): `Graduation_Projec
   lifecycle are `CHECK` constraints, `EXCLUDE` constraints, and deferred constraint triggers — not handler code. The
   runtime role is `NOSUPERUSER NOBYPASSRLS` with the exact per-table grant matrix in `security/provisioning.py::
   TABLE_GRANTS`, mirrored by `security/rls.sql`.
-- **Documented and *enforced* are different.** `INVARIANT_LEDGER.md` is the difference; `tests/
-  test_invariants_declared_and_enforced.py` parses the declarations out of `schema/README.md` and `ARCHITECTURE_V2.md` §11
-  and fails if a declared invariant has no honest row. Two catalog rules bind **every future migration**:
-  `tests/integration/test_tenant_integrity_db.py::test_rule_every_foreign_key_between_tenant_tables_carries_user_id` and
-  `::test_rule_every_engine_function_pins_search_path_with_pg_temp_last`.
+- **Documented and *enforced* are different.** `INVARIANT_LEDGER.md` is the difference;
+  `tests/test_invariants_declared_and_enforced.py` fails if a declared invariant has no honest row. Two catalog rules bind
+  **every future migration**: `tests/integration/test_tenant_integrity_db.py` (both catalog rules are named tests there).
 - **Migrations are append-only and checksum-bound.** `MIGRATIONS` in `schema/migrate.py` never loses or edits an entry;
   a new migration needs its source and its matching rollback source (the same file name under `schema/rollback/`),
   restoring the previous catalog fingerprint exactly, an entry in `MIGRATIONS`, an integration test named for it, and a
@@ -81,13 +93,48 @@ Frozen and checksum-bound (`validation/document_hashes.txt`): `Graduation_Projec
   application's do not apply (`PLAN/INDEPENDENCE_BOUNDARY.md` §4, and the root `pyproject.toml` excludes this directory).
   `tests/engine_source_identity.py` pins the engine's own identity.
 
+## The semantic layer (`src/custom_memory_engine/semantic/`)
+
+Added by `W3.5` (`V2-D88`–`V2-D91`). It sits **above** the entry point and outside every invariant: it turns language
+into the candidates `api.ingest_handlers` / `engine.ingest.apply_candidate` already accept, and every row it writes goes
+through them. Removing the package degrades the engine to what it was before, it does not leave a hole in the ledger.
+
+| module | owner of | what must stay true |
+|---|---|---|
+| `contracts.py` | the typed boundary and the three protocols (`StructuredExtractor`, `RelationAdjudicator`, `Embedder`) | imports **no** provider SDK; the closed enumerations equal their canonical homes (`tests/test_semantic_contracts.py` pins them) |
+| `grounding.py` | quote exists, specifics appear | folds NFC + whitespace runs only — never case, never diacritics; a one-character quote is refused |
+| `authority.py` | `USER > SYSTEM > ASSISTANT > THIRD_PARTY` | its Python twin must equal migration 24's generated `authority_rank`; a weaker source never supersedes a stronger one |
+| `slots.py` | one normalization of an open slot key | must equal the schema `CHECK` (`memory_version_semantic_slot_check`) |
+| `temporal.py` | bounds are aware, ordered, anchored, non-empty | only `planned` may begin after the utterance |
+| `entities.py` | cascaded mention resolution and creation | a vector proposal is `unresolved` unless an adjudicator confirms it; an answer outside the offered ids is an abstention (`V2-D106`) |
+| `conflict.py` | recall → adjudicate → commit | the GiST constraint gets the last word; a hallucinated id inserts |
+| `ingestor.py` | the two lanes | one clock tick per transaction; a refusal is a typed outcome, never a silent drop; `apply_extraction` is the pure-database half a worker calls |
+| `slow_lane.py` | claim → model → complete | every transaction under the runtime role; `MAX_ATTEMPTS` then `dead_letter`; a stale deletion epoch is terminal at once |
+| `judgements.py` | every model answer a write needs | asked before the write transaction; the write may only replay, and abstains on anything unrecorded |
+
+**Two traps here.** `halfvec` rejects PostgreSQL's `{...}` literal, so a vector always goes through
+`engine.hybrid.vector_literal` (`[...]`); psycopg's `list` adapter works for the legacy 384 slot and fails for every
+multilingual one. And `similarity()` lives in whichever schema `pg_trgm` was installed into — never
+`pg_catalog.similarity`; use `engine.hybrid.trgm_schema`.
+
+## The integrations layer (`src/custom_memory_engine/integrations/`, `V2-D94`)
+
+The only place a provider, a model id or a wire protocol exists; `tests/test_integrations.py` scans `src/` for model
+names. `wire.py` holds the shared primitives, `openai_compatible.py`/`anthropic_messages.py` are the two wire shapes,
+`provider.client_for` picks by family (override wins), `onnx_embedder.py` runs a pinned ONNX model.
+
+**The trap.** One protocol per family: Claude on `/v1/messages`, GPT on `/v1/chat/completions`, the other answering
+`400 protocol_mismatch`. A cross-protocol retry would double-bill and hide it; family guess + `CME_LLM_PROTOCOL`.
+
+**And the trap in the instrument.** Adjudication is scored by the *write the engine would make*
+(`cases.strategy_of` calls `conflict.commit_strategy`), never by label (`V2-D107`): accepting `duplicate` for `update`
+hid answers that keep a stale value. Labels stay in the model's vocabulary; a test pins them to `RELATIONS`.
+
 ## Things that will bite you
 
-1. **A fix without a control is not a fix.** This project's review standard treats a stated guarantee as unproven until
-   a mutation shows its test fails without it. Every bug fix lands with a test that fails against the unmodified code;
-   every guard lands with a test asserting its refusal *and* a positive control showing the same canary is visible to a
-   connection that bypasses the guard. `#229` is the exemplar: nine new regressions, eight of which fail on the parent
-   commit.
+1. **A fix without a control is not a fix.** A stated guarantee is unproven until a mutation shows its test fails
+   without it: every bug fix lands with a test that fails against the unmodified code, and every guard with a refusal
+   *and* a positive control. `#229` is the exemplar: nine regressions, eight failing on the parent commit.
 2. **Two implementations of one rule.** The SQL guard and its Python twin are kept equal deliberately —
    `engine/procedure_shape.py` against migration 21's `guard_procedure_shape`,
    `scope/access.py::rls_read_using` against migration 11's `*_scope_read` policy, `model/axes.py::LEGAL_LIFECYCLE`
@@ -134,9 +181,8 @@ uv run --no-sync pytest -q -m 'not integration'
 **The full suite** (what CI `verify` runs; one private database per xdist worker, each test on its own clone):
 
 ```bash
-docker compose --env-file .env -p cme-verify up -d --wait     # disposable PostgreSQL on :5433
-uv run --env-file .env pytest -q -n auto                       # locally, reading the URL from .env
-CME_TEST_DATABASE_URL=... uv run --no-sync pytest -q -n auto    # what CI `verify` runs
+docker compose --env-file .env -p cme-verify up -d --wait   # disposable PostgreSQL on :5433
+uv run --no-sync pytest -q -n auto                          # what CI `verify` runs
 docker compose --env-file .env -p cme-verify down -v
 ```
 
@@ -156,7 +202,6 @@ python3 scripts/check_plan_refs.py
 python3 scripts/audit_status.py --check
 uv run --no-sync python scripts/plan_coverage.py --check
 uv run --no-sync python scripts/check_evidence.py --plan-document PLAN/V2/*.md   # advisory here
-uv run --no-sync python scripts/check_evidence.py <closure record>                # strict, before closing
 ```
 
 **Database work.** A URL must name host, user and database explicitly; `RL_DATABASE_URL` for the runner, and
@@ -171,9 +216,9 @@ docker compose --env-file .env -p cme-verify exec -T db psql -U cme_test -d cme_
 
 ## Conventions
 
-- Async everywhere below the API; every statement parameterised and run as the caller; `Runtime.table()` for identifiers.
-- Errors carry **static codes** and never an identifier, path, scope or content (`EntryError`, `_map`).
-  `raise … from None` on every translation, so a traceback cannot leak the original value.
+- Async everywhere below the API; every statement parameterised, run as the caller; `Runtime.table()` for identifiers.
+- Errors carry **static codes** and never an identifier, path, scope or content (`EntryError`, `_map`), and every
+  translation uses `raise … from None` so a traceback cannot leak the original value.
 - `structlog` events are lowercase-with-underscores and carry no content: `logger.error("api_call_failed",
   operation=…, error_type=…)`. No f-strings in an event, no `content`/`evidence_span`/`embedding` keys anywhere
   (`security/audit_guard.py`, log channel 7).
@@ -185,13 +230,11 @@ docker compose --env-file .env -p cme-verify exec -T db psql -U cme_test -d cme_
 
 ## Known drift (report it, do not reproduce it)
 
-These are stale in `main` as of `d98f1b9`. A change that touches them should fix them in the same commit; a review should
-not treat them as precedent.
+Stale as of `d98f1b9`. Fix them in the commit that touches them; do not cite them as precedent.
 
 | Document | Says | Actually |
 |---|---|---|
-| `PLAN/CONTRIBUTING.md` §1.1–1.2 | `research-lab/` paths, `rl/<n>-<slug>` branches, `[RL-xxx]` PR titles, a research-lab-named workflow file | `custom-memory-engine/`; the practice is `feat(e###)-…` / `fix(w3)-…` branches and `type(scope):` titles with `(Refs #N)` |
-| `PLAN/INDEPENDENCE_BOUNDARY.md` §4 | a separate research-lab workflow, path-scoped to the research-lab tree | `.github/workflows/custom-memory-engine.yaml`, which has **no** `paths:` filter on `pull_request` (a filtered workflow never reports, so a required check would hang) |
-| `schema/README.md` | "Migrations **1–18** are registered in `migrate.MIGRATIONS`"; its file table has no row for `016`, `017` or `022` | 1–22 are registered; `016`, `017`, `022` are described elsewhere or not at all |
+| `PLAN/CONTRIBUTING.md` §1.1–1.2 | `research-lab/` paths, `rl/<n>-<slug>` branches, `[RL-xxx]` PR titles | `custom-memory-engine/`; `feat(e###)-…`/`fix(w3)-…` branches, `type(scope):` titles with `(Refs #N)` |
+| `PLAN/INDEPENDENCE_BOUNDARY.md` §4 | a path-scoped research-lab workflow | `.github/workflows/custom-memory-engine.yaml`, with **no** `paths:` filter (a filtered workflow never reports, so a required check hangs) |
 | `README.md` (root) and `docs/` | the FastAPI/LangGraph template | accurate for `app/`; it says nothing about the engine, and must not be read as engine documentation |
-| root `AGENTS.md` | "all imports MUST be at the top of the file"; "all routes must have rate limiting decorators" | false for the engine's deliberate lazy imports, and for four `app/api/v1/auth.py` session routes |
+| root `AGENTS.md` | "all imports MUST be at the top"; "all routes must have rate limiting" | false for the engine's deliberate lazy imports and four `app/api/v1/auth.py` routes |

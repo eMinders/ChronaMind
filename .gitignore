@@ -32,3 +32,6 @@ evals/reports/
 .cursor/
 .vscode/
 .agents/
+
+# Local reference implementations of external memory engines (read-only research material)
+reference-memory-engines/

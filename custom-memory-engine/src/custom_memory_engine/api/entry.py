@@ -67,6 +67,10 @@ SINGLE_TARGETS = (
     "entity_b",
     "subject_entity",
     "procedure_id",
+    # `V2-D105`: a lift's ground is an artifact the caller must be able to read, and it is resolved like every other
+    # single target, so an unreadable ground is `forbidden` before the handler runs and is indistinguishable from an
+    # absent one.
+    "evidence_artifact_id",
 )
 #: `result_id` names a prior **result**, not an artifact: it has no row, so it is resolved by the
 #: :class:`~custom_memory_engine.api.refine.ResultStore` and never by the artifact resolver (E-034, V2-D83).

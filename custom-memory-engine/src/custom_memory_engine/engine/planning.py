@@ -32,6 +32,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from custom_memory_engine.scope.access import ReadSet
@@ -71,6 +72,18 @@ MODES: frozenset[str] = frozenset({"current_state", "historical_as_of", "histori
 #: ``V2-D81``: the diff of the belief in effect at ``window_start`` against the belief in effect at ``window_end``.
 CHANGE_MODE = "change"
 
+#: How a plan produces its candidate set (``V2-D86``). ``temporal`` is the pre-W3.5 recency scan; ``hybrid`` ranks the
+#: same authorized population by relevance to the request's own text (``engine.hybrid``) and never falls back to
+#: recency -- a relevance query that matches nothing answers nothing, which is an answer, rather than a page of
+#: unrelated memories presented as one.
+TEMPORAL_RECALL = "temporal"
+HYBRID_RECALL = "hybrid"
+RECALL_MODES: frozenset[str] = frozenset({TEMPORAL_RECALL, HYBRID_RECALL})
+
+#: The longest query text a plan will carry a digest of. A bound exists because the text is hashed and then matched
+#: by three SQL arms; an unbounded request is unbounded work.
+MAX_QUERY_TEXT = 8192
+
 #: A plan's mode: one temporal predicate, or ``change`` (two of them, ``V2-D81``).
 type PlanMode = QueryMode | Literal["change"]
 
@@ -105,11 +118,19 @@ class Intent:
     belief_time: datetime | None = None
     window_start: datetime | None = None
     window_end: datetime | None = None
+    #: The request's own text, when it supplied one (``V2-D86``). It travels in the intent so a drill-down can ask the
+    #: same question of the same read set; the plan carries only its digest, and a recorded plan cannot replay with a
+    #: different question.
+    text: str | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
             raise PlanningError(PLAN_INTENT_REFUSED)
         if isinstance(self.limit, bool) or not isinstance(self.limit, int) or self.limit < 1:
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if self.text is not None and (
+            not isinstance(self.text, str) or not self.text.strip() or len(self.text) > MAX_QUERY_TEXT
+        ):
             raise PlanningError(PLAN_INTENT_REFUSED)
 
 
@@ -174,10 +195,23 @@ class Plan:
     # The request's canonical scope, which procedure applicability is matched against (E-030). Not an authorization
     # input: what may be read is `scopes`, and `execute_plan` refuses any scope the caller does not hold.
     scope: str | None = None
+    #: How the candidate set is produced (``V2-D86``): the recency scan, or relevance to the request's text. The
+    #: plan records the *mode* and a **digest** of the text, never the text: a plan is a value a recorder may hold,
+    #: and a query is caller content.
+    recall: str = TEMPORAL_RECALL
+    query_digest: str | None = None
     stages: tuple[str, ...] = STAGES
 
     def __post_init__(self) -> None:
         if self.route not in ("channels", "audit"):
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if self.recall not in RECALL_MODES:
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if (self.recall == HYBRID_RECALL) != (self.query_digest is not None):
+            # a hybrid plan without a digest cannot be checked against its text on replay, and a temporal plan that
+            # carries one claims to rank by a question it does not have
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if self.query_digest is not None and (not isinstance(self.query_digest, str) or len(self.query_digest) != 64):
             raise PlanningError(PLAN_INTENT_REFUSED)
         if (self.route == "audit") != (self.mode == "audit_as_of"):
             # V2-D73: an audit row is a past belief and never answer context, and nothing else is audit. A plan that
@@ -199,6 +233,13 @@ class Plan:
             raise PlanningError(PLAN_INTENT_REFUSED)
         if self.mode == CHANGE_MODE and self.expansion != "none":
             # V2-D81: a diff compares beliefs, not neighbours; a recorded plan cannot smuggle expansion into one
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if self.mode == CHANGE_MODE and self.recall != TEMPORAL_RECALL:
+            # a diff reports what changed for every authorized row; ranking it by relevance would silently drop from
+            # the diff every row the question did not mention, which is the opposite of what a change report is for
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if self.route == "audit" and self.recall != TEMPORAL_RECALL:
+            # V2-D73: an audit is a past belief and never answer context; a present question must not reorder it
             raise PlanningError(PLAN_INTENT_REFUSED)
         if self.expansion == ASSOCIATION_EXPANSION and self.hop_budget < 1:
             # expansion at a zero budget reaches nothing; a plan that records expansion must traverse at least one hop
@@ -233,6 +274,10 @@ class Plan:
             "window_start": self.window_start,
             "window_end": self.window_end,
             "scope": self.scope,
+            # Only a hybrid plan carries the recall fields: a temporal plan is byte-identical to what every recorded
+            # plan written before W3.5 contains, so a `from_dict(to_dict(plan))` round-trip of an old record still
+            # produces the same bytes it was recorded with.
+            **({"recall": self.recall, "query_digest": self.query_digest} if self.recall == HYBRID_RECALL else {}),
             "stages": list(self.stages),
         }
 
@@ -261,6 +306,8 @@ class Plan:
             rows = payload["rows"]
             scopes = payload["scopes"]
             stages = payload["stages"]
+            recall = payload.get("recall", TEMPORAL_RECALL)
+            query_digest = payload.get("query_digest")
         except KeyError as exc:  # a truncated record must not replay as a different query
             raise PlanningError(PLAN_INTENT_REFUSED) from exc
         if (
@@ -276,7 +323,10 @@ class Plan:
             or not isinstance(filters, Sequence)
             or not isinstance(stages, Sequence)
             or not isinstance(scopes, Sequence)
+            or not isinstance(recall, str)
         ):
+            raise PlanningError(PLAN_INTENT_REFUSED)
+        if query_digest is not None and not isinstance(query_digest, str):
             raise PlanningError(PLAN_INTENT_REFUSED)
         if not all(isinstance(item, str) for item in filters) or not all(isinstance(item, str) for item in stages):
             raise PlanningError(PLAN_INTENT_REFUSED)
@@ -323,6 +373,8 @@ class Plan:
                 window_start=instants["window_start"],
                 window_end=instants["window_end"],
                 scope=request_scope,
+                recall=recall,
+                query_digest=query_digest,
             )
         except PlanningError:
             raise
@@ -400,6 +452,10 @@ class RuleBasedPlanner:
         # changed, it is a neighbour of one, so `change` never expands -- and a fixed candidate set per view is what
         # lets the executor tell "absent" from "not reached".
         expands = intent.mode != CHANGE_MODE
+        # A text is never merely dropped: `Plan.__post_init__` refuses a hybrid plan for `change` or `audit_as_of`,
+        # so a caller who supplied a question to a mode that cannot answer it learns that, rather than silently
+        # receiving an unranked page (or a relevance-filtered diff, which would be missing rows).
+        ranks = intent.text is not None
         return Plan(
             mode=intent.mode,
             route=route,
@@ -414,6 +470,8 @@ class RuleBasedPlanner:
             window_start=kept("window_start", intent.window_start),
             window_end=kept("window_end", intent.window_end),
             scope=intent.scope,
+            recall=HYBRID_RECALL if ranks else TEMPORAL_RECALL,
+            query_digest=query_digest(intent.text) if ranks and intent.text is not None else None,
         )
 
 
@@ -435,7 +493,10 @@ def refine_plan(prior: Plan, *, candidates: int) -> Plan:
     * ``expansion`` becomes ``none`` with a zero hop budget — following an association would reach an artifact the
       prior result never contained, and that is a widening, not a drill-down;
     * ``rows`` becomes the number of candidate ids, so the id-restricted statement fetches the prior result rather
-      than a page of the read set.
+      than a page of the read set;
+    * ``recall`` becomes ``temporal`` with no digest, because the candidate ids **are** the question now: re-running
+      the relevance ranking would intersect the prior result with a fresh recall and could drop a row the caller
+      drilled into for a reason that has nothing to do with their instruction.
 
     Everything else — mode, route, filters, scopes, instants, request scope — is the prior plan's, because a
     drill-down may not change the question. Pure, no I/O, deterministic (``E-031``), so a recorded refine plan
@@ -443,7 +504,28 @@ def refine_plan(prior: Plan, *, candidates: int) -> Plan:
     """
     if isinstance(candidates, bool) or not isinstance(candidates, int) or candidates < 1:
         raise PlanningError(PLAN_INTENT_REFUSED)
-    return replace(prior, expansion="none", hop_budget=0, rows=candidates)
+    return replace(
+        prior,
+        expansion="none",
+        hop_budget=0,
+        rows=candidates,
+        recall=TEMPORAL_RECALL,
+        query_digest=None,
+    )
+
+
+def query_digest(text: str) -> str:
+    """A stable digest of a query text, so a plan can name its question without carrying it.
+
+    Whitespace is collapsed before hashing, so a caller who retypes the same question with different spacing replays
+    the same plan; the text itself is never stored in a plan and never written to an audit row (``RL-072``).
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise PlanningError(PLAN_INTENT_REFUSED)
+    normalized = " ".join(text.split())
+    if len(normalized) > MAX_QUERY_TEXT:
+        raise PlanningError(PLAN_INTENT_REFUSED)
+    return sha256(normalized.encode("utf-8")).hexdigest()
 
 
 #: How a plan reaches ``E-036``. The default is a no-op: nothing is logged or stored unless a caller asks. A plan
@@ -470,10 +552,14 @@ def observe_nothing(_stage: str) -> AbstractContextManager[None]:
 
 __all__ = [
     "CHANGE_MODE",
+    "HYBRID_RECALL",
+    "MAX_QUERY_TEXT",
     "MODES",
     "PLAN_INTENT_REFUSED",
     "PROCEDURE_APPLICABILITY",
+    "RECALL_MODES",
     "STAGES",
+    "TEMPORAL_RECALL",
     "TEMPORAL_INDEX",
     "Intent",
     "Plan",
@@ -486,6 +572,7 @@ __all__ = [
     "RuleBasedPlanner",
     "StageObserver",
     "plan_retrieval",
+    "query_digest",
     "observe_nothing",
     "read_scopes",
     "record_nothing",

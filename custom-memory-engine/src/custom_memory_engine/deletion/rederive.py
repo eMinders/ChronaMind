@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from math import isfinite
 from re import fullmatch
-from typing import Protocol
+from typing import Any, Protocol
 
 from psycopg import AsyncConnection, sql
 from psycopg.errors import InvalidParameterValue
@@ -157,6 +157,25 @@ async def _detach_carried_rows(
     return _CarriedRows(tuple(rows), gate_refs)
 
 
+async def _insertable_columns(cursor: Any, schema_name: str, table: str) -> tuple[str, ...]:
+    """Every column of ``table`` a caller may write, in definition order.
+
+    Read from the catalog rather than assumed: a *generated* column (``memory_evidence.authority_rank``, migration 24)
+    can only be written as ``DEFAULT``, so ``INSERT INTO t SELECT * FROM jsonb_populate_record(...)`` -- which names
+    every column including the generated one -- is refused. Listing the writable columns keeps the carry exact and
+    makes it survive any later generated column without another edit here.
+    """
+    await cursor.execute(
+        "SELECT a.attname FROM pg_catalog.pg_attribute AS a "
+        "JOIN pg_catalog.pg_class AS c ON c.oid = a.attrelid "
+        "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = %s AND c.relname = %s AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = '' "
+        "ORDER BY a.attnum",
+        (schema_name, table),
+    )
+    return tuple(str(record[0]) for record in await cursor.fetchall())
+
+
 async def _restore_carried_rows(
     connection: AsyncConnection, user_id: str, version_id: str, carried: _CarriedRows, schema_name: str
 ) -> None:
@@ -164,10 +183,14 @@ async def _restore_carried_rows(
     async with connection.cursor() as cursor:
         for table, record in carried.rows:
             target = sql.Identifier(schema_name, table)
+            columns = sql.SQL(", ").join(
+                sql.Identifier(name) for name in await _insertable_columns(cursor, schema_name, table)
+            )
             await cursor.execute(
-                sql.SQL("INSERT INTO {t} SELECT * FROM pg_catalog.jsonb_populate_record(NULL::{t}, %s::jsonb)").format(
-                    t=target
-                ),
+                sql.SQL(
+                    "INSERT INTO {t} ({columns}) SELECT {columns} "
+                    "FROM pg_catalog.jsonb_populate_record(NULL::{t}, %s::jsonb)"
+                ).format(t=target, columns=columns),
                 (record,),
             )
         if carried.gate_refs:

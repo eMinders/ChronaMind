@@ -45,7 +45,7 @@ def test_every_element_on_main_is_owned() -> None:
     elements, owners, findings = coverage.resolve(PLAN)
     assert [f.render() for f in findings] == []
     counts = {kind: sum(e.kind == kind for e in elements) for kind in coverage.CLASSES}
-    assert counts == {"kind": 4, "table": 7, "invariant": 17, "channel": 4, "operation": 29, "migration": 9}
+    assert counts == {"kind": 4, "table": 7, "invariant": 17, "channel": 4, "operation": 31, "migration": 9}
     assert all(owners[e] for e in elements)
 
 
@@ -102,10 +102,13 @@ def test_deferral_needs_a_reason_and_a_decision(plan: Path) -> None:
 
 
 def test_removing_an_invariant_owner_from_the_ledger_is_reported(plan: Path) -> None:
+    # any V2 row that is still open and therefore still owned; chosen from the ledger rather than named, so closing a
+    # particular invariant does not silently turn this into a test of nothing
     text = (plan / "INVARIANT_LEDGER.md").read_text(encoding="utf-8")
-    row = next(line for line in text.splitlines() if line.startswith("| I12 |"))
+    row = next(line for line in text.splitlines() if line.startswith("| I") and "`PARTIAL`" in line)
+    name = row.split("|")[1].strip()
     _edit(plan, "INVARIANT_LEDGER.md", row, row.rsplit("|", 2)[0] + "| |")
-    assert _unowned(plan) == {("invariant", "I12")}
+    assert _unowned(plan) == {("invariant", name)}
 
 
 def test_a_row_for_an_undeclared_element_is_reported(plan: Path) -> None:

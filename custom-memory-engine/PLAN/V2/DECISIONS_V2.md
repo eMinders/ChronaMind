@@ -2188,3 +2188,920 @@ is the evidence — not the run's conclusion.
 
 **Status:** decided and implemented (2026-11-20), under the Project Owner's instruction to make the review gate
 repository-aware. `V2-D57` stands; this records how it runs.
+
+## V2-D86 — `query` ranks the caller's text, and the temporal predicate stays a filter
+
+**Context.** The end-to-end review that opened `W3.5` found the read path *text-blind*: `execute_plan` fetched
+`ORDER BY lower(recorded_range) DESC LIMIT n` and expanded one association hop, and **never read `request["text"]`**.
+`engine/ingest.py` never wrote `memory_embedding` either, so the v1 dense+lexical ranker existed, was tested, and was
+connected to nothing on the V2 path. The Gate G3 latency figure (`11.82 ms` P95) was therefore honest about the code and
+meaningless about the product: it measured a recency scan against V1's `32.61 ms` hybrid search, which is not a
+comparison.
+
+**Decision.** `query` accepts the request's own `text` (and optionally `embedding` + `embedding_model`), and produces its
+candidate set by **hybrid recall** instead of a recency scan:
+
+1. The **filters are unchanged and run first**: the compiled temporal predicate, the typed-artifact guard and the
+   caller's read predicate, in one statement, before any `LIMIT` (`V2-D73`). Relevance changes the *order* of authorized
+   rows, never their membership.
+2. Three **ranking arms** run over that population — dense cosine in the version's embedding slot (HNSW), a
+   language-agnostic lexical arm (`content_fts_simple`, `to_tsvector('simple', …)`), and a `pg_trgm` substring arm keyed
+   on the longest query token — and are fused by **Reciprocal Rank Fusion** (`k = 60`), which is rank-based and so
+   needs no normalisation between cosine distance, `ts_rank_cd` and trigram similarity.
+3. The fused ids are composed into the **same** statement's filter (`m.id = ANY(...)`) beside the temporal and read
+   predicates, so the fetcher cannot return a row the recall did not authorise even if the two disagreed about what is
+   current. Rows come back in fused order; graph expansion (`V2-D76`) then appends reached rows behind them.
+4. **Zero generative model calls.** The reranker seam (`hybrid.Reranker`) is a protocol the engine does not implement: a
+   cross-encoder is deterministic code over fixed weights, and a deployment injects one. That is what keeps the hot read
+   path model-free, replayable and at tens of milliseconds.
+5. **A relevance query that matches nothing answers nothing.** There is no fallback to recency: a page of unrelated
+   memories presented as an answer to a question is a wrong answer that looks like a right one.
+
+`Plan` records `recall` and a **digest** of the question, never the question: a plan is a value a recorder may hold, and
+a query is caller content (`RL-072`). A hybrid plan replayed with a different text is refused
+(`validation_error/plan_query_mismatch`) rather than silently ranked by it. `change` and `audit_as_of` are refused a
+relevance question outright (`text_unsupported_for_mode`): a diff must report every authorized row and an audit must
+report a past belief unchanged, so silently ignoring the question would be a lie about what ran.
+
+**What this supersedes and what it does not.** §9.3's non-negotiable stands: the temporal predicate is a filter, never a
+score term — which is why the arms rank a population the predicate already decided. `V2-D75`'s rule that ranking follows
+channel routing stands: relevance orders candidates, and `channel_of` alone decides where a row is presented.
+`V2-D11`'s staged retrieval stands, and the five measured stages are unchanged (`E-036`), so cost attribution does not
+move.
+
+**Exclusion, recorded honestly.** `memory_embedding` is now written by the ingest path (`attach_embedding`, in the slot
+the vector's width belongs to). Until a deployment supplies an embedder, a text query uses the two lexical arms and the
+gates' `G3` latency figure is re-baselined against *that* — see `ROADMAP_V2.md` §6.1.
+
+**Evidence.** `engine/hybrid.py` (`hybrid_recall`, `fuse`, `vector_literal`, `trigram_token`, `rerank`);
+`engine/planning.py` (`Intent.text`, `Plan.recall`, `Plan.query_digest`, `query_digest`);
+`api/read_handlers.py` (`_recall_query_for`, `_recall`, `execute_plan` candidate generation);
+`tests/test_hybrid.py` (22 unit checks); `tests/integration/test_hybrid_recall_db.py` (11 checks: relevance over recency,
+Arabic and CJK queries, mixed-script, dense paraphrase, refusals, RLS, refine containment).
+
+**Status:** decided and implemented (2026-11-21) under the Project Owner's instruction to implement the review's findings.
+
+## V2-D87 — Structure stays closed, domain vocabulary becomes open, and third-party evidence is quarantined
+
+**Context.** Three defects shared one root cause: the engine treated *structural* decisions and *domain* vocabulary as
+the same kind of thing.
+
+* `memory_version.predicate_key` is a foreign key into `predicate_schema`, so every claim needed a pre-registered
+  predicate. V2 `assert` therefore wrote `predicate_key = 'statement'` for everything and `single_valued = False`, which
+  silently disabled the whole conflict pipeline: `apply_candidate` only consults `existing_relation` when
+  `candidate.single_valued` is true, and `'statement'` is multi-valued by design. Supersession, contradiction detection
+  and the exclusion constraint were dormant on the public API.
+* `um_facet` — the functional tag of the evolving user model — was read by the user-model view and **written by
+  nothing**.
+* Any evidence that was not a chat turn was refused (`external_evidence_cannot_be_grounded`), so a coding agent, a
+  research agent or a user pasting a document could not record what it said, despite migrations 8/16/17 having built the
+  columns for exactly that.
+
+**Decision.** The closed/open split is made explicit and the write path is repaired:
+
+1. **Closed, and enforced in the schema**: `kind`, `lifecycle`, `verification`, `visibility`, the six `um_facet`
+   values, `assertion_mode`, `cardinality`. These are epistemic and structural; a model may not invent them.
+2. **Open, and not a catalog**: `memory_version.semantic_slot` (migration 24) is a soft grouping key with **no foreign
+   key**, normalized once by `semantic.slots.normalize_slot` and re-checked by a `CHECK` (trimmed, 1–120 characters, no
+   control characters). A domain nobody anticipated needs no migration to be sayable. `predicate_key` **stays** a
+   foreign key, because the closed structural vocabulary is exactly what a foreign key should protect.
+3. **The exclusion key gains the slot**: `no_bitemporal_overlap` compares `COALESCE(semantic_slot, predicate_key)`
+   instead of `predicate_key`. For every row that names no slot this is the version-15 key unchanged, so all existing
+   data keeps its guarantee; it becomes slot-scoped only where a slot was supplied. Without this, two unrelated
+   single-valued facts about one person ("residence" and "preferred_editor") collide on the generic predicate and the
+   constraint refuses a legal write.
+4. **`assert` accepts the four semantic options**: `cardinality` (`single`/`multi`/`event`, default `multi`) decides
+   `single_valued`; `semantic_slot`; `um_facet`; `assertion_mode`. Omitting them reproduces the pre-W3.5 multi-valued
+   write exactly, so no existing caller's behaviour changes.
+5. **Non-turn evidence is accepted and quarantined.** The row stores the declared `source_type`, the reference and the
+   caller's `content_hash`. A claim whose evidence is *entirely* non-turn is forced to `assertion_mode = 'third_party'`
+   whatever the caller asked for, and `'third_party'` now **holds** rather than rejects: the claim is stored `contested`,
+   which the channel router sends to `conflicts`. Presenting retrieved text as fact is what the channel separation
+   exists to prevent, and discarding it would destroy evidence a user pasted. The gate's evidence check accepts a
+   non-turn citation on its structure (reference, span, well-formed hash, all schema-enforced) and still requires a
+   user turn for every **turn** span.
+6. **Authority is derived, not declared.** Migration 24 adds
+   `memory_evidence.authority_rank` as a **generated** column from `source_type` and `evidence_role`
+   (`USER 0 > SYSTEM 1 > ASSISTANT 2 > THIRD_PARTY 3`), the one form a compromised runtime cannot forge. A
+   lower-ranked source may not supersede a higher-ranked belief: the attempt is recorded
+   (`memory_conflict.reason_code = 'authority_quarantine'`), never silently dropped. Equal rank is allowed, because a
+   user correcting their own earlier statement is the commonest supersession there is.
+
+**What this replaces.** `engine.gate._INSTRUCTION_PATTERNS` — twelve hardcoded English substrings — is no longer the
+primary injection defence. Quarantine by *source* is structural: it depends on where text came from, not on what it
+says, so it cannot be paraphrased around in another language. The phrase list remains as a narrow belt-and-braces check
+on user text.
+
+**Evidence.** `schema/024_semantic_slot.sql` and its rollback; `semantic/slots.py`, `semantic/authority.py`;
+`api/ingest_handlers.py` (`_assert`, `_choice`); `api/contract.py` (`assert` inputs);
+`engine/gate.py` (`evidence_supported`, `classify_assertion`); `engine/transactions.py`
+(`CandidateVersionInput.semantic_slot`, `_PLACEMENT_COLUMNS`, slot-aware supersession lookup);
+`tests/integration/test_migration_m24.py` (23 checks, including the two-slot coexistence and the refusal of a
+non-representable downgrade); `tests/integration/test_api_wiring_ingest.py` (third-party quarantine, slot-scoped
+supersession); `tests/test_semantic_authority.py`; `PLAN/V2/API_V2.md` §4.3.
+
+**Status:** decided and implemented (2026-11-21).
+
+## V2-D88 — The LLM owns semantic understanding; deterministic code owns every check on it
+
+**Context.** The review's second finding was a placement error in both directions: the LLM was absent where it is
+irreplaceable (reading natural, paraphrased, multilingual turns; classifying modality; resolving "my boss" to a person)
+and present, or planned, only where it adds least (rendering prose after a non-LLM counted a pattern). No engine
+inspected in the same review got this right: nine of twelve hardcode English NLP, and the two that do not are
+single-node embedded stores.
+
+**Decision.** Every capability has exactly one owner, and the boundary is a **typed contract** rather than a prompt:
+
+| capability | owner | mechanism |
+|---|---|---|
+| atomic claims, entities, facets, modality, relative time, the open slot | **model** | `semantic.contracts.StructuredExtractor` → `ExtractionResult` (typed, closed structural enums, open domain vocabulary) |
+| quote exists in the source; its numbers/dates/identifiers appear in the same source | **deterministic** | `semantic.grounding` (`normalize`, `quote_grounded`, `specifics_in`, `ground_claim`, `ground_text`) |
+| authority of a source | **deterministic, database-derived** | `semantic.authority` and migration 24's generated column |
+| one normalization of a slot key | **deterministic** | `semantic.slots.normalize_slot` + the schema `CHECK` |
+| temporal bounds are aware, ordered, anchored, non-empty | **deterministic** | `semantic.temporal` |
+| entity resolution | **hybrid cascade** | exact → trigram → vector → injected `EntityAdjudicator` (`semantic.entities`) |
+| conflict / supersession relation | **hybrid, 3 stages** | deterministic recall → injected `RelationAdjudicator` → deterministic commit (`semantic.conflict`, `V2-D89`) |
+| retrieval ranking | **deterministic + neural embeddings, zero generative calls** | `engine.hybrid` (`V2-D86`) |
+| lifecycle, provenance, exclusion, RLS, deletion | **the database** | unchanged since W1–W3 |
+
+**The quote is never translated.** `verbatim_quote` is in the source language, because a translated quote cannot be
+compared with anything and grounding would degrade to trusting the model. A claim may be stored in one language and
+retrieved by a question in another — that is what the multilingual arms are for (`V2-D86`) — and it can still be
+*proved* against what was said.
+
+**No provider enters the engine.** `semantic/contracts.py` imports no SDK and names no model. Extraction, embedding and
+adjudication are protocols; the deployment injects implementations. The engine contributes the contract and the checks,
+because that is what makes an injected model safe to trust, and the evaluation harness freezes the implementation so a
+replay is exact (`RL-032`).
+
+**What this does not do.** It does not make the output of a model *correct*. It makes a wrong output **detectable** —
+a fabricated quote fails grounding, a fabricated number fails specifics, a third-party claim cannot overwrite a user's,
+and a contradiction cannot be silently resolved. That is the whole of the claim being made.
+
+**Evidence.** `semantic/contracts.py`, `grounding.py`, `authority.py`, `slots.py`, `temporal.py`;
+`tests/test_semantic_contracts.py`, `tests/test_semantic_grounding.py`, `tests/test_semantic_slots.py`,
+`tests/test_semantic_temporal.py`, `tests/test_semantic_authority.py`.
+
+**Status:** decided and implemented (2026-11-21).
+
+## V2-D89 — Conflict resolution is recall → adjudicate → commit, and the GiST constraint keeps the last word
+
+**Context.** `engine.gate.existing_relation` compared `(subject_key, predicate_key)` exactly and then compared content
+for exact lowercased equality. Combined with `V2-D87`'s findings it meant the engine had *no* semantic deduplication and
+*no* contradiction detection on the public API: "I moved to Berlin" and "Living in Berlin now" were two unrelated
+memories, and a correction superseded nothing. Graphiti and Quipu both solve this; both pay for it with a model call on
+every write, and Quipu's answer (propose → isolated verify → deterministic check) is the one whose cost curve and
+failure modes fit a governed ledger.
+
+**Decision.** Three stages, each with a single owner:
+
+1. **Recall** — deterministic, one statement (`semantic.conflict.recall_neighbours`): cosine over the multilingual
+   embedding slot (HNSW, migration 23) or, with no embedder, `pg_trgm` similarity; restricted to the caller's own
+   `(user, scope_path, subject_key)`, to `status = 'active'`, `single_valued`, `upper_inf(recorded_range)` — exactly the
+   population `no_bitemporal_overlap` governs, so recall can find no more than the constraint could hold. At most ten
+   neighbours, ordered by descending similarity then id, so two identical calls produce identical shortlists.
+2. **Adjudicate** — model, isolated (`RelationAdjudicator`): one relation per plausible neighbour
+   (`duplicate` / `update` / `correction` / `contradiction` / `additive` / `unrelated`). It is shown the neighbour's text
+   and id and **no score and no preferred order**, because an adjudicator shown a favoured answer tends to confirm it —
+   Quipu's isolated verifier makes the same choice for the same reason.
+3. **Commit** — deterministic (`commit_strategy`), with a fixed precedence: a contradiction opens a `contradicts`
+   association (it is the one relation that must not be resolved silently); a duplicate reinforces; a correction or an
+   update supersedes; everything else — including a relation this module does not recognise, and an adjudicator's
+   hallucinated id — inserts. The authority ladder may veto any of them (`V2-D87`), and the database's exclusion
+   constraint gets the last word whatever the model said, which is why a model can be wrong here without the ledger being
+   wrong.
+
+**Why `single_valued` only.** A `multi` claim is a series; two of them are two occurrences, not a contradiction.
+Recalling them would invite the adjudicator to "resolve" a non-conflict.
+
+**Why no adjudicator is a supported configuration.** `adjudicator=None` returns no relations and the write inserts, which
+is the pre-W3.5 behaviour kept reachable as an ablation. It is deliberately *not* replaced by exact string equality:
+silence is honest, and a caller who wants the cheap check asks for it explicitly.
+
+**Open risk, stated.** Contradiction handling opens an association and stores the candidate; it does **not** retire the
+existing belief automatically. Retirement needs `C-026`'s refutation path (`W5`), and inventing one here would be a
+second, unreviewed lifecycle transition.
+
+**Evidence.** `semantic/conflict.py`; `engine/gate.existing_relation` (slot-scoped); `tests/test_semantic_conflict.py`
+(strategy precedence, quarantine, unknown ids, empty recall); `tests/integration/test_migration_m24.py` (slot-scoped
+exclusivity at the database level).
+
+**Status:** decided and implemented (2026-11-21).
+
+## V2-D90 — Entity resolution is a cascade, and ambiguity is reported rather than guessed
+
+**Context.** ChronaMind's entity model is the strongest in the comparison and the reason it cannot resolve anything by
+itself: entities are **opaque principal-scoped ids** (migration 10) and `memory_version.subject_entity_id` is a composite
+foreign key proving the entity exists, belongs to the same principal and lives in the same scope (migration 19). That is
+correct for isolation and silent about language: `"Mom"`, `"my mother"` and `"سارة"` are three strings and no id.
+
+**Decision.** A four-stage cascade (`semantic.entities.resolve_mention`), cheapest first: exact normalized label
+equality (no query cost beyond one indexed lookup) → `pg_trgm` similarity → cosine over `entity.embedding` when an
+embedder is supplied → an injected `EntityAdjudicator` for what the deterministic stages cannot separate.
+
+**A merge needs evidence.** The deterministic stages return *candidates*; a merge requires an exact match or an
+adjudicated one. Two candidates within `AMBIGUITY_MARGIN` of each other and no adjudicator is `unresolved` **with both
+ids named** — a caller may store the claim against the subject and leave the entity link unset, but picking a winner
+would attach one person's claim to another, and the typed foreign key that makes that structurally sound is exactly what
+would make the mistake permanent.
+
+**Label normalization is deliberately narrow**: NFKC, casefold, possessives dropped, whitespace collapsed, surrounding
+punctuation trimmed. Nothing else, and in particular **diacritics are kept**: `أحمد` and `احمد` are different spellings,
+and deciding they are the same name belongs to the adjudication stage where a false merge is visible, not to a normalizer
+where it would be invisible.
+
+**Scope.** Every stage filters on `(user_id, scope_path)` exactly as the composite foreign key will re-check at write
+time, so a mention cannot resolve to an entity of another scope or another principal.
+
+**Evidence.** `semantic/entities.py`; `tests/test_semantic_entities.py`.
+
+**Status:** decided and implemented (2026-11-21). Wiring `resolve_mention` into the write path is `E-041`'s remaining
+acceptance criterion and is tracked in `ROADMAP_V2.md` §6.1.
+
+## V2-D91 — Ingestion is two lanes: durable immediately, understood shortly after
+
+**Context.** The engine had the hard half and no front door. `api.ingest_handlers` accepts pre-extracted claims plus a
+verbatim span, and every consumer that wanted to feed it raw conversation had to reinvent extraction, grounding and
+conflict classification — which in practice means each consumer either reimplements governance badly or bypasses it. The
+review named this "the engine is a storage driver, not a memory engine".
+
+**Decision.** `semantic.ingestor.ingest_turn` runs two lanes with different budgets:
+
+* **fast** (synchronous, milliseconds, no model): the verbatim turn is persisted and its episode committed through the
+  same write path every artifact uses. From that instant it is durable, searchable by the language-agnostic lexical arms
+  and inside the deletion boundary.
+* **slow** (one structured extraction per unit of text, then per claim: grounding → authority → temporal validation →
+  slot normalization → optional embedding → three-stage conflict → governed write). Every refusal is a typed outcome with
+  a reason recorded (`grounding_failed`, `authority_quarantine`, `adjudicated_contradiction`), never a silent drop.
+
+A deployment chooses how much of the slow lane runs per call (`extractor=None` is the pure fast lane; `adjudicator=None`
+is grounding without a second model) and **every combination is a supported configuration of the same code**, so an
+ablation measures what the product runs (`RL-032`). Two code paths would let the measured system diverge from the shipped
+one, which is the defect this phase exists to remove.
+
+**What the ingestor does not do.** It computes no embedding and calls no model itself: the caller injects an `Embedder`,
+a `StructuredExtractor` and a `RelationAdjudicator`, and **every row goes through `engine.ingest` / `engine.transactions`
+exactly as `assert` does**. RLS, the temporal exclusion, the provenance trigger and the deletion closure therefore remain
+in charge, and removing the package degrades the engine to what it was before rather than leaving a hole in the ledger.
+
+**Evidence.** `semantic/ingestor.py`; `tests/test_semantic_ingestor.py` (a fake extractor/embedder/adjudicator driving
+the real write path).
+
+**Status:** decided and implemented (2026-11-21). Asynchronous scheduling (a worker, a budget, backpressure) is `C-023`'s
+and stays in `W5`.
+
+## V2-D92 — W5 proposes patterns with a model and admits them with statistics, and a real user reaches a usable model sooner
+
+**Context.** Two W5 specifications were written before the semantic layer existed, and both would have made G5 measure
+the wrong thing.
+
+1. `C-020` mandated **non-LLM** co-occurrence/window heuristics for candidate generation, with the LLM confined to prose
+   rendering (`C-022`). On the synthetic suites (`own_P`/`own_U`) that works, because each latent rule fires on a
+   discrete predicate drawn from a fixed vocabulary. On a real conversation it cannot work: "I hate morning standups" and
+   "don't book me anything before 10am" share no entity, no window and no token, and they are the same preference. A
+   generator that cannot see that produces no candidate, so `C-021`'s verifier is handed an empty set and G5 is green
+   about a capability the product does not have.
+2. `V2-D19` requires `o >= 36` zero-counter opportunities for `confidence_lower >= 0.90` at a 97.5% one-sided
+   Clopper–Pearson bound. That is correct for a statistical claim about a latent process. It is also, for a real personal
+   digital twin, an empty user model: a genuine preference recurs 3–10 times, and the user sees nothing until month
+   nine.
+
+**Decision.** Three amendments, none of which relaxes a bound:
+
+1. **`C-020` is replaced in role, not in spirit.** Candidate generation becomes *semantic clustering → LLM hypothesis
+   proposal → blind LLM evidence scoring*, with the deterministic operators retained as **recall arms**. The LLM proposes;
+   it does not admit. The `(s, k, u)` ledger, the partial-identification CP bound (`SD-002`), the dependence correction
+   (`SD-008`), always-valid looks (`SD-005`) and sticky dissent (`UM-012`) are unchanged — they are a stronger verifier
+   than the reference implementation this pattern comes from, because Quipu tests a `p`-value while ChronaMind bounds an
+   interval.
+2. **The instrument gains a linguistic realism track (`UM-016`).** Every scenario is rendered in three paraphrased
+   registers, an Arabic register and a code-switched register from the same latent rule, and G4b requires the oracle
+   solver to recover the same rule from every register. A precision claim about natural language cannot be earned on a
+   corpus with one phrasing per event; MIRIX's own code records a `-7.7` QA regression from exactly the kind of
+   unmeasured shortcut this closes.
+3. **Sparsity is calibrated honestly rather than hidden (`SD-009`).** Three mechanisms, each separately measurable:
+   * `SD-003`'s hierarchical pooling, which already exists in the plan and is now a *prerequisite* rather than a later
+     refinement;
+   * a **stated-preference fast path**: a `single`-valued claim the user asserted is not a sample of a latent process,
+     it is an observation of the process — `assert`-written claims with `cardinality = 'single'` reach `verified` on
+     their own evidence, which is what `V2-D87`'s write-path repair made possible;
+   * **tiered trust** (`provisional` / `verified`), which `UM-011` already distinguishes at the *rendering* layer:
+     `provisional` never reaches `facts` (the channel router routes it by lifecycle, unchanged), never drives a
+     recommendation, and is labelled as provisional wherever it appears.
+
+**What must be measured, so the tier is not a loophole.** `UM-002` gains `UM11`: the precision of the `provisional`
+tier, reported beside `verified`'s. G5b's `UM8 = 0` (no harmful personalization) and `UM4` (stale-harm, non-increasing
+across noise levels) apply to both tiers. A `provisional` tier whose precision is not measured is a way of hiding a weak
+model behind a word, and `SD-009` exists to make that impossible.
+
+**What this does not change.** `V2-D19`'s bound, `V2-D42`'s frozen split, `V2-D84`'s scenario-level sample size and the
+prohibition on reading the confirmatory split before G-TS all stand. Nothing here may be evaluated on the confirmatory
+split early.
+
+**Evidence.** `PLAN/V2/ROADMAP_V2.md` §7 (`UM-016`, `SD-009`) and §8 (`C-020` amended); `PLAN/V2/STATISTICS.md` §5.2;
+`PLAN/V2/USER_MODEL.md` §4. Prose specification at decision time: no implementation exists yet, and none is claimed.
+
+**Status:** decided (2026-11-21). Implementation belongs to W4 (`UM-016`, `SD-009`) and W5 (`C-020`), both of which
+remain gated on G3.5 and G4.
+
+## V2-D93 — The root application reaches the engine over a narrow HTTP contract, not an import, and `mem0ai` leaves the path
+
+**Context.** The root FastAPI/LangGraph app (`app/`) still ran `mem0ai` (`AsyncMemory` + pgvector) through
+`app/services/memory.py`, with its own schema and its own semantics. The review named this as architectural drift and
+recorded why the dependency is indefensible for a governed memory service: Mem0's OSS engine (v2.2.1) is ADD-only with
+no supersession, keeps deleted plaintext in its SQLite `history`/`messages` tables, and does not check tenant ownership
+on `get` / `delete(id)`. Meanwhile the engine and the app run on **different interpreters on purpose** — CPython 3.12 for
+the engine with its own Ruff, Pyright, lock file and CI job (`PLAN/INDEPENDENCE_BOUNDARY.md` §4) against 3.14 for the app
+— so an in-process import would erase a boundary the project maintains deliberately.
+
+**Decision.** The app's memory layer is a client of the engine's **public operations over HTTP**
+(`app/services/memory_engine.py`), with three calls that map onto three operations:
+
+| app call | engine call | note |
+|---|---|---|
+| `initialize()` | `GET /healthz` | a pre-warm; a failure is logged and swallowed, because memory is an enhancement and an agent that refuses to answer is worse than one without a memory |
+| `search(user_id, query)` | `query` with `text` and the caller's scope | renders the four channels with their **epistemic labels**: a hypothesis is labelled as inferred and a conflict as unresolved |
+| `add(user_id, messages)` | `ingest_episode` then `assert` | the turn is recorded **first** (fast lane, `V2-D91`), then each `role == "user"` message becomes a grounded claim |
+
+Four properties are deliberate and tested (`tests/test_memory_engine_boundary.py`, 11 checks):
+
+1. **No fallback.** A deployment without `MEMORY_ENGINE_URL` has **no** long-term memory. Silently falling back to mem0
+   would mean a deployment believes it has governance it does not have — the exact failure this decision removes.
+2. **No shared partition.** An anonymous caller gets an empty context rather than a common one, which would leak one
+   caller's facts into another's prompt.
+3. **Ordering is the fast lane.** The episode is written before the claim, so a turn is durable and inside the deletion
+   boundary even when the claim step fails.
+4. **Rendering cannot launder.** `_render` emits a channel heading only when that channel contributes a line, so an
+   empty channel never reads as "there is a fact here".
+
+**What is still owed, stated rather than implied.** The engine side of this contract — an HTTP host that authenticates a
+caller and dispatches to `Engine.call` — does not exist. It is `E-046`, with the acceptance criteria below, and until it
+lands a deployment that sets `MEMORY_ENGINE_URL` gets a client that cannot connect (loudly, by design).
+
+**`E-046` acceptance criteria.** (a) A host that maps `POST /v1/call {operation, tier, arguments}` to
+`Engine.call` under a credential derived from a bearer token, never from a request field; (b) `tier` accepted only from
+the token's claim, so a caller cannot promote itself (`V2-D47`); (c) every one of the seven static error codes mapped to
+an HTTP status without ever carrying an identifier or content (`API_V2.md` §1.1); (d) request bodies bounded and the
+`request` object validated by the operation's own handler, not by the host; (e) `GET /healthz` unauthenticated and
+content-free; (f) an integration test that drives one `query` and one `assert` through the host into a disposable
+database and asserts the four channels come back intact; (g) the app's boundary test re-run against the real host rather
+than a mock transport.
+
+**What this does not change.** The engine's contract, its invariants, and the root app's independence rules. The legacy
+`app/services/memory.py` remains in the tree until `E-046` lands, and
+`tests/test_memory_engine_boundary.py::test_no_module_on_the_agents_path_imports_mem0` asserts that **nothing on the
+agent's path** uses it any more — `graph.py` and `main.py` are on the engine client.
+
+**Evidence.** `app/services/memory_engine.py`; `app/core/config.py` (`MEMORY_ENGINE_URL`, `MEMORY_ENGINE_TOKEN`);
+`app/core/langgraph/graph.py` and `app/main.py` (wired to `memory_engine`); `tests/test_memory_engine_boundary.py`;
+`make check` green on the root app.
+
+**Status:** decided and implemented for the client side (2026-11-21). The engine-side host is `E-046`, open, in `W3.5`'s
+remaining work and blocking `W7`'s "app on the public API only" gate.
+
+## V2-D94 — Two wire protocols, one local embedder, and models chosen by measurement
+
+**Context.** The engine takes injected `StructuredExtractor`, `Embedder` and `RelationAdjudicator` (``V2-D88``) and knows
+nothing about a provider. A deployment still has to *choose* concrete implementations, and the choice is a decision with
+quality, cost, latency and licensing consequences. This record is that decision, taken from measurements rather than
+from a leaderboard. The harness is `scripts/eval_models.py`; the results are in `reports/model_selection/README.md`.
+
+**One protocol per model family.** The gateway serves Claude models on `/v1/messages` and GPT models on
+`/v1/chat/completions`, and refuses the other shape with `400 protocol_mismatch`. So there are two small clients — no SDK
+for either — and one selector (`integrations.provider.client_for`) that picks by model family and takes an explicit
+override. Two facts about *compatibility*, not preference, and both were discovered by calling the API:
+
+* `response_format: {"type": "json_object"}` is refused by Claude models, so the Messages client asks for JSON in the
+  system prompt instead. A single client could not serve both families without such a fallback;
+* `temperature` is refused by several models (`400 Omit temperature for this model`). The clients learn it per model and
+  drop the field, so a deployment's configuration does not have to encode a compatibility matrix that changes per model.
+
+**Embeddings are local, because the provider has none.** `/embeddings` answers `403` for every candidate name tried.
+`integrations/onnx_embedder.py` runs a pinned `bge-m3` ONNX file (1024-d, CLS pooling) in the `halfvec(1024)` slot, with
+`tokenizers`/`onnxruntime` — already the project's dependencies for its evaluation baselines. Pooling and the
+`query:`/`passage:` prefixes are parameters of the asset and are validated, because getting either wrong degrades recall
+silently while every test still passes.
+
+**The chosen combination.**
+
+| capability | model | the measurement that decided it |
+|---|---|---|
+| extraction | `gpt-6.2-sol` | zero JSON parse failures (the others had 3–4), 100% verbatim quote grounding, 12/13 on multilingual cases |
+| adjudication | `claude-haiku-5-5` | 6/6 once the label semantics are read correctly, and the cheapest/fastest of the three; its weakness (long structured output) does not apply to a 3-field answer |
+| embeddings | local `bge-m3` | the only option: the provider serves no embedding endpoint |
+| reranking | none | an LLM rerank over the top 5 scored 10/14 top-1 against the fused order's 9.6/14 — inside noise — while abstaining on the cross-script questions the dense arm already solved, and costing a model call per read |
+
+**The number that changed the prompt, not the choice.** The first sweep showed the best model returning *verbatim*
+quotes only ~25% of the time. A quote that is not a verbatim substring is a claim `grounding.ground_text` refuses, so
+three of four extracted memories would never be stored — a defect no leaderboard reports and no unit test of the
+extractor would have caught. Adding a worked example and a hard rule to `EXTRACTION_SYSTEM` took the rate to 86–100%.
+The evaluation harness itself also had a bug at that point (`quote_grounded` called with reversed arguments), which made
+every model look equally bad; `tests/test_eval_harness.py` now pins the argument order, because a wrong instrument
+reports the wrong winner.
+
+**What this does not do.** No model name reaches `src/custom_memory_engine` outside `integrations/`: a test asserts it,
+and the `ModelClient` protocol is the only shape the engine sees. A deployment that prefers a different provider
+implements the same four methods; a deployment that prefers a self-hosted model implements the same four methods over a
+local runtime; neither touches a decision, a migration or the read path.
+
+**Status:** decided and implemented (2026-11-21). `scripts/eval_models.py` reproduces the table; the sweep history and
+the per-case failures are kept under `reports/model_selection/`.
+
+## V2-D95 — The entity resolver had never run against the real table
+
+**Context.** `E-041` shipped `semantic/entities.py` with a cascade documented as exact → trigram → vector →
+adjudicator, and only ever exercised by unit tests that did not touch the database. Wiring it into the write path
+found two columns that do not exist: it queried `entity.label` (the column is `canonical_name`) and
+`entity.embedding` (there is no such column — migration 10 never added one).
+
+**Decision.** Fix the query to the real schema and **drop the vector stage** rather than add a column to keep a
+documented stage alive. Entity names are short labels; a per-name vector would be a new column, a new index and a
+re-embedding rollout, and the cascade still has exact, alias, trigram and adjudicator. The floor constants that
+described the vector stage are removed, and `resolve_mention` accepts an `embedding` argument it documents as unused so
+an existing caller does not break.
+
+**The rule the resolver now obeys, and that the wiring test enforces.** A tie is `unresolved`, never a guess: two
+entities whose scores are within `AMBIGUITY_MARGIN` produce no attachment and a count in the ingestion report, because
+attaching a claim to the wrong person is worse than attaching it to nobody. An adjudicator that *abstains* on a single
+candidate also yields `unresolved` rather than `created` — creating a duplicate identity next to one the resolver had
+already found is the same mistake seen from the other side.
+
+**Wiring.** `semantic.ingestor` resolves every mention (one cache per claim, so a repeated mention costs one query),
+creates the unknown ones in the claim's own scope, and sets `subject_key`/`subject_entity_id` only when the extractor
+designated that mention as the subject (`ExtractedClaim.subject_mention`). A claim about the speaker — "I moved to
+Berlin" — keeps `subject_key='self'` and still creates the Berlin entity, which is the distinction between *about* and
+*mentioned*. Stage counts go into `IngestionReport.diagnostics` as content-free integers, so an operator can see that
+mentions are being created rather than matched without logging a single label.
+
+**Evidence.** `semantic/entities.py`; `semantic/ingestor.py`; `tests/integration/test_semantic_entities_db.py` (9 tests
+against the migrated schema, including one that drives two turns through the ingestor and asserts exactly one entity
+row); `tests/integration/test_semantic_ingestor_db.py`.
+
+**Status:** implemented (2026-11-21). The vector stage is deferred until `entity` has an embedding column and a
+measurement justifies it.
+
+## V2-D96 — The host, the refutation operation, and the asynchronous lane (``E-046``, ``E-047``, ``C-026``)
+
+**The host is the engine's contract over HTTP, and nothing more.** `host/service.py` holds a connection pool and builds
+the deployment's wiring per call; `host/app.py` adds exactly three things the engine cannot know: who is calling (a
+bearer token mapped to a `Credential`, tier from the token, never from the body), a body bound enforced before parsing,
+and the seven static codes of `API_V2.md` §1.1 mapped to HTTP statuses. `forbidden` answers 403 for "absent" and
+"unreadable" alike, so the transport does not re-introduce the oracle the engine's error contract removes. Every
+operation's result is serialised by deriving the wire shape from the result object (dataclass fields, `__slots__`
+entries), so a field added to a result cannot be forgotten here.
+
+**One wiring function, and an explicit list of what is not wired.** Before this, a deployment had to call six
+`register_*` functions in the right order; forgetting one produced a live service where an operation answers `forbidden`,
+which reads exactly like a permission bug. `api/wiring.wire_engine` is the single call, and
+`UNWIRED_OPERATIONS` states every operation the contract declares and no handler owns, with the reason. A test fails if
+the list and reality disagree.
+
+**`refute` completes the lifecycle.** It was in the contract since `API_V2.md` §3 with no handler: a belief the engine
+inferred could be argued with only by an administrator, and the semantic ingestor's contradictions could only be staged,
+never retired. `refute` is Tier B and fenced three ways (`own_lineage_only`, `targets_readable`, `evidence_required`), and
+it only ever moves an artifact **out of** `inferred`: an `asserted` claim is the user's own word, withdrawn by the user
+or resolved by adjudication. The retirement is the recorded-time close (branch (S) of `I10`), the archive row, one
+content-free audit event carrying the reason code and two counts, and — when a counter-evidence ref names one of the
+caller's readable versions — a `contradicts` association, so the justification is traversable *and* inside the deletion
+closure. The refs themselves are never copied into the audit row: a ref can be a path or a URL, and `audit_event`
+outlives deletion.
+
+**The asynchronous lane is two transactions, and that is the point.** `queue.process_one` runs a handler inside one
+transaction, which is right for database-only work and wrong for a model call: five seconds of extraction would hold row
+locks, and a serialization retry would re-bill the model. `semantic/slow_lane.py` adds `claim_one` (transaction A:
+`FOR UPDATE SKIP LOCKED`, mark `running`, count the attempt) and `complete_one` (transaction B: write, mark `done`), with
+`recover_stale` for the one state the split introduces — a worker that died holding a lease. `semantic.ingestor` is split
+accordingly: `ingest_turn` is now exactly fast lane + extract + `apply_extraction`, and `apply_extraction` is the pure
+database half a worker calls.
+
+**What the app sends, and the contract extension it needed.** The root application keeps its own transcript, so its
+evidence is a non-`turn` source. `_source` now accepts an optional `role` on non-`turn` sources: without it every claim
+the app made would have been quarantined as third-party, which would have made the engine unusable for its only
+deployment. A `turn` source may not declare a role — there the role is a column of the row being cited, and a
+caller-supplied copy would be a second source of truth.
+
+**Evidence.** `host/` (credentials, service, app); `api/lifecycle_handlers.py`; `api/wiring.py`;
+`semantic/slow_lane.py`; `scripts/run_host.py`; `scripts/run_worker.py`;
+`tests/integration/test_host_e2e_db.py` (18 tests, real uvicorn on a real socket against a real database);
+`tests/integration/test_slow_lane_db.py` (8 tests: identity, claim, completion, dead-letter after `MAX_ATTEMPTS`, lease
+recovery, tenant scoping, idle-connection requirement); `tests/integration/test_host_e2e_db.py::test_refute_*`.
+
+**Status:** implemented (2026-11-21). `dissent`, `verify`, `expire`, `rebuild_index`, `export` and `stats` remain
+unwired with their reasons recorded in `api/wiring.UNWIRED_OPERATIONS`.
+
+---
+
+## V2-D97 — Every operation is wired: the six, and what each one's missing piece actually was
+
+**Status:** adopted (2026-11-25). Supersedes the "remain unwired" paragraph of `V2-D96`. Closes `A-014`'s handler half
+and the `I11`/`I15` rows that read "`verify`/`stats` are not wired, so the ledger is not reachable through `Engine.call`".
+
+`api.wiring.UNWIRED_OPERATIONS` is now **empty**. That is not a bookkeeping change: each entry had a stated reason, and
+each reason named a missing *piece of machinery*, not missing plumbing. This decision records what that machinery is and
+where it lives, because the alternative — a handler that satisfies the signature — would have turned six honest gaps into
+six silent lies.
+
+| operation | why it was unwired | what was actually built |
+|---|---|---|
+| `stats` | "needs an outcome-stats reader" | `engine/statistics.py`: the ledger, the verification record behind the status, the derivation ids, the derived staleness causes and procedure outcomes, in one report that returns **ids and never content** |
+| `verify` | "the `verification` wire shape is unspecified while the schema requires held-out splits, disjoint windows and context keys" | `engine/verification.py`: a `VerificationRecord` with exactly `I11`'s six facts, a disjointness assessment, the append-only insert, the status move, and the `F5` epoch fence |
+| `dissent` | "needs a `negative_constraint` reader in inference; a constraint nothing consults would be a write-only column" | the handler **and** the reader: `refute`'s sibling in `api/lifecycle_handlers.py`, plus `InferHandlers._blocked`, so `infer` answers `Rejected("negative_constraint_active")` |
+| `expire` | "`V2-D14` is still open on the retention values" | `engine/expiry.py` + a handler that reads the window from `profile.abstraction_expiry` and stamps `abstraction_stats.expires_at`; no defaults are compiled in, so an unconfigured deployment expires nothing and says so |
+| `rebuild_index` | "returns a job id and needs the queue's index-maintenance handler" | `engine/index_maintenance.py`: three logical indexes, two execution shapes (`REINDEX … CONCURRENTLY` outside a transaction for `fts`/`vector`, an in-transaction reseal for `closure_hash`), and the job the handler enqueues |
+| `export` | "`ExportSnapshotStore` exists, the handler does not" | migration 25 + `engine/export.py`: the store was a **process-local dict**, which cannot implement channel 11 at all; a manifest is now a durable, epoch-bound, append-only row |
+
+**Three declarations were corrected, and each correction is a safety change rather than a convenience.**
+
+1. `expire` no longer declares `deletes=True`. It stamps a derived-cause column and destroys nothing; a declared deletion
+   that never happens invites a reviewer to assume a guarantee, and aims `TB1` at an operation that deletes nothing.
+2. `expire`'s output is `ExpiryReceipt` (two counts and the belief time) instead of `Receipt`. `PurgeReceipt`'s reasoning
+   applies unchanged: an expiry touches no caller-named artifact, so there is no id to return and an id is the one thing
+   `API_V2.md` §1.1 forbids in a maintenance receipt. It also gains `precondition_failed`, because a caller's `as_of` can
+   be well-formed and still not a legal observation of the clock.
+3. `dissent` records its constraint against the method **family** (the method's name, not its id), so a user's rejection
+   survives a method version upgrade. Lifting a constraint needs grounded evidence and has no operation yet, so a dissent
+   is currently permanent — the conservative direction, since silently re-learning what a user rejected is the failure
+   this mechanism exists to prevent.
+
+**`verify`'s disjointness algorithm** is the part `INVARIANT_LEDGER.md` recorded as "not built". `I11` requires the
+held-out split to be genuinely held out, which the schema alone cannot check: overlapping **windows** re-check the same
+evidence, and a shared **context key** is the near-duplicate leakage that makes a finite-sample bound meaningless. Both
+are refused before the insert, with distinct codes, so the two faults stay distinguishable in an incident. One split is
+recorded once per artifact: re-running a split until it agrees is not verification.
+
+**Evidence.** `tests/integration/test_api_wiring_lifecycle_db.py` (23 tests through `Engine.call` as the restricted role:
+ledger and ids without content, cross-tenant `forbidden`, a grounded artifact's empty ledger, the verification record
+behind the status, disjoint/leaky/duplicate/invalid splits, dissent's retirement and constraint, the re-learn refusal,
+the expiry stamp with and without a policy, `as_of` in the future, the queued rebuild, the empty `UNWIRED_OPERATIONS`,
+the export manifest and its replay, the tier check, and channel 11); `tests/integration/test_migration_m25.py` (6:
+self-consistency, the count constraint, the digest constraint, append-only on `UPDATE`/`DELETE`, RLS under the runtime
+role, and the rollback fingerprint); `tests/integration/test_migration_m24.py` (rollback composition through 25).
+
+---
+
+## V2-D98 — The engine embeds the query, and the write path embeds the document
+
+**Status:** adopted (2026-11-25). Completes `V2-D86`'s dense arm, which was measured but unreachable from a deployment.
+
+`V2-D86` gave the read path a dense arm and `hybrid.RecallQuery` an `embedding` field, and `V2-D93` gave the app an HTTP
+client. The gap between them was decisive: **the caller had to supply the vector**, so the app would have had to own a
+model to receive hybrid recall — and it does not. In practice every app query ran the two lexical arms, and the dense arm
+was reachable only from a test that hand-built a vector.
+
+**The engine now owns both sides of one model.** `ReadHandlers` takes an optional `semantic.contracts.Embedder`;
+`wire_engine` passes the deployment's and `host.HostService` builds it from `CME_EMBEDDING_ASSET`/`CME_EMBEDDING_DIR`.
+`ingest_episode` and `assert` embed the **document**, `query` embeds the **question** (`embed=True` → `query=True`), and
+both name `embedder.model`, which is what the dense arm's `embedding_model = %(model)s` predicate joins on. A vector
+stored under one model is invisible to a question encoded by another; there is no silent cross-model cosine.
+
+**Failure degrades and says so.** A model that cannot load must not turn every question into `internal_error`, and it
+must not degrade silently either: the read logs `query_embedding_unavailable` with a static code and the result reports
+exactly which arms ran (`QueryResult.arms`). That field is the reason the degradation is honest — a benchmark, a test and
+a caller can all see whether an answer was hybrid. On the write path the rule is the opposite and deliberate: a model
+failure never fails the write (a lost user message is far worse than a row the lexical arms must find), and the failure
+is logged instead.
+
+**Advanced callers still win.** A request that supplies `embedding`/`embedding_model` keeps them; the engine's embedder is
+only consulted when the caller sent text and no vector. A supplied vector is validated against `hybrid.EMBEDDING_SLOTS`
+at the boundary, so a width the schema cannot index is refused rather than dropped.
+
+**One model, one process.** The embedder is a single object per process (it owns a loaded ONNX session); building one per
+request would reload a 2.2 GB graph per request. A width the schema cannot index is refused at **start-up**
+(`embedder_from_environment`), which is the only place it can be refused without answering a caller's question with an
+error about a vector they never sent.
+
+**Evidence.** `tests/integration/test_hybrid_recall_db.py` (a configured embedder finds a paraphrase with no caller
+vector and reports `("dense","lexical","trigram")`; a failing embedder degrades to `("lexical","trigram")`; a
+caller-supplied vector still wins; the ingest path stores the vector under the configured model);
+`tests/integration/test_host_e2e_db.py` (the real `bge-m3` model through the real HTTP host: a paraphrase is found over
+the wire, `arms` contains `dense`, and an unrelated question still answers nothing).
+
+---
+
+## V2-D99 — An export is a durable manifest, not a copy of the memories
+
+**Status:** adopted (2026-11-25). Supersedes `deletion.closure.ExportSnapshotStore` as the export mechanism (the class
+remains as the in-memory helper the deletion suite uses).
+
+`API_V2.md` §4.9 asks for three things — a manifest of the caller's read set, exclusion of deletion-pending content, and
+"a snapshot made before a deletion must not be served after it (channel 11)". What existed was a Python dict: correct
+enough to prove `F11` inside one process, and useless as an implementation, because the host builds its wiring per call
+and a second worker would not see the dict at all.
+
+**The design decision is what a snapshot contains.** A manifest: the sorted ids the caller could read, a SHA-256 over
+them, the count, the read set's scope paths and the deletion epoch. **Not** the content. A second copy of content is
+exactly what a deletion cannot reach, so an export that copies is an export that leaks on channel 11; serving a snapshot
+re-reads through the ordinary read path, so every deletion, retraction and expiry lands in it as it lands everywhere
+else. Migration 25 makes the manifest append-only, self-consistent (count = array length, digest = SHA-256) and
+user-isolated under `FORCE ROW LEVEL SECURITY`.
+
+**Channel 11 is a comparison, not a trigger.** `captured_epoch` against `current_deletion_epoch` (the `MAX` over the
+append-only `deletion_request` log), checked through the same `require_current_deletion_epoch` guard a verification
+commit uses — so a serve racing a deletion either completes before it or is refused after it, and there is no third
+outcome. A replay of the same read set at the same epoch returns the existing manifest: the row already there *is* the
+answer, and re-inserting would mint a second id for the same fact.
+
+**Evidence.** `tests/integration/test_migration_m25.py`; `tests/integration/test_api_wiring_lifecycle_db.py`
+(`test_export_manifests_what_the_caller_can_read_and_replays_the_same_manifest`,
+`test_export_is_tier_c_only_and_refuses_a_malformed_selector`,
+`test_a_snapshot_made_before_a_deletion_is_not_served_after_it`, which drives the real `delete` operation).
+
+---
+
+## V2-D100 — The retrieval decision, re-made on 64 labelled questions
+
+**Status:** adopted (2026-11-25). Supersedes the numbers in `reports/retrieval/README.md`'s first round and the "BM25 is not
+implemented" paragraph's reasoning; the *decision* (no BM25, no reranker) survives, on much stronger evidence.
+
+The first round measured 16 questions and concluded that the dense arm earns its place. It could not answer the question
+the plan left open — whether a term-weighting ranker or a second-stage reranker improves the *order* — because a set with
+two unanswerable questions cannot measure a precision claim, and it did not: the 0.45 similarity floor chosen there
+answered **7 of 8** unanswerable questions on the larger set.
+
+**What was measured.** 49 memories and 64 questions (20 lexical, 12 paraphrase, 8 cross-script, 8 with no answer), six
+configurations through the real read path, `bm25` and both rerank rows computed offline over the same candidates so they
+cannot win by retrieving what the engine could not.
+
+| configuration | recall@5 | top-1 | nDCG@5 | no-match FP |
+|---|---|---|---|---|
+| recency | 0.089 | 0.018 | 0.053 | 1.000 |
+| lexical only | 0.393 | 0.375 | 0.386 | 0.000 |
+| **hybrid (shipped)** | **0.982** | **0.732** | **0.882** | 0.125 |
+| bm25 over the corpus | 0.143 | 0.071 | 0.106 | 1.000 |
+| hybrid → rerank by BM25 | 0.982 | 0.482 | 0.765 | 0.125 |
+| hybrid → rerank by recency (control) | 0.982 | 0.411 | 0.726 | 0.125 |
+
+**Three decisions.**
+
+1. **BM25 is rejected.** Standalone it recalls 0.143 — term weighting cannot connect a paraphrase to its memory. As a
+   reranker it keeps recall and destroys ranking (top-1 0.732 → 0.482), because it pulls lexical overlap above meaning.
+   The recency control degrades too (0.726), so the method is sound and BM25 is simply worse informed than the fusion.
+2. **No reranker is shipped.** The two cheapest rerankers both make the order worse; a cross-encoder is one model call
+   per *read* for a gain the first round measured inside noise. `Reranker` stays a seam.
+3. **`DENSE_SIMILARITY_FLOOR` is 0.55, measured, and the constant is asserted against its sweep.** The criterion is
+   stated before the numbers: minimise the no-match false-positive rate subject to recall@5 ≥ 0.90. 0.55 gives 0.982
+   recall and one FP in eight; 0.62 gives zero FP and 0.768 recall. The residual is not hidden: the weakest *true*
+   match on this set is 0.46 and the strongest *false* one is 0.605, so no single cosine threshold separates them, and
+   that is a limit of a bi-encoder rather than of the threshold.
+
+**One read-path defect the measurement found.** With `simple` as the FTS configuration (no stopword list, by design, since
+a stopword list is language-specific), a question like "what is the wifi password at the office" matched every row
+containing "the". The lexical arm now prunes query terms whose document frequency in the caller's own rows exceeds
+`TERM_PRUNING_DF_RATIO = 0.35` — a statistic computed inside the same temporal and read predicate, so it is a statistic
+about rows the caller may already read and never a cross-tenant oracle. Membership was the defect; ranking was not.
+
+**Evidence.** `tests/integration/test_retrieval_eval_db.py` (the set's own coverage, the floor sweep asserted against the
+constant, and the relative claim that the fusion dominates what it replaced and is not beaten by any alternative),
+`evaluation/retrieval/`, `reports/retrieval/{evaluation.json,evaluation.md,floor_sweep.json}`.
+
+---
+
+## V2-D101 — Entity embeddings propose, and never merge
+
+**Status:** adopted (2026-11-25). Migration 26.
+
+`semantic/entities.py` documented a four-stage cascade with a vector stage that was dead code: it queried
+`entity.embedding`, a column that never existed. The earlier fix removed the query and recorded that restoring the stage
+needs a migration. Migration 26 adds `entity.embedding_1024 halfvec(1024)`, `embedding_model` and an HNSW index, and the
+stage is implemented.
+
+**Why it earns its place.** A cross-script mention shares no trigram with its entity: `ليلى حسن` scores 0.0 with
+`Layla Hassan` under `pg_trgm` and 0.573 under the model. `مكتب برلين` scores 0.791 against `Berlin office`. No amount of
+string matching serves that case.
+
+**Why it may not merge.** The same measurement produced the counter-examples that decide the design: `Munich office`
+scores **0.769** against `Berlin office`, and `Project Beta` scores **0.791** against `Project Alpha`. Two *different*
+entities that differ by one token are nearly identical in embedding space — exactly the pairs where a merge is
+destructive and permanent. So the stage runs **only** when exact, alias and trigram found nothing, requires
+`VECTOR_FLOOR = 0.75`, filters by `embedding_model`, and returns a *candidate*. The existing fence is unchanged: a merge
+needs an exact match or an adjudicated confirmation, which is why `Munich office` proposes Berlin and stays `unresolved`.
+
+**What this does not claim.** A deployment with no adjudicator resolves no cross-script mention (it reports them
+`unresolved`). That is the correct half of the capability, and the alternative — merging on cosine — is the failure the
+measurement exists to prevent.
+
+**Evidence.** `tests/integration/test_semantic_entities_db.py::test_a_cross_script_mention_can_be_proposed_and_needs_confirmation_to_merge`,
+`::test_a_different_entity_of_the_same_shape_is_proposed_but_never_merged`,
+`::test_without_an_embedding_the_cascade_behaves_exactly_as_before`;
+`tests/integration/test_migration_m25.py`'s composed-rollback check; `reports/entity_resolution/README.md`.
+
+---
+
+## V2-D102 — The model evaluation set is 46 cases, and one of its labels was wrong
+
+**Status:** adopted (2026-11-25). Supersedes the 21-case selection in `reports/model_selection/README.md`.
+
+Extraction and adjudication were being chosen from 21 cases, 12 of them extraction. The set is now 46 (28 extraction
+across English, Arabic and mixed-script, 3 schema, 14 adjudication, 1 rewrite) and it separates the candidates where the
+old one could not:
+
+| model | ext-en | ext-ar | ext-mixed | schema | adjudication (corrected labels) | p50 |
+|---|---|---|---|---|---|---|
+| `gpt-6.2-sol` | **13/14** | **10/10** | **6/6** | 3/3 | **13/14** | 9.0 s |
+| `claude-sonnet-5-5` | 10/14 | 8/10 | 3/6 | 3/3 | 11/14 | 6.4 s |
+| `claude-haiku-5-5` | 12/14 | 8/10 | 2/6 | 3/3 | 10/14 | 2.5 s |
+
+The adjudication column is the *second* run, after the label defect below was fixed: the first run's figures (5-6 of 14
+for every model) were the instrument failing, not the models. `claude-haiku-5-5` stays the documented choice for a
+latency-bound deployment — 10 of 14 at 2.5 s against 13 of 14 at 9.0 s — and `CLAUDE.md` records that trade explicitly
+rather than hiding it behind "gpt is better".
+
+**The defect the expansion exposed.** The second adjudication block used the engine's *strategy* names as its expected
+labels: `supersede` and `reinforce`, which are what `conflict.commit_strategy` decides. The models are asked for
+`duplicate|update|correction|contradiction|additive|unrelated` and can never answer either, so three candidates were
+scored wrong for correct answers (a move answered `update`, which is exactly right). Every adjudication figure before
+this correction is therefore void, and the earlier conclusion "all three models score 4/6, so the choice is a tie" was an
+artefact of the instrument. `tests/test_eval_harness.py::test_every_adjudication_label_is_a_relation_a_model_may_emit`
+now fails if a label is outside the vocabulary.
+
+**Selection.** Both stages go to `gpt-6.2-sol`: extraction 29 of 30 against 21 and 22, adjudication 13 of 14 against 10
+and 11, with 100% verbatim-quote grounding and no JSON parse failures across either run — a margin no longer inside
+noise. `claude-haiku-5-5` is recorded as the latency fallback (2.5 s against 9.0 s at four points of adjudication
+accuracy), because adjudication runs once per conflicting candidate and a deployment with a tight write budget may
+legitimately prefer it.
+
+---
+
+## V2-D103 — The worker is deployed, probed from the queue, and tested
+
+**Status:** adopted (2026-11-25).
+
+The slow lane existed and nothing ran it. `deploy/` now holds a systemd unit (`cme-worker.service`), a container image
+(`Dockerfile.worker`) and a compose file (`compose.worker.yaml`), and `scripts/worker_healthcheck.py` is the probe all
+three use.
+
+**The probe reads the queue, not the process.** Exit 0 healthy, 1 degraded (the oldest due job is older than 30 minutes),
+2 unhealthy (a lease past `semantic.slow_lane.LEASE`, or the database is unreachable). A PID check passes through the
+failure this lane is most likely to have — a worker alive but stuck behind a hung model call — so the probe measures the
+property that matters: is the queue being drained.
+
+**Graceful stop is the loop's own.** `SIGTERM` sets the loop's stop event, the job in flight finishes, and the process
+exits; `TimeoutStopSec=60`/`stop_grace_period: 60s` outlive one extraction with retries. A hard kill loses only a lease,
+which `recover_stale` returns.
+
+**Deployment stays outside the engine.** No import of `deploy/` from `src/`, and the probe imports only the queue and the
+lease constant, so it never loads the embedding model to answer "is the loop alive".
+
+**What is tested and what is not.** `tests/integration/test_worker_deployment_db.py` drives a real queue: a lease past its
+window is returned to `queued`; the probe returns 0/1/2 for healthy/degraded/unhealthy; a job that fails repeatedly
+reaches `dead_letter` after `MAX_ATTEMPTS`. What is *not* tested is that systemd or Docker restarts the process — that is
+the supervisor's contract, and the unit and compose file are reviewed rather than executed.
+
+## V2-D104 — The read path carries a relevance judge, and the judge gates
+
+**Context.** `V2-D100` re-derived the dense floor to 0.55 and recorded a residual it could not remove: one unanswerable
+question in eight ("our neighbours complain about the noise every night") still returned a neighbour, because its
+nearest memory sat at cosine 0.605 while the weakest *genuine* paraphrase in the set sat at 0.46. Before accepting that
+as a model limit, three cheaper rules were measured on the full query × corpus cosine matrix and **rejected**: a
+corpus-relative z-score (unanswerable questions reached 3.44, answerable ones fell to 2.16), a top-1/top-2 gap (gaps
+overlap completely), and requiring a lexical or trigram arm to corroborate the dense one (it would have dropped 30 of 56
+genuine answers). Encoding only the informative terms of the question made the overlap worse (0.361 vs 0.569).
+
+**Decision.** A local cross-encoder reads each candidate *together* with the question and returns one logit on a fixed
+scale, and the page keeps only candidates at or above `JUDGE_RELEVANCE_FLOOR`. Two multilingual rerankers were
+measured on the labelled set; `bge-reranker-v2-m3` (int8 ONNX, pinned by revision and SHA-256 in
+`scripts/fetch_models.py`) separates the classes — weakest answerable -6.68, strongest unanswerable -11.01 — and
+`jina-reranker-v2-base-multilingual` does not (-2.91 vs -2.38), so it is recorded and not chosen. The floor is the
+midpoint, **-8.8**, asserted against `reports/retrieval/evaluation.json` by
+`tests/test_hybrid.py::test_the_judge_floor_sits_between_the_weakest_answer_and_the_strongest_non_answer`.
+
+**Where it lives.** In `api.read_handlers`, after the id-restricted fetch, because that is where the candidate *content*
+is already in hand — the judge costs one forward pass per candidate and no second statement. `engine.hybrid` stays pure
+SQL over ids. The old order-only `Reranker` seam is removed: nothing implemented it, and its contract ("only the order is
+used") was exactly what made it unable to fix this.
+
+**Bounds and failure.** At most `JUDGE_CANDIDATES` (10) are read (~28 ms each, pairs scored one at a time because the
+graph is padding-sensitive), and rows beyond the bound are *not* returned unjudged. A judge failure, a score-count
+mismatch or a non-finite score degrades to the fused page and reports `judgement=None`; a judged page reports
+`QueryResult.judgement` (model, floor, scored, kept, best), so "no judge", "judged and empty" and "judged and kept" are
+three distinguishable answers. No LLM is on the read path.
+
+**Measured.** `hybrid_judged`: recall@5 0.982 (unchanged), top-1 0.768 (from 0.732), nDCG@5 0.896 (from 0.882),
+no-match false positives **0.000** (from 0.125). End to end over real HTTP, the exact near-miss returns an empty page
+(`test_host_e2e_db.py::test_the_judge_refuses_the_near_miss_the_dense_arm_alone_would_have_answered`).
+
+**Cost.** ~28 ms per candidate on the reference CPU, and a 570 MB model file. The judge is optional
+(`CME_RERANKER_ASSET`); a deployment without it behaves exactly as before and reports `judgement=None`.
+
+## V2-D105 — A dissent can be lifted, on new grounded evidence, and named
+
+**Context.** `I16` says a denied element "cannot be re-inferred … *without new grounded evidence*". After `V2-D97` the
+constraint was written and read, but no operation lifted it and none returned its id, so a dissent was permanent and
+unnamable — `I16` was `PARTIAL` for exactly that reason.
+
+**Decision.** Two operations. `lift(constraint_id, evidence_artifact_id, note?)` (Adjudicate, Tier C) stamps the
+schema's existing lift record. The evidence must be an `observed` or `asserted` artifact of the caller's: readability is
+the entry point's `targets_readable` condition (so an unreadable ground is `forbidden`, indistinguishable from absent),
+and groundedness is checked in the handler — an `inferred` artifact is refused (`evidence_not_grounded`), because a
+constraint on inference that inference can lift is no constraint. One lift per constraint; a second is
+`constraint_not_active`. `constraints(include_lifted?)` (Read, Tier B and C) lists the caller's own constraints, ids
+and element names only, active first. The caller names the *constraint*, not the belief, because the constraint
+survives both the retirement and the deletion of the belief that provoked it.
+
+**What the schema already guaranteed and is now reachable.** Deleting the lift's evidence clears the reference and the
+guard withdraws the whole lift, so the dissent is active again and `infer` refuses the element again —
+`test_api_wiring_lifecycle_db.py::test_deleting_the_lift_evidence_withdraws_the_lift_and_the_element_blocks_again`.
+`I16` moves to `ENFORCED`.
+
+## V2-D106 — The slow lane asks its models before it writes, under the tenant's role, inside the deletion fence
+
+**Context.** A review of the worker found six defects that no test reached, because the loop lived in
+`scripts/run_worker.py` and `tests/` may not import `scripts/`:
+
+1. **Model calls inside the write transaction.** `apply_extraction` was documented as pure database work, but the
+   worker handed it the embedder and the relation adjudicator, which it called after `allocate_clock` had locked the
+   tenant's watermark — seconds of lock per adjudicated claim, during which the fast lane for the same user queued.
+2. **No restricted role.** `CME_RUNTIME_ROLE` was read and never used; every slow-lane write ran as the connecting owner.
+3. **Vector proposals merged without confirmation.** With no entity adjudicator — the state of every deployment, since
+   none was wired — `resolve_mention` returned a single vector candidate as *resolved*, merging "Munich office" into
+   "Berlin office" on a 0.769 cosine: the exact case `V2-D101` forbids. And an adjudicator's answer was trusted even if
+   it named an entity that was never offered.
+4. **No deletion fence.** A turn read at deletion epoch *E* and written after a deletion committed would resurrect what
+   the user removed; `process_one` fences this (`F5`) and the slow lane did not.
+5. **Recovery only at start-up**, so a lease held by a dead worker stayed `running` until some worker restarted; and an
+   extractor exception left its job `running` for the whole ten-minute lease instead of backing off.
+6. **A probe that could not see the queue.** `job` forces RLS and the probe never bound `app.user_id`, so in any
+   non-superuser deployment it reported "healthy" over any backlog. The test DSN is a superuser, which hid it.
+
+**Decision.**
+
+* The loop is engine code (`custom_memory_engine.worker`); the script is the process around it.
+* **Ask, then write** (`semantic.judgements`): embed every text up front; dry-run the write in a rolled-back
+  transaction with *recording* adapters to collect exactly the questions it asks; answer them with no transaction open;
+  write with *replay* adapters that cannot call a model and abstain on anything unrecorded. A second dry run is made
+  only when an entity answer could move a claim's subject.
+* Every slow-lane transaction runs under `SET LOCAL ROLE` + `app.user_id` (`security.scoping.tenant_scope`); only
+  `REINDEX ... CONCURRENTLY` keeps the owner, because it needs the index owner.
+* `EntityAdjudicator.choose` is asynchronous, and an LLM implementation exists
+  (`integrations.openai_compatible.OpenAiCompatibleEntityAdjudicator`) that shows the model numbered candidates and
+  never an id. A vector proposal without confirmation is `unresolved`; an answer outside the offered set is an
+  abstention.
+* The turn and the deletion epoch are read in one snapshot; the write requires the epoch unchanged, and a stale one
+  dead-letters the job with the same content-free audit event `process_one` writes.
+* Expired leases are returned on every idle cycle; a pre-write failure is recorded through `complete_one`'s backoff.
+* The probe reads each tenant inside its own scope, under the runtime role.
+
+**Tests.** `test_worker_loop_db.py` (every model call asserted to see an idle connection — fails with
+`embed:in_transaction` if the write is handed live adapters; cross-script confirmation; unconfirmed proposal left
+unattached; backoff; recovery by a live loop; graceful stop mid-call; RLS on another tenant's turn; deletion during the
+model call dead-letters). `test_worker_process_db.py` runs the real script as a child: SIGTERM exit 0, SIGTERM mid-call
+still commits, SIGKILL then restart recovers, missing variable is exit 2. `test_semantic_entities_db.py` pins the merge
+regression and the offered-set fence; `test_worker_deployment_db.py` runs the probe as the restricted role with a control
+proving the unbound read sees nothing. Each regression test was run against the old code and failed.
+
+## V2-D107 — Models are scored by the write they cause, and entity adjudication is chosen for its error profile
+
+**Context.** Two defects in the measuring instrument, found while extending it: the adjudication scorer accepted
+`duplicate`, `update` and `correction` for one another although the engine reinforces on the first and supersedes on
+the other two, so an answer that keeps a stale value scored as correct; and the adjudication prompt never offered
+`additive`, so a statement adding a detail to an existing belief had no correct answer that kept the detail (two cases
+had been labelled `duplicate` for that reason, which the engine would execute as "keep the old one").
+
+**Decision.** `evaluation.model_selection.cases.strategy_of` calls `conflict.commit_strategy`, and a case is correct
+when the answer causes the expected write (alternatives argued per case); no answer is never credited. The production
+prompt offers `additive` and says the two statements may be in different scripts. Entity adjudication is a measured
+task through the shipped adapter, with false merges counted apart from misses. Mixed-script extraction gains five cases.
+
+**Measured** (`reports/model_selection/round3/`): `gpt-6.2-sol` 20/20 adjudication, 10/11 mixed-script extraction,
+zero JSON failures, 10/12 entity with **one false merge**; `claude-haiku-5-5` 17/20, 7/11, two JSON failures, 10/12
+entity with **zero** false merges, 2.8 s p50 against 11.6 s; `claude-sonnet-5-5` 17/20, 6/11, 10/12 with zero.
+
+**Selection.** Extraction and relation adjudication stay on `gpt-6.2-sol`: the alternatives answered genuine
+contradictions as `update`, which supersedes a belief silently. Entity adjudication moves to `claude-haiku-5-5`
+(`CME_ENTITY_ADJUDICATOR_MODEL`): equal accuracy and the safe error profile — a false merge corrupts identity, a miss is
+repaired by the next mention. The sample (12 entity cases) is stated as finding failure kinds, not ranking within a
+point; a re-run that showed haiku merging falsely would reverse the choice.
+
+## V2-D108 — A deletion reaches the entities it orphans
+
+**Context.** An `entity` row holds a name (`canonical_name`, `aliases`) and, since migration 26, a vector derived from
+it — content in `I8`'s sense. No deletion path touched the table, and the runtime role holds no `DELETE` grant on it, so
+`delete(scope='all')` removed every memory and left the name of every person those memories were about. The leak
+scanner never looked at `entity`, which is why nothing reported it.
+
+**Decision.** Migration 27 adds `delete_orphaned_entities(user, ids)`, a `SECURITY DEFINER` function with a pinned
+`search_path`, gated by `deletion_in_this_transaction` exactly like `delete_exclusive_turns` (the transaction must have
+appended a `deletion_request`; the marker GUC alone is refused). It deletes only entities no surviving memory cites as
+subject; the `ON DELETE RESTRICT` foreign key stays the guarantee. `delete(scope='all')` erases every such entity of the
+user, including when no memory matched; a `topic` deletion whose target is an entity id — the subject key of the claims
+about it — erases that entity: per-person erasure. A `memory` deletion leaves entities alone, because without a record
+of which claim *mentioned* which entity the engine cannot tell a by-product from the user's declared structure; that
+boundary is stated here rather than guessed at. The receipt and the audit row carry `deleted_entities`, a count.
+
+**Tests.** `test_api_wiring_lifecycle_db.py`: `delete all` erases declared and mentioned names and audits only a count;
+a topic deletion by entity id erases that entity and nothing else, and a memory deletion erases none; the function is
+refused outside a deletion transaction even with the marker set. `test_migration_m26.py` covers 27's exact rollback.
+
+## V2-D109 — An export manifest's identity is (user, epoch, digest), and it goes with its user
+
+**Context.** Two defects found in review of PR #241. The manifest id was `exp-` + the digest, and `id` is a global
+primary key: a second export of an unchanged read set at a *new* deletion epoch collided with the old row and returned
+an id whose stored epoch was stale (never servable), and two users with identical readable sets (most simply both
+empty) collided, so the second got `validation_error`. Separately, migration 25 promised that a manifest is removable
+only by cascade from its user, while its guard raised on every `DELETE`, the cascade included.
+
+**Decision.** `engine.export.snapshot_id_for` hashes `user \0 epoch \0 digest`. Migration 28 replaces only the guard
+body: a `DELETE` is admitted when the parent `app_user` row is no longer visible (the cascade), and refused otherwise;
+`UPDATE` and `TRUNCATE` are refused as before. Tests: an export after an epoch change with an identical read set is
+servable and gets a new id; two users' empty exports get distinct ids; a direct delete is refused and the user cascade
+succeeds; migration 28 rolls back to the recorded version-27 fingerprint.

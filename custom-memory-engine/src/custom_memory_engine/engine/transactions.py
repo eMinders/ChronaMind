@@ -154,6 +154,16 @@ class CandidateVersionInput(_TransactionModel):
     #: in the caller's own scope.
     subject_entity_id: str | None = None
     predicate_key: str
+    #: The open semantic slot (migration 24, ``V2-D87``): a soft grouping key, normalized by
+    #: ``semantic.slots.normalize_slot`` before it reaches here. It is part of the exclusion key
+    #: (``COALESCE(semantic_slot, predicate_key)``) and of the supersession comparison, so two unrelated single-valued
+    #: facts about the same subject can each be current.
+    semantic_slot: str | None = None
+    #: The extractor's contextual judgement, recorded beside the consequence it produced.
+    cardinality_hint: str | None = None
+    #: The functional facet of an evolving-user-model artifact (migration 6). Optional, and ``None`` for a fact that is
+    #: not about the user's preferences, goals, constraints or habits -- which is most of them.
+    um_facet: str | None = None
     single_valued: bool = True
     content: str
     valid_from: AwareDatetime
@@ -419,7 +429,16 @@ _INSERT_COLUMNS = (
 )
 _INSERT_BASE_ARITY = 18
 #: Columns written only when the caller supplies them; absent, the axes/method triggers derive them.
-_OPTIONAL_COLUMNS = ("scope_path", "visibility", "kind", "method_id", "subject_entity_id")
+_OPTIONAL_COLUMNS = (
+    "scope_path",
+    "visibility",
+    "kind",
+    "method_id",
+    "subject_entity_id",
+    "semantic_slot",
+    "cardinality_hint",
+    "um_facet",
+)
 
 
 async def _insert_version(
@@ -448,6 +467,9 @@ async def _insert_version(
     kind: str | None = None,
     method_id: str | None = None,
     subject_entity_id: str | None = None,
+    semantic_slot: str | None = None,
+    cardinality_hint: str | None = None,
+    um_facet: str | None = None,
     archival_branch: str | None = None,
 ) -> None:
     """Single write path for memory_version rows; keeps the column list in one place."""
@@ -477,6 +499,9 @@ async def _insert_version(
         "kind": kind,
         "method_id": method_id,
         "subject_entity_id": subject_entity_id,
+        "semantic_slot": semantic_slot,
+        "cardinality_hint": cardinality_hint,
+        "um_facet": um_facet,
     }
     extra = [name for name in _OPTIONAL_COLUMNS if optional[name] is not None]
     columns = _INSERT_COLUMNS + "".join(f", {name}" for name in extra)
@@ -490,7 +515,9 @@ async def _insert_version(
 
 #: The columns that place a row rather than describe a version of it (``V2-D82``). A close-then-insert re-issues the
 #: *same belief*, so it must carry these from the row it re-issues; the axes trigger derives them for a new one.
-_PLACEMENT_COLUMNS = "scope_path, visibility, kind, method_id, subject_entity_id"
+_PLACEMENT_COLUMNS = (
+    "scope_path, visibility, kind, method_id, subject_entity_id, semantic_slot, cardinality_hint, um_facet"
+)
 
 
 async def _placement_of(cursor: Any, schema_name: str, version_id: str, user_id: str) -> dict[str, Any]:
@@ -528,6 +555,11 @@ def _successor_placement(candidate: CandidateVersionInput, prior: dict[str, Any]
         "kind": candidate.kind,
         "method_id": candidate.method_id,
         "subject_entity_id": candidate.subject_entity_id,
+        # `semantic_slot`, `cardinality_hint` and `um_facet` describe the *belief*, like `subject_key`: a re-issued
+        # copy keeps them, because re-pointing a claim at another slot would rewrite what the claim is about.
+        "semantic_slot": candidate.semantic_slot,
+        "cardinality_hint": candidate.cardinality_hint,
+        "um_facet": candidate.um_facet,
     }
 
 
@@ -715,6 +747,9 @@ async def stage_candidate(
                 kind=candidate.kind,
                 method_id=candidate.method_id,
                 subject_entity_id=candidate.subject_entity_id,
+                semantic_slot=candidate.semantic_slot,
+                cardinality_hint=candidate.cardinality_hint,
+                um_facet=candidate.um_facet,
             )
             await _insert_provenance(
                 cursor,
@@ -794,6 +829,9 @@ async def commit_initial_version(
                 kind=candidate.kind,
                 method_id=candidate.method_id,
                 subject_entity_id=candidate.subject_entity_id,
+                semantic_slot=candidate.semantic_slot,
+                cardinality_hint=candidate.cardinality_hint,
+                um_facet=candidate.um_facet,
             )
             await _insert_provenance(
                 cursor,
@@ -908,6 +946,9 @@ async def supersede_single(
                     "assertion_mode, confidence, importance, reinforcement_count, extractor_version "
                     "FROM {mv} "
                     "WHERE user_id = %s AND subject_key = %s AND predicate_key = %s "
+                    # the exclusion key's own grouping (`COALESCE(semantic_slot, predicate_key)`, migration 24):
+                    # supersession must find exactly the belief the constraint would refuse to overlap
+                    "AND COALESCE(semantic_slot, predicate_key) = COALESCE(%s, predicate_key) "
                     "AND single_valued = true AND status = 'active' "
                     "AND recorded_range IS NOT NULL AND upper_inf(recorded_range) "
                     "AND event_range && %s "
@@ -918,6 +959,7 @@ async def supersede_single(
                     candidate.user_id,
                     candidate.subject_key,
                     candidate.predicate_key,
+                    candidate.semantic_slot,
                     v_new_range,
                 ),
             )
@@ -948,6 +990,9 @@ async def supersede_single(
                     kind=candidate.kind,
                     method_id=candidate.method_id,
                     subject_entity_id=candidate.subject_entity_id,
+                    semantic_slot=candidate.semantic_slot,
+                    cardinality_hint=candidate.cardinality_hint,
+                    um_facet=candidate.um_facet,
                 )
                 await _insert_provenance(
                     cursor,

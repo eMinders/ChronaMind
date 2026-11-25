@@ -50,7 +50,8 @@ The table is the **complete** enumeration: `tests/test_api_contract.py` holds it
 ## 2. Shared types
 
 ```text
-SourceRef      { type: 'turn'|'tool'|'file'|'paper'|'event'|'external', ref: str, span?: str, content_hash: str }
+SourceRef      { type: 'turn'|'tool'|'file'|'paper'|'event'|'external', ref: str, span?: str, content_hash: str,
+                 role?: 'user'|'assistant'|'system' }
 ScopeSelector  exact(path) | subtree(path) | with_visibility(path, {project, shared})      # section 6
 QueryRequest   { text, intent?, mode: current_state|historical_as_of|historical_window|change|audit_as_of,
                  scope?, target_time?, belief_time?, window_start?, window_end?,
@@ -107,6 +108,7 @@ lineage produced; Tier C: its own assertions), `scope_writable` (`scope.access.a
 | 1 | Ingest | `ingest_episode` | ✓ | ✓ | ✓ | `scope_writable` |
 | 2 | Ingest | `ingest_artifact` | ✓ | ✓ | ✓ | `evidence_required`, `scope_writable` |
 | 3 | Read | `query` | ✓ | ✓ | ✓ | — |
+| 30 | Read | `constraints` | ✓ | ✓ | ✓ | — |
 | 4 | Read | `refine` | ✓ | ✓ | ✓ | `targets_readable` |
 | 5 | Read | `get` | ✓ | ✓ | ✓ | `targets_readable` |
 | 6 | Read | `provenance` | ✓ | ✓ | ✓ | `targets_readable` |
@@ -122,6 +124,7 @@ lineage produced; Tier C: its own assertions), `scope_writable` (`scope.access.a
 | 16 | Structure | `record_outcome` | ✓ | ✓ | ✓ | `targets_readable` |
 | 17 | Adjudicate | `adjudicate` | — | ✓ | ✓ | `targets_readable` |
 | 18 | Adjudicate | `dissent` | — | ✓ | ✓ | `targets_readable` |
+| 31 | Adjudicate | `lift` | — | ✓ | ✓ | `targets_readable` |
 | 19 | Maintain | `purge_working` | — | — | ✓ | `scope_writable` |
 | 20 | Maintain | `expire` | — | — | ✓ | `scope_writable` |
 | 21 | Maintain | `rebuild_index` | — | — | ✓ | — |
@@ -144,7 +147,7 @@ runtime by calling `api.contract.authorize` and honouring each condition.
 | ID | Rule | Test |
 |---|---|---|
 | TB1 | **Tier B cannot delete.** It may only `retract_own` an artifact of its own method lineage. | `test_tb1_tier_b_cannot_delete` |
-| TB2 | **Tier B cannot adjudicate** (`adjudicate`, `dissent`). A reflection service must not silence a conflict or a user's dissent. | `test_tb2_tier_b_cannot_adjudicate` |
+| TB2 | **Tier B cannot adjudicate** (`adjudicate`, `dissent`, `lift`). A reflection service must not silence a conflict or a user's dissent. | `test_tb2_tier_b_cannot_adjudicate` |
 | TB3 | Every operation that creates `asserted` requires source evidence (Tier B and Tier C alike). | `test_tb3_grounded_writes_require_evidence` |
 | TB4 | Nothing moves to `asserted` except Tier C adjudication of a `contested` item; `inferred → asserted` does not exist. | `test_tb4_only_tier_c_adjudication_promotes_to_asserted` |
 | TB5 | A Tier B lifecycle change (`retract_own`, `verify`, `refute`) applies to its own method lineage only. | `test_tb5_tier_b_lifecycle_changes_are_own_lineage_only` |
@@ -278,7 +281,7 @@ channel gets its own reported budget; it does not retire or silently replace `re
 
 ### 4.3 Write (grounded)
 
-**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key, subject_entity?, preconditions?: Precondition[], steps?: str[]) → Receipt | rejected`**
+**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key, subject_entity?, preconditions?: Precondition[], steps?: str[], assertion_mode?, cardinality?, semantic_slot?, um_facet?) → Receipt | rejected`**
 A grounded statement through the grounding policy. **`evidence` must be non-empty for Tier B and Tier C
 alike** (TB3). An optional `subject_entity` names an entity in the same scope as the claim; the claim's subject and
 entity remain scope-local. Result lifecycle: `asserted` or `contested`. *Errors:* `validation_error` (no evidence, bad
@@ -289,6 +292,39 @@ fields inside `candidate`. Passing either for any other kind is `validation_erro
 (`procedure_shape_requires_a_procedure`), and a malformed one is `validation_error` with the parser's code; neither is
 `forbidden`, and the error contract above is otherwise unchanged. `get` and `query` return both on a procedure
 artifact. The engine never executes a step; `engine/procedure_matching.py` answers applicability only.
+
+**Semantic write options (`W3.5`, `V2-D87`).** Four optional arguments carry what semantic extraction produces, and each
+is a closed or normalized value the engine validates before any statement runs:
+
+* `cardinality` (`single` | `multi` | `event`, default `multi`) decides `single_valued`. Only a single-valued claim can
+  supersede another and only it is exclusive within its slot, so this is the argument that switches the conflict
+  pipeline on. Omitting it keeps the pre-W3.5 multi-valued shape, so an existing caller's writes are unchanged.
+* `semantic_slot` is the open grouping key (migration 24) that says what the claim is about without a catalog. It is
+  normalized once (`semantic.slots.normalize_slot`: NFKC, casefold, separator collapse, edge punctuation stripped) and
+  the schema enforces the same rule. Two single-valued claims in different slots are two facts and neither supersedes
+  the other.
+* `um_facet` tags an artifact as part of the evolving user model (`preference` | `goal` | `constraint` | `context` |
+  `decision_pattern` | `meta_preference`). Before `W3.5` the column was read and never written.
+* `assertion_mode` is the caller's pragmatics. `asserted` may become active; `planned` routes to `plans_to`;
+  `hedged`, `hypothetical` and `third_party` are **held** (`contested`, routed to `conflicts`) rather than rejected;
+  `quoted` and `joking` are rejected because they assert nothing.
+
+**Non-turn evidence (`V2-D87`).** `evidence` may cite `external`, `tool`, `file` or `event` sources, each with its
+`content_hash`; the row stores the declared type, its reference and that hash. A claim whose every source is
+non-turn **and declares no role** is forced to `assertion_mode = third_party` whatever the caller asked for —
+presenting retrieved text as fact is precisely what the channel router exists to prevent — and the deterministic
+authority ladder
+(`semantic.authority`: `USER > SYSTEM > ASSISTANT > THIRD_PARTY`, derived from `source_type`/`evidence_role`) is what
+stops such a claim superseding one resting on the user's own words. A refused supersession is *recorded*
+(`memory_conflict.reason_code = 'authority_quarantine'`), never silently dropped.
+
+**`role` on a non-turn source (`V2-D96`, `V2-D93`).** An application that keeps its own transcript — the ChronaMind app's
+session log is the one deployment this engine has — cites its own record of who spoke, not a `turn` row the engine never
+saw. Without `role` on such a source every claim it makes would be quarantined as third-party, which would make the
+engine unusable for that deployment; with it, the claim is classified exactly as a `turn` source would be. A **`turn`
+source may not carry `role`**: there the role is a column of the row being cited, and a caller-supplied copy would be a
+second source of truth. An undeclared `role` is `validation_error: source_role_invalid`; a `role` on a `turn` source is
+`validation_error: source_role_not_allowed_for_turn`.
 
 **`retract_own(ctx, artifact_id, reason) → Receipt`**
 Moves an artifact to `retired` (recorded-time close). Tier B: only artifacts **its own method produced**. Tier C:
@@ -369,6 +405,25 @@ The user rejects an inference (`USER_MODEL.md` §3 "Contest", `V2-D33`): `inferr
 (`I16`). No evidence is required: the user is the authority over their own model. Tier C only (TB2): a cognition
 service must not dissent on the user's behalf. *Errors:* `precondition_failed` (not `inferred`), `forbidden`.
 
+**`lift(ctx, constraint_id, evidence_artifact_id, note?) → Receipt`** (`V2-D105`)
+The undo `I16` describes: a denied element reopens, but only on **new grounded evidence**. `evidence_artifact_id` names an
+`observed` or `asserted` artifact of the caller's — an `inferred` one is refused (`evidence_not_grounded`), because a
+constraint on inference cannot be lifted by more inference without making the constraint vacuous. The lift is a
+record, not a permission: `lifted_at`, `lifted_by` and `lift_evidence_version_id` move together (the schema's
+`negative_constraint_lift_is_complete`), and **deleting the evidence withdraws the lift**, so the dissent stands again.
+One lift per constraint (`constraint_not_active` on a second attempt), Tier C only (TB2). The caller names the
+constraint rather than the artifact because the constraint survives both the retirement and the deletion of the belief
+that provoked it. *Errors:* `precondition_failed` (`constraint_not_active`, `evidence_not_readable`,
+`evidence_not_grounded`), `validation_error`, `forbidden`.
+
+### 4.6.1 Reading back the dissent
+
+**`constraints(ctx, include_lifted?) → ConstraintList`** (`V2-D105`)
+The caller's own negative constraints, active first. Without it a constraint's id is unknowable and a dissent is a
+permanent block with no way to name it. Returns identifiers only — the constraint id, the scope path the caller owns,
+the predicate key, the method *family* (a registered name), both instants, and the lift's evidence id — and never
+content. Available to Tier B, because a service acting for the user must be able to see why its inference was refused.
+
 ### 4.7 Maintain — Tier C only
 
 **`purge_working(ctx, scope) → PurgeReceipt`** — deletes `retention='working'` episodes of one scope, audited; durable
@@ -376,9 +431,15 @@ claims and abstractions are untouched (retention floors). The receipt carries th
 nothing else: a purge touches no caller-named artifact, so there is no artifact id to return and an id would be the one
 thing §1.1 forbids. A repeated purge returns `(0, retained)` and is not an error; the counts also appear, content-free,
 in the scope event (an `audit_event` of type `working_purged`). An episode that a surviving row cites as evidence is
-retained, not promoted or demoted: rule PW-1 in `engine/purge.py`, logged as `E-026-F1` for a decision record. **`expire(ctx, scope, as_of?) → Receipt`** — applies
-retention expiry; recorded as a scope event, not a deletion of knowledge. **`rebuild_index(ctx, index:
-fts|vector|closure_hash) → JobId`** — queues an index rebuild. *Errors:* `forbidden`, `validation_error`.
+retained, not promoted or demoted: rule PW-1 in `engine/purge.py`, logged as `E-026-F1` for a decision record. **`expire(ctx, scope, as_of?) → ExpiryReceipt`** — applies retention expiry: an abstraction whose
+`profile.abstraction_expiry` window has elapsed gets `abstraction_stats.expires_at` stamped, which is what derives the
+`expired` stale cause (`V2-D24`), and one content-free scope event (`retention_expired`) records two counts. Nothing is
+deleted — the contract's `deletes` flag was corrected to `false` (`V2-D97`) — and the numbers come only from the
+profile, so a deployment without a policy expires nothing (`V2-D14`). `as_of` may not be in the future (the engine's own
+clock is the observation, `V2-D73`). *Errors:* `forbidden`, `validation_error`, `precondition_failed`.
+**`rebuild_index(ctx, index: fts|vector|closure_hash) → JobId`** — queues an index rebuild; the worker runs
+`REINDEX ... CONCURRENTLY` for `fts`/`vector` (outside any transaction) and reseals `closed_over_hash` for
+`closure_hash` (`engine/index_maintenance.py`). *Errors:* `forbidden`, `validation_error`.
 All Maintain operations are **admin-only** (`V2-D47`).
 
 **`register_method(ctx, name, version, params_schema_hash, description, idempotency_key) → MethodId`** (`V2-D46`)

@@ -4,7 +4,7 @@
 (`--check`) or if any element is unowned (`tests/test_plan_coverage.py`). Elements are extracted from
 `ARCHITECTURE_V2.md`; owners come from `INVARIANT_LEDGER.md` (invariants) and `COVERAGE.md` (the rest).
 
-**70 elements, 0 unowned.**
+**72 elements, 0 unowned.**
 
 ## Kinds (4)
 
@@ -39,14 +39,14 @@
 | `I6` | §11 | `enforced` |
 | `I7` | §11 | `E-023`, `E-033` |
 | `I8` | §11 | `enforced` |
-| `I9` | §11 | `A-014` |
-| `I10` | §11 | `E-016`, `E-037` |
-| `I11` | §11 | `C-010`, `C-021` |
-| `I12` | §11 | `E-025` |
+| `I9` | §11 | `enforced` |
+| `I10` | §11 | `enforced` |
+| `I11` | §11 | `enforced` |
+| `I12` | §11 | `enforced` |
 | `I13` | §11 | `enforced` |
 | `I14` | §11 | `enforced` |
 | `I15` | §11 | `C-010`, `C-021` |
-| `I16` | §11 | `UM-012` |
+| `I16` | §11 | `enforced` |
 | `I17` | §11 | `enforced` |
 
 ## Channels (4)
@@ -58,7 +58,7 @@
 | `procedures` | §9.1 | `E-017`, `E-030`, `E-033` |
 | `conflicts` | §9.1 | `E-017`, `E-033`, `E-035` |
 
-## Operations (29)
+## Operations (31)
 
 | Element | Declared | Owners |
 |---|---|---|
@@ -68,6 +68,7 @@
 | `refine` | §8.1 Read | `E-039`, `E-034` |
 | `get` | §8.1 Read | `E-039`, `E-033` |
 | `provenance` | §8.1 Read | `E-039`, `E-033` |
+| `constraints` | §8.1 Read | `E-053` |
 | `assert` | §8.1 Write (grounded) | `E-039`, `E-015` |
 | `retract_own` | §8.1 Write (grounded) | `E-039`, `E-016` |
 | `infer` | §8.1 Write (inferred) | `E-039`, `C-021` |
@@ -80,6 +81,7 @@
 | `record_outcome` | §8.1 Structure | `E-039`, `E-030` |
 | `adjudicate` | §8.1 Adjudicate | `E-039`, `E-016` |
 | `dissent` | §8.1 Adjudicate | `E-039`, `UM-012` |
+| `lift` | §8.1 Adjudicate | `E-053`, `UM-012` |
 | `purge_working` | §8.1 Maintain | `E-039`, `E-026` |
 | `expire` | §8.1 Maintain | `E-039`, `A-014` |
 | `rebuild_index` | §8.1 Maintain | `E-039`, `A-014` |
@@ -112,7 +114,7 @@
 - `M2`: SYNC_LOG §3 ['E-011', 'MA-011'] → now ['E-011']
 - `M9`: SYNC_LOG §3 ['E-011', 'MA-011'] → now ['E-011']
 - `M8`: SYNC_LOG §3 ['E-018', 'E-020'] → now ['E-020']
-- `I12`: SYNC_LOG §3 ['E-004'] → now ['E-025']
+- `I12`: SYNC_LOG §3 ['E-004'] → now ['enforced']
 - `I1′`: SYNC_LOG §3 ['E-004'] → now ['enforced']
 - `I13`: SYNC_LOG §3 ['E-017', 'E-037', 'E-038', 'MA-011', 'UM-012'] → now ['enforced']
 - `I17`: SYNC_LOG §3 ['E-017', 'E-037', 'E-038', 'MA-011', 'UM-012'] → now ['enforced']

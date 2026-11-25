@@ -114,6 +114,11 @@ VALUES: dict[str, object] = {
     "content": "x",
     "event_time": None,
     "event_range": None,
+    # the semantic write options (`V2-D87`); `None` is the documented default for each
+    "assertion_mode": None,
+    "cardinality": None,
+    "semantic_slot": None,
+    "um_facet": None,
     "request": {},
     "result_id": "",  # replaced by a real handle in `valid_arguments` (E-034)
     "instruction": "x",
@@ -158,6 +163,11 @@ VALUES: dict[str, object] = {
     "segment": "p1",
     "principal": "bob",
     "grant_id": "g1",
+    # the lift loop (V2-D105). `evidence` here is an artifact id, not a SourceRef list: a lift's ground is a version
+    # the caller already holds, and the schema stores it as a foreign key, so a ref would have to be resolved first.
+    "constraint_id": "nc1",
+    "evidence_artifact_id": "a1",
+    "include_lifted": False,
 }
 
 

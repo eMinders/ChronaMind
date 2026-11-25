@@ -1,0 +1,52 @@
+# systemd unit for the slow-lane worker (`V2-D103`).
+#
+# Install:
+#   sudo install -m 0644 deploy/cme-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cme-worker
+#
+# Why a unit rather than a supervisor inside the engine: the worker is a *process* with one job (drive the queue), a
+# restart policy, and an environment. Keeping that out of `src/` means the engine stays importable by a test, a script and
+# a host without inheriting a process model it does not own.
+#
+# What each directive is for, because a restart policy nobody explained is a policy nobody maintains:
+#
+#   Restart=always          the loop exits 0 only on SIGTERM; any other exit is a fault and must come back
+#   RestartSec=5            a crash loop should be visible in the journal, not a fork bomb
+#   KillSignal=SIGTERM      `scripts/run_worker.py` handles SIGTERM: it finishes the job in flight, then exits. SIGKILL
+#                           would abandon a lease, which `recover_stale` repairs after the lease window instead
+#   TimeoutStopSec=60       longer than one extraction (a model call with retries) so a graceful stop can finish
+#   WatchdogSec             reserved: a `sd_notify` heartbeat is not wired, so the unit does not claim one
+#   NoNewPrivileges, ProtectSystem, PrivateTmp
+#                           the worker needs the network (the model) and its environment, nothing else
+[Unit]
+Description=ChronaMind memory engine — slow-lane worker
+Documentation=file:///opt/chronamind/custom-memory-engine/deploy/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chronamind
+Group=chronamind
+WorkingDirectory=/opt/chronamind/custom-memory-engine
+# The environment file holds the DSN, the runtime role, the deployment keys and the provider credentials. It is the only
+# place they live: never in the unit, never in the repository (`V2-D54`, and `.env` is gitignored).
+EnvironmentFile=/etc/chronamind/worker.env
+ExecStart=/opt/chronamind/custom-memory-engine/.venv/bin/python scripts/run_worker.py
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=60
+# Health: the probe reads the queue, so it fails when the loop is not draining it — not merely when the process is gone.
+ExecStartPost=/bin/sh -c 'sleep 10; /opt/chronamind/custom-memory-engine/.venv/bin/python scripts/worker_healthcheck.py'
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/chronamind/custom-memory-engine/.model-cache
+# Environment (see deploy/README.md): CME_DATABASE_URL, CME_RUNTIME_ROLE, CME_SCHEMA, CME_WORKER_USERS,
+# CME_PROVISIONING_KEYS, CME_LLM_BASE_URL/CME_LLM_API_KEY, CME_LLM_PROTOCOL, CME_EXTRACTOR_MODEL,
+# CME_ADJUDICATOR_MODEL, CME_EMBEDDING_ASSET, CME_EMBEDDING_DIR.
+
+[Install]
+WantedBy=multi-user.target

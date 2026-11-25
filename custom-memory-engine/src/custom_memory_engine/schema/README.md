@@ -25,8 +25,15 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` �
 | `019_subject_entity.sql` | Migration 19 (`V2-D74`): `memory_version.subject_entity_id`, making an entity subject a composite foreign key (exists, same principal, same scope) |
 | `020_outcome_stats.sql` | Migration 20 (`E-027`, `V2-D75`): `outcome_stats`, the procedure outcome counters `record_outcome` maintains. `E-030` did **not** extend it: the procedure shape has its own table (migration 21, `V2-D77`) |
 | `021_procedure_shape.sql` | Migration 21 (`E-030`): `procedure_shape`, a procedure's `preconditions` and `steps`, written once with it; the precondition grammar is enforced in SQL |
+| `022_deletion_through_cognition.sql` | Migration 22 (`E-037`, `V2-D50`): deletion through cognition, the 11-channel substrate, the acyclic derivation guard and the keyed-digest receipt surface |
+| `023_multilingual_index.sql` | Migration 23 (`W3.5`, `V2-D86`): the `'simple'`/`pg_trgm` lexical surface and the multilingual `halfvec` embedding slots with one HNSW index each |
+| `024_semantic_slot.sql` | Migration 24 (`W3.5`, `V2-D87`): `semantic_slot`, `cardinality_hint`, the slot-scoped exclusion key, and the derived `authority_rank` |
+| `025_export_snapshot.sql` | Migration 25 (`E-038`/`F11`, `V2-D99`): `export_snapshot`, the durable epoch-bound export manifest with its self-consistency constraints and append-only guard |
+| `026_entity_embedding.sql` | Migration 26 (`V2-D101`): `entity.embedding_1024` (`halfvec`), `embedding_model`, and the HNSW index that makes entity resolution's vector stage a *proposal* source |
+| `027_entity_erasure.sql` | Migration 27 (`V2-D108`): `delete_orphaned_entities`, the deletion-gated `SECURITY DEFINER` path that lets `delete(all)` and an entity-`topic` deletion erase the entities they orphan; the runtime role still holds no `DELETE` on `entity` |
+| `028_export_snapshot_cascade.sql` | Migration 28: the export-manifest guard admits the cascade from `app_user` (migration 25 promised it and raised on it); a direct `DELETE`, `UPDATE` or `TRUNCATE` is still refused |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
-| `init_extensions.sql` | `vector` + `btree_gist` bootstrap for disposable databases |
+| `init_extensions.sql` | `vector` + `btree_gist` + `pg_trgm` bootstrap for disposable databases |
 
 [`migrate.py`](migrate.py) implements the `RL-041` migration runner described below. `RL-042` owns transactional supersession and `archive_version`. `RL-043` owns retrieval functions as engine APIs. `bitemporal_on_full.sql` still defines the design-check query helpers locally so the 43 assertions can run before those tasks.
 
@@ -53,7 +60,7 @@ Only schemas created and marked by this runner, owned by the current role, are
 managed. Existing unmarked schemas are never adopted or erased. The twelve
 canonical tables stay unchanged; `_cme_schema_migrations` is a private migration-history
 table recording version, filename, canonical-LF source SHA-256, live-catalog digest
-and application time. Migrations **1–18** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
+and application time. Migrations **1–24** are registered in `migrate.MIGRATIONS` (append-only); integration suites build their
 schema from the same list (`tests/integration/schema.py`), so every migration is exercised by every suite.
 Unknown versions and edited historical sources are refused, rather than reapplied.
 
@@ -484,6 +491,73 @@ RLS with read/insert policies; the runtime role holds `SELECT, INSERT` only.
 Rollback: `rollback/021_procedure_shape.sql` restores version 20 exactly. **Data loss, stated:** every stored
 `preconditions`/`steps` blob is dropped (version 20 has nowhere to keep it). The procedures themselves are untouched
 and read as "no preconditions", which is "always applicable"; nothing is backfilled on reapply.
+
+## Migration 23: language-agnostic lexical indexing and multilingual dense slots (`023_multilingual_index.sql`, `W3.5`, `V2-D86`)
+
+Two English-locked assumptions removed, additively.
+
+**Lexical.** `memory_version.content_fts_simple` is `to_tsvector('simple', content)`, a stored generated column with a
+GIN index, and `memory_version_content_trgm_idx` is a `gin_trgm_ops` index on `content`. `'simple'` is the only
+text-search configuration with no language (lowercase and split, nothing else), which is what a corpus whose language is
+per-row requires: English stemming does not merely fail on Arabic or CJK, it discards the morphology and matches noise.
+The trigram arm covers what a tokeniser cannot -- Arabic root variation without diacritics, transliterated names,
+partially-typed queries, hyphenated identifiers. `content_fts` (English) is untouched: v1 retrieval reads it.
+
+**Dense.** `memory_embedding.embedding` was `vector(384)` because the only shipped baseline was
+`BAAI/bge-small-en-v1.5`. That column keeps its type and its data and loses only its `NOT NULL`; four **dimension
+slots** are added beside it -- `embedding_768`, `embedding_1024`, `embedding_1536`, `embedding_3072`, each `halfvec` of a
+fixed width with its own partial HNSW index (`halfvec_cosine_ops`, `WHERE slot IS NOT NULL`).
+
+Why slots and not one "configurable" column: pgvector's HNSW index is built for one fixed dimension, and a `vector`
+column without a typmod cannot be indexed at all, so a single table cannot hold arbitrary dimensions *and* be
+ANN-indexed. Slots give the property that actually matters -- **coexistence during a re-embedding rollout**, each model
+searchable, no second database, no per-deployment migration parameter. A new dimension class is a one-paragraph
+migration; that is the documented extension point, and it is more honest than a schema that claims to be
+dimension-agnostic. `memory_embedding_exactly_one_vector_check` requires exactly one slot per row;
+`memory_embedding_slot_dimensions_check` checks `vector_dims(slot)` against the slot's width, so a 1024d vector in the
+1536 slot is refused at the row instead of discovered as a missing hit.
+
+The legacy 384 slot keeps **exact** search on purpose: it is what the v1 evaluations were measured against, and an
+approximate index would move a published benchmark's numbers under a migration that claims to be additive.
+
+Requires `pg_trgm`. Rollback: `rollback/023_multilingual_index.sql` restores version 22 exactly (the legacy column and
+its data are untouched; the four slot columns and their vectors are dropped, which is stated, not discovered). `pg_trgm`
+is deliberately **not** dropped by the rollback: extension ownership belongs to the deployment's bootstrap
+(`tests/init_extensions.sql`), not to a schema migration. `pg_trgm` is required in `public` so the engine schema's
+catalog fingerprint stays free of extension functions (`test_tenant_integrity_db`'s pinning rule).
+
+## Migration 24: an open semantic slot, an explicit cardinality hint, and source authority (`024_semantic_slot.sql`, `W3.5`, `V2-D87`)
+
+The database stops deciding *domain* vocabulary and keeps enforcing *invariants*.
+
+| Column | Meaning |
+|---|---|
+| `memory_version.semantic_slot` | open-ended, normalized grouping key (`residence`, `preferred_editor`, ...), `NULL` for none; ≤ 120 characters, trimmed, no control characters, immutable in place |
+| `memory_version.cardinality_hint` | the extractor's contextual judgement (`single` / `multi` / `event`), recorded so the decision that produced `single_valued` stays auditable and distinguishable from its consequence |
+| `memory_evidence.authority_rank` | `GENERATED ALWAYS AS (CASE WHEN source_type <> 'turn' THEN 3 WHEN evidence_role = 'user' THEN 0 WHEN evidence_role = 'system' THEN 1 WHEN evidence_role = 'assistant' THEN 2 ELSE 3 END) STORED` |
+
+`predicate_key` stays a foreign key into `predicate_schema`, because the closed **structural** vocabulary (`episode`,
+`statement`, `plans_to`) is exactly what a foreign key should protect. V1's mistake was not having a catalog; it was
+making the catalog the only way to say what a claim is about, which forced V2 `assert` to write
+`predicate_key = 'statement'` for every claim and thereby switch conflict detection off.
+
+`authority_rank` is **generated**, not supplied: Veracium's authority ladder is a guarantee only if it cannot be
+asserted by the text it governs, and a generated column is the one form a compromised runtime cannot forge. It is
+derived from `source_type` and `evidence_role`, both already structural since migrations 8/17.
+
+**The exclusion key gains the slot.** `no_bitemporal_overlap` compared `(scope_path, subject_key, predicate_key)` as migration
+15 re-keyed it (`I5`); with one generic predicate for every claim, two unrelated single-valued facts about the same
+subject (`residence` and `preferred_editor`) collide on one key and the constraint refuses a legal write. The key
+becomes `COALESCE(semantic_slot, predicate_key)`: identical to the version-15 key for every row that names no slot,
+slot-scoped only where a slot was supplied. `COALESCE` is immutable and `btree_gist` indexes text expressions, so this is a real
+exclusion constraint, not a comment.
+
+`guard_update` is restated in full (migration 22's body plus the two new columns in both tuples); a partial replacement
+would silently drop the `V2-D50` tombstone branch.
+
+Rollback: `rollback/024_semantic_slot.sql` restores version 23. **Data loss, stated:** slots and hints recorded since
+migration 24 have nowhere to live in version 23. The key narrows only after collapsing colliding slot-scoped singles
+through the ordinary archival branch, so the narrower constraint cannot be satisfied by raising.
 
 The async Python API is `MigrationRunner(MigrationConfig(...))`, with `status()`,
 `apply()` and `reset(confirm_schema=...)`. Records are immutable; the public runner
