@@ -30,7 +30,7 @@ no worker at all (claims are stored, extraction simply does not happen until one
 | `CME_HOST_TOKENS` | host | JSON `{token: {principal, tier, admin}}`. Tokens are the *only* source of tier. Never logged (the registry's repr shows a count) |
 | `CME_WORKER_USERS` | worker | the principals this worker serves — the queue is tenant-scoped, so this is the worker's whole remit |
 | `CME_LLM_BASE_URL`, `CME_LLM_API_KEY`, `CME_LLM_PROTOCOL` | worker | the provider (the credential comes from the env file only) and which wire shape to speak: Claude on `/v1/messages`, GPT on `/v1/chat/completions`, inferred from the model family unless overridden |
-| `CME_EXTRACTOR_MODEL`, `CME_ADJUDICATOR_MODEL` | worker | the measured selection (`reports/model_selection/README.md`); the adjudicator model serves both relation and entity adjudication |
+| `CME_EXTRACTOR_MODEL`, `CME_ADJUDICATOR_MODEL`, `CME_ENTITY_ADJUDICATOR_MODEL` | worker | the measured selection per capability (`reports/model_selection/README.md`); the entity adjudicator defaults to the relation adjudicator when unset |
 | `CME_ADJUDICATE` | worker | `0` disables both adjudicators (extraction only, cheaper, no semantic dedup and no cross-script entity merges). Default on |
 | `CME_WORKER_IDLE_POLL` | worker | seconds between polls when idle (default 5); also the cadence at which expired leases are returned |
 | `CME_RERANKER_ASSET`, `CME_RERANKER_DIR`, `CME_RERANKER_FLOOR` | host | the relevance judge (`V2-D104`): `bge-reranker-v2-m3`, or unset to return the fused page unjudged. The floor defaults to the measured `-8.8`; change it only after re-measuring |

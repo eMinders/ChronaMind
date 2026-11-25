@@ -3048,3 +3048,26 @@ model call dead-letters). `test_worker_process_db.py` runs the real script as a 
 still commits, SIGKILL then restart recovers, missing variable is exit 2. `test_semantic_entities_db.py` pins the merge
 regression and the offered-set fence; `test_worker_deployment_db.py` runs the probe as the restricted role with a control
 proving the unbound read sees nothing. Each regression test was run against the old code and failed.
+
+## V2-D107 — Models are scored by the write they cause, and entity adjudication is chosen for its error profile
+
+**Context.** Two defects in the measuring instrument, found while extending it: the adjudication scorer accepted
+`duplicate`, `update` and `correction` for one another although the engine reinforces on the first and supersedes on
+the other two, so an answer that keeps a stale value scored as correct; and the adjudication prompt never offered
+`additive`, so a statement adding a detail to an existing belief had no correct answer that kept the detail (two cases
+had been labelled `duplicate` for that reason, which the engine would execute as "keep the old one").
+
+**Decision.** `evaluation.model_selection.cases.strategy_of` calls `conflict.commit_strategy`, and a case is correct
+when the answer causes the expected write (alternatives argued per case); no answer is never credited. The production
+prompt offers `additive` and says the two statements may be in different scripts. Entity adjudication is a measured
+task through the shipped adapter, with false merges counted apart from misses. Mixed-script extraction gains five cases.
+
+**Measured** (`reports/model_selection/round3/`): `gpt-6.2-sol` 20/20 adjudication, 10/11 mixed-script extraction,
+zero JSON failures, 10/12 entity with **one false merge**; `claude-haiku-5-5` 17/20, 7/11, two JSON failures, 10/12
+entity with **zero** false merges, 2.8 s p50 against 11.6 s; `claude-sonnet-5-5` 17/20, 6/11, 10/12 with zero.
+
+**Selection.** Extraction and relation adjudication stay on `gpt-6.2-sol`: the alternatives answered genuine
+contradictions as `update`, which supersedes a belief silently. Entity adjudication moves to `claude-haiku-5-5`
+(`CME_ENTITY_ADJUDICATOR_MODEL`): equal accuracy and the safe error profile — a false merge corrupts identity, a miss is
+repaired by the next mention. The sample (12 entity cases) is stated as finding failure kinds, not ranking within a
+point; a re-run that showed haiku merging falsely would reverse the choice.

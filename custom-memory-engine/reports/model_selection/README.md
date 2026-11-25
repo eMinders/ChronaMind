@@ -38,7 +38,49 @@ leaves the vocabulary again. **Every adjudication figure published before this c
 | `claude-sonnet-5-5` | 10/14 | 8/10 | 3/6 | 3/3 | 11/14 | 100% | 0 | 6.4 s | 11.1 s | 47 k |
 | `claude-haiku-5-5` | 12/14 | 8/10 | 2/6 | 3/3 | 10/14 | 100% | 0 | 4.9 s | 10.3 s | 61 k |
 
-## Selection
+## Round 3 — scored by the write, with entity adjudication (`V2-D107`, `round3/`)
+
+**What changed in the instrument, and why it matters more than the numbers.**
+
+1. **Adjudication is scored by the engine's write, not by the label.** The previous scorer accepted `duplicate`,
+   `update` and `correction` for one another. The engine *reinforces* on `duplicate` and *supersedes* on the other two,
+   so a move answered "duplicate" kept the old address and was still scored correct. `cases.strategy_of` now calls
+   `conflict.commit_strategy` itself, so the scorer and the engine cannot disagree about what an answer does.
+2. **`additive` is in the prompt.** It was always in the engine's vocabulary (`RELATIONS`) and never offered to the
+   model. Without it, "I work remotely three days a week" against "I work remotely" had no correct answer that keeps
+   the new detail; two cases that had been labelled `duplicate` for that reason are relabelled and argued in place.
+   The prompt also says the two statements may be in different scripts.
+3. **Entity adjudication is measured** through the shipped adapter (`OpenAiCompatibleEntityAdjudicator`), on 12 cases
+   of which 5 must *not* merge. False merges and misses are counted separately, because they cost differently.
+4. **Five more mixed-script extraction cases** (Arabizi, code-switching mid-sentence).
+
+| model | mixed-script extraction | quotes grounded | JSON failures | adjudication (20) | entity (12) | false merges | p50 |
+|---|---|---|---|---|---|---|---|
+| `gpt-6.2-sol` | **10/11** | 16/16 | **0** | **20/20** | 10/12 | **1** | 11.6 s |
+| `claude-haiku-5-5` | 7/11 | 12/12 | 2 | 17/20 | 10/12 | **0** | 2.8 s |
+| `claude-sonnet-5-5` | 6/11 | 14/14 | 2 | 17/20 | 10/12 | **0** | 3.1 s |
+
+**What the errors were.** Both Claude models answered two genuine contradictions (no change signal) as `update` or with
+no relation — `update` silently supersedes a belief the engine cannot know is stale, which is exactly what `conflicts`
+exists to prevent. Their mixed-script failures include invalid JSON on Arabizi turns. `gpt-6.2-sol`'s one entity
+error that matters merged "Berlin" into "berlin office"; its other was an abstention. The Claude models' four entity
+errors were all abstentions.
+
+## Selection (current)
+
+| capability | model | why |
+|---|---|---|
+| semantic extraction | **`gpt-6.2-sol`** | best on every extraction set, including mixed-script (10/11 against 7 and 6), the only one with zero JSON failures; 100% quote grounding |
+| relationship adjudication | **`gpt-6.2-sol`** | 20/20 scored by the write; the alternatives turn contradictions into silent supersessions |
+| entity adjudication | **`claude-haiku-5-5`** (`CME_ENTITY_ADJUDICATOR_MODEL`) | equal accuracy, **zero false merges** against one, and 4× faster. A false merge corrupts identity; a miss is repaired by the next mention, so the safe error profile wins the tie |
+| embeddings | **local `bge-m3`** | the provider serves none; `reports/retrieval/` |
+| relevance judge (read path) | **local `bge-reranker-v2-m3`** | separates answerable from unanswerable where no cosine floor can (`reports/retrieval/` round 3, `V2-D104`) |
+
+**Sample size, stated.** 12 entity cases and 20 adjudication pairs are enough to find the failure *kinds* above and not
+enough to rank models within a point. The entity choice rests on the asymmetric cost of the one false merge, not on a
+claimed accuracy difference; a re-run that showed haiku merging falsely would reverse it.
+
+## Round 2 selection (superseded by the table above for entity adjudication)
 
 | capability | model | why |
 |---|---|---|
@@ -46,7 +88,7 @@ leaves the vocabulary again. **Every adjudication figure published before this c
 | relationship adjudication | **`gpt-6.2-sol`** | 13 of 14, against 11 and 10. |
 | entity adjudication | `gpt-6.2-sol` (same client) | the cascade's last stage asks a yes/no question about a short candidate list; the same model, no second selection to justify |
 | embeddings | **local `bge-m3`** | the provider serves none; measured in `reports/retrieval/` |
-| reranking | **none** | measured and rejected in `reports/retrieval/` (nDCG 0.882 fused against 0.765 BM25-reranked, 0.726 recency-reranked) |
+| reranking | **none** | measured and rejected in `reports/retrieval/` (nDCG 0.882 fused against 0.765 BM25-reranked, 0.726 recency-reranked). Round 3 of the retrieval report adds a cross-encoder *judge*, which is a different thing: it gates as well as orders |
 
 **The documented alternative.** `claude-haiku-5-5` costs 2.5-4.9 s per call against 9.0 s and scores four adjudication
 points lower. Adjudication runs once per conflicting candidate on the write path, so a deployment with a tight write
@@ -103,7 +145,7 @@ needs to know — the two cannot both be true, and the new value replaces the ol
 label set in the harness has been widened accordingly, and this paragraph is here because silently changing a metric to
 make a number look better is exactly what a measurement report must not do.
 
-## Selection
+## Round 1 selection (historical; superseded twice)
 
 | capability | choice | why |
 |---|---|---|
@@ -112,12 +154,12 @@ make a number look better is exactly what a measurement report must not do.
 | embeddings | **local `bge-m3`** | the provider serves no embedding endpoint; the local model is pinned, reproducible, and measured (see `reports/retrieval/README.md`). |
 | reranking | **none** | measured: an LLM rerank on the top-5 candidates scored 10/14 top-1 against the fused order's 9.6/14 — inside noise — while abstaining on the cross-script questions the dense arm already solved. It also costs one model call per *read*, which contradicts the zero-model read path (`V2-D86`). |
 
-Reproduce with:
+Reproduce round 3 with (credentials from the env file only; `PYTHONPATH=.` so `evaluation/` is importable):
 
 ```bash
-scripts/eval_models.py --models gpt-6.2-sol claude-haiku-5-5 claude-sonnet-5-5 \
-  --tasks extraction_en extraction_ar extraction_mixed schema adjudication \
-  --out reports/model_selection/final
+PYTHONPATH=. uv run --env-file ../.env python scripts/eval_models.py \
+  --models gpt-6.2-sol claude-haiku-5-5 claude-sonnet-5-5 \
+  --tasks extraction_mixed adjudication entity_adjudication --out reports/model_selection/round3
 ```
 
 The quotas on the gateway used for this evaluation are limited and it returned `insufficient_quota` mid-sweep once,

@@ -287,6 +287,9 @@ def settings_from_environment(environment: Mapping[str, str]) -> WorkerSettings:
     base_url, api_key = required("CME_LLM_BASE_URL"), required("CME_LLM_API_KEY")
     extractor_model = required("CME_EXTRACTOR_MODEL")
     adjudicator_model = environment.get("CME_ADJUDICATOR_MODEL", "").strip() or extractor_model
+    # Selected separately (V2-D107): entity adjudication is scored by its false merges, and the model that wins relation
+    # adjudication is not the one that merges least. Defaults to the relation adjudicator when unset.
+    entity_model = environment.get("CME_ENTITY_ADJUDICATOR_MODEL", "").strip() or adjudicator_model
 
     def client(model: str) -> object:
         return client_for(base_url=base_url, api_key=api_key, model=model, protocol=protocol)
@@ -301,7 +304,7 @@ def settings_from_environment(environment: Mapping[str, str]) -> WorkerSettings:
         embedder=OnnxEmbedder(assets) if assets is not None else None,
         adjudicator=OpenAiCompatibleAdjudicator(client(adjudicator_model)) if adjudicating else None,  # type: ignore[arg-type]
         entity_adjudicator=(
-            OpenAiCompatibleEntityAdjudicator(client(adjudicator_model)) if adjudicating else None  # type: ignore[arg-type]
+            OpenAiCompatibleEntityAdjudicator(client(entity_model)) if adjudicating else None  # type: ignore[arg-type]
         ),
         idle_poll=float(environment.get("CME_WORKER_IDLE_POLL", "5")),
     )

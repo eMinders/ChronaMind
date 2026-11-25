@@ -1,0 +1,143 @@
+[
+  {
+    "model": "gpt-6.2-sol",
+    "tasks": {
+      "adjudication": {
+        "passed": 20,
+        "attempts": 20,
+        "rate": 1.0,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 0,
+        "failures": []
+      },
+      "entity_adjudication": {
+        "passed": 10,
+        "attempts": 12,
+        "rate": 0.833,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 0,
+        "failures": [
+          "ent_cross_script_person:miss",
+          "ent_city_vs_office:false_merge"
+        ]
+      },
+      "extraction_mixed": {
+        "passed": 10,
+        "attempts": 11,
+        "rate": 0.909,
+        "json_errors": 0,
+        "quote_grounded": 16,
+        "quotes_offered": 16,
+        "failures": [
+          "mix_switch:missing_deadline"
+        ]
+      }
+    },
+    "p50_ms": 11636.2,
+    "p95_ms": 28989.8,
+    "prompt_tokens": 248852,
+    "completion_tokens": 3329,
+    "errors": []
+  },
+  {
+    "model": "claude-haiku-5-5",
+    "tasks": {
+      "adjudication": {
+        "passed": 17,
+        "attempts": 20,
+        "rate": 0.85,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 0,
+        "failures": [
+          "adj_contradiction:said_update",
+          "adj_ar_contradiction:said_update",
+          "adj2_reinforce_ar:said_update"
+        ]
+      },
+      "entity_adjudication": {
+        "passed": 10,
+        "attempts": 12,
+        "rate": 0.833,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 0,
+        "failures": [
+          "ent_cross_script_person:miss",
+          "ent_spelling:miss"
+        ]
+      },
+      "extraction_mixed": {
+        "passed": 7,
+        "attempts": 11,
+        "rate": 0.636,
+        "json_errors": 2,
+        "quote_grounded": 12,
+        "quotes_offered": 12,
+        "failures": [
+          "mix_switch:no_claims_array",
+          "mx2_arabizi:model_output_not_json",
+          "mx2_code_switch:missing_\u0646\u0648\u0641\u0645\u0628\u0631",
+          "mx3_relocation:model_output_not_json"
+        ]
+      }
+    },
+    "p50_ms": 2813.6,
+    "p95_ms": 7076.5,
+    "prompt_tokens": 23841,
+    "completion_tokens": 11427,
+    "errors": []
+  },
+  {
+    "model": "claude-sonnet-5-5",
+    "tasks": {
+      "adjudication": {
+        "passed": 17,
+        "attempts": 20,
+        "rate": 0.85,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 0,
+        "failures": [
+          "adj_contradiction:said_None",
+          "adj_ar_contradiction:said_None",
+          "adj2_negation:model_output_not_json"
+        ]
+      },
+      "entity_adjudication": {
+        "passed": 10,
+        "attempts": 12,
+        "rate": 0.833,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 0,
+        "failures": [
+          "ent_full_name_ar:miss",
+          "ent_project_ar:miss"
+        ]
+      },
+      "extraction_mixed": {
+        "passed": 6,
+        "attempts": 11,
+        "rate": 0.545,
+        "json_errors": 2,
+        "quote_grounded": 14,
+        "quotes_offered": 14,
+        "failures": [
+          "mix_switch:no_claims_array",
+          "mx2_arabizi:missing_report",
+          "mx3_arabizi_move:model_output_not_json",
+          "mx3_allergy:missing_penicillin",
+          "mx3_relocation:model_output_not_json"
+        ]
+      }
+    },
+    "p50_ms": 3062.9,
+    "p95_ms": 10962.2,
+    "prompt_tokens": 18021,
+    "completion_tokens": 12980,
+    "errors": []
+  }
+]
