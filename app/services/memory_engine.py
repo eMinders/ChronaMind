@@ -133,7 +133,7 @@ class MemoryEngineClient:
             response.raise_for_status()
             logger.info("memory_engine_initialized", status=response.status_code)
         except Exception as error:  # noqa: BLE001 - a pre-warm must never stop the app from serving
-            logger.error("memory_engine_pre_warm_failed", error=str(error))
+            logger.exception("memory_engine_pre_warm_failed", error=str(error))
 
     async def search(self, user_id: str | None, query: str) -> str:
         """Render the caller's memory as prompt context, or ``""`` when there is none or the engine is unreachable.
