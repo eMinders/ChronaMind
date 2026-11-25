@@ -124,7 +124,7 @@ lineage produced; Tier C: its own assertions), `scope_writable` (`scope.access.a
 | 16 | Structure | `record_outcome` | ✓ | ✓ | ✓ | `targets_readable` |
 | 17 | Adjudicate | `adjudicate` | — | ✓ | ✓ | `targets_readable` |
 | 18 | Adjudicate | `dissent` | — | ✓ | ✓ | `targets_readable` |
-| 31 | Adjudicate | `lift` | — | ✓ | ✓ | `scope_writable`, `targets_readable` |
+| 31 | Adjudicate | `lift` | — | ✓ | ✓ | `targets_readable` |
 | 19 | Maintain | `purge_working` | — | — | ✓ | `scope_writable` |
 | 20 | Maintain | `expire` | — | — | ✓ | `scope_writable` |
 | 21 | Maintain | `rebuild_index` | — | — | ✓ | — |
@@ -405,8 +405,8 @@ The user rejects an inference (`USER_MODEL.md` §3 "Contest", `V2-D33`): `inferr
 (`I16`). No evidence is required: the user is the authority over their own model. Tier C only (TB2): a cognition
 service must not dissent on the user's behalf. *Errors:* `precondition_failed` (not `inferred`), `forbidden`.
 
-**`lift(ctx, constraint_id, evidence, note?) → Receipt`** (`V2-D105`)
-The undo `I16` describes: a denied element reopens, but only on **new grounded evidence**. `evidence` names an
+**`lift(ctx, constraint_id, evidence_artifact_id, note?) → Receipt`** (`V2-D105`)
+The undo `I16` describes: a denied element reopens, but only on **new grounded evidence**. `evidence_artifact_id` names an
 `observed` or `asserted` artifact of the caller's — an `inferred` one is refused (`evidence_not_grounded`), because a
 constraint on inference cannot be lifted by more inference without making the constraint vacuous. The lift is a
 record, not a permission: `lifted_at`, `lifted_by` and `lift_evidence_version_id` move together (the schema's

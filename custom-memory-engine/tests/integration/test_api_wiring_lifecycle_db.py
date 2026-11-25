@@ -514,6 +514,12 @@ async def test_a_snapshot_made_before_a_deletion_is_not_served_after_it(database
 # ------------------------------------------------------------------------------- lifting a dissent (I16, V2-D105)
 
 
+async def listed(engine: Engine, ctx: object, **arguments: object) -> ConstraintList:
+    result = await engine.call(ctx, "constraints", arguments)  # type: ignore[arg-type]
+    assert isinstance(result, ConstraintList)
+    return result
+
+
 async def _dissented(conn, engine, artifact_id: str = "v-dissented", evidence: str | None = "v-ground") -> str:
     """A grounded artifact, an inferred one dissented, and the id of the constraint the dissent recorded.
 
@@ -551,7 +557,9 @@ async def test_the_lift_loop_is_closed_and_discoverable(database) -> None:  # no
 
         # a grounded artifact is the ground: new evidence, not a second opinion
         receipt = await engine.call(
-            caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-ground", "note": "user_confirmed"}
+            caller("alice"),
+            "lift",
+            {"constraint_id": constraint_id, "evidence_artifact_id": "v-ground", "note": "user_confirmed"},
         )
         assert isinstance(receipt, Receipt)
         assert (receipt.id, receipt.effect) == (constraint_id, "lifted")
@@ -579,7 +587,7 @@ async def test_the_lift_loop_is_closed_and_discoverable(database) -> None:  # no
         assert isinstance(lifted, ConstraintList) and len(lifted) == 1
         assert lifted.constraints[0].lift_evidence_version_id == "v-ground"
         # …and hidden by default, because the default question is "what still blocks me"
-        assert len(await engine.call(caller("alice"), "constraints", {})) == 0
+        assert len(await listed(engine, caller("alice"))) == 0
 
 
 async def test_a_lift_needs_new_grounded_evidence_and_not_an_inference(database) -> None:  # noqa: F811
@@ -591,13 +599,13 @@ async def test_a_lift_needs_new_grounded_evidence_and_not_an_inference(database)
         await inferred(conn, "v-guess", content="alice probably wants this")
         constraint_id = await _dissented(conn, engine)
         refused = await forbidden(
-            engine, caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-guess"}
+            engine, caller("alice"), "lift", {"constraint_id": constraint_id, "evidence_artifact_id": "v-guess"}
         )
         assert (refused.code, refused.detail) == ("precondition_failed", "evidence_not_grounded")
         # and nothing moved
-        assert await rows(
-            conn, "SELECT lifted_at FROM negative_constraint WHERE id = %s", (constraint_id,)
-        ) == [(None,)]
+        assert await rows(conn, "SELECT lifted_at FROM negative_constraint WHERE id = %s", (constraint_id,)) == [
+            (None,)
+        ]
 
 
 async def test_a_lift_cannot_name_evidence_it_cannot_read(database) -> None:  # noqa: F811
@@ -608,14 +616,16 @@ async def test_a_lift_cannot_name_evidence_it_cannot_read(database) -> None:  # 
         # checked first, and bob does not own it, so both answers are the same word
         for evidence in ("v-alices", "v-absent"):
             refused = await forbidden(
-                engine, caller("bob"), "lift", {"constraint_id": constraint_id, "evidence": evidence}
+                engine, caller("bob"), "lift", {"constraint_id": constraint_id, "evidence_artifact_id": evidence}
             )
-            assert (refused.code, refused.detail) == ("precondition_failed", "constraint_not_active")
-        # alice can name her own constraint, and then the evidence check is the one that answers
+            # `targets_readable` answers first for bob: alice's artifact and one that does not exist are the same word
+            assert (refused.code, refused.detail) == ("forbidden", None)
+        # alice can name her own constraint; naming evidence that does not exist is still just `forbidden`, so the
+        # answer carries no information about which check refused it
         refused = await forbidden(
-            engine, caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-nothing-here"}
+            engine, caller("alice"), "lift", {"constraint_id": constraint_id, "evidence_artifact_id": "v-nothing-here"}
         )
-        assert (refused.code, refused.detail) == ("precondition_failed", "evidence_not_readable")
+        assert (refused.code, refused.detail) == ("forbidden", None)
 
 
 async def test_another_principals_constraint_is_indistinguishable_from_a_missing_one(database) -> None:  # noqa: F811
@@ -623,12 +633,16 @@ async def test_another_principals_constraint_is_indistinguishable_from_a_missing
     async with world(database) as (conn, engine, _):
         constraint_id = await _dissented(conn, engine, evidence="v-bobs-gone")
         await grounded(conn, "v-bobs", content="bob wrote this down", user="bob")
-        refused = await forbidden(engine, caller("bob"), "lift", {"constraint_id": constraint_id, "evidence": "v-bobs"})
+        refused = await forbidden(
+            engine, caller("bob"), "lift", {"constraint_id": constraint_id, "evidence_artifact_id": "v-bobs"}
+        )
         assert (refused.code, refused.detail) == ("precondition_failed", "constraint_not_active")
-        absent = await forbidden(engine, caller("bob"), "lift", {"constraint_id": "nc-nope", "evidence": "v-bobs"})
+        absent = await forbidden(
+            engine, caller("bob"), "lift", {"constraint_id": "nc-nope", "evidence_artifact_id": "v-bobs"}
+        )
         assert (absent.code, absent.detail) == (refused.code, refused.detail)
         # bob's own listing shows nothing of alice's
-        assert len(await engine.call(caller("bob"), "constraints", {})) == 0
+        assert len(await listed(engine, caller("bob"))) == 0
 
 
 async def test_a_constraint_cannot_be_lifted_twice(database) -> None:  # noqa: F811
@@ -637,9 +651,9 @@ async def test_a_constraint_cannot_be_lifted_twice(database) -> None:  # noqa: F
         # both grounds exist before anything allocates a clock: belief time only moves forward
         await grounded(conn, "v-g2", content="evidence two")
         constraint_id = await _dissented(conn, engine, evidence="v-g1")
-        await engine.call(caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-g1"})
+        await engine.call(caller("alice"), "lift", {"constraint_id": constraint_id, "evidence_artifact_id": "v-g1"})
         refused = await forbidden(
-            engine, caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-g2"}
+            engine, caller("alice"), "lift", {"constraint_id": constraint_id, "evidence_artifact_id": "v-g2"}
         )
         assert (refused.code, refused.detail) == ("precondition_failed", "constraint_not_active")
         assert await rows(
@@ -655,8 +669,10 @@ async def test_deleting_the_lift_evidence_withdraws_the_lift_and_the_element_blo
     """
     async with world(database) as (conn, engine, _):
         constraint_id = await _dissented(conn, engine, evidence="v-ground-2")
-        await engine.call(caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-ground-2"})
-        assert len(await engine.call(caller("alice"), "constraints", {})) == 0
+        await engine.call(
+            caller("alice"), "lift", {"constraint_id": constraint_id, "evidence_artifact_id": "v-ground-2"}
+        )
+        assert len(await listed(engine, caller("alice"))) == 0
         async with conn.transaction():
             await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
             await conn.execute("DELETE FROM memory_evidence WHERE version_id = 'v-ground-2'")
@@ -687,7 +703,10 @@ async def test_lift_and_constraints_are_tier_c_reads_and_writes(database) -> Non
         listing = await engine.call(caller("alice", "B"), "constraints", {})
         assert isinstance(listing, ConstraintList) and len(listing) == 1
         refused = await forbidden(
-            engine, caller("alice", "B"), "lift", {"constraint_id": constraint_id, "evidence": "v-ground-3"}
+            engine,
+            caller("alice", "B"),
+            "lift",
+            {"constraint_id": constraint_id, "evidence_artifact_id": "v-ground-3"},
         )
         assert refused.code == "forbidden"
 
@@ -696,10 +715,10 @@ async def test_malformed_lift_and_constraint_arguments_are_static_refusals(datab
     async with world(database) as (conn, engine, _):
         constraint_id = await _dissented(conn, engine, evidence="v-ground-4")
         for arguments, code in (
-            ({"evidence": "v-ground-4"}, "validation_error"),
-            ({"constraint_id": "  ", "evidence": "v-ground-4"}, "validation_error"),
+            ({"evidence_artifact_id": "v-ground-4"}, "validation_error"),
+            ({"constraint_id": "  ", "evidence_artifact_id": "v-ground-4"}, "validation_error"),
             ({"constraint_id": constraint_id}, "validation_error"),
-            ({"constraint_id": constraint_id, "evidence": 7}, "validation_error"),
+            ({"constraint_id": constraint_id, "evidence_artifact_id": 7}, "validation_error"),
         ):
             refused = await forbidden(engine, caller("alice"), "lift", arguments)
             assert refused.code == code, (arguments, refused.code)

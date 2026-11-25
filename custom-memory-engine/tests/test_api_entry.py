@@ -166,7 +166,7 @@ VALUES: dict[str, object] = {
     # the lift loop (V2-D105). `evidence` here is an artifact id, not a SourceRef list: a lift's ground is a version
     # the caller already holds, and the schema stores it as a foreign key, so a ref would have to be resolved first.
     "constraint_id": "nc1",
-    "evidence": "a1",
+    "evidence_artifact_id": "a1",
     "include_lifted": False,
 }
 

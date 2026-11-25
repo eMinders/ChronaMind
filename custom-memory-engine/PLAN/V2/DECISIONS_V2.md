@@ -2946,3 +2946,59 @@ lease constant, so it never loads the embedding model to answer "is the loop ali
 window is returned to `queued`; the probe returns 0/1/2 for healthy/degraded/unhealthy; a job that fails repeatedly
 reaches `dead_letter` after `MAX_ATTEMPTS`. What is *not* tested is that systemd or Docker restarts the process — that is
 the supervisor's contract, and the unit and compose file are reviewed rather than executed.
+
+## V2-D104 — The read path carries a relevance judge, and the judge gates
+
+**Context.** `V2-D100` re-derived the dense floor to 0.55 and recorded a residual it could not remove: one unanswerable
+question in eight ("our neighbours complain about the noise every night") still returned a neighbour, because its
+nearest memory sat at cosine 0.605 while the weakest *genuine* paraphrase in the set sat at 0.46. Before accepting that
+as a model limit, three cheaper rules were measured on the full query × corpus cosine matrix and **rejected**: a
+corpus-relative z-score (unanswerable questions reached 3.44, answerable ones fell to 2.16), a top-1/top-2 gap (gaps
+overlap completely), and requiring a lexical or trigram arm to corroborate the dense one (it would have dropped 30 of 56
+genuine answers). Encoding only the informative terms of the question made the overlap worse (0.361 vs 0.569).
+
+**Decision.** A local cross-encoder reads each candidate *together* with the question and returns one logit on a fixed
+scale, and the page keeps only candidates at or above `JUDGE_RELEVANCE_FLOOR`. Two multilingual rerankers were
+measured on the labelled set; `bge-reranker-v2-m3` (int8 ONNX, pinned by revision and SHA-256 in
+`scripts/fetch_models.py`) separates the classes — weakest answerable -6.68, strongest unanswerable -11.01 — and
+`jina-reranker-v2-base-multilingual` does not (-2.91 vs -2.38), so it is recorded and not chosen. The floor is the
+midpoint, **-8.8**, asserted against `reports/retrieval/evaluation.json` by
+`tests/test_hybrid.py::test_the_judge_floor_sits_between_the_weakest_answer_and_the_strongest_non_answer`.
+
+**Where it lives.** In `api.read_handlers`, after the id-restricted fetch, because that is where the candidate *content*
+is already in hand — the judge costs one forward pass per candidate and no second statement. `engine.hybrid` stays pure
+SQL over ids. The old order-only `Reranker` seam is removed: nothing implemented it, and its contract ("only the order is
+used") was exactly what made it unable to fix this.
+
+**Bounds and failure.** At most `JUDGE_CANDIDATES` (10) are read (~28 ms each, pairs scored one at a time because the
+graph is padding-sensitive), and rows beyond the bound are *not* returned unjudged. A judge failure, a score-count
+mismatch or a non-finite score degrades to the fused page and reports `judgement=None`; a judged page reports
+`QueryResult.judgement` (model, floor, scored, kept, best), so "no judge", "judged and empty" and "judged and kept" are
+three distinguishable answers. No LLM is on the read path.
+
+**Measured.** `hybrid_judged`: recall@5 0.982 (unchanged), top-1 0.768 (from 0.732), nDCG@5 0.896 (from 0.882),
+no-match false positives **0.000** (from 0.125). End to end over real HTTP, the exact near-miss returns an empty page
+(`test_host_e2e_db.py::test_the_judge_refuses_the_near_miss_the_dense_arm_alone_would_have_answered`).
+
+**Cost.** ~28 ms per candidate on the reference CPU, and a 570 MB model file. The judge is optional
+(`CME_RERANKER_ASSET`); a deployment without it behaves exactly as before and reports `judgement=None`.
+
+## V2-D105 — A dissent can be lifted, on new grounded evidence, and named
+
+**Context.** `I16` says a denied element "cannot be re-inferred … *without new grounded evidence*". After `V2-D97` the
+constraint was written and read, but no operation lifted it and none returned its id, so a dissent was permanent and
+unnamable — `I16` was `PARTIAL` for exactly that reason.
+
+**Decision.** Two operations. `lift(constraint_id, evidence_artifact_id, note?)` (Adjudicate, Tier C) stamps the
+schema's existing lift record. The evidence must be an `observed` or `asserted` artifact of the caller's: readability is
+the entry point's `targets_readable` condition (so an unreadable ground is `forbidden`, indistinguishable from absent),
+and groundedness is checked in the handler — an `inferred` artifact is refused (`evidence_not_grounded`), because a
+constraint on inference that inference can lift is no constraint. One lift per constraint; a second is
+`constraint_not_active`. `constraints(include_lifted?)` (Read, Tier B and C) lists the caller's own constraints, ids
+and element names only, active first. The caller names the *constraint*, not the belief, because the constraint
+survives both the retirement and the deletion of the belief that provoked it.
+
+**What the schema already guaranteed and is now reachable.** Deleting the lift's evidence clears the reference and the
+guard withdraws the whole lift, so the dissent is active again and `infer` refuses the element again —
+`test_api_wiring_lifecycle_db.py::test_deleting_the_lift_evidence_withdraws_the_lift_and_the_element_blocks_again`.
+`I16` moves to `ENFORCED`.

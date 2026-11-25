@@ -45,7 +45,7 @@ def test_every_element_on_main_is_owned() -> None:
     elements, owners, findings = coverage.resolve(PLAN)
     assert [f.render() for f in findings] == []
     counts = {kind: sum(e.kind == kind for e in elements) for kind in coverage.CLASSES}
-    assert counts == {"kind": 4, "table": 7, "invariant": 17, "channel": 4, "operation": 29, "migration": 9}
+    assert counts == {"kind": 4, "table": 7, "invariant": 17, "channel": 4, "operation": 31, "migration": 9}
     assert all(owners[e] for e in elements)
 
 

@@ -47,6 +47,8 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `record_outcome` | operation | `E-039`, `E-030` | wired by `E-027` (`V2-D75`) through `Engine.call`; `E-030` owns the procedure shape it extends |
 | `adjudicate` | operation | `E-039`, `E-016` | |
 | `dissent` | operation | `E-039`, `UM-012` | `V2-D46`; unwired: `UM-012` lands it through `Engine.call` (§4.1) |
+| `lift` | operation | `E-053`, `UM-012` | `V2-D105`; reopens a dissented element on new grounded evidence (`I16`) |
+| `constraints` | operation | `E-053` | `V2-D105`; the caller's own negative constraints, ids and element names only |
 | `purge_working` | operation | `E-039`, `E-026` | admin-only (`V2-D47`); wired by `E-026` through `Engine.call` (`api/maintain_handlers.py`); purged-evidence rule PW-1 in `engine/purge.py` = `V2-D72` (bound open as `E-026-F1`) |
 | `expire` | operation | `E-039`, `A-014` | admin-only; unwired: `A-014` lands it through `Engine.call` (§4.1) |
 | `rebuild_index` | operation | `E-039`, `A-014` | admin-only; unwired: `A-014` lands it through `Engine.call` (§4.1) |

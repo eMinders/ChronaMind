@@ -75,6 +75,8 @@ class ConstraintList:
 
     def __iter__(self) -> Iterator[Constraint]:
         return iter(self.constraints)
+
+
 _SOURCE_TYPES = frozenset({"turn", "tool", "file", "paper", "event", "external"})
 
 
@@ -200,7 +202,7 @@ class LifecycleHandlers:
         constraint_id = call.arguments.get("constraint_id")
         if not isinstance(constraint_id, str) or not constraint_id.strip():
             raise EntryError("validation_error", "constraint_id_required")
-        evidence_id = call.arguments.get("evidence")
+        evidence_id = call.arguments.get("evidence_artifact_id")
         if not isinstance(evidence_id, str) or not evidence_id.strip():
             raise EntryError("validation_error", "evidence_artifact_id_required")
         reason = _optional_code(call.arguments.get("note"))
@@ -367,6 +369,9 @@ class LifecycleHandlers:
 
     async def _require_grounded_evidence(self, connection: AsyncConnection, user: str, artifact_id: str) -> None:
         """The lift's ground must be a grounded artifact of the caller's that still exists.
+
+        Readability was already decided by the entry point's ``targets_readable`` condition, so an artifact the caller
+        cannot read never reaches this function. What is left is the half the condition cannot express.
 
         ``grounded`` is the whole point: an ``inferred`` artifact is the engine's own guess, and letting a guess lift a
         constraint on inference would let the engine reverse a user's denial by inferring the same thing twice. The

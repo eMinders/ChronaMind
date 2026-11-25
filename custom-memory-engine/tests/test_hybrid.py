@@ -174,7 +174,6 @@ def test_the_judge_floor_sits_between_the_weakest_answer_and_the_strongest_non_a
     import json
     from pathlib import Path
 
-
     report = json.loads(
         (Path(__file__).resolve().parents[1] / "reports" / "retrieval" / "evaluation.json").read_text("utf-8")
     )

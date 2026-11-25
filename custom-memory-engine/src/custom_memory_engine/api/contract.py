@@ -144,10 +144,11 @@ OPERATIONS: tuple[Operation, ...] = (
     _op("dissent", "Adjudicate", "C", ("artifact_id", "note"), "Receipt", ("precondition_failed",),
         ("targets_readable",), transitions=frozenset({("inferred", "retired")})),
     # `V2-D105`: the undo `I16` describes — a denied element reopens *on new grounded evidence*, and nothing else lifts
-    # it. `scope_writable` because a lift changes what the engine may write in that scope; no lifecycle transition,
-    # because it changes a constraint rather than a belief.
-    _op("lift", "Adjudicate", "C", ("constraint_id", "evidence", "note"), "Receipt", ("precondition_failed",),
-        ("scope_writable", "targets_readable")),
+    # it. No lifecycle transition: it changes a constraint, not a belief. `targets_readable` covers the evidence (an
+    # artifact id), so an unreadable ground is `forbidden` *before* the handler runs, like every other target input.
+    # The constraint is the caller's own row under RLS; another principal's is refused like a missing one.
+    _op("lift", "Adjudicate", "C", ("constraint_id", "evidence_artifact_id", "note"), "Receipt",
+        ("precondition_failed",), ("targets_readable",)),
     _op("constraints", "Read", "BC", ("include_lifted",), "ConstraintList"),
     _op("purge_working", "Maintain", "C", ("scope",), "PurgeReceipt", conditions=("scope_writable",), deletes=True,
         admin_only=True),
@@ -188,6 +189,8 @@ _TARGET_INPUTS = frozenset(
         "subject_entity",
         "procedure_id",
         "sources",
+        # `V2-D105`: a lift's ground is an artifact of the caller's, and it is checked like every other named artifact
+        "evidence_artifact_id",
     }
 )
 
