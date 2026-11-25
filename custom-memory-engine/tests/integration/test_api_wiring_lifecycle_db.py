@@ -142,15 +142,34 @@ async def inferred(
             "INSERT INTO memory_derivation VALUES (%s, %s, %s, 'consolidation')",
             (version_id, "src-" + version_id, user),
         )
+        await conn.execute(
+            "INSERT INTO memory_version (id, memory_key, user_id, status, lifecycle, kind, subject_key, "
+            "predicate_key, single_valued, content, event_range, recorded_range, layer, scope_path, visibility, "
+            "retention) "
+            "VALUES (%s, %s, %s, 'active', 'asserted', 'claim', 'self', 'statement', false, 'held out for ' || %s, "
+            "tstzrange(%s, NULL), tstzrange(clock_now(), NULL), 'semantic', %s, 'private', 'durable')",
+            ("held-" + version_id, "held-" + version_id, user, version_id, T0, f"/u/{user}/"),
+        )
+        await conn.execute(
+            "INSERT INTO memory_evidence (version_id, turn_id, user_id, evidence_span, evidence_role) "
+            "VALUES (%s, %s, %s, 'x', 'support')",
+            ("held-" + version_id, "t-" + user, user),
+        )
         # The insert trigger assigns the persona method (`assign_memory_version_method`); an UPDATE of `method_id` is
         # refused once set (`method_id_is_fixed_once_set`), so this only fills a row the trigger left without one.
         await conn.execute(
             "UPDATE memory_version SET method_id = %s WHERE id = %s AND method_id IS NULL",
             (method_id or INHERITED_ID, version_id),
         )
+        # Seed an admissible ledger by default so `verify(outcome='verified')` checks pinning and bounds cleanly.
+        await conn.execute(
+            "UPDATE abstraction_stats SET support_count = 36, counter_count = 0, undetermined_count = 0, "
+            "opportunity_count = 36, refutation_attempts = 3 WHERE version_id = %s AND user_id = %s",
+            (version_id, user),
+        )
 
 
-def record(**overrides: object) -> dict[str, object]:
+def record(artifact_id: str = "v-default", **overrides: object) -> dict[str, object]:
     """A valid ``verification`` argument; ``overrides`` change one fact each, so a test refuses for one reason."""
     body: dict[str, object] = {
         "held_out_split_id": "split-2026-03",
@@ -159,6 +178,8 @@ def record(**overrides: object) -> dict[str, object]:
         "held_out_window": ["2026-03-01T00:00:00+00:00", "2026-04-01T00:00:00+00:00"],
         "support_context_key": "weekday-mornings",
         "held_out_context_key": "weekend-evenings",
+        "support_artifact_ids": [f"src-{artifact_id}"],
+        "held_out_artifact_ids": [f"held-{artifact_id}"],
         "outcome": "verified",
     }
     body.update(overrides)
@@ -212,7 +233,9 @@ async def test_stats_surfaces_the_verification_record_behind_a_verified_status(d
     async with world(database) as (conn, engine, _):
         await inferred(conn, "v-verifiable")
         receipt = await engine.call(
-            caller("alice", "B"), "verify", {"artifact_id": "v-verifiable", "verification": record()}
+            caller("alice", "B"),
+            "verify",
+            {"artifact_id": "v-verifiable", "verification": record("v-verifiable")},
         )
         assert isinstance(receipt, Receipt) and receipt.effect == "verified"
         result = await engine.call(caller("alice"), "stats", {"artifact_id": "v-verifiable"})
@@ -221,6 +244,11 @@ async def test_stats_surfaces_the_verification_record_behind_a_verified_status(d
         assert result.negative_control_slice_id == "control-2026-03"
         assert result.windows_disjoint is True
         assert result.verified_on is not None
+        assert result.artifact_pinning_status == "pinned"
+        assert result.pinning_label == "pinned"
+        assert result.verified_support_ids == ("src-v-verifiable",)
+        assert result.verified_held_out_ids == ("held-v-verifiable",)
+        assert result.closed_over_hash is not None
 
 
 # --------------------------------------------------------------------------------------------------- verify
@@ -229,7 +257,7 @@ async def test_stats_surfaces_the_verification_record_behind_a_verified_status(d
 async def test_verify_records_a_disjoint_split_and_moves_the_status(database) -> None:  # noqa: F811
     async with world(database) as (conn, engine, _):
         await inferred(conn, "v-v2")
-        await engine.call(caller("alice", "B"), "verify", {"artifact_id": "v-v2", "verification": record()})
+        await engine.call(caller("alice", "B"), "verify", {"artifact_id": "v-v2", "verification": record("v-v2")})
         assert await rows(conn, "SELECT count(*) FROM verification WHERE version_id = 'v-v2'") == [(1,)]
 
 
@@ -241,12 +269,12 @@ async def test_a_leaky_split_is_refused_before_anything_is_written(database) -> 
     """
     async with world(database) as (conn, engine, _):
         await inferred(conn, "v-v3")
-        shared_context = record(held_out_context_key="weekday-mornings")
+        shared_context = record("v-v3", held_out_context_key="weekday-mornings")
         refused = await forbidden(
             engine, caller("alice", "B"), "verify", {"artifact_id": "v-v3", "verification": shared_context}
         )
         assert refused.detail == "split_shares_a_context_key"
-        overlapping = record(held_out_window=["2026-01-15T00:00:00+00:00", "2026-02-15T00:00:00+00:00"])
+        overlapping = record("v-v3", held_out_window=["2026-01-15T00:00:00+00:00", "2026-02-15T00:00:00+00:00"])
         refused = await forbidden(
             engine, caller("alice", "B"), "verify", {"artifact_id": "v-v3", "verification": overlapping}
         )
@@ -260,9 +288,9 @@ async def test_the_same_split_cannot_be_verified_twice(database) -> None:  # noq
     """Re-running one split until it agrees is not verification, so the second posting is refused."""
     async with world(database) as (conn, engine, _):
         await inferred(conn, "v-v4")
-        await engine.call(caller("alice", "B"), "verify", {"artifact_id": "v-v4", "verification": record()})
+        await engine.call(caller("alice", "B"), "verify", {"artifact_id": "v-v4", "verification": record("v-v4")})
         refused = await forbidden(
-            engine, caller("alice", "B"), "verify", {"artifact_id": "v-v4", "verification": record()}
+            engine, caller("alice", "B"), "verify", {"artifact_id": "v-v4", "verification": record("v-v4")}
         )
         assert refused.detail == "split_already_verified"
 
@@ -342,7 +370,7 @@ async def test_a_dissented_element_is_not_silently_relearned(database) -> None: 
                 "method": {"id": INHERITED_ID, "version": "1", "params_hash": PERSONA_HASH},
                 "sources": ["src-v-relearn"],  # the support row `inferred` wrote
                 "statement": "alice prefers morning meetings",
-                "ledger": {"support": 3, "counter": 0, "undetermined": 0, "opportunity": 3},
+                "ledger": {"support": 1, "counter": 0, "undetermined": 0, "opportunity": 1},
                 "idempotency_key": "re-learn-1",
             },
         )
@@ -593,7 +621,7 @@ async def test_the_lift_loop_is_closed_and_discoverable(database) -> None:  # no
                 "method": {"id": INHERITED_ID, "version": "1", "params_hash": PERSONA_HASH},
                 "sources": ["v-ground"],
                 "statement": "alice prefers morning meetings",
-                "ledger": {"support": 3, "counter": 0, "undetermined": 0, "opportunity": 3},
+                "ledger": {"support": 1, "counter": 0, "undetermined": 0, "opportunity": 1},
                 "idempotency_key": "re-learn-2",
             },
         )
@@ -705,7 +733,7 @@ async def test_deleting_the_lift_evidence_withdraws_the_lift_and_the_element_blo
                 "method": {"id": INHERITED_ID, "version": "1", "params_hash": PERSONA_HASH},
                 "sources": ["src-v-dissented"],
                 "statement": "alice prefers morning meetings",
-                "ledger": {"support": 3, "counter": 0, "undetermined": 0, "opportunity": 3},
+                "ledger": {"support": 1, "counter": 0, "undetermined": 0, "opportunity": 1},
                 "idempotency_key": "re-learn-3",
             },
         )

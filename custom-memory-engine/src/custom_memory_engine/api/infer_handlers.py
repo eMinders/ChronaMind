@@ -34,6 +34,7 @@ from psycopg.types.json import Jsonb
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Receipt, Rejected, Runtime, new_id, now, remember, replayed
+from custom_memory_engine.engine.abstraction_ledger import LedgerError, derive_ledger
 from custom_memory_engine.engine.admission import (
     AdmissionError,
     LedgerCounts,
@@ -42,11 +43,14 @@ from custom_memory_engine.engine.admission import (
     assess_soundness,
     record_soundness_assessment,
 )
+from custom_memory_engine.engine.refutation import run_refutation_probes
+from custom_memory_engine.engine.staleness import compute_closure
 from custom_memory_engine.engine.transactions import CandidateVersionInput, DerivationInput, commit_initial_version
 from custom_memory_engine.model.axes import Retention
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
 from custom_memory_engine.security.audit_guard import content_free_details
+from custom_memory_engine.soundness.admission import DEFAULT_TAU_CONFIDENCE, DEFAULT_TAU_COVERAGE
 
 _STATEMENT_LIMIT = 20_000
 _MAX_SOURCES = 256
@@ -70,14 +74,14 @@ def _method(raw: object) -> MethodRef:
     )
 
 
-def _ledger(raw: object) -> LedgerCounts:
-    """The opportunity ledger ``{support, counter, undetermined, opportunity}`` (``STATISTICS.md``).
+def _ledger(raw: object) -> LedgerCounts | None:
+    """The optional caller-supplied opportunity ledger ``{support, counter, undetermined, opportunity}``.
 
-    A missing ledger is an empty one: ``o = 0`` is "insufficient evidence", which the soundness policy rejects (and
-    records) rather than this parser. A ledger that is present must be complete and must balance.
+    When omitted (``None``), the engine derives ``(s, k, u)`` from readable database evidence via
+    :func:`engine.abstraction_ledger.derive_ledger`. When present, the payload must be well formed and balance.
     """
     if raw is None:
-        return LedgerCounts(0, 0, 0)
+        return None
     if not isinstance(raw, Mapping) or any(name not in raw for name in _LEDGER_FIELDS):
         raise EntryError("validation_error", "ledger_incomplete")
     try:
@@ -106,8 +110,8 @@ class InferHandlers:
         self,
         runtime: Runtime,
         *,
-        tau_confidence: float,
-        tau_coverage: float,
+        tau_confidence: float = DEFAULT_TAU_CONFIDENCE,
+        tau_coverage: float = DEFAULT_TAU_COVERAGE,
         profile: Profile | None = None,
     ) -> None:
         self.runtime = runtime
@@ -133,24 +137,78 @@ class InferHandlers:
             raise EntryError("validation_error", "scope_invalid") from None
         if not scope.startswith(f"/u/{user}/"):
             raise EntryError("forbidden")  # defence in depth: `scope_writable` already decided this
-        method, ledger, sources = (
+        method, caller_ledger, sources = (
             _method(call.arguments.get("method")),
             _ledger(call.arguments.get("ledger")),
             _sources(call.arguments.get("sources")),
         )
-        candidate = SoundnessCandidate(
-            source_ids=sources, method=method, ledger=ledger, refutation_attempts=0, negative_control_clean=False
-        )
-        # The registry was consulted by the entry point (`registered_method`); a call that reaches here is registered.
-        assessment = assess_soundness(
-            candidate,
-            tau_confidence=self.tau_confidence,
-            tau_coverage=self.tau_coverage,
-            method_registered=lambda _ref: True,
-        )
         async with self.runtime.session(user) as connection:
             if (found := await replayed(self.runtime, connection, user, "infer", key)) is not None:
                 return await self._receipt(connection, user, found)
+            if not await self._all_own(connection, user, sources, read_set=call.ctx.read_set):
+                # a derivation is same-tenant (migration 4): a source readable through a grant cannot be derived from
+                raise EntryError("forbidden")
+            try:
+                derived = await derive_ledger(
+                    connection,
+                    user,
+                    sources,
+                    statement=statement,
+                    scope_path=scope,
+                    read_set=call.ctx.read_set,
+                    schema_name=self.runtime.schema_name,
+                )
+            except LedgerError as exc:
+                failed_counts = caller_ledger if caller_ledger is not None else LedgerCounts(0, 0, 0)
+                failed_candidate = SoundnessCandidate(
+                    source_ids=sources,
+                    method=method,
+                    ledger=failed_counts,
+                    refutation_attempts=0,
+                    negative_control_clean=False,
+                )
+                failed_assessment = assess_soundness(
+                    failed_candidate,
+                    tau_confidence=self.tau_confidence,
+                    tau_coverage=self.tau_coverage,
+                    method_registered=lambda _ref: True,
+                )
+                await record_soundness_assessment(
+                    connection,
+                    user_id=user,
+                    candidate=failed_candidate,
+                    assessment=failed_assessment,
+                    tau_confidence=self.tau_confidence,
+                    tau_coverage=self.tau_coverage,
+                    schema_name=self.runtime.schema_name,
+                )
+                return Rejected(exc.code)
+
+            probes = await run_refutation_probes(
+                connection,
+                user,
+                None,
+                sources,
+                scope_path=scope,
+                read_set=call.ctx.read_set,
+                schema_name=self.runtime.schema_name,
+            )
+            derived_counts = LedgerCounts(derived.support, derived.counter, derived.undetermined)
+            candidate = SoundnessCandidate(
+                source_ids=sources,
+                method=method,
+                ledger=derived_counts,
+                refutation_attempts=probes.attempts,
+                negative_control_clean=probes.negative_control_clean,
+            )
+            # The registry was consulted by the entry point (`registered_method`); a call that reaches here is
+            # registered.
+            assessment = assess_soundness(
+                candidate,
+                tau_confidence=self.tau_confidence,
+                tau_coverage=self.tau_coverage,
+                method_registered=lambda _ref: True,
+            )
             await record_soundness_assessment(
                 connection,
                 user_id=user,
@@ -160,6 +218,12 @@ class InferHandlers:
                 tau_coverage=self.tau_coverage,
                 schema_name=self.runtime.schema_name,
             )
+            if caller_ledger is not None and (
+                caller_ledger.support,
+                caller_ledger.counter,
+                caller_ledger.undetermined,
+            ) != (derived.support, derived.counter, derived.undetermined):
+                return Rejected("ledger_mismatch")
             if not assessment.creation.allowed:
                 return Rejected(assessment.creation.reasons[0])
             # I16, the reader half of `dissent`: a constraint the user recorded is consulted before anything is
@@ -167,9 +231,6 @@ class InferHandlers:
             # an error, exactly like a soundness refusal: the call was well formed, the answer is "no".
             if await self._blocked(connection, user, scope, method):
                 return Rejected("negative_constraint_active")
-            if not await self._all_own(connection, user, sources):
-                # a derivation is same-tenant (migration 4): a source readable through a grant cannot be derived from
-                raise EntryError("forbidden")
             version_id, recorded = new_id("v"), await now(connection)
             await commit_initial_version(
                 connection,
@@ -194,7 +255,15 @@ class InferHandlers:
                 ),
                 schema_name=self.runtime.schema_name,
             )
-            await self._fill_ledger(connection, user, version_id, ledger)
+            closure = await compute_closure(connection, user, version_id, schema_name=self.runtime.schema_name)
+            await self._fill_ledger(
+                connection,
+                user,
+                version_id,
+                derived_counts,
+                refutation_attempts=probes.attempts,
+                closed_over_hash=closure.digest,
+            )
             await self._promote_sources(connection, user, sources)
             await self._stamp(connection, call, version_id)
             await remember(self.runtime, connection, user, "infer", key, version_id)
@@ -254,28 +323,61 @@ class InferHandlers:
                     ),
                 )
 
-    async def _all_own(self, connection: AsyncConnection, user: str, sources: Sequence[str]) -> bool:
+    async def _all_own(
+        self,
+        connection: AsyncConnection,
+        user: str,
+        sources: Sequence[str],
+        *,
+        read_set: object | None = None,
+    ) -> bool:
+        if not sources:
+            return True
+        from custom_memory_engine.scope.access import ReadSet, row_visible
+
+        checked_read_set = read_set if isinstance(read_set, ReadSet) else None
         async with connection.cursor(row_factory=tuple_row) as cursor:
             await cursor.execute(
-                sql.SQL("SELECT count(*) FROM {t} WHERE id = ANY(%s) AND user_id = %s").format(
+                sql.SQL("SELECT id, scope_path, visibility FROM {t} WHERE id = ANY(%s) AND user_id = %s").format(
                     t=self.runtime.table("memory_version")
                 ),
                 (list(sources), user),
             )
-            row = await cursor.fetchone()
-        return row is not None and row[0] == len(sources)
+            visible_ids = {
+                str(row[0])
+                for row in await cursor.fetchall()
+                if checked_read_set is None or row_visible(checked_read_set, row[1], row[2])
+            }
+        return len(visible_ids) == len(sources)
 
     async def _fill_ledger(
-        self, connection: AsyncConnection, user: str, version_id: str, ledger: LedgerCounts
+        self,
+        connection: AsyncConnection,
+        user: str,
+        version_id: str,
+        ledger: LedgerCounts,
+        *,
+        refutation_attempts: int,
+        closed_over_hash: str,
     ) -> None:
-        """Replace the zero ledger the insert trigger created with the request's counts (``I15``)."""
+        """Replace the zero ledger the insert trigger created with the derived ledger and closure hash (``I15``)."""
         async with connection.cursor() as cursor:
             await cursor.execute(
                 sql.SQL(
                     "UPDATE {t} SET support_count = %s, counter_count = %s, undetermined_count = %s, "
-                    "opportunity_count = %s WHERE version_id = %s AND user_id = %s"
+                    "opportunity_count = %s, refutation_attempts = %s, closed_over_hash = %s "
+                    "WHERE version_id = %s AND user_id = %s"
                 ).format(t=self.runtime.table("abstraction_stats")),
-                (ledger.support, ledger.counter, ledger.undetermined, ledger.opportunity, version_id, user),
+                (
+                    ledger.support,
+                    ledger.counter,
+                    ledger.undetermined,
+                    ledger.opportunity,
+                    refutation_attempts,
+                    closed_over_hash,
+                    version_id,
+                    user,
+                ),
             )
             if cursor.rowcount != 1:
                 raise EntryError("validation_error", "ledger_not_recorded")
@@ -317,8 +419,8 @@ def register_infer_handlers(
     engine: Engine,
     runtime: Runtime,
     *,
-    tau_confidence: float,
-    tau_coverage: float,
+    tau_confidence: float = DEFAULT_TAU_CONFIDENCE,
+    tau_coverage: float = DEFAULT_TAU_COVERAGE,
     profile: Profile | None = None,
 ) -> InferHandlers:
     """Wire ``infer`` onto ``engine``. The thresholds are required: ``V2-D30`` has not fixed their values."""

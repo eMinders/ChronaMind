@@ -20,9 +20,9 @@ from tests.integration.test_read_path_db import CODING_PROFILE, episode
 
 pytestmark = pytest.mark.integration
 
-# V2-D30 is open; these are its suggested values, stated by the wiring as the handler requires.
+# V2-D30 defaults; stated explicitly by the test wiring.
 TAU_CONFIDENCE, TAU_COVERAGE = 0.90, 0.60
-LEDGER = {"support": 3, "counter": 0, "undetermined": 1, "opportunity": 4}
+LEDGER = {"support": 2, "counter": 0, "undetermined": 0, "opportunity": 2}
 STATEMENT = "A missing import may explain repeated name errors in focused CI tests."
 
 
@@ -67,7 +67,7 @@ def infer_args(ref: Mapping[str, str], sources: list[str], **override: object) -
         "sources": sources,
         "statement": STATEMENT,
         "predicate": None,
-        "ledger": LEDGER,
+        "ledger": None,
         "idempotency_key": "i1",
         **override,
     }
@@ -92,10 +92,16 @@ async def test_infer_creates_an_inferred_abstraction_read_back_as_a_hypothesis(d
         ) == sorted([(first,), (second,)])
         assert await rows(
             conn,
-            "SELECT support_count, counter_count, undetermined_count, opportunity_count, verification_status "
+            "SELECT support_count, counter_count, undetermined_count, opportunity_count, "
+            "refutation_attempts, verification_status "
             "FROM abstraction_stats WHERE version_id = %s",
             (receipt.id,),
-        ) == [(3, 0, 1, 4, "unverified")]
+        ) == [(2, 0, 0, 2, 3, "unverified")]
+        assert await rows(
+            conn,
+            "SELECT closed_over_hash IS NOT NULL FROM abstraction_stats WHERE version_id = %s",
+            (receipt.id,),
+        ) == [(True,)]
         got = await engine.call(agent("alice", "C"), "get", {"artifact_id": receipt.id})
         assert isinstance(got, Artifact)
         assert (got.kind, got.lifecycle, got.channel, got.verification) == (
@@ -160,13 +166,21 @@ async def test_an_empty_ledger_is_a_recorded_rejection_and_a_malformed_one_is_in
         wire(engine)
         ref = await method(engine)
         source = await observed(engine, "alice", "e1")
-        missing = await engine.call(agent("alice"), "infer", infer_args(ref, [source], ledger=None))
+        missing = await engine.call(
+            agent("alice"), "infer", infer_args(ref, [], ledger=None, idempotency_key="empty-1")
+        )
         assert missing == Rejected("insufficient_evidence")
         assert await rows(
             conn,
             "SELECT details->>'creation_allowed', details->>'opportunity' FROM audit_event "
             "WHERE event_type = 'soundness_assessed' AND user_id = 'alice'",
         ) == [("false", "0")]
+        mismatch = await engine.call(
+            agent("alice"),
+            "infer",
+            infer_args(ref, [source], ledger={"support": 3, "counter": 0, "undetermined": 0, "opportunity": 3}),
+        )
+        assert mismatch == Rejected("ledger_mismatch")
         for ledger, detail in (
             ({"support": 1, "counter": 0, "undetermined": 0}, "ledger_incomplete"),
             ({"support": 1, "counter": 0, "undetermined": 0, "opportunity": 2}, "ledger_unbalanced"),
