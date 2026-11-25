@@ -880,3 +880,52 @@ async def test_a_delegated_caller_keeps_the_tokens_tier_and_is_never_admin(datab
         promoted = await delegated(host.client, host.service, "carol", "query", tier="C", request={"text": "x"})
         assert promoted.status_code == 400
         assert promoted.json()["error"] == {"code": "validation_error", "detail": "reserved_argument"}
+
+
+async def test_returning_to_an_earlier_single_valued_value_supersedes_the_current_one(database) -> None:  # noqa: F811
+    """Berlin → Paris → Berlin: the third statement is the current value, not a reinforcement of history.
+
+    Supersession reissues Berlin with its valid time closed. The gate's duplicate check used to match that historical
+    row on content alone, so the second "I live in Berlin" was folded into it: no row was written, the receipt named a
+    version that does not exist, and Paris stayed current. A duplicate must be valid at the candidate's valid time.
+    """
+    async with live(database) as host:
+        receipts: list[str] = []
+        for index, said in enumerate(("I live in Berlin", "I moved to Paris", "I live in Berlin")):
+            evidence = {
+                "type": "external",
+                "ref": f"app://session/move-{index}",
+                "span": said,
+                "content_hash": canonical_hash(said),
+                "role": "user",
+            }
+            response = await delegated(
+                host.client,
+                host.service,
+                "carol",
+                "assert",
+                scope="/u/carol/",
+                kind="claim",
+                content=said,
+                evidence=[evidence],
+                event_range=None,
+                cardinality="single",
+                semantic_slot="residence",
+                idempotency_key=f"move-{index}",
+            )
+            assert response.status_code == 200, response.text
+            receipts.append(response.json()["result"]["id"])
+        current = await delegated(host.client, host.service, "carol", "query", request={"text": "Berlin Paris"})
+        assert current.status_code == 200, current.text
+        assert [item["content"] for item in current.json()["result"]["facts"]] == ["I live in Berlin"]
+        async with connect(database) as conn:
+            async with conn.cursor(row_factory=tuple_row) as cursor:
+                # every receipt names a stored version: a receipt for a row that was never written is the old defect
+                await cursor.execute("SELECT count(*) FROM memory_version WHERE id = ANY(%s)", (receipts,))
+                row = await cursor.fetchone()
+                assert row is not None and row[0] == 3
+                await cursor.execute(
+                    "SELECT content FROM memory_version WHERE user_id = 'carol' AND status = 'active' "
+                    "AND upper_inf(recorded_range) AND upper_inf(event_range)"
+                )
+                assert [r[0] for r in await cursor.fetchall()] == ["I live in Berlin"]

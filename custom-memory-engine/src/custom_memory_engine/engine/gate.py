@@ -23,6 +23,7 @@ Checks, in order, each recording a ``MEMORY_CONFLICT`` reason code:
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -254,13 +255,20 @@ async def existing_relation(
     predicate_key: str,
     candidate_content: str,
     semantic_slot: str | None = None,
+    valid_from: datetime | None = None,
     schema_name: str = "cme_engine",
 ) -> tuple[ConflictRelation | None, str | None]:
     """Cheap deterministic conflict lookup over current single-valued beliefs.
 
-    Returns ``(relation, existing_version_id)``. Exact normalized content is a ``duplicate``; other overlaps are left
-    ``None`` for the open-ended three-stage resolution (``semantic.conflict``) or the transactional supersession path
-    to decide.
+    Returns ``(relation, existing_version_id)``. Exact normalized content is a ``duplicate`` only when that belief is
+    **valid at** ``valid_from`` (the candidate's valid-time start); other overlaps are left ``None`` for the open-ended
+    three-stage resolution (``semantic.conflict``) or the transactional supersession path to decide.
+
+    Why valid time matters: supersession closes the old value's *valid* range and reissues it as a still-believed
+    historical fact ("lived in Berlin until March"). A user who later says "I live in Berlin" again is not repeating
+    that historical row — at the new valid time the current value is Paris — so matching it as a duplicate would
+    reinforce history, drop the new statement and leave Paris current. ``valid_from=None`` keeps the content-only
+    match for callers that have no valid time to offer.
 
     The lookup is scoped by ``COALESCE(semantic_slot, predicate_key)`` -- migration 24's exclusion key -- so it finds
     exactly the beliefs the constraint considers exclusive. Before that key the lookup was ``(subject_key,
@@ -270,7 +278,8 @@ async def existing_relation(
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
-                "SELECT id, content FROM {v} WHERE user_id = %s AND subject_key = %s AND predicate_key = %s "
+                "SELECT id, content, event_range FROM {v} "
+                "WHERE user_id = %s AND subject_key = %s AND predicate_key = %s "
                 "AND COALESCE(semantic_slot, predicate_key) = COALESCE(%s, predicate_key) "
                 "AND single_valued = true AND status = 'active' AND upper_inf(recorded_range) "
                 "ORDER BY lower(event_range) DESC, id LIMIT 5"
@@ -279,8 +288,10 @@ async def existing_relation(
         )
         rows = await cursor.fetchall()
     normalized = " ".join(candidate_content.lower().split())
-    for version_id, content in rows:
-        if " ".join(content.lower().split()) == normalized:
+    for version_id, content, event_range in rows:
+        if " ".join(content.lower().split()) != normalized:
+            continue
+        if valid_from is None or event_range is None or valid_from in event_range:
             return "duplicate", version_id
     return (None, rows[0][0] if rows else None)
 

@@ -220,6 +220,7 @@ async def apply_candidate(
             predicate_key=candidate.predicate_key,
             candidate_content=candidate.content,
             semantic_slot=candidate.semantic_slot,
+            valid_from=candidate.valid_from,
             schema_name=schema_name,
         )
         relation = found or ("update" if existing_version_id else "unrelated")
