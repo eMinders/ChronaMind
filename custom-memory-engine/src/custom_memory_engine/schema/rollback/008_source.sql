@@ -3,6 +3,16 @@
 -- It REFUSES, with a static error, while any non-turn source exists: dropping the columns would lose that evidence.
 -- After a re-apply the four new columns sit at later attribute numbers (PostgreSQL never reuses a dropped one); every
 -- other catalog property is identical. Roll back later migrations first.
+-- This rollback's data guard must see every tenant's rows. Under FORCE ROW LEVEL SECURITY a role that cannot bypass it (an
+-- ordinary owner included) sees none, so the guard would pass on an empty view and the rollback would drop data it
+-- was written to protect. Such a role is refused first (`V2-D123`).
+DO $bypass$
+BEGIN
+  IF NOT (SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user) THEN
+    RAISE EXCEPTION 'rollback_requires_bypassrls' USING ERRCODE = '42501';
+  END IF;
+END
+$bypass$;
 
 DO $$
 BEGIN

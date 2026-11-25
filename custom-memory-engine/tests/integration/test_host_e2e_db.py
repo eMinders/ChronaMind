@@ -27,6 +27,7 @@ import httpx
 import pytest
 import uvicorn
 from psycopg import AsyncConnection, sql
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.entry import Credential
@@ -751,6 +752,8 @@ async def test_metrics_endpoint_renders_prometheus_text_without_tenant_or_conten
         assert 'cme_host_rate_limited_total{operation="query",tier="B"} 1' in body
         assert 'cme_host_call_duration_seconds_bucket{operation="assert",tier="B",le="+Inf"} 1' in body
         assert "# TYPE cme_queue_depth gauge" in body
+        # the test database login is a superuser, so the queue is measured here
+        assert "cme_queue_metrics_available 1" in body
         assert "cme_queue_dead_letters_total 0" in body
         assert "# TYPE cme_degradations_total counter" in body
 
@@ -933,3 +936,48 @@ async def test_returning_to_an_earlier_single_valued_value_supersedes_the_curren
                     "AND upper_inf(recorded_range) AND upper_inf(event_range)"
                 )
                 assert [r[0] for r in await cursor.fetchall()] == ["I live in Berlin"]
+
+
+async def test_a_host_login_without_bypassrls_reports_the_queue_unmeasured_not_zero(database) -> None:  # noqa: F811
+    """Under forced RLS a non-BYPASSRLS login sees no tenant's jobs: that must not render as 0 dead letters."""
+    config, schema = database
+    login = "cme_metrics_" + uuid4().hex[:10]
+    password = uuid4().hex
+    async with connect(database) as conn:
+        await conn.execute(
+            sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD {}").format(
+                sql.Identifier(login), sql.Literal(password)
+            )
+        )
+        await conn.execute(
+            sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(sql.Identifier(schema), sql.Identifier(login))
+        )
+        # SELECT is granted, so what blanks the count is row-level security, not a permission error
+        await conn.execute(
+            sql.SQL("GRANT SELECT ON {} TO {}").format(sql.Identifier(schema, "job"), sql.Identifier(login))
+        )
+        await conn.commit()
+    try:
+        dsn = make_conninfo(config.database_url.get_secret_value(), user=login, password=password)
+        credentials = HostCredentials({TOKENS["alice-b"]: Credential("alice", "B")})
+        service = await HostService.open(HostSettings(dsn=dsn, role=login, schema_name=schema), credentials)
+        try:
+            assert await service.collect_queue_metrics() is None
+            body = service.metrics.render(queue_counts=None)
+        finally:
+            await service.close()
+        assert "cme_queue_metrics_available 0" in body
+        assert "cme_queue_dead_letters_total" not in body
+        # the owner-level login (a superuser here) does measure it
+        owner = await HostService.open(
+            HostSettings(dsn=config.database_url.get_secret_value(), role=login, schema_name=schema), credentials
+        )
+        try:
+            assert await owner.collect_queue_metrics() == {}
+        finally:
+            await owner.close()
+    finally:
+        async with connect(database) as conn:
+            await conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(login)))
+            await conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(login)))
+            await conn.commit()

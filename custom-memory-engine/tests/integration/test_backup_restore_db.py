@@ -1,4 +1,4 @@
-"""End-to-end PostgreSQL backup & restore rehearsal integration tests (``#255``, ``V2-D119``)."""
+"""Backup & restore rehearsal against real PostgreSQL, and the erasure-journal replay (``#255``, ``V2-D122``)."""
 
 from __future__ import annotations
 
@@ -40,10 +40,32 @@ def test_backup_and_restore_rehearsal_passes_against_real_postgres() -> None:
     assert report["post_restore_migration_reason"] is None
     assert report["post_restore_kept_count"] == 1
     assert report["post_restore_deleted_count"] == 0
-    assert report["post_restore_deletion_requests"] == 1
+    assert report["post_restore_deletion_requests"] == 3
     assert report["post_restore_digest_verified"] is True
+    # the risk: a backup from before the deletions brings the deleted memories back, with no record of the deletions
     assert report["pre_restore_resurrected_count"] == 1
     assert report["pre_restore_deletion_requests"] == 0
+    # the erasure journal (V2-D122): three deletions after the backup, kept outside the database
+    assert report["journal_entries"] == 3
+    assert report["journal_entries_after_stale_export"] == 3  # exporting from the older database cannot shrink it
+    assert report["journal_wrong_key_refused"] is True
+    # replayed into the restored database: the resolved memory deletion and bob's `delete all` erase again, and the
+    # memory the backup never held is recorded with nothing to erase
+    assert (report["replay_replayed"], report["replay_recorded_unresolved"], report["replay_already_present"]) == (
+        2,
+        1,
+        0,
+    )
+    assert report["replayed_resurrected_count"] == 0
+    assert report["replayed_bob_count"] == 0
+    assert report["replayed_kept_count"] == 1
+    assert report["replayed_request_ids_match"] is True
+    # idempotent: a second replay finds every request and does nothing
+    assert (report["second_replay_already_present"], report["second_replay_replayed"]) == (3, 0)
+    # the leak scanner's database channels: the resurrection is visible before the replay and gone after it
+    assert report["scan_leaks_before_replay"] > 0
+    assert report["scan_leaks_after_replay"] == 0
+    assert report["scan_measured_channels_after_replay"] > 0
 
 
 async def test_rehearsal_refuses_non_bypassrls_dump_role(database) -> None:  # noqa: F811

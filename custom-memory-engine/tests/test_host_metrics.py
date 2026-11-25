@@ -68,6 +68,7 @@ def test_prometheus_text_format_renders_all_families_and_counts() -> None:
 
     assert 'cme_queue_depth{kind="semantic_extraction",status="queued"} 4' in rendered
     assert "cme_queue_dead_letters_total 3" in rendered
+    assert "cme_queue_metrics_available 1" in rendered
     assert 'cme_degradations_total{component="embedder"} 1' in rendered
     assert 'cme_degradations_total{component="judge"} 1' in rendered
 
@@ -109,3 +110,15 @@ async def test_instrumented_proxies_record_embedder_and_judge_degradations() -> 
     assert 'cme_degradations_total{component="judge"} 1' in rendered
     assert "hello" not in rendered
     assert "world" not in rendered
+
+
+def test_an_unmeasured_queue_is_reported_unavailable_never_as_zero_dead_letters() -> None:
+    """Under forced RLS a session without BYPASSRLS sees no tenant's jobs: an empty count would be a false zero."""
+    rendered = HostMetrics().render(queue_counts=None)
+    assert "cme_queue_metrics_available 0" in rendered
+    assert "cme_queue_dead_letters_total" not in rendered
+    assert "cme_queue_depth" not in rendered
+    # a measured empty queue is a real zero, and says so
+    measured = HostMetrics().render(queue_counts={})
+    assert "cme_queue_metrics_available 1" in measured
+    assert "cme_queue_dead_letters_total 0" in measured

@@ -19,8 +19,13 @@
 -- The writer is `api.handlers.Handlers.set_visibility`, which is an ordinary `UPDATE` of one artifact row as the
 -- caller: row-level security's own-user `WITH CHECK` decides whether the caller may write it, so sharing needs no
 -- privileged function and no GUC gate. `assert`/`ingest_episode`/`create_entity`/`link` take the same column at
--- insertion. Nothing syncs child columns, so there is no window in which they disagree with the parent, and no
--- `SECURITY DEFINER` path that could raise a visibility a caller may not raise.
+-- insertion. The child tables still carry their migration-11 `scope_path`/`visibility` columns, and nothing updates
+-- them: after a `set_visibility` the parent says `shared` while its children keep the value they were written with.
+-- That disagreement is inert by construction, because no child policy reads those columns any more -- readability is
+-- the parent's alone -- and that is deliberate: a synced copy is a second source of truth that can drift, and syncing it
+-- would need a `SECURITY DEFINER` path. A future policy must not read a child's own `visibility`
+-- (`test_migration_m2.py::test_the_read_policy_is_the_library_expression_on_every_scoped_table` pins every child to
+-- `rls_parent_read`).
 --
 -- Ten tables keep the migration-11 policy unchanged: `memory_version`, `entity` and `association` (an artifact's own
 -- visibility), `negative_constraint`, `memory_conflict`, `turn`, `session`, `job`, `audit_event`, `deletion_request`

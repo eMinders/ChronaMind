@@ -10,7 +10,12 @@ Exercises every documented requirement in ``deploy/README.md``:
 4. Restores both dumps into fresh databases after bootstrapping ``public`` extensions (``vector``, ``btree_gist``,
    ``pg_trgm``), re-provisions ``CME_RUNTIME_ROLE`` with :func:`provision_runtime_role`, verifies
    ``MigrationRunner.status().state == "applied"`` and post-deletion row/receipt integrity, AND verifies that
-   restoring the pre-deletion dump resurrects the deleted memory (proving the ``#255`` / ``V2-D119`` policy caveat).
+   restoring the pre-deletion dump resurrects the deleted memories (the risk ``V2-D119`` stated).
+5. Exports the erasure journal from the live database after the deletions (``V2-D122``), proves an export from the
+   restored older database cannot shrink it and a wrong deletion key is refused, replays it into the restored
+   pre-deletion database, and verifies nothing deleted is readable any more (a resolved ``memory`` deletion, a target
+   the backup never held, and a user's ``delete all``), the kept memory survives, the request ids are the originals,
+   and a second replay does nothing.
 """
 
 from __future__ import annotations
@@ -22,8 +27,10 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
@@ -33,10 +40,13 @@ from psycopg.rows import tuple_row
 from pydantic import SecretStr
 from rich.console import Console
 
+from custom_memory_engine.api.delete_handlers import DeleteHandlers
 from custom_memory_engine.api.entry import CallerContext, Credential
 from custom_memory_engine.api.read_handlers import QueryResult
 from custom_memory_engine.api.runtime import Receipt, Runtime
 from custom_memory_engine.api.wiring import wire_engine
+from custom_memory_engine.deletion.journal import JournalError, export_to_file, read_journal, replay_journal
+from custom_memory_engine.deletion.scanner import ScanContext, scan_deleted_key
 from custom_memory_engine.engine.deletion import target_ref_digest
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.schema.migrate import (
@@ -64,6 +74,10 @@ DELETION_KEY = b"d" * 32
 T0 = datetime(2026, 3, 10, 9, 0, tzinfo=UTC)
 KEEP_TEXT = "Alice works as an architect in Vienna"
 DELETE_TEXT = "Alice is allergic to shellfish"
+#: Written and deleted *after* the pre-deletion backup: the restored database never held it.
+LATE_TEXT = "Alice adopted a greyhound named Comet"
+#: Bob's only memory; Bob then deletes everything (`scope='all'`) after the backup.
+BOB_TEXT = "Bob plays the cello in an orchestra"
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +97,21 @@ class RehearsalReport:
     post_restore_digest_verified: bool
     pre_restore_resurrected_count: int
     pre_restore_deletion_requests: int
+    journal_entries: int
+    journal_entries_after_stale_export: int
+    journal_wrong_key_refused: bool
+    replay_replayed: int
+    replay_recorded_unresolved: int
+    replay_already_present: int
+    replayed_resurrected_count: int
+    replayed_bob_count: int
+    replayed_kept_count: int
+    replayed_request_ids_match: bool
+    second_replay_already_present: int
+    second_replay_replayed: int
+    scan_leaks_before_replay: int
+    scan_leaks_after_replay: int
+    scan_measured_channels_after_replay: int
 
 
 def _resolve_pg_tool_mode() -> str:
@@ -164,24 +193,26 @@ def _run_pg_restore(mode: str, dsn: str, schema: str, dump_bytes: bytes) -> None
         raise RuntimeError(f"pg_restore_failed:{err}")
 
 
-def _context(tier: str, *, admin: bool = False) -> CallerContext:
-    scope = "/u/alice/"
+def _context(tier: str, *, admin: bool = False, user: str = "alice") -> CallerContext:
+    scope = f"/u/{user}/"
     return CallerContext.from_credential(
-        Credential("alice", tier, admin),  # type: ignore[arg-type]
+        Credential(user, tier, admin),  # type: ignore[arg-type]
         write_scope=scope,
-        read_set=resolve_read_set("alice", [Selector.of(scope)], ()),
+        read_set=resolve_read_set(user, [Selector.of(scope)], ()),
     )
 
 
-async def _write_claim(conn: AsyncConnection, role: str, schema: str, text: str, key: str) -> str:
+async def _write_claim(
+    conn: AsyncConnection, role: str, schema: str, text: str, key: str, *, user: str = "alice"
+) -> str:
     runtime = Runtime(conn, role, schema, provenance_key=PROVENANCE_KEY, deletion_key=DELETION_KEY)
     engine = wire_engine(runtime)
-    ctx = _context("B")
+    ctx = _context("B", user=user)
     receipt = await engine.call(
         ctx,
         "assert",
         {
-            "scope": "/u/alice/",
+            "scope": f"/u/{user}/",
             "kind": "claim",
             "content": text,
             "evidence": [
@@ -200,13 +231,46 @@ async def _write_claim(conn: AsyncConnection, role: str, schema: str, text: str,
     return cast(Receipt, receipt).id
 
 
-async def _query_facts(conn: AsyncConnection, role: str, schema: str, query_text: str) -> list[str]:
+async def _memory_key(conn: AsyncConnection, schema: str, version_id: str, *, user: str = "alice") -> str:
+    async with conn.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute("SELECT set_config('app.user_id', %s, false)", (user,))
+        await cursor.execute(
+            sql.SQL("SELECT memory_key FROM {} WHERE id = %s").format(sql.Identifier(schema, "memory_version")),
+            (version_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.execute("RESET app.user_id")
+    if row is None:
+        raise RuntimeError("seeded_memory_key_missing")
+    return str(row[0])
+
+
+async def _leak_scan(
+    conn: AsyncConnection, schema: str, targets: tuple[tuple[str, str, str, int], ...]
+) -> tuple[int, int]:
+    """The deletion leak scanner's database channels over each ``(user, memory_key, canary, epoch)``.
+
+    Returns (channels that found a residual, channels measured), summed over the targets.
+    """
+    leaks = measured = 0
+    for user, memory_key, canary, epoch in targets:
+        report = await scan_deleted_key(
+            ScanContext(user, memory_key, canary, epoch), {}, connection=conn, schema_name=schema
+        )
+        leaks += len(report.leaks)
+        measured += sum(1 for finding in report.findings if finding.measured)
+    return leaks, measured
+
+
+async def _query_facts(
+    conn: AsyncConnection, role: str, schema: str, query_text: str, *, user: str = "alice"
+) -> list[str]:
     runtime = Runtime(conn, role, schema, provenance_key=PROVENANCE_KEY, deletion_key=DELETION_KEY)
     engine = wire_engine(runtime)
     result = await engine.call(
-        _context("B"),
+        _context("B", user=user),
         "query",
-        {"request": {"scope": "/u/alice/", "text": query_text}},
+        {"request": {"scope": f"/u/{user}/", "text": query_text}},
     )
     return sorted({item.content for item in cast(QueryResult, result).facts})
 
@@ -311,6 +375,7 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
     post_role = f"cme_rt_post_{tag}"
     pre_role = f"cme_rt_pre_{tag}"
 
+    journal_path = Path(tempfile.gettempdir()) / f"cme_rehearsal_journal_{tag}.jsonl"
     admin_dsn = make_conninfo(source_dsn, dbname="postgres")
     src_dsn = make_conninfo(source_dsn, dbname=src_db)
     post_dsn = make_conninfo(source_dsn, dbname=post_db)
@@ -334,10 +399,13 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
             async with await AsyncConnection.connect(src_dsn, autocommit=True, connect_timeout=5) as src_conn:
                 await src_conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema_name)))
                 await src_conn.execute("INSERT INTO app_user VALUES ('alice', 'ext-alice', %s)", (T0,))
+                await src_conn.execute("INSERT INTO app_user VALUES ('bob', 'ext-bob', %s)", (T0,))
                 await provision_runtime_role(src_conn, schema_name, src_role)
 
                 await _write_claim(src_conn, src_role, schema_name, KEEP_TEXT, "reh-keep")
                 del_version_id = await _write_claim(src_conn, src_role, schema_name, DELETE_TEXT, "reh-del")
+                bob_version_id = await _write_claim(src_conn, src_role, schema_name, BOB_TEXT, "reh-bob", user="bob")
+                bob_memory_key = await _memory_key(src_conn, schema_name, bob_version_id, user="bob")
 
                 async with src_conn.cursor(row_factory=tuple_row) as cursor:
                     await cursor.execute("SELECT set_config('app.user_id', 'alice', false)")
@@ -370,9 +438,26 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 )
                 if DELETE_TEXT in await _query_facts(src_conn, src_role, schema_name, "shellfish"):
                     raise RuntimeError("source_delete_failed")
+                # after the backup: a memory written and deleted (the restored database never holds it), and one
+                # user's `delete all`
+                late_version_id = await _write_claim(src_conn, src_role, schema_name, LATE_TEXT, "reh-late")
+                late_memory_key = await _memory_key(src_conn, schema_name, late_version_id)
+                await engine.call(
+                    _context("C", admin=True),
+                    "delete",
+                    {"scope": "memory", "target_ref": late_memory_key, "deletion_epoch": None},
+                )
+                await engine.call(_context("C", user="bob"), "delete", {"scope": "all", "deletion_epoch": None})
+                if BOB_TEXT in await _query_facts(src_conn, src_role, schema_name, "cello", user="bob"):
+                    raise RuntimeError("source_delete_all_failed")
 
                 post_dump = _run_pg_dump(mode, src_dsn, schema_name)
                 source_catalog = await _snapshot_catalog(src_conn, schema_name)
+                # the erasure journal, exported from the live database after the deletions (V2-D122)
+                journal_entries = await export_to_file(
+                    src_conn, journal_path, key=DELETION_KEY, schema_name=schema_name
+                )
+                source_request_ids = sorted(entry.request_id for entry in read_journal(journal_path).entries)
 
             post_state, post_reason, post_cat_ok = await _restore_and_provision(
                 mode=mode,
@@ -402,7 +487,8 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                     )
                     req_rows = await cursor.fetchall()
                 post_req_count = len(req_rows)
-                digest_ok = post_req_count == 1 and str(req_rows[0][0]) == expected_digest
+                # the alice memory deletion, alice's late deletion and bob's `delete all`
+                digest_ok = post_req_count == 3 and expected_digest in {str(row[0]) for row in req_rows}
 
             async with await AsyncConnection.connect(pre_dsn, autocommit=True, connect_timeout=5) as pre_conn:
                 pre_resurrected = await _query_facts(pre_conn, pre_role, schema_name, "shellfish")
@@ -412,6 +498,42 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                     )
                     pre_req_row = await cursor.fetchone()
                 pre_req_count = int(pre_req_row[0]) if pre_req_row else 0
+                pre_bob = await _query_facts(pre_conn, pre_role, schema_name, "cello", user="bob")
+                if DELETE_TEXT not in pre_resurrected or BOB_TEXT not in pre_bob:
+                    raise RuntimeError("pre_restore_resurrection_check_did_not_trigger")
+
+                # an export from the restored, older database must not shrink the journal
+                stale_export_entries = await export_to_file(
+                    pre_conn, journal_path, key=DELETION_KEY, schema_name=schema_name
+                )
+                journal = read_journal(journal_path)
+
+                # a replay under the wrong deletion key is refused before it writes anything
+                wrong_key_refused = False
+                wrong = Runtime(pre_conn, pre_role, schema_name, provenance_key=PROVENANCE_KEY, deletion_key=b"w" * 32)
+                try:
+                    await replay_journal(DeleteHandlers(wrong), journal)
+                except JournalError as error:
+                    wrong_key_refused = error.code == "journal_key_mismatch"
+
+                targets = (("alice", del_memory_key, "shellfish", 1), ("bob", bob_memory_key, "cello", 1))
+                before_scan = await _leak_scan(pre_conn, schema_name, targets)
+                runtime = Runtime(
+                    pre_conn, pre_role, schema_name, provenance_key=PROVENANCE_KEY, deletion_key=DELETION_KEY
+                )
+                first = await replay_journal(DeleteHandlers(runtime), journal)
+                after_scan = await _leak_scan(pre_conn, schema_name, targets)
+                second = await replay_journal(DeleteHandlers(runtime), journal)
+                replayed_resurrected = await _query_facts(pre_conn, pre_role, schema_name, "shellfish")
+                replayed_kept = await _query_facts(pre_conn, pre_role, schema_name, "Vienna")
+                replayed_bob = await _query_facts(pre_conn, pre_role, schema_name, "cello", user="bob")
+                async with pre_conn.cursor(row_factory=tuple_row) as cursor:
+                    await cursor.execute(
+                        sql.SQL("SELECT id FROM {} ORDER BY id").format(
+                            sql.Identifier(schema_name, "deletion_request")
+                        )
+                    )
+                    replayed_ids = sorted(str(row[0]) for row in await cursor.fetchall())
 
             if KEEP_TEXT not in post_kept:
                 raise RuntimeError("post_restore_kept_memory_missing")
@@ -419,8 +541,6 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 raise RuntimeError("post_restore_deleted_memory_unexpectedly_present")
             if not digest_ok:
                 raise RuntimeError("post_restore_deletion_digest_mismatch")
-            if DELETE_TEXT not in pre_resurrected:
-                raise RuntimeError("pre_restore_resurrection_check_did_not_trigger")
 
             return RehearsalReport(
                 dump_mode=mode,
@@ -436,8 +556,24 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 post_restore_digest_verified=digest_ok,
                 pre_restore_resurrected_count=len(pre_resurrected),
                 pre_restore_deletion_requests=pre_req_count,
+                journal_entries=journal_entries,
+                journal_entries_after_stale_export=stale_export_entries,
+                journal_wrong_key_refused=wrong_key_refused,
+                replay_replayed=first.replayed,
+                replay_recorded_unresolved=first.recorded_unresolved,
+                replay_already_present=first.already_present,
+                replayed_resurrected_count=len(replayed_resurrected),
+                replayed_bob_count=len(replayed_bob),
+                replayed_kept_count=len(replayed_kept),
+                replayed_request_ids_match=replayed_ids == source_request_ids,
+                second_replay_already_present=second.already_present,
+                second_replay_replayed=second.replayed + second.recorded_unresolved,
+                scan_leaks_before_replay=before_scan[0],
+                scan_leaks_after_replay=after_scan[0],
+                scan_measured_channels_after_replay=after_scan[1],
             )
         finally:
+            journal_path.unlink(missing_ok=True)
             for dsn, role in ((src_dsn, src_role), (post_dsn, post_role), (pre_dsn, pre_role)):
                 try:
                     await _drop_role_in_db(dsn, role)

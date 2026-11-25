@@ -264,14 +264,26 @@ class HostService:
             return False
         return True
 
-    async def collect_queue_metrics(self) -> dict[tuple[str, str], int]:
-        """Collect aggregate ``(kind, status)`` job counts without tenant or content identifiers."""
+    async def collect_queue_metrics(self) -> dict[tuple[str, str], int] | None:
+        """Aggregate ``(kind, status)`` job counts without tenant or content identifiers, or ``None`` if unmeasured.
+
+        ``job`` is under forced row-level security, so a session that cannot bypass it sees no tenant's rows and an
+        honest count is impossible: that is ``None`` (rendered as ``cme_queue_metrics_available 0``), never a zero. A
+        deployment that wants queue gauges on the host gives its login role ``BYPASSRLS``; otherwise the queue is
+        observed from the database directly (``deploy/README.md``). No privileged function is added for this.
+        """
         if self._pool is None:
-            return {}
+            return None
         counts: dict[tuple[str, str], int] = {}
         try:
             async with self._pool.connection(timeout=2.0) as connection:
                 async with connection.cursor(row_factory=tuple_row) as cursor:
+                    await cursor.execute(
+                        "SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user"
+                    )
+                    row = await cursor.fetchone()
+                    if row is None or not row[0]:
+                        return None
                     await cursor.execute(
                         sql.SQL("SELECT kind, status, count(*) FROM {} GROUP BY kind, status").format(
                             sql.Identifier(self.settings.schema_name, "job")
@@ -281,7 +293,7 @@ class HostService:
                         counts[(str(kind), str(status))] = int(total)
         except Exception as error:  # noqa: BLE001 - metrics scrape degrades gracefully
             logger.warning("host_metrics_queue_query_failed", error_type=type(error).__name__)
-            return {}
+            return None
         return counts
 
     # -- the call ---------------------------------------------------------------------------------------------

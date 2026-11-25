@@ -55,6 +55,7 @@ METRIC_LABELS: dict[str, tuple[str, ...]] = {
     "cme_host_rate_limited_total": ("operation", "tier"),
     "cme_queue_depth": ("kind", "status"),
     "cme_queue_dead_letters_total": (),
+    "cme_queue_metrics_available": (),
     "cme_degradations_total": ("component",),
 }
 
@@ -116,7 +117,8 @@ class HostMetrics:
         self._duration_counts: dict[tuple[str, str], int] = {}
         self._rate_limited: dict[tuple[str, str], int] = {}
         self._degradations: dict[str, int] = {}
-        self._queue_snapshot: dict[tuple[str, str], int] = {}
+        #: ``None`` until a measured snapshot is set: an unmeasured queue is never rendered as zero.
+        self._queue_snapshot: dict[tuple[str, str], int] | None = None
 
     def record_call(
         self,
@@ -175,7 +177,11 @@ class HostMetrics:
             self._queue_snapshot = sanitized
 
     def render(self, queue_counts: Mapping[tuple[str, str], int] | None = None) -> str:
-        """Render all metric families in Prometheus exposition text format v0.0.4."""
+        """Render all metric families in Prometheus exposition text format v0.0.4.
+
+        ``queue_counts`` is a measured queue snapshot; ``None`` falls back to the stored one, and when neither was
+        measured the queue families are omitted and ``cme_queue_metrics_available`` is ``0`` (never a false zero).
+        """
         with self._lock:
             calls = dict(self._calls)
             dur_buckets = {k: list(v) for k, v in self._duration_buckets.items()}
@@ -186,7 +192,7 @@ class HostMetrics:
             snapshot = (
                 {(_norm_token(k), _norm_token(s)): max(0, int(c)) for (k, s), c in queue_counts.items()}
                 if queue_counts is not None
-                else dict(self._queue_snapshot)
+                else (None if self._queue_snapshot is None else dict(self._queue_snapshot))
             )
 
         lines: list[str] = []
@@ -218,16 +224,20 @@ class HostMetrics:
             labels = _format_labels(METRIC_LABELS["cme_host_rate_limited_total"], (op, tier))
             lines.append(f"cme_host_rate_limited_total{labels} {value}")
 
-        lines.append("# HELP cme_queue_depth Current number of jobs in the slow-lane queue by kind and status.")
-        lines.append("# TYPE cme_queue_depth gauge")
-        for (kind, status), value in sorted(snapshot.items()):
-            labels = _format_labels(METRIC_LABELS["cme_queue_depth"], (kind, status))
-            lines.append(f"cme_queue_depth{labels} {value}")
+        lines.append("# HELP cme_queue_metrics_available 1 when the queue families below were measured, else 0.")
+        lines.append("# TYPE cme_queue_metrics_available gauge")
+        lines.append(f"cme_queue_metrics_available {0 if snapshot is None else 1}")
+        if snapshot is not None:
+            lines.append("# HELP cme_queue_depth Current number of jobs in the slow-lane queue by kind and status.")
+            lines.append("# TYPE cme_queue_depth gauge")
+            for (kind, status), value in sorted(snapshot.items()):
+                labels = _format_labels(METRIC_LABELS["cme_queue_depth"], (kind, status))
+                lines.append(f"cme_queue_depth{labels} {value}")
 
-        dead_letters = sum(count for (_, status), count in snapshot.items() if status == "dead_letter")
-        lines.append("# HELP cme_queue_dead_letters_total Total number of dead-lettered slow-lane jobs.")
-        lines.append("# TYPE cme_queue_dead_letters_total counter")
-        lines.append(f"cme_queue_dead_letters_total {dead_letters}")
+            dead_letters = sum(count for (_, status), count in snapshot.items() if status == "dead_letter")
+            lines.append("# HELP cme_queue_dead_letters_total Total number of dead-lettered slow-lane jobs.")
+            lines.append("# TYPE cme_queue_dead_letters_total counter")
+            lines.append(f"cme_queue_dead_letters_total {dead_letters}")
 
         lines.append("# HELP cme_degradations_total Total number of component degradations (embedder, judge).")
         lines.append("# TYPE cme_degradations_total counter")

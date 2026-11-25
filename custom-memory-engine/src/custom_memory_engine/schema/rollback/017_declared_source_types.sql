@@ -2,6 +2,16 @@
 -- it. Restores the version-16 shape rule and source trigger exactly. It REFUSES, with a static error, while any
 -- 'tool', 'file' or 'event' evidence row exists: version 16 cannot store one, and rewriting it as 'external' would
 -- erase the declared type it was recorded with.
+-- This rollback's data guard must see every tenant's rows. Under FORCE ROW LEVEL SECURITY a role that cannot bypass it (an
+-- ordinary owner included) sees none, so the guard would pass on an empty view and the rollback would drop data it
+-- was written to protect. Such a role is refused first (`V2-D123`).
+DO $bypass$
+BEGIN
+  IF NOT (SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user) THEN
+    RAISE EXCEPTION 'rollback_requires_bypassrls' USING ERRCODE = '42501';
+  END IF;
+END
+$bypass$;
 
 DO $$
 BEGIN

@@ -9,7 +9,7 @@
 # dropped on exit. Nothing reads a dotenv file.
 #
 # Steps, one per acceptance criterion of #253:
-#   1. systemd   `systemd-analyze verify` on cme-worker.service, cme-maintenance.service and .timer (staged --root), and
+#   1. systemd   `systemd-analyze verify` on every unit and timer in deploy/ (staged --root), and
 #                every CME_* variable a unit, the compose file or the Dockerfile names exists in .env.example and in
 #                deploy/README.md (scripts/verify_deploy_artifacts.py --require-systemd)
 #   2. build     `docker build -f deploy/Dockerfile.worker`, the command the Dockerfile documents
@@ -135,7 +135,7 @@ run_worker_image() {
 # ---------------------------------------------------------------------------------------------------------------------
 step "1/6 systemd units and the environment inventory"
 uv run --no-sync python scripts/verify_deploy_artifacts.py --require-systemd
-ok "systemd-analyze verify: cme-worker.service, cme-maintenance.service, cme-maintenance.timer"
+ok "systemd-analyze verify: cme-worker, cme-maintenance(.timer), cme-erasure-journal(.timer)"
 
 # ---------------------------------------------------------------------------------------------------------------------
 step "2/6 docker build -f deploy/Dockerfile.worker"

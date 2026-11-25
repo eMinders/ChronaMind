@@ -206,7 +206,13 @@ async def _discover_closure_and_scopes(
     *,
     has_scope_path: bool,
 ) -> tuple[list[str], list[str], frozenset[str]]:
-    """Read seeds, unbounded dependents, and the canonical scope set of every node in the closure."""
+    """Read seeds, unbounded dependents, and the canonical scope set of every node in the closure.
+
+    A blank ``target_ref`` outside ``all`` seeds nothing: it is the erasure-journal replay of a target the restored
+    database never held (:mod:`custom_memory_engine.deletion.journal`), which still records its request.
+    """
+    if scope != "all" and not target_ref.strip():
+        return [], [], frozenset()
     scope_expr = sql.SQL("scope_path") if has_scope_path else sql.SQL("NULL::text")
     v_scope_expr = sql.SQL("v.scope_path") if has_scope_path else sql.SQL("NULL::text")
     if scope == "all":
@@ -280,8 +286,15 @@ async def delete_memory(
     schema_name: str = "cme_engine",
     clock_tick: ClockTick | None = None,
     replay_time: datetime | None = None,
+    request_id: str | None = None,
+    stored_target_ref: str | None = None,
 ) -> DeletionReceipt:
     """Delete a memory target through its entire unbounded cognitive closure in one transaction.
+
+    ``request_id`` and ``stored_target_ref`` exist for one caller, the erasure-journal replay after a restore
+    (``V2-D122``): the replayed request keeps its original id and digest, so a second replay finds it and does nothing.
+    With ``stored_target_ref`` a blank ``target_ref`` is allowed (the restored database never held the target, so the
+    request is recorded and nothing is erased); a non-blank one must digest to ``stored_target_ref``.
 
     * **Unbounded closure (``V2-D09``):** traverses ``memory_derivation`` with ``WITH RECURSIVE ... UNION`` and no
       depth limit; terminates even on an injected cycle (F9).
@@ -298,7 +311,9 @@ async def delete_memory(
     """
     if scope not in ("memory", "topic", "all"):
         raise DeletionError("invalid_deletion_scope")
-    if scope != "all" and (not isinstance(target_ref, str) or not target_ref.strip()):
+    if not isinstance(target_ref, str):
+        raise DeletionError("nonblank_target_ref_required")
+    if scope != "all" and not target_ref.strip() and stored_target_ref is None:
         raise DeletionError("nonblank_target_ref_required")
     follows_lineage = should_follow_lineage(ablation)
     if deletion_epoch is not None and (
@@ -312,7 +327,11 @@ async def delete_memory(
         raise DeletionError("positive_lock_retries_required")
 
     key = receipt_key if receipt_key is not None else default_receipt_key()
-    stored_target_ref = target_ref_digest(key, user_id, scope, target_ref)
+    computed_target_ref = target_ref_digest(key, user_id, scope, target_ref)
+    if stored_target_ref is not None and (scope == "all" or target_ref.strip()):
+        if not hmac.compare_digest(stored_target_ref, computed_target_ref):
+            raise DeletionError("replay_target_mismatch")
+    stored_target_ref = stored_target_ref if stored_target_ref is not None else computed_target_ref
 
     await _verify_user_context(connection, user_id)
 
@@ -356,6 +375,7 @@ async def delete_memory(
                     schema_name=schema_name,
                     clock_tick=clock_tick,
                     replay_time=replay_time,
+                    request_id=request_id,
                     versions=versions,
                     derivations=derivations,
                     evidence=evidence,
@@ -392,6 +412,7 @@ async def _delete_memory_once(
     schema_name: str,
     clock_tick: ClockTick | None,
     replay_time: datetime | None,
+    request_id: str | None,
     versions: sql.Identifier,
     derivations: sql.Identifier,
     evidence: sql.Identifier,
@@ -500,7 +521,7 @@ async def _delete_memory_once(
             epoch: int = row[0]
             if deletion_epoch is not None and deletion_epoch != epoch:
                 raise DeletionError("deletion_epoch_not_next")
-            request_id = f"del-{uuid4().hex}"
+            request_id = request_id or f"del-{uuid4().hex}"
             await cursor.execute(
                 sql.SQL(
                     "INSERT INTO {r} (id, user_id, scope, target_ref, status, deletion_epoch, requested_at, "

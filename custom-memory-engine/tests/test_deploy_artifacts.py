@@ -28,7 +28,7 @@ def _copy_deploy_tree(dst: Path) -> None:
     shutil.copy2(ROOT / ".dockerignore", dst / ".dockerignore")
     shutil.copytree(ROOT / "deploy", dst / "deploy")
     (dst / "scripts").mkdir(parents=True, exist_ok=True)
-    for name in ("run_worker.py", "run_maintenance.py", "worker_healthcheck.py", "run_host.py"):
+    for name in ("run_worker.py", "run_maintenance.py", "worker_healthcheck.py", "run_host.py", "erasure_journal.py"):
         shutil.copy2(ROOT / "scripts" / name, dst / "scripts" / name)
 
 
@@ -63,6 +63,21 @@ def test_bogus_execstart_in_systemd_unit_fails_loudly(tmp_path: Path) -> None:
     assert code == 1
     assert payload["ok"] is False
     assert any("worker_unit_exec_script_missing" in err for err in payload["errors"])  # type: ignore[attr-defined]
+
+
+def test_the_erasure_journal_unit_never_shares_the_workers_environment_file(tmp_path: Path) -> None:
+    """The journal export holds a BYPASSRLS credential (V2-D122); the worker must never be able to read it."""
+    _copy_deploy_tree(tmp_path)
+    unit = tmp_path / "deploy" / "cme-erasure-journal.service"
+    unit.write_text(
+        unit.read_text(encoding="utf-8").replace("/etc/chronamind/journal.env", "/etc/chronamind/worker.env"),
+        encoding="utf-8",
+    )
+    code, payload = _run_verifier(tmp_path)
+    assert code == 1
+    errors: list[str] = payload["errors"]  # type: ignore[assignment]
+    assert "journal_unit_must_not_read_worker_env" in errors
+    assert "journal_unit_missing_directive:EnvironmentFile=/etc/chronamind/journal.env" in errors
 
 
 @pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="systemd-analyze not installed")

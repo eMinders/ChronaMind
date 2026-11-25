@@ -127,7 +127,9 @@ runtime extras with `uv sync --frozen --no-default-groups --extra host --extra e
   - `tests/integration/test_worker_process_db.py` runs `scripts/run_worker.py` as a child process against PostgreSQL with `SIGTERM`, mid-call `SIGTERM`, `SIGKILL` lease recovery, and missing-env exit-2 assertions.
   - `tests/integration/test_slow_lane_concurrency_db.py` verifies `FOR UPDATE SKIP LOCKED`, concurrent `claim_one` / `recover_stale`, zombie worker lease fencing, and dead-lettering after `MAX_ATTEMPTS`.
   - `tests/integration/test_maintenance_scheduler_db.py` exercises `worker/maintenance.py` and `scripts/run_maintenance.py` (`--once`, `--dry-run`) against PostgreSQL.
-  - `tests/integration/test_backup_restore_db.py` executes `scripts/rehearse_restore.py` (`pg_dump` / `pg_restore` round-trip, `BYPASSRLS` check, `public` extensions, role re-provisioning, and pre-deletion resurrection verification) against PostgreSQL.
+  - `tests/integration/test_backup_restore_db.py` executes `scripts/rehearse_restore.py` (`pg_dump` / `pg_restore` round-trip, `BYPASSRLS` check, `public` extensions, role re-provisioning, pre-deletion resurrection) and the erasure-journal replay (`V2-D122`: export, a stale export
+    that cannot shrink the journal, a wrong key refused, replay, a leak scan before and after, idempotence) against
+    PostgreSQL.
   - `tests/integration/test_host_e2e_db.py` drives real HTTP requests over uvicorn for auth, rate/concurrency `429` isolation, and Prometheus `/metrics`.
 - **Not executed in CI:**
   - systemd itself: no unit is started under a live PID 1, so `User=`, `EnvironmentFile=`, the sandboxing directives,
@@ -143,7 +145,7 @@ runtime extras with `uv sync --frozen --no-default-groups --extra host --extra e
   - `cme-maintenance` (`scripts/run_maintenance.py`) in a container: it has no image of its own; it runs under
     systemd only, and as a process in `test_maintenance_scheduler_db.py`.
 
-## Backup and restore policy (`A-014`, `V2-D119`)
+## Backup and restore policy (`A-014`, `V2-D119`, `V2-D122`)
 
 Every PostgreSQL table in `cme_engine` enforces `FORCE ROW LEVEL SECURITY` (`app.user_id`), and signatures/receipts
 depend on process-wide HMAC keys outside the database. Therefore:
@@ -163,11 +165,33 @@ depend on process-wide HMAC keys outside the database. Therefore:
    schema comment carries `OWNER_MARKER`, run `security.provisioning.provision_runtime_role` to create/grant
    `CME_RUNTIME_ROLE` with least privilege, and run `MigrationRunner.status()` to verify `state == 'applied'`,
    `version == 32`, and matching `_cme_schema_migrations` checksums and catalog fingerprint.
-5. **Pre-deletion backup caveat ("resurrection").** A restore from a backup taken *before* a user deletion will restore
-   the rows that existed at dump time until manual deletion-log replay or retention expiry removes them, because no
-   automated post-restore deletion-log replay daemon ships in this repository. Operators performing point-in-time or
-   dump-based recovery must manually reconcile `deletion_request` receipts issued after the backup timestamp before
-   re-enabling traffic.
+5. **Deletions survive an older backup: the erasure journal (`V2-D122`).** A backup taken before a deletion still
+   holds the deleted rows, and restoring it rolls back the `deletion_request` rows too. So the deletion log is copied
+   *out of the database*: `cme-erasure-journal.timer` runs `scripts/erasure_journal.py export` every five minutes,
+   merging every completed request (content-free: user id, scope, HMAC digest of the target, epoch) into
+   `/var/lib/chronamind/erasure-journal.jsonl`. The merge never drops an entry, so an export from a restored, older
+   database cannot shrink it. It runs from `/etc/chronamind/journal.env`, never the worker's file:
+   - `CME_JOURNAL_DATABASE_URL`: a `BYPASSRLS` role that can only read `deletion_request`
+     (`CREATE ROLE cme_journal LOGIN BYPASSRLS; GRANT USAGE ON SCHEMA cme_engine TO cme_journal;
+     GRANT SELECT ON cme_engine.deletion_request TO cme_journal;`). Without `BYPASSRLS` it would read zero rows under
+     forced RLS, so the export refuses (`journal_export_requires_bypassrls`);
+   - `CME_DELETION_RECEIPT_KEY`: only a one-way key check is written, so a replay under another key is refused.
+
+   **Ship the journal off-host** with every backup and continuously (it is small and holds no content); the database
+   cannot protect a copy of its own history. **Restore procedure:** stop the host and worker; if the old database is
+   still reachable, run one last `export`; restore the backup (steps 3–4); then, before re-enabling traffic,
+
+   ```bash
+   CME_DATABASE_URL=... CME_RUNTIME_ROLE=... CME_DELETION_RECEIPT_KEY=... \
+       python scripts/erasure_journal.py replay --journal /var/lib/chronamind/erasure-journal.jsonl
+   ```
+
+   It re-applies, per user in epoch order and through the engine's own deletion path under the restricted role, every
+   journalled request the restored database lacks, keeping the original request ids; a second run does nothing. A
+   target the backup never held is recorded with nothing to erase. Then run `scripts/run_maintenance.py --once` so
+   retention (`expire`, `purge_working`) catches up too. **What it does not cover:** deletions made after the newest
+   journal copy you still have (the recovery point is the export interval plus your off-host shipping delay), and a
+   journal lost together with the database.
 
 Run a full local restore rehearsal at any time with:
 
@@ -191,5 +215,5 @@ uv run --env-file .env python scripts/rehearse_restore.py --source-dsn "$CME_TES
 
 - **No load balancer config, TLS, or auth proxy.** The host binds `127.0.0.1` by default and authenticates bearer
   tokens itself; putting it behind TLS is the deployment's job.
-- **No automated post-restore deletion-log replay.** Operators must track and replay post-backup deletions manually on
-  restore from pre-deletion backups (see backup/restore policy above).
+- **No automatic replay on restore.** `scripts/erasure_journal.py replay` is a step of the restore procedure above; nothing
+  detects a restore by itself.

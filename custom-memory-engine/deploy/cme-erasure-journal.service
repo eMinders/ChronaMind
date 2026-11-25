@@ -1,0 +1,31 @@
+# systemd oneshot service exporting the erasure journal (`V2-D122`).
+#
+# Triggered by `cme-erasure-journal.timer`. Copies every completed `deletion_request` (content-free: user id, scope,
+# HMAC digest of the target, epoch) out of the database into /var/lib/chronamind/erasure-journal.jsonl, merging so the
+# file never shrinks. After a restore, `scripts/erasure_journal.py replay` re-applies the deletions the restored backup
+# predates. Ship the file off-host with the backups (deploy/README.md, "Backup and restore policy").
+[Unit]
+Description=ChronaMind memory engine — erasure journal export
+Documentation=file:///opt/chronamind/custom-memory-engine/deploy/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=chronamind
+Group=chronamind
+WorkingDirectory=/opt/chronamind/custom-memory-engine
+# A separate file: CME_JOURNAL_DATABASE_URL names a BYPASSRLS role (SELECT on deletion_request only) that the worker
+# must never hold.
+EnvironmentFile=/etc/chronamind/journal.env
+StateDirectory=chronamind
+StateDirectoryMode=0700
+ExecStart=/opt/chronamind/custom-memory-engine/.venv/bin/python scripts/erasure_journal.py export --journal /var/lib/chronamind/erasure-journal.jsonl
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Environment (see deploy/README.md): CME_JOURNAL_DATABASE_URL, CME_DELETION_RECEIPT_KEY, CME_SCHEMA.
+
+[Install]
+WantedBy=multi-user.target

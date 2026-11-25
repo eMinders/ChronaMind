@@ -3,8 +3,9 @@
 Checks performed:
 
 1. Cross-checks every ``CME_*`` environment variable referenced in ``deploy/cme-worker.service``,
-   ``deploy/cme-maintenance.service``, ``deploy/compose.worker.yaml``, and ``deploy/Dockerfile.worker`` (plus engine
-   host/worker/maintenance code when present) against ``.env.example`` and ``deploy/README.md``.
+   ``deploy/cme-maintenance.service``, ``deploy/cme-erasure-journal.service``, ``deploy/compose.worker.yaml``, and
+   ``deploy/Dockerfile.worker`` (plus engine host/worker/maintenance code when present) against ``.env.example`` and
+   ``deploy/README.md``.
 2. Inspects ``deploy/Dockerfile.worker`` and ``.dockerignore`` for pinned base/uv SHA-256 digests, unprivileged
    ``USER chronamind``, read-only code/venv permissions, ``STOPSIGNAL SIGTERM``, queue-based ``HEALTHCHECK``, and
    exclusion of ``.env`` / ``.model-cache`` / secrets.
@@ -188,8 +189,10 @@ def _check_unit_contents(root: Path) -> list[str]:
     worker_unit = deploy_dir / "cme-worker.service"
     maint_unit = deploy_dir / "cme-maintenance.service"
     maint_timer = deploy_dir / "cme-maintenance.timer"
+    journal_unit = deploy_dir / "cme-erasure-journal.service"
+    journal_timer = deploy_dir / "cme-erasure-journal.timer"
 
-    for unit in (worker_unit, maint_unit, maint_timer):
+    for unit in (worker_unit, maint_unit, maint_timer, journal_unit, journal_timer):
         if not unit.is_file():
             errors.append(f"missing_file:deploy/{unit.name}")
 
@@ -239,14 +242,41 @@ def _check_unit_contents(root: Path) -> list[str]:
         if not exec_match or not (root / exec_match.group(1)).is_file():
             errors.append("maintenance_unit_exec_script_missing")
 
-    if maint_timer.is_file():
-        t_text = maint_timer.read_text(encoding="utf-8")
+    if journal_unit.is_file():
+        j_text = journal_unit.read_text(encoding="utf-8")
+        for required in (
+            "[Unit]",
+            "[Service]",
+            "[Install]",
+            "Type=oneshot",
+            "User=chronamind",
+            "Group=chronamind",
+            "NoNewPrivileges=true",
+            "PrivateTmp=true",
+            "ProtectSystem=strict",
+            "ProtectHome=true",
+            "StateDirectory=chronamind",
+            # the BYPASSRLS journal credential must never share the worker's environment file
+            "EnvironmentFile=/etc/chronamind/journal.env",
+        ):
+            if required not in j_text:
+                errors.append(f"journal_unit_missing_directive:{required}")
+        if "/etc/chronamind/worker.env" in j_text:
+            errors.append("journal_unit_must_not_read_worker_env")
+        exec_match = re.search(r"^\s*ExecStart=\S+\s+(\S+)", j_text, re.M)
+        if not exec_match or not (root / exec_match.group(1)).is_file():
+            errors.append("journal_unit_exec_script_missing")
+
+    for timer, label in ((maint_timer, "maintenance"), (journal_timer, "journal")):
+        if not timer.is_file():
+            continue
+        t_text = timer.read_text(encoding="utf-8")
         for required in ("[Unit]", "[Timer]", "[Install]", "OnCalendar=", "Persistent=true"):
             if required not in t_text:
-                errors.append(f"maintenance_timer_missing_directive:{required}")
+                errors.append(f"{label}_timer_missing_directive:{required}")
         unit_match = re.search(r"^\s*Unit=(\S+)", t_text, re.M)
         if not unit_match or not (deploy_dir / unit_match.group(1)).is_file():
-            errors.append("maintenance_timer_target_unit_missing")
+            errors.append(f"{label}_timer_target_unit_missing")
 
     return errors
 
@@ -259,7 +289,13 @@ def _run_systemd_analyze(root: Path, *, require_systemd: bool) -> tuple[bool, li
         return False, []
 
     deploy_dir = root / "deploy"
-    unit_names = ("cme-worker.service", "cme-maintenance.service", "cme-maintenance.timer")
+    unit_names = (
+        "cme-worker.service",
+        "cme-maintenance.service",
+        "cme-maintenance.timer",
+        "cme-erasure-journal.service",
+        "cme-erasure-journal.timer",
+    )
     for name in unit_names:
         if not (deploy_dir / name).is_file():
             return False, [f"missing_unit_for_systemd_analyze:{name}"]
@@ -270,6 +306,7 @@ def _run_systemd_analyze(root: Path, *, require_systemd: bool) -> tuple[bool, li
         etc_systemd.mkdir(parents=True)
         (stage / "etc" / "chronamind").mkdir(parents=True)
         (stage / "etc" / "chronamind" / "worker.env").write_text("", encoding="utf-8")
+        (stage / "etc" / "chronamind" / "journal.env").write_text("", encoding="utf-8")
 
         app_root = stage / "opt" / "chronamind" / "custom-memory-engine"
         (app_root / ".venv" / "bin").mkdir(parents=True)
@@ -281,7 +318,7 @@ def _run_systemd_analyze(root: Path, *, require_systemd: bool) -> tuple[bool, li
         py.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         py.chmod(0o755)
 
-        for script_name in ("run_worker.py", "run_maintenance.py", "worker_healthcheck.py"):
+        for script_name in ("run_worker.py", "run_maintenance.py", "worker_healthcheck.py", "erasure_journal.py"):
             src_script = root / "scripts" / script_name
             if src_script.is_file():
                 shutil.copy2(src_script, app_root / "scripts" / script_name)
@@ -334,6 +371,7 @@ def verify_deploy_artifacts(root: Path = DEFAULT_ROOT, *, require_systemd: bool 
     deploy_sources = (
         root / "deploy" / "cme-worker.service",
         root / "deploy" / "cme-maintenance.service",
+        root / "deploy" / "cme-erasure-journal.service",
         root / "deploy" / "compose.worker.yaml",
         root / "deploy" / "Dockerfile.worker",
     )

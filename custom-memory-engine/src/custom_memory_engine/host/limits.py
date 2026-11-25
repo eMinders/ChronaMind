@@ -25,7 +25,16 @@ class ResourceLimitError(EntryError):
 
 
 class RateLimiter:
-    """Per-principal token-bucket rate limiter. Disabled when ``rps == 0.0``."""
+    """Per-principal token-bucket rate limiter. Disabled when ``rps == 0.0``.
+
+    With a delegating token every end user is a principal, so the bucket map is swept: a bucket idle long enough to
+    have refilled to ``burst`` is exactly a bucket that does not exist (both admit the next ``burst`` calls), so
+    dropping it changes no decision. The sweep runs when the map passes a high-water mark that doubles with the live
+    size, so it is amortised O(1) per call and the map stays bounded by the principals active within one refill.
+    """
+
+    #: The smallest map size that triggers a sweep.
+    SWEEP_FLOOR = 1024
 
     def __init__(
         self,
@@ -42,6 +51,7 @@ class RateLimiter:
         self.burst = burst
         self._clock = clock or time.monotonic
         self._buckets: dict[str, tuple[float, float]] = {}
+        self._sweep_at = self.SWEEP_FLOOR
 
     @property
     def enabled(self) -> bool:
@@ -57,6 +67,8 @@ class RateLimiter:
         now = float(self._clock())
         entry = self._buckets.get(principal)
         if entry is None:
+            if len(self._buckets) >= self._sweep_at:
+                self._sweep(now)
             self._buckets[principal] = (float(self.burst) - 1.0, now)
             return True
         tokens, last = entry
@@ -67,6 +79,16 @@ class RateLimiter:
             return False
         self._buckets[principal] = (refilled - 1.0, now)
         return True
+
+    def _sweep(self, now: float) -> None:
+        """Drop every bucket that has refilled to ``burst``: it is indistinguishable from an absent one."""
+        full = float(self.burst)
+        self._buckets = {
+            principal: (tokens, last)
+            for principal, (tokens, last) in self._buckets.items()
+            if tokens + max(0.0, now - last) * self.rps < full
+        }
+        self._sweep_at = max(self.SWEEP_FLOOR, 2 * len(self._buckets))
 
     def check(self, principal: str) -> None:
         """Raise :class:`ResourceLimitError` when ``principal`` has exhausted its token bucket."""

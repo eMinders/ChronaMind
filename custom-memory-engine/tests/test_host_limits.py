@@ -58,6 +58,27 @@ def test_rate_limiter_token_bucket_refills_and_isolates_principals() -> None:
         limiter.check("alice")
 
 
+def test_idle_principals_buckets_are_swept_and_an_active_ones_limit_survives_the_sweep() -> None:
+    """Every end user is a principal behind a delegating token: the map must not grow with every user ever seen."""
+    clock = FakeClock()
+    limiter = RateLimiter(rps=1.0, burst=2, clock=clock)
+    for _ in range(2):
+        limiter.check("busy")  # "busy" has exhausted its bucket
+    for index in range(RateLimiter.SWEEP_FLOOR - 1):  # with "busy", the map reaches the floor
+        limiter.check(f"user-{index}")
+    clock.advance(1.5)  # every one-call bucket has refilled to the burst; "busy" has 1.5 tokens, not 2
+    limiter.check("newcomer")  # the map is at the floor: this insert sweeps it
+
+    assert set(limiter._buckets) == {"busy", "newcomer"}  # pyright: ignore[reportPrivateUsage]
+    # the sweep changed no decision: "busy" keeps its partial bucket and is refused on its second call
+    limiter.check("busy")
+    with pytest.raises(ResourceLimitError):
+        limiter.check("busy")
+    # a swept principal starts again from a full bucket, exactly as it would have after refilling
+    limiter.check("user-0")
+    limiter.check("user-0")
+
+
 @pytest.mark.parametrize(
     ("rps", "burst", "expected"),
     [

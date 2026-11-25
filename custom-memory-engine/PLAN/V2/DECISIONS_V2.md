@@ -3175,7 +3175,8 @@ append-only verification records outlive deleted artifacts (IDs are opaque and c
 2. **Children follow their parent.** Migration 32 replaces the independent migration-11 scope policy on
    `memory_evidence`, `memory_derivation`, `memory_embedding`, `abstraction_stats` and `verification`, and adds one to
    `outcome_stats` and `procedure_shape`, with `scope.access.rls_parent_read`: a child row is readable exactly when
-   its `memory_version` parent is. There is no second copy of "is this shared" to drift, so a private artifact
+   its `memory_version` parent is. No policy reads a second copy of "is this shared" (the children's own migration-11
+   `visibility` columns are left stale and inert; `V2-D123`), so a private artifact
    cannot leak its evidence and a shared one cannot render as `missing_provenance`.
 3. **Reads.** Read paths no longer add `user_id = <caller>` to statements RLS already governs (`compile_predicate`'s
    `cross_tenant`, `read_handlers`, `provenance`, `expansion`, `statistics`, `staleness`, `outcomes`,
@@ -3261,7 +3262,8 @@ Records the backup/restore policy in `deploy/README.md` (dumps require `BYPASSRL
 re-provisioned post-restore; pre-deletion backups resurrect rows deleted after the backup until retention expiry because
 no automated deletion-log replay ships). Adds `worker/maintenance.py` + `scripts/run_maintenance.py` + systemd timer for
 scheduled `expire`/`purge_working`/`rebuild_index`, dependency-free Prometheus `/metrics` (`host/metrics.py`) without
-tenant/content labels, and a real `pg_dump`/`pg_restore` rehearsal (`scripts/rehearse_restore.py`).
+tenant/content labels, and a real `pg_dump`/`pg_restore` rehearsal (`scripts/rehearse_restore.py`). The resurrection
+caveat is narrowed by `V2-D122` (the erasure journal).
 
 
 ### V2-D120 — A delegating service token acts for the end user it names
@@ -3336,4 +3338,72 @@ correction through the real host, one model call per turn); `tests/live/test_mem
 **Cost and limits.** One small structured call per user turn, off the response path (`add()` runs as a background
 task). The model's tense judgement is the remaining precision risk; the grounding check bounds what it can invent, not
 whether it misreads a past statement as current. The live evaluation is opt-in because CI has no model credential.
+
+
+### V2-D122 — The erasure journal: a restore re-applies the deletions its backup predates
+
+**Status:** adopted (2026-11-26). Narrows the resurrection caveat of `V2-D119`; `D-ENG-04` is unchanged.
+
+**The risk.** A backup taken before a deletion holds the deleted rows, and restoring it also rolls back the
+`deletion_request` rows that recorded the erasure. The rehearsal measured it: the deleted memory is readable again and
+the restored database holds no trace of the deletion. A right-to-erasure promise that one routine restore undoes is not
+one.
+
+**Decision.** `deletion_request` is already an append-only, content-free log (user, scope, HMAC digest of the target,
+per-user epoch). It is copied *out of the database* and replayed after a restore (`deletion/journal.py`,
+`scripts/erasure_journal.py`):
+
+1. **Export** (`cme-erasure-journal.timer`, every five minutes, and before any restore): every completed request is
+   merged into a JSON-lines file. The merge never drops an entry, so an export from a restored, older database cannot
+   shrink the journal; two different entries under one id or one `(user, epoch)` are refused. The export role needs
+   `BYPASSRLS` (checked: under forced RLS a role without it reads zero rows and would write an empty journal that
+   looks valid) and is granted `SELECT` on `deletion_request` only, from an environment file the worker never reads.
+   The header carries a one-way key check of the deletion key, never the key.
+2. **Replay** (a step of the restore procedure, before the host serves traffic): per user in epoch order, every
+   journalled request the restored database lacks is re-applied through `DeleteHandlers.replay` — the engine's own
+   deletion path, the deployment's handler configuration, the restricted role and the user's own RLS — keeping the
+   original request id, digest and epoch, so a second replay finds it and does nothing. The target is found by
+   recomputing the digest over the user's restored keys (`memory_key`; for `topic` also `subject_key` and entity ids):
+   the journal never holds a plaintext target (`T-29`). A target the backup never held is recorded with nothing to
+   erase. A replay under another deletion key is refused before it writes (it would otherwise match nothing and
+   record every deletion as done); a restored database holding a *different* request at a journalled epoch is refused
+   as divergent.
+
+**Alternatives rejected.** Per-user encryption keys destroyed on deletion (crypto-shredding) would make old backups
+unreadable for that user and is the stronger design, but it touches every content column, index and embedding; it is
+the follow-up if the recovery-point residual below is unacceptable. A journal table in a second schema of the same
+database: zero recovery point when only the engine schema is restored, but lost with the cluster, and a second schema
+outside the migration runner's catalog checks. A plaintext or encrypted target in the journal: it would keep, outside
+the database, the very name the digest exists to hide.
+
+**Residual (stated).** Deletions after the newest journal copy the operator still has (the export interval plus the
+off-host shipping delay), and a journal lost together with the database. Retention expiry is re-applied by running
+maintenance after the restore.
+
+**Evidence.** `tests/integration/test_backup_restore_db.py` over a real `pg_dump`/`pg_restore`: three deletions after
+the backup (a resolved memory deletion, one the backup never held, a user's `delete all`); before the replay the
+deleted memories are readable and the leak scanner finds residuals in 6 measured channels; after it, nothing deleted is
+readable, the scanner finds 0, the kept memory survives, the request ids are the originals, and a second replay does
+nothing. `tests/test_erasure_journal.py` pins the file, the merge and the key check.
+
+
+### V2-D123 — Hardening from the independent review of #259
+
+**Status:** adopted (2026-11-26).
+
+1. **Guarded rollbacks refuse a role that cannot see every row.** Thirteen rollback scripts guard a data loss with
+   `IF EXISTS (SELECT … FROM <forced-RLS table>)`. Run by an ordinary owner (the deployment `test_migration_owner.py`
+   supports), forced RLS hides every row, the guard passes on an empty view and the rollback drops the data it was
+   written to protect. Each now refuses first with `rollback_requires_bypassrls`, inside the same transaction.
+   (`tests/integration/test_migration_owner.py::test_a_guarded_rollback_refuses_an_owner_that_cannot_see_every_row`
+   fails without it.)
+2. **An unmeasured queue is not a zero.** `/metrics` counted `job` rows on a connection without a tenant scope; for a
+   login without `BYPASSRLS` forced RLS returned nothing and the host rendered `cme_queue_dead_letters_total 0`. The
+   host now reports `cme_queue_metrics_available 0` and omits the queue families when it cannot measure them; no
+   privileged function was added to measure them.
+3. **The rate limiter's map is bounded.** With a delegating token every end user is a principal; buckets that have
+   refilled to the burst (indistinguishable from absent ones) are swept at an amortised high-water mark.
+4. **Migration 32's header said the child visibility columns could not disagree with the parent.** They do, and are
+   inert because no policy reads them; the header now says so, and `test_migration_m2.py` pins every child policy to
+   `rls_parent_read`.
 
