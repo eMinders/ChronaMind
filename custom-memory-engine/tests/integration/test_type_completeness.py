@@ -14,8 +14,9 @@ Illegal tuples (every retention-floor violation included, and the facet ``inferr
 
 Honest scope: ``Engine.call`` drives all wired W1–W3 operations (``ingest_episode``, ``assert``, ``query``, ``get``,
 ``provenance``, ``refine``, ``record_outcome``, ``cost``, ``delete``, ``create_scope``, ``link_entity``,
-``purge_working``, ``register_method``, ``infer``); the remaining 7 later-wave operations are reported as
-*not yet testable*, never as passes (``V2-D62``, ``V2-D63``). ``tests/test_channel_membership_model.py`` (channels),
+``purge_working``, ``register_method``, ``infer``); every other operation is wired too, and the inventory is taken
+from the deployment wiring (``wire_engine``). An unwired operation would be reported as *not yet testable*, never as a
+pass (``V2-D62``, ``V2-D63``). ``tests/test_channel_membership_model.py`` (channels),
 ``model.axes`` (rules) and ``tests/profile_branching.py`` (no branching on a profile) are the independent oracles.
 """
 
@@ -36,10 +37,8 @@ from psycopg.errors import CheckViolation, RaiseException
 from custom_memory_engine.api.contract import OPERATIONS
 from custom_memory_engine.api.delete_handlers import register_delete_handlers
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
-from custom_memory_engine.api.infer_handlers import register_infer_handlers
 from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
 from custom_memory_engine.api.maintain_handlers import register_maintain_handlers
-from custom_memory_engine.api.outcome_handlers import register_outcome_handlers
 from custom_memory_engine.api.read_handlers import Artifact, CostReport, QueryResult, register_read_handlers
 from custom_memory_engine.api.runtime import DbTargets, Receipt
 from custom_memory_engine.engine.channels import Verification, channel_of
@@ -781,29 +780,20 @@ async def test_delete_is_wired_through_engine_call_for_tier_c_only(database) -> 
 
 
 async def test_unwired_operations_are_reported_as_not_yet_testable_never_as_passes(database) -> None:  # noqa: F811
+    """`E-039`'s closing inventory (#97), measured on the engine a deployment actually builds.
+
+    This test used to hand-register six handler groups and assert that `export` was still unwired; once every
+    operation had a handler that made it report "25 of 31" for an engine the host serves at 31 of 31. The inventory is
+    now taken from `api.wiring.wire_engine` — the one wiring call the HTTP host makes — so it cannot disagree with what
+    is deployed, and an operation added to the contract without a handler fails here by name.
+    """
+    from custom_memory_engine.api.wiring import UNWIRED_OPERATIONS, wire_engine
+
     async with world(database) as (conn, engine, _schema):
         del conn
-        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
-        register_ingest_handlers(engine, runtime)
-        register_read_handlers(engine, runtime)
-        register_infer_handlers(engine, runtime, tau_confidence=0.90, tau_coverage=0.60)  # V2-D30 suggested values
-        register_maintain_handlers(engine, runtime)
-        register_outcome_handlers(engine, runtime)
-        register_delete_handlers(engine, runtime)
-        unwired = set(engine.unwired_operations())
-        assert {"export"} <= unwired  # W3+ owner: A-015
-        # query/get/provenance (E-033), cost (E-036), delete (E-037) and infer (C-021) are wired via Engine.call
-        assert not {"query", "get", "provenance", "cost", "delete", "infer"} & unwired
-        # `create_scope` left this list when migration 15 let a sub-scope hold a row (E-040, V2-D64).
-        assert "create_scope" not in unwired
-        # `purge_working` left it when E-026 wired it; it is exercised above through Engine.call only.
-        assert "purge_working" not in unwired
-        # E-034 wires `refine`; `test_refine_db.py` drives the whole drill-down through Engine.call.
-        assert "refine" not in unwired
-        # E-024 wires `link_entity` (V2-D71); `test_link_entity_is_wired_through_engine_call_...` drives it here.
-        assert "link_entity" not in unwired
-        # E-027 wires `record_outcome` (V2-D75); `test_record_outcome_db.py` drives the whole feedback loop here.
-        assert "record_outcome" not in unwired
+        deployed = wire_engine(engine.resolver.runtime)  # type: ignore[attr-defined]
+        unwired = set(deployed.unwired_operations())
+        assert unwired == set(UNWIRED_OPERATIONS) == set(), sorted(unwired)
         print(
             f"\nG1: {len(OPERATIONS) - len(unwired)} of {len(OPERATIONS)} operations wired; "
             f"unwired (not yet testable): {sorted(unwired)}"
