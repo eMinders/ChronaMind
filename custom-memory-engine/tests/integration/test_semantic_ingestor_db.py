@@ -337,9 +337,10 @@ async def test_a_correction_supersedes_and_the_old_belief_stays_auditable(databa
         assert await scalar(conn, "SELECT count(*) FROM memory_version") == 2
 
 
-async def test_an_entity_mention_is_not_linked_without_resolution(database) -> None:  # noqa: F811
-    """`V2-D90`'s remaining criterion: resolution is not wired yet, so the claim is stored against the subject and the
-    entity link stays unset rather than naming a string that looks like an id."""
+async def test_a_mention_that_is_not_the_subject_never_becomes_the_subject(database) -> None:  # noqa: F811
+    """Resolution is wired (`V2-D95`): the mention is resolved or created, but the claim's subject changes only when the
+    extractor named that mention as the subject. A claim that merely *mentions* Alice stays a claim about the speaker,
+    and its entity link stays unset rather than pointing at whoever happened to be named."""
     async with structure_world(database) as (conn, engine, schema):
         await ingest(
             engine,
