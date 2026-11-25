@@ -1,4 +1,4 @@
-"""``engine.hybrid``: fusion, vector literals, slots, the trigram probe and the reranker seam (W3.5).
+"""``engine.hybrid``: fusion, vector literals, slots, the trigram probe and the judge's measured floor.
 
 These are the pure parts of hybrid recall -- no database, no model -- so they run in seconds and pin the arithmetic
 that decides which memory a caller sees first.
@@ -10,14 +10,14 @@ import pytest
 
 from custom_memory_engine.engine.hybrid import (
     EMBEDDING_SLOTS,
+    JUDGE_CANDIDATES,
+    JUDGE_RELEVANCE_FLOOR,
     RRF_CONSTANT,
     ArmRanking,
-    Recall,
     RecallError,
     RecallQuery,
     arm_depth,
     fuse,
-    rerank,
     slot_for_dimension,
     trigram_token,
     vector_literal,
@@ -161,56 +161,48 @@ def test_the_trigram_probe_declines_a_query_that_would_match_most_of_the_corpus(
     assert trigram_token("?!,.") is None
 
 
-# --------------------------------------------------------------------------------------------------- the reranker
+# ------------------------------------------------------------------------------- the relevance judge (V2-D104)
 
 
-class _Reverse:
-    """A reranker that reverses the fused order: the simplest scorer with an observable effect."""
+def test_the_judge_floor_sits_between_the_weakest_answer_and_the_strongest_non_answer() -> None:
+    """`JUDGE_RELEVANCE_FLOOR` is a *measured* operating point, pinned against the measurement it came from.
 
-    def score(self, query_text: str, candidates) -> list[float]:
-        assert query_text
-        return [float(index) for index in range(len(candidates))]
-
-
-def _recall() -> Recall:
-    fused = fuse((ArmRanking("dense", ("a", "b", "c")),), limit=10)
-    return Recall(ordered=tuple(v for v, _ in fused), scored=fused, arms=(), candidates=3)
+    The extremes are read from `reports/retrieval/evaluation.json`, which the retrieval-evaluation test regenerates
+    from the real read path — so this is not a copy of a number, it is the number asserting the relation that justifies
+    the constant. Re-measure and the file changes; set the constant outside the recorded gap and this fails.
+    """
+    import json
+    from pathlib import Path
 
 
-def test_a_reranker_reorders_the_page_and_cannot_admit_a_new_row() -> None:
-    reranked = rerank(_recall(), "question", _Reverse(), limit=2)
-    assert reranked.ordered == ("c", "b")
-    assert set(reranked.ordered) <= {"a", "b", "c"}
+    report = json.loads(
+        (Path(__file__).resolve().parents[1] / "reports" / "retrieval" / "evaluation.json").read_text("utf-8")
+    )
+    judge = report["judge"]
+    assert judge["measured"] is True, "the report holds no judge measurement; run the retrieval evaluation"
+    weakest_answer = judge["weakest_answerable"]
+    strongest_non_answer = judge["strongest_unanswerable"]
+    assert strongest_non_answer < JUDGE_RELEVANCE_FLOOR < weakest_answer, (strongest_non_answer, weakest_answer)
+    # the constant is the midpoint of the two extremes: the point with the most slack on both sides, which is the only
+    # definition of "best" that does not presuppose a cost ratio the labelled set cannot supply
+    assert JUDGE_RELEVANCE_FLOOR == pytest.approx((weakest_answer + strongest_non_answer) / 2, abs=0.1)
+    # the separation is wide enough to be a finding rather than a coincidence: > 2 logits on the tight side
+    assert min(weakest_answer - JUDGE_RELEVANCE_FLOOR, JUDGE_RELEVANCE_FLOOR - strongest_non_answer) > 1.0
+    assert JUDGE_CANDIDATES > 0
 
 
-def test_no_reranker_is_the_default_and_changes_nothing() -> None:
-    original = _recall()
-    assert rerank(original, "question", None, limit=10) is original
+def test_the_judge_is_a_protocol_a_double_can_satisfy() -> None:
+    """The engine takes an injected judge, so the seam must be structural: no base class to inherit."""
+    from custom_memory_engine.engine.hybrid import RelevanceJudge
 
+    class _Judge:
+        model = "fake-judge"
 
-def test_a_reranker_returning_the_wrong_number_of_scores_is_refused() -> None:
-    class _Short:
-        def score(self, query_text: str, candidates) -> list[float]:
-            return [1.0]
+        async def relevance(self, query: str, documents) -> list[float]:
+            return [0.0 for _ in documents]
 
-    with pytest.raises(RecallError) as refused:
-        rerank(_recall(), "question", _Short(), limit=3)
-    assert refused.value.code == "reranker_score_count_mismatch"
-
-
-def test_a_reranker_returning_a_non_finite_score_is_refused() -> None:
-    class _Infinite:
-        def score(self, query_text: str, candidates) -> list[float]:
-            return [math.inf for _ in candidates]
-
-    with pytest.raises(RecallError) as refused:
-        rerank(_recall(), "question", _Infinite(), limit=3)
-    assert refused.value.code == "reranker_score_must_be_finite"
-
-
-def test_an_empty_page_is_returned_unchanged_by_a_reranker() -> None:
-    empty = Recall(ordered=(), scored=(), arms=(), candidates=0)
-    assert rerank(empty, "question", _Reverse(), limit=3) is empty
+    assert isinstance(_Judge(), RelevanceJudge)
+    assert not isinstance(object(), RelevanceJudge)
 
 
 # ------------------------------------------------------- function-word pruning (V2-D100, `informative_terms`)

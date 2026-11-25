@@ -54,8 +54,9 @@ artifact to ``none`` and would drop exactly the withdrawn rows an audit exists t
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from math import isfinite
 from typing import cast
 
 import structlog
@@ -99,7 +100,16 @@ from custom_memory_engine.engine.cost import (
     StageSpan,
 )
 from custom_memory_engine.engine.expansion import expand_associations
-from custom_memory_engine.engine.hybrid import Recall, RecallError, RecallQuery, hybrid_recall, slot_for_dimension
+from custom_memory_engine.engine.hybrid import (
+    JUDGE_CANDIDATES,
+    JUDGE_RELEVANCE_FLOOR,
+    Recall,
+    RecallError,
+    RecallQuery,
+    RelevanceJudge,
+    hybrid_recall,
+    slot_for_dimension,
+)
 from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
 from custom_memory_engine.engine.planning import (
     ASSOCIATION_EXPANSION,
@@ -243,6 +253,22 @@ class Artifact:
         return f"Artifact({self.artifact_id!r}, kind={self.kind!r}, channel={self.channel!r})"
 
 
+@dataclass(frozen=True, slots=True)
+class Judgement:
+    """What the relevance judge said about one page: a reported fact, like :attr:`QueryResult.arms`.
+
+    ``scored`` is how many candidates the judge read, ``kept`` how many cleared its floor, and ``best`` the highest
+    score it returned (``None`` when it read nothing). ``model`` and ``floor`` are recorded because a score means
+    nothing without the weights and the operating point that produced it.
+    """
+
+    model: str
+    floor: float
+    scored: int
+    kept: int
+    best: float | None
+
+
 class QueryResult:
     """The four channels, explicit per-channel coverage and assembly cost (``API_V2.md`` §4.2).
 
@@ -260,7 +286,7 @@ class QueryResult:
     """
 
     __slots__ = (
-        "arms", "audit", "changes", "conflicts", "coverage", "cost", "facts", "hypotheses", "is_audit",
+        "arms", "audit", "changes", "conflicts", "coverage", "cost", "facts", "hypotheses", "is_audit", "judgement",
         "procedures", "refused", "result_id", "stage_costs",
     )  # fmt: skip
 
@@ -280,6 +306,7 @@ class QueryResult:
         result_id: str | None = None,
         stage_costs: QueryCost | None = None,
         arms: Sequence[str] = (),
+        judgement: Judgement | None = None,
     ) -> None:
         self.facts = tuple(facts)
         self.hypotheses = tuple(hypotheses)
@@ -296,6 +323,10 @@ class QueryResult:
         # part of it" is a *reported fact* rather than an inference from a latency number: a query whose embedding
         # was unavailable answers from the lexical arms and says so here (V2-D98).
         self.arms = tuple(arms)
+        # What the relevance judge said, or `None` when no judge is configured (V2-D104). `None` and "judged and
+        # nothing cleared the floor" are different answers — the second one is an empty page and is *reported*, so a
+        # caller can tell "this deployment cannot judge" from "this question has no answer here".
+        self.judgement = judgement
         empty = ChannelCoverage(0, 0, (), 0, 0, 0, 0)
         self.coverage = coverage or CoverageReport(empty, empty, empty, empty)
         self.cost = cost or AssemblyCost(0, 0, 0, 0)
@@ -444,6 +475,8 @@ class ReadHandlers:
         clock: Callable[[], float] | None = None,
         collect_cost: bool = True,
         embedder: Embedder | None = None,
+        judge: RelevanceJudge | None = None,
+        judge_floor: float = JUDGE_RELEVANCE_FLOOR,
     ) -> None:
         self.runtime = runtime
         # E-031: the model seam, defaulted to the rule-based planner and therefore unused (criterion 9). The recorder
@@ -462,6 +495,13 @@ class ReadHandlers:
         # The engine's own query embedder (V2-D98). ``None`` keeps the pre-W3.5 behaviour: text-only queries rank by
         # the two language-agnostic lexical arms, and a caller that wants the dense arm supplies its own vector.
         self.embedder: Embedder | None = embedder
+        # The relevance judge (V2-D104): a cross-encoder that reads a question and a memory *together* and answers on
+        # one absolute scale, so a floor on its score can refuse to answer. ``None`` keeps the fused order and reports
+        # ``judgement=None``; a deployment that sets one gets a gate that an unanswerable question comes back empty
+        # from. The floor belongs to the judge, not to the engine: it is a property of the weights, so a deployment
+        # that swaps the model must re-derive it (`reports/retrieval/README.md`).
+        self.judge: RelevanceJudge | None = judge
+        self.judge_floor: float = judge_floor
         # E-038 (V2-D24): the closure-hash cache the read path derives `stale` through. One per handler, so repeated
         # reads of an unchanged abstraction hash its closure once; the deletion token invalidates it (F6).
         self.closure_cache = ClosureCache()
@@ -1069,6 +1109,52 @@ class ReadHandlers:
         except RecallError as exc:
             raise EntryError("validation_error", exc.code) from None
 
+    async def _judge(self, query: str, rows: Sequence[ScopedRow]) -> tuple[tuple[ScopedRow, ...], Judgement | None]:
+        """Read the page with the relevance judge and keep only what it calls relevant (``V2-D104``).
+
+        **Four decisions, each with its reason.**
+
+        *Only the first* :data:`~engine.hybrid.JUDGE_CANDIDATES` *rows are read, and the rest are dropped.* The judge
+        costs ~28 ms per pair, so an unbounded page is an unbounded read-path cost; and a gate that silently stopped
+        applying to the tail of the page would report "nothing relevant" while rows it never read were about to be
+        returned. Truncating is the only bound that is honest about what it decided.
+
+        *A failing judge degrades to the fused order and reports* ``judgement=None``. The arms are still correct, just
+        less decisive — and a model failure must not turn every read into ``internal_error`` (the same rule the query
+        embedder follows, ``V2-D98``). ``judgement=None`` is what makes the degradation visible rather than silent.
+
+        *A score-count mismatch is a programming error, not a verdict.* It degrades the same way: refusing every read
+        because a scorer returned four numbers for five candidates would be worse than ranking them.
+
+        *Order is the judge's, ties keep the fused order.* A judge that ranks two candidates equally has expressed no
+        preference between them, and the fused order already used three arms to break that tie.
+        """
+        assert self.judge is not None
+        candidates = tuple(rows[:JUDGE_CANDIDATES])
+        if not candidates:
+            return (), Judgement(model=self.judge.model, floor=self.judge_floor, scored=0, kept=0, best=None)
+        try:
+            raw = await self.judge.relevance(query, [row.content for row in candidates])
+        except Exception as error:  # noqa: BLE001 - any judge failure degrades the stage, never the read
+            logger.warning(
+                "relevance_judge_unavailable",
+                code=getattr(error, "code", "judge_failed"),
+                error_type=type(error).__name__,
+            )
+            return tuple(rows), None
+        scores = tuple(float(value) for value in raw)
+        if len(scores) != len(candidates):
+            logger.warning("relevance_judge_score_count_mismatch", expected=len(candidates), received=len(scores))
+            return tuple(rows), None
+        if not all(isfinite(value) for value in scores):
+            logger.warning("relevance_judge_score_not_finite", scored=len(scores))
+            return tuple(rows), None
+        order = sorted(range(len(candidates)), key=lambda index: (-scores[index], index))
+        kept = tuple(candidates[index] for index in order if scores[index] >= self.judge_floor)
+        return kept, Judgement(
+            model=self.judge.model, floor=self.judge_floor, scored=len(scores), kept=len(kept), best=max(scores)
+        )
+
     @staticmethod
     def _temporal_query_for(plan: Plan, user: str, reference_time: datetime) -> TemporalQuery:
         """The plan's temporal filter as a :class:`TemporalQuery`, with ρ read by the executor (``V2-D73``).
@@ -1199,6 +1285,7 @@ class ReadHandlers:
         user = call.ctx.principal
         # Which ranking arms ran, reported on the result (see `QueryResult.arms`); empty unless the plan ranked.
         ranked_arms: tuple[str, ...] = ()
+        judgement: Judgement | None = None
         is_audit = plan.route == "audit"
         if is_audit and call.ctx.tier != "C":
             raise EntryError("forbidden")  # API_V2.md §4.2: audit_as_of is Tier C only
@@ -1278,6 +1365,12 @@ class ReadHandlers:
                         elif not recall.ordered:
                             # A relevance query with no match is an answer, not an error and not a recency dump.
                             rows = ()
+                            if self.judge is not None:
+                                # Nothing to judge is a verdict, not a missing one: the arms found no candidate, so
+                                # the page is empty *and* the result says the gate ran and passed nothing.
+                                judgement = Judgement(
+                                    model=self.judge.model, floor=self.judge_floor, scored=0, kept=0, best=None
+                                )
                         else:
                             # The ids are composed into the *filter*, beside the temporal and read predicates and
                             # before LIMIT, so the fetcher cannot return a row the recall did not authorize even if
@@ -1293,6 +1386,12 @@ class ReadHandlers:
                             )
                             position = {version_id: index for index, version_id in enumerate(recall.ordered)}
                             rows = tuple(sorted(fetched, key=lambda row: position.get(row.id, len(position))))
+                            # `V2-D104`: a relevance query is answered only if something in the page is actually
+                            # relevant. Applied here, where the candidate rows and their content are already in hand,
+                            # so the judge costs one forward pass per candidate and never a second fetch — and so this
+                            # module stays the only place that knows the ranking arms exist.
+                            if self.judge is not None and recall_query is not None:
+                                rows, judgement = await self._judge(recall_query.text, rows)
                         if recall is not None:
                             ranked_arms = tuple(arm.arm for arm in recall.arms)
                     if span is not None:
@@ -1538,6 +1637,7 @@ class ReadHandlers:
             changes=changes,
             stage_costs=stage_costs,
             arms=ranked_arms,
+            judgement=judgement,
         )
 
     async def query(self, call: Call) -> QueryResult:
@@ -1778,6 +1878,8 @@ def register_read_handlers(
     clock: Callable[[], float] | None = None,
     collect_cost: bool = True,
     embedder: Embedder | None = None,
+    judge: RelevanceJudge | None = None,
+    judge_floor: float = JUDGE_RELEVANCE_FLOOR,
 ) -> ReadHandlers:
     """Wire ``get``, ``query``, ``refine``, ``provenance`` and ``cost`` onto ``engine``.
 
@@ -1785,7 +1887,8 @@ def register_read_handlers(
     recorder, observer, result store, cost store or monotonic clock without patching module state. ``results`` and
     ``costs`` default to the engine's own stores so every call through ``engine`` sees one shared view. ``embedder``
     is the deployment's query embedder (``V2-D98``): the engine owns the dense arm's query side, so a client sends
-    text and receives hybrid recall.
+    text and receives hybrid recall; ``judge`` is the deployment's relevance judge (``V2-D104``), and its floor is
+    the model's own measured operating point, not the engine's.
     """
     # `is not None`, not `or`: a store is a seam (it may carry an injected clock or capacity), and an empty one is
     # falsy, so `or` would silently swap it for the engine's own map.
@@ -1806,6 +1909,8 @@ def register_read_handlers(
         clock=clock,
         collect_cost=collect_cost,
         embedder=embedder,
+        judge=judge,
+        judge_floor=judge_floor,
     )
     table: Mapping[str, Handler] = {
         "get": handlers.get,

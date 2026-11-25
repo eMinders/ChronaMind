@@ -25,7 +25,9 @@ linked as a ``contradicts`` association, so the justification is traversable *an
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
 
 from psycopg import AsyncConnection, sql
 from psycopg.rows import tuple_row
@@ -46,6 +48,33 @@ from custom_memory_engine.engine.verification import (
 from custom_memory_engine.security.audit_guard import content_free_details
 
 _CODE = re.compile(r"[a-z0-9_]{1,64}")
+
+
+@dataclass(frozen=True, slots=True)
+class Constraint:
+    """One negative constraint, as ``constraints`` reports it: the element's names and two instants, never content."""
+
+    constraint_id: str
+    scope_path: str
+    predicate_key: str
+    method_family: str
+    dissented_at: datetime
+    lifted_at: datetime | None
+    lift_evidence_version_id: str | None
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintList:
+    """A page of the caller's own constraints, active first (``V2-D105``)."""
+
+    constraints: tuple[Constraint, ...]
+
+    def __len__(self) -> int:
+        return len(self.constraints)
+
+    def __iter__(self) -> Iterator[Constraint]:
+        return iter(self.constraints)
 _SOURCE_TYPES = frozenset({"turn", "tool", "file", "paper", "event", "external"})
 
 
@@ -123,9 +152,9 @@ class LifecycleHandlers:
 
         The constraint's key is the triple ``(scope, predicate, method family)`` the schema enforces as unique while
         active, and the family is the method's *name* — versions of one method are one family, which is what makes the
-        rejection survive a method upgrade. Lifting it needs new grounded evidence and has no operation yet
-        (``V2-D97``), so a dissent is currently permanent: the conservative direction, since re-learning something a
-        user rejected is the failure mode worth preventing.
+        rejection survive a method upgrade. Lifting it needs **new grounded evidence** and is :meth:`lift`
+        (``V2-D105``): ``I16`` says a denied element cannot be re-inferred *without* new evidence, which is a statement
+        about what a lift requires, not a statement that a dissent is permanent. Until this module, it was.
         """
         artifact_id, user = str(call.arguments["artifact_id"]), call.ctx.principal
         reason = _optional_code(call.arguments.get("note"))
@@ -146,6 +175,98 @@ class LifecycleHandlers:
                 connection, user, artifact_id, "lifecycle_dissented", {"reason_code": reason or "dissent"}
             )
             return Receipt(artifact_id, "retired", await now(connection))
+
+    async def lift(self, call: Call) -> Receipt:
+        """Reopen a dissented element, but only on new grounded evidence (``I16``, ``V2-D105``).
+
+        ``I16`` is precise about the shape of the undo: *without new grounded evidence*. So a lift is not a second
+        opinion and not a change of mind — it names an artifact the caller already holds, that artifact must be
+        **grounded** (``observed`` or ``asserted``, never ``inferred``: an inference cannot lift a constraint on
+        inference, which would make the constraint vacuous), and the schema's
+        ``negative_constraint_lift_is_complete`` constraint means the three fields move together or not at all.
+
+        **Why the caller names the constraint and not the artifact.** The constraint is the durable thing: it survives
+        the retirement, and it survives the *deletion* of the artifact that provoked it (the reference is cleared, the
+        constraint stays). Naming the artifact would make a dissent on a since-deleted belief impossible to lift, and
+        the element would be blocked for ever with no way to say so. :meth:`constraints` lists them, so an operator can
+        always find the id.
+
+        **What is not allowed.** A constraint that is already lifted is refused rather than re-stamped: the lift is a
+        record of when the reconsideration happened, and moving it would rewrite history that ``audit_event`` already
+        carries (``V2-D54``). A constraint belonging to another principal is ``forbidden``, indistinguishably from one
+        that does not exist.
+        """
+        user = call.ctx.principal
+        constraint_id = call.arguments.get("constraint_id")
+        if not isinstance(constraint_id, str) or not constraint_id.strip():
+            raise EntryError("validation_error", "constraint_id_required")
+        evidence_id = call.arguments.get("evidence")
+        if not isinstance(evidence_id, str) or not evidence_id.strip():
+            raise EntryError("validation_error", "evidence_artifact_id_required")
+        reason = _optional_code(call.arguments.get("note"))
+        async with self.runtime.session(user) as connection:
+            element = await self._active_constraint_element(connection, user, constraint_id)
+            await self._require_grounded_evidence(connection, user, evidence_id)
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        "UPDATE {t} SET lifted_at = pg_catalog.transaction_timestamp(), lifted_by = %s,"
+                        " lift_evidence_version_id = %s"
+                        " WHERE id = %s AND user_id = %s AND lifted_at IS NULL"
+                    ).format(t=self.runtime.table("negative_constraint")),
+                    (user, evidence_id, constraint_id, user),
+                )
+                if cursor.rowcount != 1:
+                    # The row was lifted between the read and this statement. Refused rather than re-stamped: the
+                    # first lift is the record, and a second one would claim a reconsideration that did not happen.
+                    raise EntryError("precondition_failed", "constraint_already_lifted")
+            await self._event(
+                connection,
+                user,
+                constraint_id,
+                "constraint_lifted",
+                {"reason_code": reason or "user_lift", "method_family": element[2], "method_id": element[3]},
+            )
+            return Receipt(constraint_id, "lifted", await now(connection))
+
+    async def constraints(self, call: Call) -> ConstraintList:
+        """The caller's own negative constraints, active first: the read that makes a dissent *liftable*.
+
+        Without it an operator could hold a permanent block and no way to name it. What is returned is
+        identifiers only — the element's predicate and method *family*, which is a registered name, and the scope,
+        which the caller owns — never content (``V2-D54``).
+        """
+        user = call.ctx.principal
+        include_lifted = call.arguments.get("include_lifted", False)
+        if not isinstance(include_lifted, bool):
+            raise EntryError("validation_error", "include_lifted_must_be_a_boolean")
+        async with self.runtime.session(user) as connection:
+            async with connection.cursor(row_factory=tuple_row) as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        "SELECT id, scope_path, predicate_key, method_family, dissented_at, lifted_at,"
+                        " lift_evidence_version_id, reason"
+                        " FROM {t} WHERE user_id = %s AND (%s OR lifted_at IS NULL)"
+                        " ORDER BY lifted_at IS NOT NULL, dissented_at DESC, id"
+                    ).format(t=self.runtime.table("negative_constraint")),
+                    (user, include_lifted),
+                )
+                rows = await cursor.fetchall()
+        return ConstraintList(
+            tuple(
+                Constraint(
+                    constraint_id=str(row[0]),
+                    scope_path=str(row[1]),
+                    predicate_key=str(row[2]),
+                    method_family=str(row[3]),
+                    dissented_at=row[4],
+                    lifted_at=row[5],
+                    lift_evidence_version_id=str(row[6]) if row[6] is not None else None,
+                    reason=str(row[7]),
+                )
+                for row in rows
+            )
+        )
 
     async def verify(self, call: Call) -> Receipt:
         """Post a held-out verification result and let the ledger's status move (``I11``).
@@ -224,6 +345,45 @@ class LifecycleHandlers:
                     artifact_id,
                 ),
             )
+
+    async def _active_constraint_element(
+        self, connection: AsyncConnection, user: str, constraint_id: str
+    ) -> tuple[str, str, str, str | None]:
+        """``(scope, predicate, method family, dissented version)`` of an *active* constraint of this user."""
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT scope_path, predicate_key, method_family, dissented_version_id"
+                    " FROM {t} WHERE id = %s AND user_id = %s AND lifted_at IS NULL"
+                ).format(t=self.runtime.table("negative_constraint")),
+                (constraint_id, user),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            # Absent, another principal's, and already-lifted are one answer: `constraint_already_lifted` is only
+            # reachable from the update's own rowcount, which cannot race a row that never existed.
+            raise EntryError("precondition_failed", "constraint_not_active")
+        return str(row[0]), str(row[1]), str(row[2]), (str(row[3]) if row[3] is not None else None)
+
+    async def _require_grounded_evidence(self, connection: AsyncConnection, user: str, artifact_id: str) -> None:
+        """The lift's ground must be a grounded artifact of the caller's that still exists.
+
+        ``grounded`` is the whole point: an ``inferred`` artifact is the engine's own guess, and letting a guess lift a
+        constraint on inference would let the engine reverse a user's denial by inferring the same thing twice. The
+        schema enforces the *same-tenant* part of this through the foreign key; the lifecycle half is enforced here.
+        """
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL("SELECT lifecycle FROM {t} WHERE id = %s AND user_id = %s").format(
+                    t=self.runtime.table("memory_version")
+                ),
+                (artifact_id, user),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            raise EntryError("precondition_failed", "evidence_not_readable")
+        if str(row[0]) not in {"asserted", "observed"}:
+            raise EntryError("precondition_failed", "evidence_not_grounded")
 
     async def active_constraint(
         self,
@@ -399,10 +559,12 @@ def register_lifecycle_handlers(engine: Engine, handlers: Handlers) -> Lifecycle
     for name, handler in {
         "refute": lifecycle.refute,
         "dissent": lifecycle.dissent,
+        "lift": lifecycle.lift,
+        "constraints": lifecycle.constraints,
         "verify": lifecycle.verify,
     }.items():
         engine.register(name, handler)
     return lifecycle
 
 
-__all__ = ["LifecycleHandlers", "register_lifecycle_handlers"]
+__all__ = ["Constraint", "ConstraintList", "LifecycleHandlers", "register_lifecycle_handlers"]

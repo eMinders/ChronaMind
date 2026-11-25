@@ -480,3 +480,113 @@ async def test_a_question_of_only_function_words_offers_no_lexical_evidence(data
             )
     assert informative == ()
     assert pruned == ("the",)
+
+
+# --------------------------------------------------------------- the relevance judge (V2-D104), as a read-path gate
+
+
+class _Judge:
+    """A judge whose verdict is a fixed function of the document, so a test states a rule instead of a model output."""
+
+    model = "fake-judge"
+
+    def __init__(self, scores: dict[str, float], *, fail: bool = False, short: bool = False) -> None:
+        self.scores = scores
+        self.fail = fail
+        self.short = short
+        self.calls = 0
+
+    async def relevance(self, query: str, documents):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("model exploded")  # noqa: TRY003
+        if self.short:
+            return [1.0]
+        return [self.scores.get(document, -20.0) for document in documents]
+
+
+@asynccontextmanager
+async def _judged(database, judge, **kwargs) -> AsyncIterator[Engine]:  # noqa: F811
+    """A world with a judge wired, and two claims a lexical question will find (and the judge may refuse)."""
+    from custom_memory_engine.api.read_handlers import register_read_handlers as wire
+
+    async with structure_world(database) as (conn, engine, schema):
+        await seed(conn, "v-answer", "the wifi password is on the router")
+        await seed(conn, "v-other", "the wifi password is printed on the fridge")
+        wire(engine, engine.resolver.runtime, judge=judge, **kwargs)  # type: ignore[attr-defined]
+        yield engine
+
+
+async def test_a_judge_vetoes_a_candidate_the_arms_found_and_says_so(database) -> None:  # noqa: F811
+    """The gate is what turns "ranked" into "answered": a candidate below the judge's floor is not returned.
+
+    `V2-D104`. The arms still decide *membership* (the judge never admits a row that recall did not find), and the
+    result reports the judgement — model, floor, how many it read, how many it kept — so a caller can distinguish an
+    empty page from an unjudged one.
+    """
+    async with _judged(database, _Judge({"the wifi password is printed on the fridge": 5.0})) as engine:
+        result = await query(engine, {"scope": "/u/alice/", "text": "wifi password"})
+        assert fact_ids(result) == ["v-other"], "only the candidate the judge kept may be returned"
+        assert result.judgement is not None
+        assert result.judgement.model == "fake-judge"
+        assert result.judgement.scored == 2 and result.judgement.kept == 1
+        assert result.judgement.best == 5.0
+        # the veto costs an answer, not a candidate list: both rows were read, one was refused
+        assert len(result.facts) == 1
+
+
+async def test_a_judge_that_keeps_nothing_returns_an_empty_page_not_an_error(database) -> None:  # noqa: F811
+    """An unanswerable question is an answer. The page is empty and the judgement records that it was decided."""
+    async with _judged(database, _Judge({})) as engine:
+        result = await query(engine, {"scope": "/u/alice/", "text": "wifi password"})
+        assert result.facts == ()
+        assert result.judgement is not None and result.judgement.scored == 2 and result.judgement.kept == 0
+        # `best` is reported even when nothing is kept: it is the evidence behind "nothing was relevant"
+        assert result.judgement.best is not None and result.judgement.best < result.judgement.floor
+
+
+async def test_a_failing_judge_degrades_to_the_fused_order_rather_than_failing_the_read(database) -> None:  # noqa: F811
+    """A model failure must not turn every read into `internal_error` — and must not be a *silent* fallback.
+
+    Same rule as the query embedder (`V2-D98`): the arms are still correct, they are just less decisive, and the result
+    reports `judgement=None` so a caller knows it received an unfiltered page rather than an empty one.
+    """
+    async with _judged(database, _Judge({}, fail=True)) as engine:
+        result = await query(engine, {"scope": "/u/alice/", "text": "wifi password"})
+        assert result.judgement is None
+        assert sorted(fact_ids(result)) == ["v-answer", "v-other"], "the fused page survives a judge failure"
+
+
+async def test_a_judge_that_returns_the_wrong_number_of_scores_is_a_degradation_not_a_verdict(database) -> None:  # noqa: F811
+    """A scorer returning one number for two candidates has a bug. Refusing the read would spread that bug to every
+    caller, so it degrades exactly like a failure — and `judgement=None` says so."""
+    async with _judged(database, _Judge({}, short=True)) as engine:
+        result = await query(engine, {"scope": "/u/alice/", "text": "wifi password"})
+        assert result.judgement is None
+        assert sorted(fact_ids(result)) == ["v-answer", "v-other"]
+
+
+async def test_the_judge_reads_a_bounded_page_and_answers_nothing_it_did_not_read(database) -> None:  # noqa: F811
+    """`JUDGE_CANDIDATES` is a latency bound, and the bound is honest: rows beyond it are not returned unjudged."""
+    from custom_memory_engine.engine.hybrid import JUDGE_CANDIDATES
+
+    judge = _Judge({})
+    async with structure_world(database) as (conn, engine, _schema):
+        # more claims than the judge is willing to read, all matched lexically
+        for index in range(JUDGE_CANDIDATES + 3):
+            await seed(conn, f"v-many-{index}", f"the wifi password number {index} is written down")
+        register_read_handlers(engine, engine.resolver.runtime, judge=judge)  # type: ignore[attr-defined]
+        result = await query(engine, {"scope": "/u/alice/", "text": "wifi password", "limit": 40})
+        assert result.judgement is not None
+        assert result.judgement.scored == JUDGE_CANDIDATES, "the judge must read no more than its bound"
+        assert len(result.facts) <= JUDGE_CANDIDATES
+        assert all("written down" in item.content for item in result.facts), "unjudged rows must never be returned"
+
+
+async def test_without_a_judge_the_query_reports_no_judgement_and_ranks_as_before(database) -> None:  # noqa: F811
+    """The default is unchanged behaviour: `judgement=None` is what a deployment without the asset reports."""
+    async with world(database) as (conn, engine, _):
+        await seed(conn, "v-answer", "the wifi password is on the router")
+        result = await query(engine, {"scope": "/u/alice/", "text": "wifi password"})
+        assert fact_ids(result) == ["v-answer"]
+        assert result.judgement is None

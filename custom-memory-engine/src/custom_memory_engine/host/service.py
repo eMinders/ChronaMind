@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from math import isfinite
 
 import structlog
 from psycopg import AsyncConnection, sql
@@ -25,7 +26,7 @@ from psycopg_pool import AsyncConnectionPool
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.api.wiring import wire_engine
-from custom_memory_engine.engine.hybrid import RecallError, slot_for_dimension
+from custom_memory_engine.engine.hybrid import JUDGE_RELEVANCE_FLOOR, RecallError, RelevanceJudge, slot_for_dimension
 from custom_memory_engine.host.credentials import HostCredentials
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.access import Selector, resolve_read_set
@@ -57,6 +58,11 @@ class HostSettings:
     #: The dense arm's query embedder (``V2-D98``). ``None`` leaves the engine lexical-only, which is honest: it
     #: ranks by the two language-agnostic arms rather than pretending a vector it does not have.
     embedder: Embedder | None = None
+    #: The relevance judge (``V2-D104``). ``None`` returns the fused page unfiltered, which is what pre-W3.7
+    #: deployments do; with one, a question nothing answers comes back empty. Both the judge and its floor are set by
+    #: the same model, so a deployment that swaps the model must re-derive the floor (``reports/retrieval``).
+    judge: RelevanceJudge | None = None
+    judge_floor: float = JUDGE_RELEVANCE_FLOOR
 
 
 class HostService:
@@ -127,6 +133,8 @@ class HostService:
                 tau_confidence=self.settings.tau_confidence,
                 tau_coverage=self.settings.tau_coverage,
                 embedder=self.settings.embedder,
+                judge=self.settings.judge,
+                judge_floor=self.settings.judge_floor,
             )
             context = await self._context(engine, runtime, credential, arguments)
             return await engine.call(context, operation, arguments)
@@ -225,6 +233,33 @@ def embedder_from_environment(environment: Mapping[str, str]) -> Embedder | None
     return OnnxEmbedder(assets)
 
 
+def judge_from_environment(environment: Mapping[str, str]) -> RelevanceJudge | None:
+    """The deployment's relevance judge, or ``None`` when ``CME_RERANKER_ASSET`` is unset.
+
+    The asset is validated at start-up for the same reason the embedder is: a missing file would otherwise surface as
+    every read silently returning unfiltered candidates, which looks like a working engine with a precision problem
+    rather than like a misconfiguration. The model itself loads on first use.
+    """
+    from custom_memory_engine.integrations.cross_encoder import OnnxCrossEncoder, assets_from_environment
+
+    assets = assets_from_environment(dict(environment))
+    return None if assets is None else OnnxCrossEncoder(assets)
+
+
+def judge_floor_from_environment(environment: Mapping[str, str]) -> float:
+    """The judge's operating point: the measured constant unless the deployment re-derived its own (``V2-D104``)."""
+    raw = environment.get("CME_RERANKER_FLOOR", "").strip()
+    if not raw:
+        return JUDGE_RELEVANCE_FLOOR
+    try:
+        value = float(raw)
+    except ValueError:
+        raise EntryError("validation_error", "cme_reranker_floor_invalid") from None
+    if not isfinite(value):
+        raise EntryError("validation_error", "cme_reranker_floor_invalid")
+    return value
+
+
 def settings_from_environment(environment: Mapping[str, str] | None = None) -> HostSettings:
     """Read the host's configuration. Every failure names a variable and never its value."""
     env = dict(os.environ if environment is None else environment)
@@ -256,6 +291,8 @@ def settings_from_environment(environment: Mapping[str, str] | None = None) -> H
         provenance_key=key(PROVENANCE_KEY_ENV),
         deletion_key=key("CME_DELETION_RECEIPT_KEY"),
         embedder=embedder_from_environment(env),
+        judge=judge_from_environment(env),
+        judge_floor=judge_floor_from_environment(env),
     )
 
 
@@ -264,5 +301,7 @@ __all__ = [
     "HostSettings",
     "MAX_READ_SELECTORS",
     "embedder_from_environment",
+    "judge_floor_from_environment",
+    "judge_from_environment",
     "settings_from_environment",
 ]

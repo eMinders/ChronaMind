@@ -17,6 +17,7 @@ import pytest
 from psycopg import AsyncConnection
 
 from custom_memory_engine.api.entry import Engine
+from custom_memory_engine.api.lifecycle_handlers import ConstraintList
 from custom_memory_engine.api.maintain_handlers import ExpiryReceipt
 from custom_memory_engine.api.runtime import Receipt
 from custom_memory_engine.api.wiring import UNWIRED_OPERATIONS, wire_engine
@@ -508,3 +509,199 @@ async def test_a_snapshot_made_before_a_deletion_is_not_served_after_it(database
             with pytest.raises(ExportError) as refused:
                 await serve_snapshot(conn, user_id="alice", snapshot_id=snapshot.snapshot_id)
             assert refused.value.code == "snapshot_invalidated_by_a_deletion"
+
+
+# ------------------------------------------------------------------------------- lifting a dissent (I16, V2-D105)
+
+
+async def _dissented(conn, engine, artifact_id: str = "v-dissented", evidence: str | None = "v-ground") -> str:
+    """A grounded artifact, an inferred one dissented, and the id of the constraint the dissent recorded.
+
+    ``evidence`` is written *before* the dissent on purpose: the belief-time watermark only moves forward
+    (``enforce_recorded_watermark``), so a grounded row cannot be back-dated after a clock allocation. That is also the
+    honest order — evidence for reopening a denial exists before the reopening is considered.
+    """
+    if evidence is not None:
+        await grounded(conn, evidence, content="the user said so on Tuesday")
+    await inferred(conn, artifact_id)
+    await engine.call(caller("alice"), "dissent", {"artifact_id": artifact_id, "note": "wrong_again"})
+    listing = await engine.call(caller("alice"), "constraints", {})
+    assert isinstance(listing, ConstraintList)
+    return listing.constraints[0].constraint_id
+
+
+async def test_the_lift_loop_is_closed_and_discoverable(database) -> None:  # noqa: F811
+    """``I16`` end to end: dissent blocks re-learning, ``constraints`` names the block, ``lift`` reopens it.
+
+    This is the loop the earlier state could not close. Without ``constraints`` the constraint's id was unknowable
+    (nothing returned it), and without ``lift`` the block was permanent — so ``I16``'s "cannot be re-inferred *without
+    new grounded evidence*" described a door with no handle on either side.
+    """
+    async with world(database) as (conn, engine, _):
+        constraint_id = await _dissented(conn, engine)
+        listing = await engine.call(caller("alice"), "constraints", {})
+        assert isinstance(listing, ConstraintList) and len(listing) == 1
+        element = listing.constraints[0]
+        assert element.constraint_id == constraint_id
+        assert (element.scope_path, element.predicate_key) == ("/u/alice/", "statement")
+        assert element.method_family == INHERITED
+        # content-free: a scope path the caller owns, two registered names, two instants, and two ids
+        assert element.lift_evidence_version_id is None and element.lifted_at is None
+        assert "alice" not in element.predicate_key and "prefers" not in element.method_family
+
+        # a grounded artifact is the ground: new evidence, not a second opinion
+        receipt = await engine.call(
+            caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-ground", "note": "user_confirmed"}
+        )
+        assert isinstance(receipt, Receipt)
+        assert (receipt.id, receipt.effect) == (constraint_id, "lifted")
+        assert await rows(
+            conn,
+            "SELECT lifted_by, lift_evidence_version_id, reason FROM negative_constraint WHERE id = %s",
+            (constraint_id,),
+        ) == [("alice", "v-ground", "wrong_again")]
+        # and the element may be learned again
+        again = await engine.call(
+            caller("alice", "B"),
+            "infer",
+            {
+                "scope": "/u/alice/",
+                "method": {"id": INHERITED_ID, "version": "1", "params_hash": PERSONA_HASH},
+                "sources": ["v-ground"],
+                "statement": "alice prefers morning meetings",
+                "ledger": {"support": 3, "counter": 0, "undetermined": 0, "opportunity": 3},
+                "idempotency_key": "re-learn-2",
+            },
+        )
+        assert getattr(again, "reason_code", None) is None, "a lifted element must be inferable again"
+        # the lifted constraint is still listed when asked for, and carries its ground
+        lifted = await engine.call(caller("alice"), "constraints", {"include_lifted": True})
+        assert isinstance(lifted, ConstraintList) and len(lifted) == 1
+        assert lifted.constraints[0].lift_evidence_version_id == "v-ground"
+        # …and hidden by default, because the default question is "what still blocks me"
+        assert len(await engine.call(caller("alice"), "constraints", {})) == 0
+
+
+async def test_a_lift_needs_new_grounded_evidence_and_not_an_inference(database) -> None:  # noqa: F811
+    """``I16``'s own words: *without new grounded evidence*. An inference cannot lift a constraint on inference, or
+    the engine could reverse a user's denial by guessing the same thing twice."""
+    async with world(database) as (conn, engine, _):
+        # the inference that will be offered as "new evidence" is written first: a clock allocation cannot be
+        # back-dated (enforce_recorded_watermark), and the point of the test is the lifecycle rule, not the watermark
+        await inferred(conn, "v-guess", content="alice probably wants this")
+        constraint_id = await _dissented(conn, engine)
+        refused = await forbidden(
+            engine, caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-guess"}
+        )
+        assert (refused.code, refused.detail) == ("precondition_failed", "evidence_not_grounded")
+        # and nothing moved
+        assert await rows(
+            conn, "SELECT lifted_at FROM negative_constraint WHERE id = %s", (constraint_id,)
+        ) == [(None,)]
+
+
+async def test_a_lift_cannot_name_evidence_it_cannot_read(database) -> None:  # noqa: F811
+    """The ground must be the caller's: transparency of the *outcome* is not permission to cite someone else's row."""
+    async with world(database) as (conn, engine, _):
+        constraint_id = await _dissented(conn, engine, evidence="v-alices")
+        # bob cannot cite alice's artifact, and cannot even tell it from one that does not exist: the constraint is
+        # checked first, and bob does not own it, so both answers are the same word
+        for evidence in ("v-alices", "v-absent"):
+            refused = await forbidden(
+                engine, caller("bob"), "lift", {"constraint_id": constraint_id, "evidence": evidence}
+            )
+            assert (refused.code, refused.detail) == ("precondition_failed", "constraint_not_active")
+        # alice can name her own constraint, and then the evidence check is the one that answers
+        refused = await forbidden(
+            engine, caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-nothing-here"}
+        )
+        assert (refused.code, refused.detail) == ("precondition_failed", "evidence_not_readable")
+
+
+async def test_another_principals_constraint_is_indistinguishable_from_a_missing_one(database) -> None:  # noqa: F811
+    """No existence oracle: the refusal is the same word whether the constraint exists or not."""
+    async with world(database) as (conn, engine, _):
+        constraint_id = await _dissented(conn, engine, evidence="v-bobs-gone")
+        await grounded(conn, "v-bobs", content="bob wrote this down", user="bob")
+        refused = await forbidden(engine, caller("bob"), "lift", {"constraint_id": constraint_id, "evidence": "v-bobs"})
+        assert (refused.code, refused.detail) == ("precondition_failed", "constraint_not_active")
+        absent = await forbidden(engine, caller("bob"), "lift", {"constraint_id": "nc-nope", "evidence": "v-bobs"})
+        assert (absent.code, absent.detail) == (refused.code, refused.detail)
+        # bob's own listing shows nothing of alice's
+        assert len(await engine.call(caller("bob"), "constraints", {})) == 0
+
+
+async def test_a_constraint_cannot_be_lifted_twice(database) -> None:  # noqa: F811
+    """The lift is a record of when the reconsideration happened; a second one would rewrite it."""
+    async with world(database) as (conn, engine, _):
+        # both grounds exist before anything allocates a clock: belief time only moves forward
+        await grounded(conn, "v-g2", content="evidence two")
+        constraint_id = await _dissented(conn, engine, evidence="v-g1")
+        await engine.call(caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-g1"})
+        refused = await forbidden(
+            engine, caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-g2"}
+        )
+        assert (refused.code, refused.detail) == ("precondition_failed", "constraint_not_active")
+        assert await rows(
+            conn, "SELECT lift_evidence_version_id FROM negative_constraint WHERE id = %s", (constraint_id,)
+        ) == [("v-g1",)]
+
+
+async def test_deleting_the_lift_evidence_withdraws_the_lift_and_the_element_blocks_again(database) -> None:  # noqa: F811
+    """The schema's own guarantee, reached through the API: the lift loses its ground, so the dissent stands again.
+
+    This is the property that makes a lift safe to offer — it is not a permission granted once, it is a claim that
+    *this evidence* outweighs the denial, and the claim dies with its evidence.
+    """
+    async with world(database) as (conn, engine, _):
+        constraint_id = await _dissented(conn, engine, evidence="v-ground-2")
+        await engine.call(caller("alice"), "lift", {"constraint_id": constraint_id, "evidence": "v-ground-2"})
+        assert len(await engine.call(caller("alice"), "constraints", {})) == 0
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+            await conn.execute("DELETE FROM memory_evidence WHERE version_id = 'v-ground-2'")
+            await conn.execute("DELETE FROM memory_version WHERE id = 'v-ground-2'")
+        listing = await engine.call(caller("alice"), "constraints", {})
+        assert isinstance(listing, ConstraintList) and len(listing) == 1, "the dissent is active again"
+        assert listing.constraints[0].lift_evidence_version_id is None
+        # and `infer` refuses the element again
+        again = await engine.call(
+            caller("alice", "B"),
+            "infer",
+            {
+                "scope": "/u/alice/",
+                "method": {"id": INHERITED_ID, "version": "1", "params_hash": PERSONA_HASH},
+                "sources": ["src-v-dissented"],
+                "statement": "alice prefers morning meetings",
+                "ledger": {"support": 3, "counter": 0, "undetermined": 0, "opportunity": 3},
+                "idempotency_key": "re-learn-3",
+            },
+        )
+        assert getattr(again, "reason_code", None) == "negative_constraint_active"
+
+
+async def test_lift_and_constraints_are_tier_c_reads_and_writes(database) -> None:  # noqa: F811
+    """``constraints`` is a read a Tier B caller may make (its own denial is its business); ``lift`` is not."""
+    async with world(database) as (conn, engine, _):
+        constraint_id = await _dissented(conn, engine, evidence="v-ground-3")
+        listing = await engine.call(caller("alice", "B"), "constraints", {})
+        assert isinstance(listing, ConstraintList) and len(listing) == 1
+        refused = await forbidden(
+            engine, caller("alice", "B"), "lift", {"constraint_id": constraint_id, "evidence": "v-ground-3"}
+        )
+        assert refused.code == "forbidden"
+
+
+async def test_malformed_lift_and_constraint_arguments_are_static_refusals(database) -> None:  # noqa: F811
+    async with world(database) as (conn, engine, _):
+        constraint_id = await _dissented(conn, engine, evidence="v-ground-4")
+        for arguments, code in (
+            ({"evidence": "v-ground-4"}, "validation_error"),
+            ({"constraint_id": "  ", "evidence": "v-ground-4"}, "validation_error"),
+            ({"constraint_id": constraint_id}, "validation_error"),
+            ({"constraint_id": constraint_id, "evidence": 7}, "validation_error"),
+        ):
+            refused = await forbidden(engine, caller("alice"), "lift", arguments)
+            assert refused.code == code, (arguments, refused.code)
+        refused = await forbidden(engine, caller("alice"), "constraints", {"include_lifted": "yes"})
+        assert (refused.code, refused.detail) == ("validation_error", "include_lifted_must_be_a_boolean")

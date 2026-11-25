@@ -32,10 +32,12 @@ incomparable scales (cosine distance, ``ts_rank_cd``, trigram similarity) combin
 found by two arms outranks one found by a single arm at the same position. The order is total -- score descending,
 then version id ascending -- so two identical calls produce identical output (``V2-D11``'s determinism requirement).
 
-**No generative model, ever.** Every arm is SQL or an injected embedding. There is **zero** LLM call on this path, and
-the reranker seam (:class:`Reranker`) is a protocol the engine does not implement: a cross-encoder is deterministic
-code over fixed weights, and a deployment that wants one injects it. That is what keeps the hot read path at tens of
-milliseconds and near-zero marginal cost, and it is why this module can be replayed.
+**No generative model, ever.** Every arm is SQL or an injected embedding, and there is **zero** LLM call on this path.
+The optional second stage is a *relevance judge* (:class:`RelevanceJudge`): a cross-encoder is deterministic code over
+fixed weights, so a deployment that wants one injects it and the same question over the same memory always gets the
+same verdict. That is what keeps the hot read path at tens of milliseconds and near-zero marginal cost, and it is why
+this module can be replayed. The judge does not live here — it is applied where the candidate rows are already in hand
+(`api.read_handlers`), so this module stays pure SQL over ids.
 
 **Security is unchanged.** Each arm composes :func:`~.predicates.scoped_artifact_filter`, so the temporal predicate,
 the typed-artifact guard and the caller's read predicate all run *before* the row limit, under the caller's own role
@@ -133,7 +135,8 @@ MAX_STATISTIC_TERMS = 6
 #: **What this cannot do.** The weakest *true* match on this set sits at 0.46 and the strongest *false* one at 0.605,
 #: so no single cosine threshold separates them: an unanswerable question whose nearest neighbour is unusually close is
 #: indistinguishable from a genuine cross-script paraphrase without a cross-encoder. That is a measured limit of the
-#: model, not of the threshold, and it is why `Reranker` stays a seam rather than a guarantee.
+#: model, not of the threshold. It is why the read path carries a *relevance judge* (`V2-D104`): a cross-encoder reads
+#: the pair together and separates exactly this case, where no floor on a bi-encoder's cosine can.
 DENSE_SIMILARITY_FLOOR = 0.55
 
 
@@ -208,15 +211,37 @@ class Recall:
 
 
 @runtime_checkable
-class Reranker(Protocol):
-    """A pluggable second-stage ranker (cross-encoder, or any fixed-weight scorer).
+class RelevanceJudge(Protocol):
+    """A *calibrated* second stage: it reads a question and a memory together and returns one absolute score.
 
-    Deliberately **not** an LLM: a generative reranker on this path would put a model call and a per-turn cost inside
-    the hot read. Given the fused candidates in fused order and the query text, return one score per candidate in the
-    same order. Returning a different number of scores is a programming error and is refused.
+    The difference from a reranker is the whole point (`V2-D104`). A reranker's scale is arbitrary, so only its order
+    can be used; a relevance judge's score is a decision on a fixed scale, so a floor on it is meaningful and a
+    question nothing answers can come back empty instead of merely re-ordered.
+
+    Deliberately **not** an LLM: a generative "is this relevant?" call per candidate would put a model call and a
+    per-turn cost inside the hot read. A cross-encoder is one forward pass and one number with no sampling, so the same
+    question and the same memory always produce the same verdict.
     """
 
-    def score(self, query_text: str, candidates: Sequence[str]) -> Sequence[float]: ...
+    @property
+    def model(self) -> str: ...
+
+    async def relevance(self, query: str, documents: Sequence[str]) -> Sequence[float]: ...
+
+
+#: Below this relevance logit a candidate is not an answer to the question. **Measured**, not chosen (`V2-D104`): on
+#: the 64-question labelled set, judged over the fused page, the weakest *answerable* question scored ``-6.68`` and the
+#: strongest *unanswerable* one ``-11.01``. ``-8.8`` is their midpoint, so it is the point with the most slack on both
+#: sides — 2.1 logits above the best non-answer and 2.2 below the worst real one. The comparison is stated before the
+#: number because the comparison is what makes the number defensible: a deployment that swaps the judge must re-derive
+#: it, and ``CME_RERANKER_FLOOR`` exists so it can without editing code.
+#:
+#: This is what the bi-encoder could not do: its own weakest true match (0.46) sat *below* its strongest false one
+#: (0.605), so no cosine floor separated them. The judge exists because ranking and judging are different questions.
+JUDGE_RELEVANCE_FLOOR = -8.8
+#: How many of the fused candidates the judge reads. A bound, because the judge costs ~28 ms per pair and the page it
+#: is guarding is small: a relevance gate over the first page is a decision about whether to answer at all.
+JUDGE_CANDIDATES = 10
 
 
 def slot_for_dimension(dimensions: int) -> tuple[str, str]:
@@ -534,43 +559,6 @@ async def hybrid_recall(
     )
 
 
-def rerank(
-    recall: Recall,
-    query_text: str,
-    reranker: Reranker | None,
-    *,
-    limit: int,
-) -> Recall:
-    """Apply an optional second-stage reranker to the fused page and return a re-ordered :class:`Recall`.
-
-    The reranker sees only candidates the recall already authorized and already ranked; it can re-order, never admit.
-    A missing reranker is the default and returns ``recall`` unchanged (the engine ships none: RRF over three arms is
-    the whole of the hot path's ranking, which is what keeps it replayable and model-free).
-    """
-    if reranker is None:
-        return recall
-    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
-        raise RecallError("positive_result_limit_required")
-    candidates = recall.ordered
-    if not candidates:
-        return recall
-    scores = tuple(float(value) for value in reranker.score(query_text, candidates))
-    if len(scores) != len(candidates):
-        raise RecallError("reranker_score_count_mismatch")
-    if not all(isfinite(value) for value in scores):
-        raise RecallError("reranker_score_must_be_finite")
-    # A reranker's own scale is meaningless to RRF, so only its order is used: the fused score is replaced by a
-    # descending position on the reranked order, and ties keep the fused order (stable by construction).
-    order = sorted(range(len(candidates)), key=lambda index: (-scores[index], index))[:limit]
-    ordered = tuple(candidates[index] for index in order)
-    return Recall(
-        ordered=ordered,
-        scored=tuple((version_id, recall.scored[index][1]) for index, version_id in zip(order, ordered, strict=True)),
-        arms=recall.arms,
-        candidates=recall.candidates,
-    )
-
-
 __all__ = [
     "ARM_DEPTH_FACTOR",
     "EMBEDDING_SLOTS",
@@ -584,10 +572,11 @@ __all__ = [
     "Recall",
     "RecallError",
     "RecallQuery",
-    "Reranker",
+    "JUDGE_CANDIDATES",
+    "JUDGE_RELEVANCE_FLOOR",
+    "RelevanceJudge",
     "fuse",
     "hybrid_recall",
-    "rerank",
     "slot_for_dimension",
     "trigram_token",
     "vector_literal",

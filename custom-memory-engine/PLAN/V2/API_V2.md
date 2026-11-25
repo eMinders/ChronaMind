@@ -108,6 +108,7 @@ lineage produced; Tier C: its own assertions), `scope_writable` (`scope.access.a
 | 1 | Ingest | `ingest_episode` | ✓ | ✓ | ✓ | `scope_writable` |
 | 2 | Ingest | `ingest_artifact` | ✓ | ✓ | ✓ | `evidence_required`, `scope_writable` |
 | 3 | Read | `query` | ✓ | ✓ | ✓ | — |
+| 30 | Read | `constraints` | ✓ | ✓ | ✓ | — |
 | 4 | Read | `refine` | ✓ | ✓ | ✓ | `targets_readable` |
 | 5 | Read | `get` | ✓ | ✓ | ✓ | `targets_readable` |
 | 6 | Read | `provenance` | ✓ | ✓ | ✓ | `targets_readable` |
@@ -123,6 +124,7 @@ lineage produced; Tier C: its own assertions), `scope_writable` (`scope.access.a
 | 16 | Structure | `record_outcome` | ✓ | ✓ | ✓ | `targets_readable` |
 | 17 | Adjudicate | `adjudicate` | — | ✓ | ✓ | `targets_readable` |
 | 18 | Adjudicate | `dissent` | — | ✓ | ✓ | `targets_readable` |
+| 31 | Adjudicate | `lift` | — | ✓ | ✓ | `scope_writable`, `targets_readable` |
 | 19 | Maintain | `purge_working` | — | — | ✓ | `scope_writable` |
 | 20 | Maintain | `expire` | — | — | ✓ | `scope_writable` |
 | 21 | Maintain | `rebuild_index` | — | — | ✓ | — |
@@ -145,7 +147,7 @@ runtime by calling `api.contract.authorize` and honouring each condition.
 | ID | Rule | Test |
 |---|---|---|
 | TB1 | **Tier B cannot delete.** It may only `retract_own` an artifact of its own method lineage. | `test_tb1_tier_b_cannot_delete` |
-| TB2 | **Tier B cannot adjudicate** (`adjudicate`, `dissent`). A reflection service must not silence a conflict or a user's dissent. | `test_tb2_tier_b_cannot_adjudicate` |
+| TB2 | **Tier B cannot adjudicate** (`adjudicate`, `dissent`, `lift`). A reflection service must not silence a conflict or a user's dissent. | `test_tb2_tier_b_cannot_adjudicate` |
 | TB3 | Every operation that creates `asserted` requires source evidence (Tier B and Tier C alike). | `test_tb3_grounded_writes_require_evidence` |
 | TB4 | Nothing moves to `asserted` except Tier C adjudication of a `contested` item; `inferred → asserted` does not exist. | `test_tb4_only_tier_c_adjudication_promotes_to_asserted` |
 | TB5 | A Tier B lifecycle change (`retract_own`, `verify`, `refute`) applies to its own method lineage only. | `test_tb5_tier_b_lifecycle_changes_are_own_lineage_only` |
@@ -402,6 +404,25 @@ The user rejects an inference (`USER_MODEL.md` §3 "Contest", `V2-D33`): `inferr
 `reason='user_dissent'`, and a `NEGATIVE_CONSTRAINT` recorded so the same element cannot be silently re-learned
 (`I16`). No evidence is required: the user is the authority over their own model. Tier C only (TB2): a cognition
 service must not dissent on the user's behalf. *Errors:* `precondition_failed` (not `inferred`), `forbidden`.
+
+**`lift(ctx, constraint_id, evidence, note?) → Receipt`** (`V2-D105`)
+The undo `I16` describes: a denied element reopens, but only on **new grounded evidence**. `evidence` names an
+`observed` or `asserted` artifact of the caller's — an `inferred` one is refused (`evidence_not_grounded`), because a
+constraint on inference cannot be lifted by more inference without making the constraint vacuous. The lift is a
+record, not a permission: `lifted_at`, `lifted_by` and `lift_evidence_version_id` move together (the schema's
+`negative_constraint_lift_is_complete`), and **deleting the evidence withdraws the lift**, so the dissent stands again.
+One lift per constraint (`constraint_not_active` on a second attempt), Tier C only (TB2). The caller names the
+constraint rather than the artifact because the constraint survives both the retirement and the deletion of the belief
+that provoked it. *Errors:* `precondition_failed` (`constraint_not_active`, `evidence_not_readable`,
+`evidence_not_grounded`), `validation_error`, `forbidden`.
+
+### 4.6.1 Reading back the dissent
+
+**`constraints(ctx, include_lifted?) → ConstraintList`** (`V2-D105`)
+The caller's own negative constraints, active first. Without it a constraint's id is unknowable and a dissent is a
+permanent block with no way to name it. Returns identifiers only — the constraint id, the scope path the caller owns,
+the predicate key, the method *family* (a registered name), both instants, and the lift's evidence id — and never
+content. Available to Tier B, because a service acting for the user must be able to see why its inference was refused.
 
 ### 4.7 Maintain — Tier C only
 

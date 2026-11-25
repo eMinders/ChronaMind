@@ -78,6 +78,9 @@ AUDIT_DETAIL_KEYS = frozenset(
         "verification_reasons",
         # lifecycle retirements through the API (E-039): a static reason code, never free text
         "reason_code",
+        # a lifted dissent (V2-D105): the constraint's id, which is an identifier, and the method *family*, which is a
+        # registered name whose versions share it. Both are code-shaped, so neither can carry a memory's text.
+        "method_family",
         # C-026 refutation (E-046): two counts. The counter-evidence *refs* are deliberately not audited -- a ref can
         # be a path or a URL, and `audit_event` outlives deletion (V2-D54).
         "counter_evidence_supplied",

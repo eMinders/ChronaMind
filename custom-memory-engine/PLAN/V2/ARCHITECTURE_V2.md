@@ -410,11 +410,11 @@ operation a tier needs appears here, and nothing outside it exists.**
 | Class | Operations | Tier B | Tier C | Notes |
 |---|---|---|---|---|
 | **Ingest** | `ingest_episode`, `ingest_artifact` | ✓ | ✓ | Writes always land in an explicit scope; the caller is authorized for it. |
-| **Read** | `query`, `refine`, `get`, `provenance` | ✓ | ✓ | Channel-separated; provenance never widens the read set. |
+| **Read** | `query`, `refine`, `get`, `provenance`, `constraints` | ✓ | ✓ | Channel-separated; provenance never widens the read set. `constraints` lists the caller's own negative constraints, ids and element names only. |
 | **Write (grounded)** | `assert`, `retract_own` | ✓ | ✓ | Grounded writes go through the *grounding* policy; Tier B asserting about the world is allowed only with source evidence, which is what stops it inventing facts. |
 | **Write (inferred)** | `infer`, `verify`, `refute` | ✓ | — | Soundness policy. `verify`/`refute` accept only the artifact's own method lineage. |
 | **Structure** | `link`, `unlink`, `create_entity`, `link_entity`, `record_outcome` | ✓ | ✓ | `record_outcome` is retrospective only; no execution. A Tier B `contradicts` link never demotes a grounded artifact (`V2-D48`). |
-| **Adjudicate** | `adjudicate`, `dissent` | — | ✓ | User/system correction of `contested` items. **Deliberately not available to Tier B**: a reflection service must not be able to silence a conflict by adjudicating it. |
+| **Adjudicate** | `adjudicate`, `dissent`, `lift` | — | ✓ | User/system correction of `contested` items. **Deliberately not available to Tier B**: a reflection service must not be able to silence a conflict by adjudicating it, nor lift a user's dissent. |
 | **Maintain** | `purge_working`, `expire`, `rebuild_index`, `register_method` | — | ✓ | Administrative: admin role within Tier C (`V2-D47`); `purge_working` is scope-scoped and audited; the method registry is append-only. |
 | **Delete** | `delete` | **—** | ✓ | Tier B can never delete. It can only `retract_own` artifacts whose method it produced. |
 | **Export** | `export` | — | ✓ | User-facing data export; excludes content whose deletion is pending. |
@@ -684,7 +684,7 @@ inference confidence, which is a consistency the first draft lacked.
 | I13 | `verified ∧ deleted-source` is unreachable after any committing transaction. | Deletion procedure ordering (§10) + invariant test |
 | I14 | Every rendered abstraction carries a bound; no API path renders an abstraction as a bare proposition. | Assembly contract + channel-integrity fuzz (`E-035`) |
 | I15 | Counter-support is *searched and recorded* (opportunity ledger present, `refutation_attempts` recorded); it is never required to be non-empty. | Conformance test + `STATISTICS.md` §2.2 |
-| I16 | A user denial is sticky: a refuted user-model element cannot be re-inferred over the same predicate/scope without new grounded evidence. | Negative-constraint table + `UM8` test |
+| I16 | A user denial is sticky: a refuted user-model element cannot be re-inferred over the same predicate/scope without new grounded evidence. | Negative-constraint table + `lift` (`V2-D105`) + `UM8` test |
 | I17 | Cross-scope provenance is opaque: a provenance reference to an unreadable scope exposes no content and no existence oracle. | Scope tests + `I7` extension |
 
 ---

@@ -11,6 +11,7 @@ not landed stays unwired and answers ``forbidden``, which is the fail-closed beh
 
 from custom_memory_engine.api.entry import Engine, Handler
 from custom_memory_engine.api.runtime import DbMethods, DbTargets, ForeignKeyPrincipals, Runtime
+from custom_memory_engine.engine.hybrid import JUDGE_RELEVANCE_FLOOR, RelevanceJudge
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.audit import ConnectionScopeReads
 from custom_memory_engine.semantic.contracts import Embedder
@@ -47,6 +48,8 @@ def wire_engine(
     tau_confidence: float = 0.6,
     tau_coverage: float = 0.5,
     embedder: Embedder | None = None,
+    judge: RelevanceJudge | None = None,
+    judge_floor: float = JUDGE_RELEVANCE_FLOOR,
 ) -> Engine:
     """Build the engine and register **every** handler that exists (``E-046``).
 
@@ -68,7 +71,7 @@ def wire_engine(
     engine = build_engine(runtime)
     structure: Handlers = register_structure_handlers(engine, runtime)
     register_ingest_handlers(engine, runtime, profile, embedder=embedder)
-    register_read_handlers(engine, runtime, embedder=embedder)
+    register_read_handlers(engine, runtime, embedder=embedder, judge=judge, judge_floor=judge_floor)
     register_infer_handlers(engine, runtime, tau_confidence=tau_confidence, tau_coverage=tau_coverage, profile=profile)
     register_delete_handlers(engine, runtime)
     register_maintain_handlers(engine, runtime, profile)

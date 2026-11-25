@@ -40,6 +40,7 @@ import pytest
 
 from custom_memory_engine.api.entry import Engine
 from custom_memory_engine.api.read_handlers import QueryResult, register_read_handlers
+from custom_memory_engine.integrations.cross_encoder import OnnxCrossEncoder, reranker_assets_for
 from custom_memory_engine.integrations.onnx_embedder import OnnxEmbedder, assets_for
 from evaluation.retrieval.quality import MEMORIES, QUESTIONS, Score, by_kind, score
 from evaluation.retrieval.rankings import bm25_scores, document_frequencies, rerank_by
@@ -50,12 +51,23 @@ pytestmark = pytest.mark.integration
 T0 = datetime(2026, 3, 10, tzinfo=UTC)
 REPORT = Path(__file__).resolve().parents[2] / "reports" / "retrieval"
 MODEL_DIR = Path(__file__).resolve().parents[2] / ".model-cache" / "bge-m3"
+RERANKER_NAME = "bge-reranker-v2-m3"
+RERANKER_DIR = Path(__file__).resolve().parents[2] / ".model-cache" / RERANKER_NAME
 TOP = 5
 
 needs_model = pytest.mark.skipif(
     not (MODEL_DIR / "model.onnx").is_file(),
     reason="the pinned embedding model is not cached locally (see scripts/fetch_models.py)",
 )
+needs_reranker = pytest.mark.skipif(
+    not (RERANKER_DIR / "model_int8.onnx").is_file(),
+    reason="the pinned reranker is not cached locally (see scripts/fetch_models.py)",
+)
+
+#: The judge's best score per question from the last measured pass, so the report can record the extremes its floor
+#: sits between (`V2-D104`). Module-level because `rank` fills it in through an out-parameter rather than returning a
+#: second value every other configuration would have to ignore.
+JUDGE_BEST: dict[str, float] = {}
 
 #: ``key -> version id`` as seeded, and the reverse, so a label can be scored without leaking an id into the dataset.
 IDS: dict[str, str] = {memory.key: f"v-{memory.key}" for memory in MEMORIES}
@@ -113,28 +125,43 @@ async def rank(
     *,
     text: bool = True,
     top: int = TOP,
+    judge: OnnxCrossEncoder | None = None,
+    best_score: dict[str, float] | None = None,
 ) -> tuple[str, ...]:
-    """The keys one configuration returns for one question, best first, through ``Engine.call``."""
-    register_read_handlers(engine, engine.resolver.runtime, embedder=embedder)  # type: ignore[attr-defined]
+    """The keys one configuration returns for one question, best first, through ``Engine.call``.
+
+    ``best_score`` is filled with the judge's highest score for this question when a judge ran. That is a *reported
+    fact* on the result (:attr:`QueryResult.judgement`), not a re-computation: the measurement costs nothing extra.
+    """
+    register_read_handlers(engine, engine.resolver.runtime, embedder=embedder, judge=judge)  # type: ignore[attr-defined]
     request: dict[str, object] = {"scope": "/u/alice/", "limit": top}
     if text:
         request["text"] = question
     result = await engine.call(caller("alice"), "query", {"request": request})
     assert isinstance(result, QueryResult)
+    if best_score is not None and judge is not None:
+        assert result.judgement is not None, "a configured judge must report its judgement on the result"
+        if result.judgement.best is not None:
+            best_score[question] = result.judgement.best
     ordered = [artifact.artifact_id for artifact in result.facts]
     reverse = {version_id: key for key, version_id in IDS.items()}
     return tuple(reverse.get(version_id, version_id) for version_id in ordered)
 
 
-async def rankings(engine: Engine, embedder: OnnxEmbedder | None) -> dict[str, dict[str, tuple[str, ...]]]:
+async def rankings(
+    engine: Engine, embedder: OnnxEmbedder | None, judge: OnnxCrossEncoder | None = None
+) -> dict[str, dict[str, tuple[str, ...]]]:
     """Every configuration's ranking for every question. One pass, so all configurations see identical state."""
     recency: dict[str, tuple[str, ...]] = {}
     lexical: dict[str, tuple[str, ...]] = {}
     hybrid: dict[str, tuple[str, ...]] = {}
+    judged: dict[str, tuple[str, ...]] = {}
+    global JUDGE_BEST
     for question in QUESTIONS:
         recency[question.text] = await rank(engine, None, question.text, text=False)
         lexical[question.text] = await rank(engine, None, question.text)
         hybrid[question.text] = await rank(engine, embedder, question.text)
+        judged[question.text] = await rank(engine, embedder, question.text, judge=judge, best_score=JUDGE_BEST)
     frequencies = document_frequencies(TEXTS)
     bm25: dict[str, tuple[str, ...]] = {}
     hybrid_then_bm25: dict[str, tuple[str, ...]] = {}
@@ -162,6 +189,7 @@ async def rankings(engine: Engine, embedder: OnnxEmbedder | None) -> dict[str, d
         "recency": recency,
         "lexical": lexical,
         "hybrid": hybrid,
+        "hybrid_judged": judged,
         "bm25": bm25,
         "hybrid_then_bm25": hybrid_then_bm25,
         "hybrid_then_recency": hybrid_then_recency,
@@ -173,6 +201,28 @@ def summarise(results: dict[str, dict[str, tuple[str, ...]]]) -> list[Score]:
 
 
 KINDS = ("lexical", "paraphrase", "cross_script", "no_match")
+
+
+def judge_report() -> dict[str, object]:
+    """The judge's measured extremes: the two numbers its floor must sit between (`V2-D104`)."""
+    from custom_memory_engine.engine.hybrid import JUDGE_RELEVANCE_FLOOR
+
+    answerable = {q.text: JUDGE_BEST[q.text] for q in QUESTIONS if q.kind != "no_match" and q.text in JUDGE_BEST}
+    unanswerable = {q.text: JUDGE_BEST[q.text] for q in QUESTIONS if q.kind == "no_match" and q.text in JUDGE_BEST}
+    if not answerable or not unanswerable:
+        return {"measured": False}
+    weakest = min(answerable, key=answerable.__getitem__)
+    strongest = max(unanswerable, key=unanswerable.__getitem__)
+    return {
+        "measured": True,
+        "model": RERANKER_NAME,
+        "floor": JUDGE_RELEVANCE_FLOOR,
+        "weakest_answerable": round(answerable[weakest], 4),
+        "weakest_answerable_question": weakest,
+        "strongest_unanswerable": round(unanswerable[strongest], 4),
+        "strongest_unanswerable_question": strongest,
+        "separation": round(answerable[weakest] - unanswerable[strongest], 4),
+    }
 
 
 def write_report(results: dict[str, dict[str, tuple[str, ...]]], scores: list[Score]) -> None:
@@ -188,6 +238,7 @@ def write_report(results: dict[str, dict[str, tuple[str, ...]]], scores: list[Sc
         "configurations": [
             {**result.as_dict(), "by_kind": by_kind(result, results[result.name])} for result in scores
         ],
+        "judge": judge_report(),
         "misses": {
             result.name: [
                 {"question": question, "kind": kind, "expected": expected, "returned": list(returned)}
@@ -289,7 +340,8 @@ async def test_the_fusion_beats_the_alternatives_and_keeps_its_place(database) -
     async with world(database) as (conn, engine, schema):
         embedder = OnnxEmbedder(assets_for("bge-m3", MODEL_DIR))
         await attach_vectors(conn, embedder)
-        results = await rankings(engine, embedder)
+        judge = OnnxCrossEncoder(reranker_assets_for(RERANKER_NAME, RERANKER_DIR))
+        results = await rankings(engine, embedder, judge)
         scores = summarise(results)
         write_report(results, scores)
         by_name = {result.name: result for result in scores}
@@ -302,9 +354,15 @@ async def test_the_fusion_beats_the_alternatives_and_keeps_its_place(database) -
         # and no alternative may beat it by more than noise (0.02 nDCG ~ one question's position)
         for alternative in ("bm25", "hybrid_then_bm25", "hybrid_then_recency"):
             assert by_name[alternative].ndcg <= hybrid.ndcg + 0.02, alternative
-        # The no-match rows are the ones that keep a ranking honest. One of eight is the measured residual: the
-        # unanswerable Arabic question's nearest neighbour sits at 0.605, above every true match this corpus holds at
-        # the other end of the scale, so no threshold separates it (see `DENSE_SIMILARITY_FLOOR`'s table). Anything
-        # above one in eight means the floor has drifted back toward "always say something".
+        # The no-match rows are the ones that keep a ranking honest. Without a judge the residual is one in eight: the
+        # unanswerable Arabic question's nearest neighbour sits at 0.605, above the weakest true match at the other end
+        # of the scale, so no cosine floor separates them (see `DENSE_SIMILARITY_FLOOR`'s table).
         assert hybrid.no_match_fp <= 0.125
+        # …and with the relevance judge it is zero, because a cross-encoder reads the pair together (V2-D104). This is
+        # the assertion that keeps the judge in the read path: delete it and the false positive comes back.
+        judged = by_name["hybrid_judged"]
+        assert judged.no_match_fp == 0.0, judged.misses
+        # the gate may not cost a quarter of the answers to buy that precision
+        assert judged.recall >= hybrid.recall - 0.05
+        assert judged.ndcg > hybrid.ndcg
         del conn, schema

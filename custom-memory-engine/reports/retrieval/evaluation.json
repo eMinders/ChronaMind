@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-25T02:37:12.627783+00:00",
+  "generated_at": "2026-11-25T13:03:27.829033+00:00",
   "corpus_size": 49,
   "questions": 64,
   "questions_by_kind": {
@@ -57,6 +57,21 @@
       }
     },
     {
+      "configuration": "hybrid_judged",
+      "recall@5": 0.9821,
+      "top1": 0.7679,
+      "mrr@5": 0.8667,
+      "ndcg@5": 0.8964,
+      "no_match_false_positive": 0.0,
+      "misses": 1,
+      "by_kind": {
+        "lexical": 1.0,
+        "paraphrase": 0.9697,
+        "cross_script": 1.0,
+        "no_match": 1.0
+      }
+    },
+    {
       "configuration": "bm25",
       "recall@5": 0.1429,
       "top1": 0.0714,
@@ -102,6 +117,16 @@
       }
     }
   ],
+  "judge": {
+    "measured": true,
+    "model": "bge-reranker-v2-m3",
+    "floor": -8.8,
+    "weakest_answerable": -6.679,
+    "weakest_answerable_question": "cryptocurrency",
+    "strongest_unanswerable": -11.0099,
+    "strongest_unanswerable_question": "جيراننا يشكون من الضجيج كل ليلة",
+    "separation": 4.3308
+  },
   "misses": {
     "recency": [
       {
@@ -924,6 +949,14 @@
           "oncall",
           "rent"
         ]
+      }
+    ],
+    "hybrid_judged": [
+      {
+        "question": "أين أتمرن",
+        "kind": "paraphrase",
+        "expected": "gym_ar",
+        "returned": []
       }
     ],
     "bm25": [

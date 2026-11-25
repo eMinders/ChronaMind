@@ -122,11 +122,12 @@ async def make_inferred(
 
 
 @asynccontextmanager
-async def live(database, *, embedder: object = None) -> AsyncIterator[Live]:  # noqa: F811
+async def live(database, *, embedder: object = None, judge: object = None) -> AsyncIterator[Live]:  # noqa: F811
     """A provisioned schema, a restricted role, a real uvicorn server on an ephemeral port, and three credentials.
 
     ``embedder`` is the deployment's model (``V2-D98``); ``None`` is a lexical-only deployment, which is what every
     test except the embedding ones runs, because loading a 2.2 GB ONNX graph per test is not a test-suite behaviour.
+    ``judge`` is the relevance judge (``V2-D104``) for the same reason and with the same rule.
     """
     config, schema = database
     role = "cme_rt_" + uuid4().hex[:12]
@@ -141,6 +142,7 @@ async def live(database, *, embedder: object = None) -> AsyncIterator[Live]:  # 
             provenance_key=PROVENANCE,
             deletion_key=DELETION,
             embedder=embedder,  # type: ignore[arg-type]
+            judge=judge,  # type: ignore[arg-type]
         )
         credentials = HostCredentials(
             {
@@ -535,3 +537,44 @@ async def test_an_unrelated_question_is_still_unanswered_with_an_embedder_config
         response = await call(host.client, host.alice_b, "query", request=question)
         assert response.status_code == 200, response.text
         assert response.json()["result"]["facts"] == []
+
+
+RERANKER_CACHE = Path(__file__).resolve().parents[2] / ".model-cache" / "bge-reranker-v2-m3"
+needs_reranker = pytest.mark.skipif(
+    not (RERANKER_CACHE / "model_int8.onnx").is_file(),
+    reason="the pinned reranker is not cached locally; run scripts/fetch_models.py",
+)
+
+
+def local_judge() -> object:
+    from custom_memory_engine.integrations.cross_encoder import OnnxCrossEncoder, reranker_assets_for
+
+    return OnnxCrossEncoder(reranker_assets_for("bge-reranker-v2-m3", RERANKER_CACHE))
+
+
+@needs_model
+@needs_reranker
+async def test_the_judge_refuses_the_near_miss_the_dense_arm_alone_would_have_answered(database) -> None:  # noqa: F811
+    """The end-to-end version of `V2-D104`, on the exact pair the bi-encoder could not separate.
+
+    "our neighbours complain about the noise every night" scored 0.605 against "I am on call every second weekend" —
+    above the weakest genuine match in the labelled set, so no cosine floor could reject it. With the judge configured,
+    the same question over the same corpus comes back empty, and the result *says* a judge ran so the caller can tell
+    that apart from a deployment that has none.
+    """
+    async with live(database, embedder=local_embedder(), judge=local_judge()) as host:
+        await assert_claim(host.client, host.alice_b, "I am on call every second weekend", "c-near-1")
+        await assert_claim(host.client, host.alice_b, "I moved to Berlin last spring", "c-near-2")
+        near_miss = {"scope": "/u/alice/", "text": "جيراننا يشكون من الضجيج كل ليلة"}
+        response = await call(host.client, host.alice_b, "query", request=near_miss)
+        assert response.status_code == 200, response.text
+        result = response.json()["result"]
+        assert result["facts"] == [], "the judge must refuse a question this corpus does not answer"
+        assert result["judgement"]["kept"] == 0
+        # …and the same deployment still answers a question it can
+        found = {"scope": "/u/alice/", "text": "where do I live"}
+        response = await call(host.client, host.alice_b, "query", request=found)
+        result = response.json()["result"]
+        assert {item["content"] for item in result["facts"]} == {"I moved to Berlin last spring"}
+        assert result["judgement"]["kept"] >= 1
+        assert result["judgement"]["best"] > result["judgement"]["floor"]

@@ -143,6 +143,12 @@ OPERATIONS: tuple[Operation, ...] = (
         ("targets_readable",), transitions=frozenset({("contested", "asserted"), ("contested", "retired")})),
     _op("dissent", "Adjudicate", "C", ("artifact_id", "note"), "Receipt", ("precondition_failed",),
         ("targets_readable",), transitions=frozenset({("inferred", "retired")})),
+    # `V2-D105`: the undo `I16` describes — a denied element reopens *on new grounded evidence*, and nothing else lifts
+    # it. `scope_writable` because a lift changes what the engine may write in that scope; no lifecycle transition,
+    # because it changes a constraint rather than a belief.
+    _op("lift", "Adjudicate", "C", ("constraint_id", "evidence", "note"), "Receipt", ("precondition_failed",),
+        ("scope_writable", "targets_readable")),
+    _op("constraints", "Read", "BC", ("include_lifted",), "ConstraintList"),
     _op("purge_working", "Maintain", "C", ("scope",), "PurgeReceipt", conditions=("scope_writable",), deletes=True,
         admin_only=True),
     # `deletes=False` (V2-D97): expiry stamps `abstraction_stats.expires_at` and derives the `expired` stale cause. It
