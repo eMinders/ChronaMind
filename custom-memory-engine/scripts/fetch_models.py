@@ -44,33 +44,41 @@ class Pinned:
     size: int
 
 
-#: The pinned set. Revisions are commit SHAs, not branch names: a branch moves, and a moved branch would silently
-#: invalidate every number in `reports/`. Digests are of the *file*, so a re-upload under the same name is caught.
+#: The pinned set. Every hex string below is a *public* digest or git revision of an open model file, marked for the
+#: secret scanner line by line because it cannot tell a SHA-256 from a key. Revisions are commit SHAs, not branch
+#: names: a branch moves, and a moved branch would silently invalidate every number in `reports/`. Digests are of the
+#: *file*, so a re-upload under the same name is caught.
 PINNED: tuple[Pinned, ...] = (
     # BAAI/bge-m3 at 5617a9f: the `onnx/` subdirectory, which is the exported graph (the repository root carries the
     # PyTorch weights and a different tokenizer). `model.onnx` is a 724 KB graph whose weights live in the 2.2 GB
     # `model.onnx_data` sidecar, so both files are pinned: a graph without its data is not a model.
     Pinned(
         asset="bge-m3",
+        # pragma: allowlist nextline secret
         revision="5617a9f61b028005a4858fdac845db406aefb181",
         remote="onnx/model.onnx",
         local="model.onnx",
+        # pragma: allowlist nextline secret
         sha256="f84251230831afb359ab26d9fd37d5936d4d9bb5d1d5410e66442f630f24435b",
         size=724923,
     ),
     Pinned(
         asset="bge-m3",
+        # pragma: allowlist nextline secret
         revision="5617a9f61b028005a4858fdac845db406aefb181",
         remote="onnx/model.onnx_data",
         local="model.onnx_data",
+        # pragma: allowlist nextline secret
         sha256="1eebfb28493f67bba03ce0ef64bfdc7fc5a3bd9d7493f818bb1d78cd798416b4",
         size=2266820608,
     ),
     Pinned(
         asset="bge-m3",
+        # pragma: allowlist nextline secret
         revision="5617a9f61b028005a4858fdac845db406aefb181",
         remote="onnx/tokenizer.json",
         local="tokenizer.json",
+        # pragma: allowlist nextline secret
         sha256="6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790",
         size=17082821,
     ),
@@ -78,25 +86,31 @@ PINNED: tuple[Pinned, ...] = (
     # budget is 512 pairs, so the graph and its tokenizer are pinned together.
     Pinned(
         asset="bge-reranker-v2-m3",
+        # pragma: allowlist nextline secret
         revision="6f5ff65298512715a1e669753bc754d2bc8f367b",
         remote="onnx/model_int8.onnx",
         local="model_int8.onnx",
+        # pragma: allowlist nextline secret
         sha256="912fc1215c2dbff6499700534bd8d31253af01573861abbfc43afd1fab6cce5d",
         size=570727094,
     ),
     Pinned(
         asset="bge-reranker-v2-m3",
+        # pragma: allowlist nextline secret
         revision="6f5ff65298512715a1e669753bc754d2bc8f367b",
         remote="tokenizer.json",
         local="tokenizer.json",
+        # pragma: allowlist nextline secret
         sha256="8bf8afbfd11306bd872018c53bfdf2e160a56f8edbcf49933324404791c148d3",
         size=17082900,
     ),
     Pinned(
         asset="bge-reranker-v2-m3",
+        # pragma: allowlist nextline secret
         revision="6f5ff65298512715a1e669753bc754d2bc8f367b",
         remote="config.json",
         local="config.json",
+        # pragma: allowlist nextline secret
         sha256="122e922dcfed6503c8721e6fe1daf090340c3d95ca7f3aa3a72730b321a51cfd",
         size=848,
     ),
