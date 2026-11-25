@@ -93,7 +93,8 @@ async def test_migration_27_rolls_back_to_the_recorded_version_26_catalog(databa
     config, schema = database
     runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
     async with connect(database) as conn:
-        await conn.execute(cast(LiteralString, rollback_sql(from_version=27, to_version=26)), prepare=False)
+        down = cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=26))
+        await conn.execute(down, prepare=False)
         recorded = await rows(conn, "SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = 26")
         assert await runner._catalog(conn) == recorded[0][0]
         assert not await rows(conn, "SELECT 1 FROM pg_catalog.pg_proc WHERE proname = 'delete_orphaned_entities'")

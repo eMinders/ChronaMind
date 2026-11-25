@@ -172,3 +172,33 @@ async def test_rollback_refuses_while_a_manifest_exists_and_proceeds_only_when_t
             await conn.execute(down, prepare=False)
     assert (await runner.status()).version == M25 - 1
     assert (await runner.apply()).action == "applied"
+
+
+async def test_a_manifest_goes_with_its_user_by_cascade_and_only_that_way(database) -> None:  # noqa: F811
+    """The header's promise, pinned (PR #241 review): `DELETE` of a manifest is refused while its user exists, and
+    removing the user cascades through it. The guard used to raise on the cascade too, so an exporting user could
+    never be removed."""
+    async with connect(database) as conn:
+        await manifest(conn, "exp-cascade")
+        with pytest.raises(RaiseException, match="export_snapshot_is_append_only"):
+            async with conn.transaction():
+                await conn.execute("DELETE FROM export_snapshot WHERE id = 'exp-cascade'")
+        # the user's other rows are removed first, as a real account erasure would; then the user itself
+        async with conn.transaction():
+            await conn.execute("DELETE FROM turn WHERE user_id = 'u1'")
+            await conn.execute("DELETE FROM session WHERE user_id = 'u1'")
+            await conn.execute("DELETE FROM app_user WHERE id = 'u1'")
+        assert await rows(conn, "SELECT count(*) FROM export_snapshot WHERE id = 'exp-cascade'") == [(0,)]
+
+
+async def test_migration_28_rolls_back_to_the_recorded_version_27_catalog(database) -> None:  # noqa: F811
+    """Migration 28 replaces only the guard's body; its rollback restores migration 25's body exactly."""
+    config, schema = database
+    runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
+    async with connect(database) as conn:
+        down = cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=27))
+        await conn.execute(down, prepare=False)
+        recorded = await rows(conn, "SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = 27")
+        assert await runner._catalog(conn) == recorded[0][0]
+    assert (await runner.apply()).action == "applied"
+    assert (await runner.status()).version == migrate.VERSION

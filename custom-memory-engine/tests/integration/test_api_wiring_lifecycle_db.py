@@ -819,3 +819,62 @@ async def test_the_erasure_function_cannot_be_called_outside_a_deletion(database
                     sql.SQL("SELECT {}.delete_orphaned_entities('alice', NULL)").format(sql.Identifier(schema))
                 )
         assert await _names(conn) == ["Layla Hassan"]
+
+
+# --------------------------------------------------- export identity is (user, epoch, digest) (PR #241 review)
+
+
+async def test_an_export_after_an_unrelated_deletion_is_servable(database) -> None:  # noqa: F811
+    """The epoch moved, the readable set did not. The second export must name a row that records the *new* epoch.
+
+    The id was derived from the digest alone, so the second insert collided with the first row, `DO NOTHING` returned
+    the old row's time, and the manifest claimed epoch 1 over a stored epoch 0: an id that could never be served.
+    """
+    from custom_memory_engine.engine.export import serve_snapshot
+
+    async with world(database) as (conn, engine, _):
+        await grounded(conn, "v-kept", content="I live in Berlin")
+        await grounded(conn, "v-gone", content="something else", user="alice")
+        alice = caller("alice", "C")
+        first = await engine.call(alice, "export", {"selectors": ["/u/alice/"]})
+        assert isinstance(first, ExportManifest)
+        # move `v-gone` out of reach of nothing: delete it, so the epoch advances and the digest changes too, then
+        # export a selector that never covered it — the digest is stable across the deletion only for this selector
+        await engine.call(alice, "delete", {"scope": "memory", "target_ref": "v-gone"})
+        second = await engine.call(alice, "export", {"selectors": ["/u/alice/"]})
+        assert isinstance(second, ExportManifest)
+        assert second.captured_epoch == 1
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+            manifest, ids = await serve_snapshot(conn, user_id="alice", snapshot_id=second.snapshot_id)
+        assert manifest.captured_epoch == 1 and ids == ("v-kept",)
+
+
+async def test_an_epoch_change_with_an_identical_read_set_mints_a_new_servable_snapshot(database) -> None:  # noqa: F811
+    """The exact trigger the review named: same ids, new epoch, same digest — only (user, epoch) tells them apart."""
+    from custom_memory_engine.engine.export import serve_snapshot
+
+    async with world(database) as (conn, engine, _):
+        await grounded(conn, "v-same", content="I live in Berlin")
+        alice = caller("alice", "C")
+        first = await engine.call(alice, "export", {"selectors": ["/u/alice/"]})
+        # a deletion that matches nothing still appends a request and advances the epoch
+        await engine.call(alice, "delete", {"scope": "memory", "target_ref": "no-such-key"})
+        second = await engine.call(alice, "export", {"selectors": ["/u/alice/"]})
+        assert isinstance(first, ExportManifest) and isinstance(second, ExportManifest)
+        assert first.manifest_digest == second.manifest_digest
+        assert first.snapshot_id != second.snapshot_id
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+            manifest, ids = await serve_snapshot(conn, user_id="alice", snapshot_id=second.snapshot_id)
+        assert (manifest.captured_epoch, ids) == (1, ("v-same",))
+
+
+async def test_two_users_exporting_the_same_empty_set_each_get_their_own_snapshot(database) -> None:  # noqa: F811
+    """Two empty read sets hash identically; a global primary key must not let one user's row block the other's."""
+    async with world(database) as (_conn, engine, _):
+        alice = await engine.call(caller("alice", "C"), "export", {"selectors": ["/u/alice/"]})
+        bob = await engine.call(caller("bob", "C"), "export", {"selectors": ["/u/bob/"]})
+        assert isinstance(alice, ExportManifest) and isinstance(bob, ExportManifest)
+        assert alice.manifest_digest == bob.manifest_digest
+        assert alice.snapshot_id != bob.snapshot_id

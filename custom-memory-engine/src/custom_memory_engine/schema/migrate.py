@@ -53,6 +53,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (25, "025_export_snapshot.sql"),
     (26, "026_entity_embedding.sql"),
     (27, "027_entity_erasure.sql"),
+    (28, "028_export_snapshot_cascade.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"

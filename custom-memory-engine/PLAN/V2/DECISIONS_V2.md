@@ -3091,3 +3091,17 @@ boundary is stated here rather than guessed at. The receipt and the audit row ca
 **Tests.** `test_api_wiring_lifecycle_db.py`: `delete all` erases declared and mentioned names and audits only a count;
 a topic deletion by entity id erases that entity and nothing else, and a memory deletion erases none; the function is
 refused outside a deletion transaction even with the marker set. `test_migration_m26.py` covers 27's exact rollback.
+
+## V2-D109 — An export manifest's identity is (user, epoch, digest), and it goes with its user
+
+**Context.** Two defects found in review of PR #241. The manifest id was `exp-` + the digest, and `id` is a global
+primary key: a second export of an unchanged read set at a *new* deletion epoch collided with the old row and returned
+an id whose stored epoch was stale (never servable), and two users with identical readable sets (most simply both
+empty) collided, so the second got `validation_error`. Separately, migration 25 promised that a manifest is removable
+only by cascade from its user, while its guard raised on every `DELETE`, the cascade included.
+
+**Decision.** `engine.export.snapshot_id_for` hashes `user \0 epoch \0 digest`. Migration 28 replaces only the guard
+body: a `DELETE` is admitted when the parent `app_user` row is no longer visible (the cascade), and refused otherwise;
+`UPDATE` and `TRUNCATE` are refused as before. Tests: an export after an epoch change with an identical read set is
+servable and gets a new id; two users' empty exports get distinct ids; a direct delete is refused and the user cascade
+succeeds; migration 28 rolls back to the recorded version-27 fingerprint.

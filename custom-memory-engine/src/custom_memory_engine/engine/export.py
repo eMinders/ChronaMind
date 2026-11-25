@@ -156,7 +156,7 @@ async def export_snapshot(
             captured_at=found[5],
             created=False,
         )
-    snapshot_id = "exp-" + digest[:32]
+    snapshot_id = snapshot_id_for(user_id, epoch, digest)
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
@@ -178,8 +178,9 @@ async def export_snapshot(
         )
         inserted = await cursor.fetchone()
         if inserted is None:
-            # The id is content-addressed over (epoch, digest), so this only happens on a concurrent identical export:
-            # the answer is that row, not an error.
+            # The id is content-addressed over (user, epoch, digest), so a conflict means a concurrent identical export
+            # by this same user at this same epoch: the answer is that row, not an error. Another user, or another
+            # epoch, can never collide (PR #241 review: the digest alone made both happen).
             await cursor.execute(
                 sql.SQL("SELECT captured_at FROM {t} WHERE user_id = %s AND id = %s").format(
                     t=sql.Identifier(schema_name, "export_snapshot")
@@ -193,6 +194,19 @@ async def export_snapshot(
     if captured_at is None:
         raise ExportError("snapshot_not_recorded")
     return ExportManifest(snapshot_id, epoch, len(ids), digest, selected, captured_at)
+
+
+def snapshot_id_for(user_id: str, epoch: int, digest: str) -> str:
+    """The manifest id: a hash over **(user, epoch, digest)**, the three facts that make two manifests the same one.
+
+    The digest alone is not an identity. Two users with identical readable sets (most simply both empty) hash alike,
+    and `id` is a global primary key, so the second user's insert collided with a row RLS hides from them. And the same
+    user's identical read set at a *new* epoch collided with the old row, which records the old epoch and is therefore
+    unservable — `export` handed back an id that `serve_snapshot` could never answer. A NUL separator keeps the fields
+    unambiguous; opaque in form, because a user id must not be readable from a manifest handle.
+    """
+    material = f"{user_id}\0{epoch}\0{digest}".encode()
+    return "exp-" + hashlib.sha256(material).hexdigest()[:32]
 
 
 async def serve_snapshot(
@@ -245,4 +259,5 @@ __all__ = [
     "manifest_digest",
     "selectors",
     "serve_snapshot",
+    "snapshot_id_for",
 ]
