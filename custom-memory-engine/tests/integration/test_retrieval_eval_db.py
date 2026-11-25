@@ -338,6 +338,8 @@ async def test_the_floor_is_swept_and_the_constant_matches_the_measured_operatin
         del schema
 
 
+@needs_model
+@needs_reranker
 async def test_the_fusion_beats_the_alternatives_and_keeps_its_place(database) -> None:  # noqa: F811
     """The measurement, and the decision it supports.
 
