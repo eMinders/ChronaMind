@@ -143,6 +143,8 @@ class DeletionReceipt:
     external_exclusion_count: int = 0
     retired_dependents: int = 0
     deleted_turns: int = 0
+    #: Entities this deletion orphaned and erased (V2-D108): a count, never a name.
+    deleted_entities: int = 0
 
 
 class _ClosureGrewError(Exception):
@@ -504,6 +506,21 @@ async def _delete_memory_once(
             )
 
             if not seeds:
+                # No memory matched, but an `all` or entity-`topic` deletion still owes the entities it names: a user
+                # who only ever declared entities, or whose claims about one were already deleted, must be able to
+                # erase it (V2-D108). The marker is set and cleared around the one gated call.
+                orphaned = 0
+                if scope in ("all", "topic"):
+                    await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '1', true)")
+                    await cursor.execute(
+                        sql.SQL("SELECT {fn}(%s, %s)").format(
+                            fn=sql.Identifier(schema_name, "delete_orphaned_entities")
+                        ),
+                        (user_id, None if scope == "all" else [target_ref]),
+                    )
+                    orphan_row = await cursor.fetchone()
+                    orphaned = int(orphan_row[0]) if orphan_row else 0
+                    await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '', true)")
                 await cursor.execute(
                     sql.SQL(
                         "INSERT INTO {a} (id, user_id, memory_ref, event_type, event_at, details) "
@@ -523,12 +540,13 @@ async def _delete_memory_once(
                                     "dependents": 0,
                                     "re_derived_versions": 0,
                                     "purged_jobs": 0,
+                                    **({"deleted_entities": orphaned} if orphaned else {}),
                                 }
                             )
                         ),
                     ),
                 )
-                return DeletionReceipt(request_id, scope, epoch, 0, 0, 0, 0)
+                return DeletionReceipt(request_id, scope, epoch, 0, 0, 0, 0, deleted_entities=orphaned)
 
             # Phase A (F3): read ALL derivation edges and node statuses BEFORE removing any edge.
             edges_by_dependent: dict[str, list[str]] = {dep: [] for dep in dependents}
@@ -744,6 +762,19 @@ async def _delete_memory_once(
                 turn_row = await cursor.fetchone()
                 deleted_turns = int(turn_row[0]) if turn_row else 0
 
+            # V2-D108: the entities this deletion orphans. `all` erases every entity of the user that no surviving
+            # memory cites; a `topic` deletion whose target is an entity id (the subject key of the claims about it)
+            # erases that entity. Narrower deletions leave the user's declared structure alone. Runs while the
+            # deletion marker is still set, because the SECURITY DEFINER function is gated on it.
+            deleted_entities = 0
+            if scope in ("all", "topic"):
+                await cursor.execute(
+                    sql.SQL("SELECT {fn}(%s, %s)").format(fn=sql.Identifier(schema_name, "delete_orphaned_entities")),
+                    (user_id, None if scope == "all" else [target_ref]),
+                )
+                entity_row = await cursor.fetchone()
+                deleted_entities = int(entity_row[0]) if entity_row else 0
+
             # Close the narrowed privilege path (S-08, V2-D50 rule 3) before returning: the marker is transaction-
             # local, so without this reset it would stay set for the rest of a caller's enclosing transaction.
             await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '', true)")
@@ -765,6 +796,8 @@ async def _delete_memory_once(
                 audit_payload["retired_dependents"] = len(plan.to_retire)
             if deleted_turns:
                 audit_payload["deleted_turns"] = deleted_turns
+            if deleted_entities:
+                audit_payload["deleted_entities"] = deleted_entities
 
             await cursor.execute(
                 sql.SQL(
@@ -790,6 +823,7 @@ async def _delete_memory_once(
         re_derived_versions=len(plan.to_rederive),
         purged_jobs=purged_jobs,
         deleted_turns=deleted_turns,
+        deleted_entities=deleted_entities,
         external_exclusions=len(external_exclusions),
     )
     return DeletionReceipt(
@@ -804,6 +838,7 @@ async def _delete_memory_once(
         external_exclusion_count=len(external_exclusions),
         retired_dependents=len(plan.to_retire),
         deleted_turns=deleted_turns,
+        deleted_entities=deleted_entities,
     )
 
 

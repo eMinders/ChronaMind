@@ -578,3 +578,68 @@ async def test_the_judge_refuses_the_near_miss_the_dense_arm_alone_would_have_an
         assert {item["content"] for item in result["facts"]} == {"I moved to Berlin last spring"}
         assert result["judgement"]["kept"] >= 1
         assert result["judgement"]["best"] > result["judgement"]["floor"]
+
+
+async def test_a_dissent_is_listed_and_lifted_over_http_and_bob_sees_none_of_it(database) -> None:  # noqa: F811
+    """``I16`` through the deployed surface: dissent (Tier C), ``constraints`` (Tier B may read), ``lift`` on grounded
+    evidence (Tier C) — and the wire shape is derived from the engine's own result types."""
+    async with live(database) as host:
+        # the inferred row is seeded at the fixture's fixed clock, so it goes in before the host advances belief time
+        async with connect(database) as owner:
+            await make_inferred(owner, "v_dissented", "alice prefers mornings")
+            await owner.commit()
+        ground = await assert_claim(host.client, host.alice_b, "I said it on Tuesday", "c-ground")
+        assert ground.status_code == 200, ground.text
+        ground_id = ground.json()["result"]["id"]
+        dissented = await call(host.client, host.alice_c, "dissent", artifact_id="v_dissented", note="not_true")
+        assert dissented.status_code == 200, dissented.text
+
+        listed = await call(host.client, host.alice_b, "constraints")
+        assert listed.status_code == 200, listed.text
+        constraints = listed.json()["result"]["constraints"]
+        assert len(constraints) == 1 and constraints[0]["lifted_at"] is None
+        assert "alice prefers mornings" not in listed.text, "a constraint carries names and ids, never content"
+        # bob sees nothing of alice's, and cannot lift what he cannot see
+        assert (await call(host.client, host.bob_b, "constraints")).json()["result"]["constraints"] == []
+
+        tier_b = await call(
+            host.client,
+            host.alice_b,
+            "lift",
+            constraint_id=constraints[0]["constraint_id"],
+            evidence_artifact_id=ground_id,
+        )
+        assert tier_b.status_code == 403
+        lifted = await call(
+            host.client,
+            host.alice_c,
+            "lift",
+            constraint_id=constraints[0]["constraint_id"],
+            evidence_artifact_id=ground_id,
+        )
+        assert lifted.status_code == 200, lifted.text
+        assert lifted.json()["result"]["effect"] == "lifted"
+        assert (await call(host.client, host.alice_b, "constraints")).json()["result"]["constraints"] == []
+
+
+async def test_a_result_handle_and_the_cost_record_survive_across_http_requests(database) -> None:  # noqa: F811
+    """Two operations whose state lives *between* calls: ``refine`` drills into a ``query``'s ``result_id``, and
+    ``cost`` reports the caller's earlier queries. The host wires a fresh engine per request (it must: each request has
+    its own pooled connection), so the stores those two read have to outlive the request — or every ``refine`` answers
+    ``forbidden`` and every ``cost`` report is empty, through the deployed surface only."""
+    async with live(database) as host:
+        await assert_claim(host.client, host.alice_b, "I moved to Berlin last spring", "c-refine")
+        queried = await call(host.client, host.alice_b, "query", request={"scope": "/u/alice/", "text": "Berlin"})
+        assert queried.status_code == 200, queried.text
+        result_id = queried.json()["result"]["result_id"]
+        assert result_id
+        refined = await call(host.client, host.alice_b, "refine", result_id=result_id, instruction="channel facts")
+        assert refined.status_code == 200, refined.text
+        # the episode and the claim grounded in it share their text, so this compares the set of contents
+        assert {item["content"] for item in refined.json()["result"]["facts"]} == {"I moved to Berlin last spring"}
+        # the handle is the caller's: bob cannot drill into alice's result
+        stolen = await call(host.client, host.bob_b, "refine", result_id=result_id, instruction="channel facts")
+        assert stolen.status_code == 403
+        cost = await call(host.client, host.alice_b, "cost", window=None)
+        assert cost.status_code == 200, cost.text
+        assert cost.json()["result"]["query_count"] >= 2, cost.text

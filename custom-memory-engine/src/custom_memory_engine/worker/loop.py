@@ -287,8 +287,8 @@ def settings_from_environment(environment: Mapping[str, str]) -> WorkerSettings:
     base_url, api_key = required("CME_LLM_BASE_URL"), required("CME_LLM_API_KEY")
     extractor_model = required("CME_EXTRACTOR_MODEL")
     adjudicator_model = environment.get("CME_ADJUDICATOR_MODEL", "").strip() or extractor_model
-    # Selected separately (V2-D107): entity adjudication is scored by its false merges, and the model that wins relation
-    # adjudication is not the one that merges least. Defaults to the relation adjudicator when unset.
+    # Selected separately (V2-D107): entity adjudication is scored by its false merges, and the model that wins
+    # relation adjudication is not the one that merges least. Defaults to the relation adjudicator when unset.
     entity_model = environment.get("CME_ENTITY_ADJUDICATOR_MODEL", "").strip() or adjudicator_model
 
     def client(model: str) -> object:

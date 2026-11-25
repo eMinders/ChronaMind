@@ -53,7 +53,7 @@ Frozen and checksum-bound (`validation/document_hashes.txt`): `Graduation_Projec
   on `embedding_model`. A model failure degrades to the lexical arms and `QueryResult.arms` says which ran.
 - **The worker is engine code** (`custom_memory_engine.worker`, `V2-D106`); `scripts/run_worker.py` is only the
   process. Every model call — extraction, embedding, both adjudicators — runs with **no transaction open**:
-  `semantic/judgements.py` dry-runs the write to collect its questions, answers them, then writes with replay adapters.
+  `semantic/judgements.py` dry-runs the write to collect its questions, then writes with replay adapters.
   Every slow-lane transaction runs under `CME_RUNTIME_ROLE`; the turn and the deletion epoch are read together and a
   stale epoch dead-letters the job (`F5`). Tested in-process and as a real child with SIGTERM/SIGKILL/restart.
 - **Models are chosen by measurement** (`V2-D102`, `reports/model_selection/README.md`): extraction **and** adjudication
@@ -61,8 +61,8 @@ Frozen and checksum-bound (`validation/document_hashes.txt`): `Graduation_Projec
   `claude-haiku-5-5` the documented latency fallback; embeddings **locally** (`bge-m3` ONNX), because the provider serves
   no `/embeddings`. Read path: an optional **relevance judge** (`bge-reranker-v2-m3` ONNX, `V2-D104`) gates the fused
   page at a measured floor; no-match false positives 0.125 → 0. BM25 and order-only reranking stay rejected.
-- **Migrations 1–26** applied and registered; rollbacks 25/26 refuse to discard data unless
-  `SET LOCAL cme.rollback_discard` names it. The suite is **4,520+ passed / 21 skipped** against PostgreSQL 16.15 + pgvector 0.8.7 + `pg_trgm`; the three extensions are
+- **Migrations 1–27** applied and registered; rollbacks 25/26 refuse to discard data unless
+  `SET LOCAL cme.rollback_discard` names it. `027`: `delete(all)`/entity-`topic` erase orphaned entities (`V2-D108`). The suite is **4,520+ passed / 21 skipped** against PostgreSQL 16.15 + pgvector 0.8.7 + `pg_trgm`; the three extensions are
   bootstrapped into `public` by `migrate.EXTENSIONS`, so the catalog fingerprint never carries another project's
   functions.
 

@@ -10,7 +10,9 @@ not landed stays unwired and answers ``forbidden``, which is the fail-closed beh
 """
 
 from custom_memory_engine.api.entry import Engine, Handler
+from custom_memory_engine.api.refine import ResultStore
 from custom_memory_engine.api.runtime import DbMethods, DbTargets, ForeignKeyPrincipals, Runtime
+from custom_memory_engine.engine.cost import CostStore
 from custom_memory_engine.engine.hybrid import JUDGE_RELEVANCE_FLOOR, RelevanceJudge
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.audit import ConnectionScopeReads
@@ -50,6 +52,8 @@ def wire_engine(
     embedder: Embedder | None = None,
     judge: RelevanceJudge | None = None,
     judge_floor: float = JUDGE_RELEVANCE_FLOOR,
+    results: ResultStore | None = None,
+    costs: CostStore | None = None,
 ) -> Engine:
     """Build the engine and register **every** handler that exists (``E-046``).
 
@@ -71,7 +75,12 @@ def wire_engine(
     engine = build_engine(runtime)
     structure: Handlers = register_structure_handlers(engine, runtime)
     register_ingest_handlers(engine, runtime, profile, embedder=embedder)
-    register_read_handlers(engine, runtime, embedder=embedder, judge=judge, judge_floor=judge_floor)
+    # `results`/`costs` are the two pieces of read state that live *between* calls: a `refine` resolves a handle a
+    # previous `query` issued, and `cost` reports earlier queries. A deployment that wires a fresh engine per request
+    # (the host does) must pass process-lived stores, or every `refine` is `forbidden` and every report empty.
+    register_read_handlers(
+        engine, runtime, embedder=embedder, judge=judge, judge_floor=judge_floor, results=results, costs=costs
+    )
     register_infer_handlers(engine, runtime, tau_confidence=tau_confidence, tau_coverage=tau_coverage, profile=profile)
     register_delete_handlers(engine, runtime)
     register_maintain_handlers(engine, runtime, profile)

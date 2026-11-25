@@ -52,6 +52,7 @@ AUDIT_DETAIL_KEYS = frozenset(
         "re_derived_versions",
         "retired_dependents",  # E-037 (V2-D50): count of dependents tombstoned by source deletion
         "deleted_turns",  # E-037 (S-08): count of exclusive evidence turns deleted in-transaction
+        "deleted_entities",  # V2-D108: count of orphaned entities erased by the deletion (never a name)
         "purged_jobs",
         # working-memory purge (E-026): the scope event records how many episodes went and how many stayed as evidence
         "purged_episodes",

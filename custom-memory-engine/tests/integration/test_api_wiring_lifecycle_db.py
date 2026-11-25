@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, sql
 
 from custom_memory_engine.api.entry import Engine
 from custom_memory_engine.api.lifecycle_handlers import ConstraintList
@@ -724,3 +724,82 @@ async def test_malformed_lift_and_constraint_arguments_are_static_refusals(datab
             assert refused.code == code, (arguments, refused.code)
         refused = await forbidden(engine, caller("alice"), "constraints", {"include_lifted": "yes"})
         assert (refused.code, refused.detail) == ("validation_error", "include_lifted_must_be_a_boolean")
+
+
+# --------------------------------------------------------------------------- deletion reaches entities (V2-D108)
+
+
+async def _entity(engine, label: str, key: str) -> str:
+    created = await engine.call(
+        caller("alice"),
+        "create_entity",
+        {"scope": "/u/alice/", "entity_type": "person", "label": label, "idempotency_key": key},
+    )
+    entity_id = getattr(created, "entity_id", None) or getattr(created, "id", None) or created
+    assert isinstance(entity_id, str), created
+    return entity_id
+
+
+async def _names(conn: AsyncConnection) -> list[str]:
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+        cursor = await conn.execute("SELECT canonical_name FROM entity WHERE user_id = 'alice' ORDER BY 1")
+        return [str(row[0]) for row in await cursor.fetchall()]
+
+
+async def test_delete_all_erases_the_names_of_the_people_the_memories_mentioned(database) -> None:  # noqa: F811
+    """``I8`` for structure: an entity's name is what the user said. ``delete all`` used to leave every one.
+
+    The regression this pins: the runtime role has no DELETE grant on ``entity``, and no deletion path called one, so
+    after "delete everything" the user's memories were gone and the names of the people in them were not.
+    """
+    async with world(database) as (conn, engine, _):
+        await _entity(engine, "Layla Hassan", "e-1")
+        await _entity(engine, "Dr. Yusuf", "e-2")
+        await grounded(conn, "v-about", content="I moved to Berlin")
+        assert await _names(conn) == ["Dr. Yusuf", "Layla Hassan"]
+        receipt = await engine.call(caller("alice"), "delete", {"scope": "all"})
+        assert getattr(receipt, "deleted_entities", None) == 2
+        assert await _names(conn) == []
+        # the audit row counts them and names none of them
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+            cursor = await conn.execute(
+                "SELECT details FROM audit_event WHERE user_id = 'alice' AND event_type = 'deletion_completed'"
+            )
+            details = [row[0] for row in await cursor.fetchall()]
+        assert details and details[-1]["deleted_entities"] == 2
+        assert "layla" not in str(details).lower()
+
+
+async def test_deleting_a_topic_by_entity_erases_that_entity_and_nothing_else(database) -> None:  # noqa: F811
+    """Per-person erasure: the entity's id is the subject key of the claims about it, and a ``topic`` deletion of it
+    removes the entity too — while another person and a plain ``memory`` deletion leave entities alone."""
+    async with world(database) as (conn, engine, _):
+        layla = await _entity(engine, "Layla Hassan", "e-3")
+        await _entity(engine, "Sara Okafor", "e-4")
+        await grounded(conn, "v-plain", content="I like tea")
+        await engine.call(caller("alice"), "delete", {"scope": "memory", "target_ref": "v-plain"})
+        assert await _names(conn) == ["Layla Hassan", "Sara Okafor"], "a memory deletion leaves declared entities"
+        receipt = await engine.call(caller("alice"), "delete", {"scope": "topic", "target_ref": layla})
+        assert getattr(receipt, "deleted_entities", None) == 1
+        assert await _names(conn) == ["Sara Okafor"]
+
+
+async def test_the_erasure_function_cannot_be_called_outside_a_deletion(database) -> None:  # noqa: F811
+    """The SECURITY DEFINER path is gated exactly like ``delete_exclusive_turns``: setting the marker GUC is not
+    enough, the transaction must itself have appended a ``deletion_request``."""
+    from psycopg.errors import InsufficientPrivilege
+
+    async with world(database) as (conn, engine, schema):
+        await _entity(engine, "Layla Hassan", "e-5")
+        role = engine.resolver.runtime.role  # type: ignore[attr-defined]
+        with pytest.raises(InsufficientPrivilege, match="entity_erasure_forbidden"):
+            async with conn.transaction():
+                await conn.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+                await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+                await conn.execute("SELECT set_config('app.deletion_active', '1', true)")
+                await conn.execute(
+                    sql.SQL("SELECT {}.delete_orphaned_entities('alice', NULL)").format(sql.Identifier(schema))
+                )
+        assert await _names(conn) == ["Layla Hassan"]

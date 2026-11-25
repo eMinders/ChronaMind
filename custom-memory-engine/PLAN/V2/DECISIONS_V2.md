@@ -3071,3 +3071,23 @@ contradictions as `update`, which supersedes a belief silently. Entity adjudicat
 (`CME_ENTITY_ADJUDICATOR_MODEL`): equal accuracy and the safe error profile — a false merge corrupts identity, a miss is
 repaired by the next mention. The sample (12 entity cases) is stated as finding failure kinds, not ranking within a
 point; a re-run that showed haiku merging falsely would reverse the choice.
+
+## V2-D108 — A deletion reaches the entities it orphans
+
+**Context.** An `entity` row holds a name (`canonical_name`, `aliases`) and, since migration 26, a vector derived from
+it — content in `I8`'s sense. No deletion path touched the table, and the runtime role holds no `DELETE` grant on it, so
+`delete(scope='all')` removed every memory and left the name of every person those memories were about. The leak
+scanner never looked at `entity`, which is why nothing reported it.
+
+**Decision.** Migration 27 adds `delete_orphaned_entities(user, ids)`, a `SECURITY DEFINER` function with a pinned
+`search_path`, gated by `deletion_in_this_transaction` exactly like `delete_exclusive_turns` (the transaction must have
+appended a `deletion_request`; the marker GUC alone is refused). It deletes only entities no surviving memory cites as
+subject; the `ON DELETE RESTRICT` foreign key stays the guarantee. `delete(scope='all')` erases every such entity of the
+user, including when no memory matched; a `topic` deletion whose target is an entity id — the subject key of the claims
+about it — erases that entity: per-person erasure. A `memory` deletion leaves entities alone, because without a record
+of which claim *mentioned* which entity the engine cannot tell a by-product from the user's declared structure; that
+boundary is stated here rather than guessed at. The receipt and the audit row carry `deleted_entities`, a count.
+
+**Tests.** `test_api_wiring_lifecycle_db.py`: `delete all` erases declared and mentioned names and audits only a count;
+a topic deletion by entity id erases that entity and nothing else, and a memory deletion erases none; the function is
+refused outside a deletion transaction even with the marker set. `test_migration_m26.py` covers 27's exact rollback.

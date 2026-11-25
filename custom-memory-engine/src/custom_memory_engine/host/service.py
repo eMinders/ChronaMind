@@ -24,8 +24,10 @@ from psycopg import AsyncConnection, sql
 from psycopg_pool import AsyncConnectionPool
 
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
+from custom_memory_engine.api.refine import ResultStore
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.api.wiring import wire_engine
+from custom_memory_engine.engine.cost import CostStore
 from custom_memory_engine.engine.hybrid import JUDGE_RELEVANCE_FLOOR, RecallError, RelevanceJudge, slot_for_dimension
 from custom_memory_engine.host.credentials import HostCredentials
 from custom_memory_engine.profile import Profile
@@ -72,6 +74,11 @@ class HostService:
         self.settings = settings
         self.credentials = credentials
         self._pool: AsyncConnectionPool | None = None
+        # Read state that must outlive one request (each request gets a freshly wired engine on its own pooled
+        # connection): the result handles `refine` drills into and the per-caller cost records `cost` reports. Both
+        # stores are caller-scoped internally, so sharing them across requests shares nothing across principals.
+        self._results = ResultStore()
+        self._costs = CostStore()
 
     @classmethod
     async def open(cls, settings: HostSettings, credentials: HostCredentials) -> HostService:
@@ -135,6 +142,8 @@ class HostService:
                 embedder=self.settings.embedder,
                 judge=self.settings.judge,
                 judge_floor=self.settings.judge_floor,
+                results=self._results,
+                costs=self._costs,
             )
             context = await self._context(engine, runtime, credential, arguments)
             return await engine.call(context, operation, arguments)

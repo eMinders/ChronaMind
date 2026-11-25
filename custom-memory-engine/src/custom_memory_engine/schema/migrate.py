@@ -52,6 +52,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (24, "024_semantic_slot.sql"),
     (25, "025_export_snapshot.sql"),
     (26, "026_entity_embedding.sql"),
+    (27, "027_entity_erasure.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -115,12 +116,14 @@ FUNCTIONS = (
     "delete_exclusive_turns",  # migration 22 (E-037): S-08 exclusive turn deletion inside a deletion transaction
     "clear_retired_tombstone_content",  # migration 22 (E-037): V2-D50 rule 3 tombstone vector/shape removal
     "deletion_in_this_transaction",  # migration 22 (E-037): the gate of the two helpers and the tombstone exception
+    "delete_orphaned_entities",  # migration 27 (V2-D108): a deletion erases the entities it orphans
 )
 # Parameterized SQL argument lists for non-zero-arg functions in FUNCTIONS so reset() drops them cleanly.
 FUNCTION_ARG_TYPES: Mapping[str, str] = {
     "delete_exclusive_turns": "text, text[]",
     "clear_retired_tombstone_content": "text, text[]",
     "deletion_in_this_transaction": "text",
+    "delete_orphaned_entities": "text, text[]",
 }
 logger = structlog.get_logger(__name__)
 

@@ -30,6 +30,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` Â
 | `024_semantic_slot.sql` | Migration 24 (`W3.5`, `V2-D87`): `semantic_slot`, `cardinality_hint`, the slot-scoped exclusion key, and the derived `authority_rank` |
 | `025_export_snapshot.sql` | Migration 25 (`E-038`/`F11`, `V2-D99`): `export_snapshot`, the durable epoch-bound export manifest with its self-consistency constraints and append-only guard |
 | `026_entity_embedding.sql` | Migration 26 (`V2-D101`): `entity.embedding_1024` (`halfvec`), `embedding_model`, and the HNSW index that makes entity resolution's vector stage a *proposal* source |
+| `027_entity_erasure.sql` | Migration 27 (`V2-D108`): `delete_orphaned_entities`, the deletion-gated `SECURITY DEFINER` path that lets `delete(all)` and an entity-`topic` deletion erase the entities they orphan; the runtime role still holds no `DELETE` on `entity` |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` + `pg_trgm` bootstrap for disposable databases |
 
