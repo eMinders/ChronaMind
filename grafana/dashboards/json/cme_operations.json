@@ -1,0 +1,93 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "cme-operations",
+    "title": "Custom Memory Engine Operations",
+    "tags": ["cme", "host", "queue", "operations"],
+    "timezone": "browser",
+    "schemaVersion": 30,
+    "version": 1,
+    "refresh": "15s",
+    "panels": [
+      {
+        "type": "graph",
+        "title": "Host Call Rate by Operation, Tier, and Status",
+        "targets": [
+          {
+            "expr": "sum by (operation, tier, status) (rate(cme_host_calls_total[1m]))",
+            "legendFormat": "{{operation}} ({{tier}}/{{status}})",
+            "refId": "A"
+          }
+        ],
+        "datasource": "Prometheus",
+        "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+      },
+      {
+        "type": "graph",
+        "title": "Host Call Duration (p95)",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (le, operation, tier) (rate(cme_host_call_duration_seconds_bucket[5m])))",
+            "legendFormat": "{{operation}} ({{tier}})",
+            "refId": "B"
+          }
+        ],
+        "datasource": "Prometheus",
+        "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+      },
+      {
+        "type": "graph",
+        "title": "Host Rate & Concurrency Refusals (429)",
+        "targets": [
+          {
+            "expr": "sum by (operation, tier) (rate(cme_host_rate_limited_total[1m]))",
+            "legendFormat": "{{operation}} ({{tier}})",
+            "refId": "C"
+          }
+        ],
+        "datasource": "Prometheus",
+        "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+      },
+      {
+        "type": "graph",
+        "title": "Slow-Lane Queue Depth by Kind and Status",
+        "targets": [
+          {
+            "expr": "cme_queue_depth",
+            "legendFormat": "{{kind}} ({{status}})",
+            "refId": "D"
+          }
+        ],
+        "datasource": "Prometheus",
+        "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 }
+      },
+      {
+        "type": "stat",
+        "title": "Dead-Lettered Jobs Total",
+        "targets": [
+          {
+            "expr": "cme_queue_dead_letters_total",
+            "legendFormat": "dead_letter",
+            "refId": "E"
+          }
+        ],
+        "datasource": "Prometheus",
+        "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 }
+      },
+      {
+        "type": "graph",
+        "title": "Component Degradations (Embedder / Judge)",
+        "targets": [
+          {
+            "expr": "sum by (component) (rate(cme_degradations_total[5m]))",
+            "legendFormat": "{{component}}",
+            "refId": "F"
+          }
+        ],
+        "datasource": "Prometheus",
+        "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 }
+      }
+    ]
+  },
+  "overwrite": true
+}

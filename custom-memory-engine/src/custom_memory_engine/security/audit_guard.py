@@ -53,6 +53,7 @@ AUDIT_DETAIL_KEYS = frozenset(
         "retired_dependents",  # E-037 (V2-D50): count of dependents tombstoned by source deletion
         "deleted_turns",  # E-037 (S-08): count of exclusive evidence turns deleted in-transaction
         "deleted_entities",  # V2-D108: count of orphaned entities erased by the deletion (never a name)
+        "deleted_mentions",  # V2-D111: count of entity_mention rows removed by deletion (never a name)
         "purged_jobs",
         # working-memory purge (E-026): the scope event records how many episodes went and how many stayed as evidence
         "purged_episodes",
@@ -77,6 +78,9 @@ AUDIT_DETAIL_KEYS = frozenset(
         "creation_reasons",
         "admissible_by_bound",
         "verification_reasons",
+        "refutation_attempts",  # V2-D112 / verification telemetry count (never prose)
+        "pinning_status",  # V2-D112: static pinning status token ('pinned' | 'unpinned_pre_migration')
+        "visibility",  # V2-D113: static visibility axis token ('private' | 'project' | 'shared')
         # lifecycle retirements through the API (E-039): a static reason code, never free text
         "reason_code",
         # a lifted dissent (V2-D105): the constraint's id, which is an identifier, and the method *family*, which is a

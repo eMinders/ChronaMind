@@ -1,53 +1,88 @@
-# Deployment (W3.6): host, worker, database
+# Deployment (W3.6, V2-D117, V2-D119): host, worker, maintenance, database
 
-Three processes and one database. This file is about the two processes a deployment of this engine actually runs; the
-database is PostgreSQL 16 with `pgvector` and `pg_trgm`, provisioned by migrations (see `src/custom_memory_engine/schema/README.md`).
+Four processes and one database. This file covers the operational processes a deployment of this engine runs; the
+database is PostgreSQL 16 with `pgvector`, `btree_gist`, and `pg_trgm`, provisioned by migrations (see
+`src/custom_memory_engine/schema/README.md`).
 
 ```
 app (ChronaMind FastAPI, port 8000)
-  └── HTTP POST /v1/call ──────────────► cme-host  (uvicorn, port 8100)   ← one process, a connection pool
+  └── HTTP POST /v1/call ──────────────► cme-host  (uvicorn, port 8100)   ← connection pool + limits + /metrics
                                               │
-                                              ├── PostgreSQL 16 (pgvector, pg_trgm)
+                                              ├── PostgreSQL 16 (pgvector, btree_gist, pg_trgm)
                                               │        ▲
    LLM provider (extraction, adjudication) ────┼────────┤
                                               │        │
-                                        cme-worker ────┘   ← the slow lane; drives the `job` table
+                                        cme-worker ────┤   ← the slow lane; drives the `job` table
+                                                       │
+                                  cme-maintenance ─────┘   ← daily timer: expire, purge_working, rebuild_index
 ```
 
-The host answers reads and fast writes; the worker does the slow writes (model extraction). They share exactly one
-thing — the database — and neither imports the other. That is deliberate: the worker can crash, restart, or be absent
-entirely while reads keep working, and a deployment that only ever writes through the API still behaves correctly with
-no worker at all (claims are stored, extraction simply does not happen until one runs).
+The host answers reads and fast writes; the worker does the slow writes (model extraction and `index_rebuild` jobs);
+maintenance periodically expires stale abstractions, purges working episodes, and enqueues index rebuilds. None
+imports the others — they coordinate exclusively through PostgreSQL.
 
 ## What each environment variable means
 
 | variable | who needs it | what it does |
 |---|---|---|
-| `CME_DATABASE_URL` | host, worker | owner-level DSN. The runtime role is dropped to per transaction (`security.tenant_scope`); the worker keeps the owner only for `REINDEX ... CONCURRENTLY`, which needs the index owner |
-| `CME_RUNTIME_ROLE` | host, worker, probe | the restricted, `NOBYPASSRLS` role every tenant statement runs as — including every slow-lane write and the health probe's queue read (`V2-D106`) |
-| `CME_SCHEMA` | host, worker | the engine schema (default `cme_engine`) |
-| `CME_PROVENANCE_KEY`, `CME_DELETION_RECEIPT_KEY` | host | ≥32-char process-wide keys; a random one per restart breaks receipt replay |
+| `CME_DATABASE_URL` | host, worker, maintenance | owner-level DSN. The runtime role is dropped to per transaction (`security.tenant_scope`); the worker keeps the owner only for `REINDEX ... CONCURRENTLY`, which needs the index owner |
+| `CME_RUNTIME_ROLE` | host, worker, maintenance, probe | the restricted, `NOBYPASSRLS` role every tenant statement runs as — including every slow-lane write, maintenance call, and the health probe's queue read (`V2-D106`) |
+| `CME_SCHEMA` | host, worker, maintenance | the engine schema (default `cme_engine`) |
+| `CME_PROVENANCE_KEY`, `CME_DELETION_RECEIPT_KEY` | host | ≥32-char process-wide keys; a random one per restart breaks receipt replay. Backed up separately from database dumps (`V2-D119`) |
 | `CME_HOST_TOKENS` | host | JSON `{token: {principal, tier, admin}}`. Tokens are the *only* source of tier. Never logged (the registry's repr shows a count) |
-| `CME_WORKER_USERS` | worker | the principals this worker serves — the queue is tenant-scoped, so this is the worker's whole remit |
-| `CME_LLM_BASE_URL`, `CME_LLM_API_KEY`, `CME_LLM_PROTOCOL` | worker | the provider (the credential comes from the env file only) and which wire shape to speak: Claude on `/v1/messages`, GPT on `/v1/chat/completions`, inferred from the model family unless overridden |
-| `CME_EXTRACTOR_MODEL`, `CME_ADJUDICATOR_MODEL`, `CME_ENTITY_ADJUDICATOR_MODEL` | worker | the measured selection per capability (`reports/model_selection/README.md`); the entity adjudicator defaults to the relation adjudicator when unset |
-| `CME_ADJUDICATE` | worker | `0` disables both adjudicators (extraction only, cheaper, no semantic dedup and no cross-script entity merges). Default on |
-| `CME_WORKER_IDLE_POLL` | worker | seconds between polls when idle (default 5); also the cadence at which expired leases are returned |
-| `CME_RERANKER_ASSET`, `CME_RERANKER_DIR`, `CME_RERANKER_FLOOR` | host | the relevance judge (`V2-D104`): `bge-reranker-v2-m3`, or unset to return the fused page unjudged. The floor defaults to the measured `-8.8`; change it only after re-measuring |
-| `CME_EMBEDDING_ASSET`, `CME_EMBEDDING_DIR` | host, worker | the local embedding model, or unset for a lexical-only deployment. **Both must agree**: a question encoded by one model cannot match a document encoded by another (`V2-D98`) |
+| `CME_HOST_HOST`, `CME_HOST_PORT` | host | bind host and port (default `127.0.0.1:8100`) |
+| `CME_HOST_MAX_BODY_BYTES` | host | maximum request body bytes enforced before JSON parsing (default `1048576`) |
+| `CME_HOST_POOL_MIN`, `CME_HOST_POOL_MAX` | host | psycopg async pool bounds (default `1`..`8`) |
+| `CME_HOST_RATE_LIMIT_RPS`, `CME_HOST_RATE_LIMIT_BURST` | host | per-principal token-bucket rate limiter (`0.0` disables by default; burst default `20`; `V2-D117`) |
+| `CME_HOST_MAX_INFLIGHT`, `CME_HOST_PER_PRINCIPAL_MAX_INFLIGHT`, `CME_HOST_INFLIGHT_TIMEOUT_SECONDS` | host | global & per-principal in-flight semaphores (`pool_max >= max_inflight + 1` enforced at startup so `/healthz` and `/metrics` always retain a connection; per-principal defaults to `max(1, max_inflight - 1)` when unset so one caller cannot starve another; timeout default `0.05`s, returning `429 resource_limit`) |
+| `CME_TAU_CONFIDENCE`, `CME_TAU_COVERAGE` | host | soundness admission defaults (`0.90` and `0.60`, `V2-D30`) |
+| `CME_WORKER_USERS` | worker, maintenance, probe | the principals served — the queue is tenant-scoped, so this is the workers' and scheduler's whole remit |
+| `CME_LLM_BASE_URL`, `CME_LLM_API_KEY`, `CME_LLM_PROTOCOL` | worker | the provider (credential from env file only) and wire protocol: Claude on `/v1/messages`, GPT on `/v1/chat/completions` |
+| `CME_EXTRACTOR_MODEL`, `CME_ADJUDICATOR_MODEL`, `CME_ENTITY_ADJUDICATOR_MODEL` | worker | measured selection per capability (`reports/model_selection/README.md`); entity adjudicator falls back to relation adjudicator when unset |
+| `CME_ADJUDICATE` | worker | `0` disables both adjudicators; default on |
+| `CME_WORKER_IDLE_POLL` | worker | seconds between polls when idle (default `5`); also the cadence at which expired leases are returned |
+| `CME_MAINTENANCE_INTERVAL_SECONDS` | maintenance | loop interval in seconds when `run_maintenance.py` runs without `--once` (default `86400`) |
+| `CME_MAINTENANCE_INDEXES` | maintenance | comma-separated logical indexes to enqueue (`fts,vector,closure_hash`) |
+| `CME_MAINTENANCE_PROFILE` | maintenance | optional path to a JSON/TOML profile overriding the default `V2-D14` expiry windows |
+| `CME_RERANKER_ASSET`, `CME_RERANKER_DIR`, `CME_RERANKER_FLOOR` | host | relevance judge (`V2-D104`): `bge-reranker-v2-m3`, or unset to return the fused page unjudged (default floor `-8.8`) |
+| `CME_EMBEDDING_ASSET`, `CME_EMBEDDING_DIR` | host, worker | local embedding model, or unset for lexical-only. **Both must agree** (`V2-D98`) |
+| `CME_MODEL_CACHE` | compose | optional host directory mounted read-only at `/models` in `deploy/compose.worker.yaml` (default `../.model-cache`) |
 
-Secrets live in `/etc/chronamind/worker.env` (mode 0600, owned by the service user) and in the host's equivalent. They
-are never in the unit, never in an image, and never in the repository — `.env` and `.model-cache/` are gitignored.
+Secrets live in `/etc/chronamind/worker.env` (mode `0600`, owned by `chronamind`) and in the host's equivalent. They
+are never in units, never in container images, and never in the repository — `.env`, `.env.*`, and `.model-cache/` are
+excluded by both `.gitignore` and `.dockerignore`.
 
-## Running the worker
+## Transport rate limits, concurrency, and metrics (`V2-D117`, `V2-D119`)
 
-**systemd** — `deploy/cme-worker.service`. Install, then:
+- **Rate limiting and in-flight isolation (`host/limits.py`)**: Every `/v1/call` passes a per-principal token bucket
+  (`CME_HOST_RATE_LIMIT_RPS` / `CME_HOST_RATE_LIMIT_BURST`) and bounded semaphore acquisition
+  (`CME_HOST_MAX_INFLIGHT` / `CME_HOST_PER_PRINCIPAL_MAX_INFLIGHT`). Excess requests fail fast with HTTP `429`
+  (`{"error": {"code": "resource_limit", ...}}`) with static codes only and zero caller content. Startup refuses any
+  configuration where `pool_max < max_inflight + 1`.
+- **Prometheus `/metrics` (`host/metrics.py`)**: Dependency-free Prometheus v0.0.4 exposition on `GET /metrics`
+  (unauthenticated like `/healthz`; binds `127.0.0.1:8100` by default and bypasses the request concurrency semaphore on
+  reserved pool capacity). Metrics cover `cme_host_calls_total`, `cme_host_call_duration_seconds`,
+  `cme_host_rate_limited_total`, `cme_queue_depth`, `cme_queue_dead_letters_total`, and `cme_degradations_total`.
+  Tenant identifiers, tokens, paths, queries, and memory content are strictly forbidden in all metric labels.
+  `prometheus/prometheus.yml` scrapes `custom-memory-engine` and `grafana/dashboards/json/cme_operations.json` plots
+  these series.
+
+## Running the worker and maintenance scheduler
+
+**systemd** — `deploy/cme-worker.service`, `deploy/cme-maintenance.service`, `deploy/cme-maintenance.timer`. Install:
 
 ```bash
-sudo systemctl enable --now cme-worker
+sudo install -m 0644 deploy/cme-worker.service deploy/cme-maintenance.service deploy/cme-maintenance.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cme-worker cme-maintenance.timer
 journalctl -u cme-worker -f          # structured JSON: one line per tick, one per failure
 sudo systemctl stop cme-worker       # SIGTERM: finish the job in flight, then exit
 ```
+
+Note on systemd hardening: `cme-worker.service` mounts `.model-cache` read-only (`ReadOnlyPaths=`), runs with
+`ProtectSystem=strict`, `NoNewPrivileges=true`, and `PrivateTmp=true`, and deliberately avoids `ExecStartPost` health
+checks so a temporarily degraded backlog does not cause systemd to kill-loop a healthy worker. Monitor health out of
+band via `scripts/worker_healthcheck.py`.
 
 **Docker** — `deploy/Dockerfile.worker` and `deploy/compose.worker.yaml`:
 
@@ -56,44 +91,69 @@ docker compose -f deploy/compose.worker.yaml --env-file /etc/chronamind/worker.e
 docker compose -f deploy/compose.worker.yaml ps      # `healthy` is the queue-based probe, not a PID
 ```
 
-Both paths do the same four things, which are the whole of the deployment contract:
+The worker container image pins both `python:3.12.16-slim-bookworm` and `uv` by immutable SHA-256 digest, installs
+runtime extras with `uv sync --frozen --no-default-groups --extra host --extra embeddings`, keeps `/app/src`,
+`/app/scripts`, and `/app/.venv` owned by `root:root` read-only, and runs as unprivileged `chronamind` (uid `10001`).
 
-1. **restart on failure** (`Restart=always` / `restart: unless-stopped`), with a five-second gap so a crash loop is
-   visible in the journal rather than a fork bomb;
-2. **stop gracefully** on `SIGTERM`: `scripts/run_worker.py` installs a handler, finishes the job in flight, and exits.
-   The stop timeout (60 s) outlives one extraction with its retries;
-3. **recover continuously**: `recover_stale` returns any job whose lease (`semantic.slow_lane.LEASE`, 10 minutes)
-   expired, on start-up *and on every idle cycle*, so a job held by a worker that was killed is picked up by any live
-   worker within one poll interval — not at the next restart;
-4. **report health from the queue**, not from the process: `scripts/worker_healthcheck.py` reads each tenant's queue
-   under the runtime role and exits `0` healthy, `1` degraded (the oldest due job is older than 30 minutes), `2`
-   unhealthy (a lease expired for more than `STALE_LEASE_GRACE`, or the database is unreachable). A hung model call
-   inside a live process is the failure this lane is most likely to have, and a PID check would pass through it.
+**What is executed in CI vs. verified locally / out-of-band.**
+- **Executed in CI (`verify` job in `.github/workflows/custom-memory-engine.yaml`):**
+  - `tests/test_deploy_artifacts.py` runs `scripts/verify_deploy_artifacts.py` (cross-checks every `CME_*` env var across systemd units, compose, `.env.example`, and this document; inspects `Dockerfile.worker` and `.dockerignore`; and runs `systemd-analyze verify` against a staged `--root` on Linux hosts) plus mutation tests proving bogus `ExecStart` and unknown `CME_*` env vars fail loudly.
+  - `tests/integration/test_worker_process_db.py` runs `scripts/run_worker.py` as a child process against PostgreSQL with `SIGTERM`, mid-call `SIGTERM`, `SIGKILL` lease recovery, and missing-env exit-2 assertions.
+  - `tests/integration/test_slow_lane_concurrency_db.py` verifies `FOR UPDATE SKIP LOCKED`, concurrent `claim_one` / `recover_stale`, zombie worker lease fencing, and dead-lettering after `MAX_ATTEMPTS`.
+  - `tests/integration/test_maintenance_scheduler_db.py` exercises `worker/maintenance.py` and `scripts/run_maintenance.py` (`--once`, `--dry-run`) against PostgreSQL.
+  - `tests/integration/test_backup_restore_db.py` executes `scripts/rehearse_restore.py` (`pg_dump` / `pg_restore` round-trip, `BYPASSRLS` check, `public` extensions, role re-provisioning, and pre-deletion resurrection verification) against PostgreSQL.
+  - `tests/integration/test_host_e2e_db.py` drives real HTTP requests over uvicorn for auth, rate/concurrency `429` isolation, and Prometheus `/metrics`.
+- **Verified locally / not executed automatically in CI:**
+  - `docker build -f deploy/Dockerfile.worker` container image build, image inspection (non-root `chronamind`, read-only `/app/src`, no `.env`/`.model-cache`), container smoke execution (`worker_healthcheck.py` / missing-env exit 2), and `docker compose -f deploy/compose.worker.yaml` validation/healthcheck are verified locally rather than inside GitHub Actions.
+  - Live `systemd` PID 1 daemon activation and `cme-maintenance.timer` scheduling on a production host are not booted in CI (`systemd-analyze verify` checks unit files statically).
 
-**What is tested, and how.** `tests/integration/test_worker_process_db.py` runs the real `scripts/run_worker.py` as a
-child process against a real database and a stub provider: a job is served end to end; `SIGTERM` exits 0; `SIGTERM`
-*during* a model call still commits the job; `SIGKILL` mid-call leaves a held lease that a restarted process returns
-and completes; a missing variable is exit 2 naming the variable. The loop itself (`custom_memory_engine.worker`) is
-tested in-process with every model call checked to run **outside** a transaction (`test_worker_loop_db.py`). What is
-still not executed is systemd or Docker itself; the unit and compose file are written to the contract those tests pin.
+## Backup and restore policy (`A-014`, `V2-D119`)
+
+Every PostgreSQL table in `cme_engine` enforces `FORCE ROW LEVEL SECURITY` (`app.user_id`), and signatures/receipts
+depend on process-wide HMAC keys outside the database. Therefore:
+
+1. **Back up with a `BYPASSRLS` (or `SUPERUSER`) role.** A dump taken by a regular or restricted role without
+   `BYPASSRLS` either fails on forced RLS or silently omits tenant rows. Always verify the dump role's `rolbypassrls` /
+   `rolsuper` attribute before dumping (`scripts/rehearse_restore.py` enforces this).
+2. **Back up secrets separately from database dumps.** Store `CME_PROVENANCE_KEY`, `CME_DELETION_RECEIPT_KEY`, and
+   `CME_HOST_TOKENS` in your secret manager / encrypted host backup (`/etc/chronamind/*.env`). They are never stored in
+   PostgreSQL; restoring a database without the matching keys breaks signature and deletion-receipt verification.
+3. **Bootstrap `public` extensions before restoring the schema.** Schema-scoped dumps (`--schema=cme_engine`) do not
+   carry `public` extensions. Before running `pg_restore`, ensure `vector`, `btree_gist`, and `pg_trgm` exist in
+   `public` (`CREATE EXTENSION IF NOT EXISTS ... WITH SCHEMA public`).
+4. **Re-provision the runtime role and verify the catalog post-restore.** Roles are cluster-wide and not included in a
+   schema dump. Restore a `--schema=cme_engine` dump with `pg_restore --no-owner --no-acl --exit-on-error` (omit
+   `--schema=` on `pg_restore` so `CREATE SCHEMA` and `COMMENT ON SCHEMA` are restored), confirm the `cme_engine`
+   schema comment carries `OWNER_MARKER`, run `security.provisioning.provision_runtime_role` to create/grant
+   `CME_RUNTIME_ROLE` with least privilege, and run `MigrationRunner.status()` to verify `state == 'applied'`,
+   `version == 32`, and matching `_cme_schema_migrations` checksums and catalog fingerprint.
+5. **Pre-deletion backup caveat ("resurrection").** A restore from a backup taken *before* a user deletion will restore
+   the rows that existed at dump time until manual deletion-log replay or retention expiry removes them, because no
+   automated post-restore deletion-log replay daemon ships in this repository. Operators performing point-in-time or
+   dump-based recovery must manually reconcile `deletion_request` receipts issued after the backup timestamp before
+   re-enabling traffic.
+
+Run a full local restore rehearsal at any time with:
+
+```bash
+uv run --env-file .env python scripts/rehearse_restore.py --source-dsn "$CME_TEST_DATABASE_URL"
+```
 
 ## Failure behaviour, stated
 
 | what happens | what the engine does |
 |---|---|
-| the model returns 500 or times out | tenacity retries with exponential backoff; if it still fails, the job is re-queued with backoff at once (not left `running` until its lease expires) |
-| the model is down for the whole attempt budget | the job is `dead_letter` after `MAX_ATTEMPTS` (3), visible in the table and in the journal, and never retried silently |
-| the worker is killed mid-extraction | the lease expires; `recover_stale` returns the job to `queued`; the work is redone from the stored turn, which is why the job carries a turn id and not the text |
-| the turn a job names was deleted | the read under the tenant's role finds nothing; the job fails, backs off and is dead-lettered after `MAX_ATTEMPTS` — never written against a turn that no longer exists |
-| the embedding model is missing on the host | reads still answer from the two lexical arms and report exactly which arms ran (`QueryResult.arms`); nothing turns into a 500 |
-| the embedding model is missing on the worker | claims are stored without vectors and logged; the lexical arms still find them |
-| the database is unreachable | the host answers `internal_error` (no content), the worker's probe exits `2`, both restart policies apply |
+| caller exceeds `CME_HOST_RATE_LIMIT_RPS` or `CME_HOST_MAX_INFLIGHT` | host fails fast with HTTP `429` (`resource_limit`), static error code only; `/healthz` and `/metrics` still succeed via reserved pool connection |
+| the model returns 500 or times out | tenacity retries with exponential backoff; if it still fails, the job is re-queued with backoff at once (fenced on `status='running' AND attempts=%s`) |
+| the model is down for the whole attempt budget | the job is `dead_letter` after `MAX_ATTEMPTS` (3), visible in `job` and `cme_queue_dead_letters_total`, and never retried silently |
+| the worker is killed mid-extraction | the lease expires; `recover_stale` (`FOR UPDATE SKIP LOCKED`) returns jobs below `MAX_ATTEMPTS` to `queued` and dead-letters jobs at/above `MAX_ATTEMPTS`; stale zombie completions cannot overwrite newer attempts |
+| the turn a job names was deleted | the read under the tenant's role finds nothing; the job fails, backs off and is dead-lettered after `MAX_ATTEMPTS` |
+| the embedding model or judge fails on the host | reads degrade to lexical arms / unjudged fused order, report exact `arms`/`judgement`, and increment `cme_degradations_total` |
+| the database is unreachable | the host answers `internal_error` (`500`, no content), `/healthz` answers `503`, the worker's probe exits `2`, and restart policies apply |
 
 ## What is *not* here
 
 - **No load balancer config, TLS, or auth proxy.** The host binds `127.0.0.1` by default and authenticates bearer
-  tokens itself; putting it behind TLS is the deployment's job, and the engine does not pretend to do it.
-- **No metrics exporter.** The host logs one structured line per call (operation, tier, status, code, duration) and the
-  worker one per tick; a scrape endpoint is a separate decision, not a hidden one.
-- **No scheduler for index maintenance.** `rebuild_index` enqueues work as any other job; a deployment that wants it on a
-  schedule runs `curl` (host) or a cron unit.
+  tokens itself; putting it behind TLS is the deployment's job.
+- **No automated post-restore deletion-log replay.** Operators must track and replay post-backup deletions manually on
+  restore from pre-deletion backups (see backup/restore policy above).

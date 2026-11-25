@@ -1,0 +1,26 @@
+# systemd oneshot service for periodic CME maintenance (`#255`, `A-014`, `V2-D119`).
+#
+# Triggered by `cme-maintenance.timer`. Runs `expire`, `purge_working`, and enqueues `rebuild_index`
+# jobs for `cme-worker` under `CME_RUNTIME_ROLE`.
+[Unit]
+Description=ChronaMind memory engine — periodic maintenance
+Documentation=file:///opt/chronamind/custom-memory-engine/deploy/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=chronamind
+Group=chronamind
+WorkingDirectory=/opt/chronamind/custom-memory-engine
+EnvironmentFile=/etc/chronamind/worker.env
+ExecStart=/opt/chronamind/custom-memory-engine/.venv/bin/python scripts/run_maintenance.py --once
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Environment (see deploy/README.md): CME_DATABASE_URL, CME_RUNTIME_ROLE, CME_SCHEMA, CME_WORKER_USERS,
+# CME_MAINTENANCE_INTERVAL_SECONDS, CME_MAINTENANCE_INDEXES, CME_MAINTENANCE_PROFILE.
+
+[Install]
+WantedBy=multi-user.target

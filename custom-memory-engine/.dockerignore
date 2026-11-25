@@ -1,0 +1,23 @@
+# Exclude local secrets, model weights, VCS metadata, tests, and research corpora from Docker build contexts.
+.git
+.gitignore
+.env
+.env.*
+.venv
+.model-cache
+__pycache__/
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.coverage
+tests/
+evaluation/
+research/
+reports/
+PLAN/
+validation/
+reference/
+evidence/
+decisions/
+audits/
+*.md

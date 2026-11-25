@@ -1,21 +1,26 @@
-"""The HTTP host: ``POST /v1/call`` over the engine's own operations (``E-046``, ``V2-D93``).
+"""The HTTP host: ``POST /v1/call`` over the engine's own operations (``E-046``, ``V2-D93``, ``#251``, ``#255``).
 
 **The contract is the engine's, not the host's.** There is no host-side endpoint per operation, no host-side argument
 validation and no host-side authorisation rule: the body names an operation, the engine's own contract decides whether
 that operation exists, which tier may call it, which arguments it accepts and which conditions must hold. The host adds
-exactly three things the engine cannot know, all of them transport concerns:
+transport concerns:
 
 1. **Who is calling** — a bearer token maps to a :class:`~custom_memory_engine.api.entry.Credential`, and the tier
-   comes from the token. A body that names ``tier`` is refused by the entry point as a reserved argument, so the
-   transport cannot be talked into a promotion.
+   comes from the token. A top-level ``tier`` field in the envelope is ignored by :func:`_envelope`, while
+   ``arguments["tier"]`` is refused by :meth:`Engine.call` as a reserved argument, so the transport cannot be talked
+   into a promotion.
 2. **A size bound** — a declared maximum body, enforced before parsing. Without it the JSON parser is the DoS surface.
-3. **A status code** — the seven codes of ``API_V2.md`` §1.1 mapped to HTTP, with nothing added to the body beyond the
+3. **Rate & concurrency limits** — per-principal token bucket and bounded in-flight concurrency
+   (``429 resource_limit``) so one saturated caller cannot monopolize all pool connections.
+4. **A status code** — the seven codes of ``API_V2.md`` §1.1 mapped to HTTP, with nothing added to the body beyond the
    code and its static sub-code. ``forbidden`` answers 403 for "absent" and "unreadable" alike, so the transport does
    not re-introduce the oracle the engine's error contract removes (``THREAT_MODEL.md`` T-11).
+5. **Operational probes** — ``GET /healthz`` and ``GET /metrics`` are unauthenticated, content/tenant-free, and bypass
+   the request concurrency semaphore via reserved pool capacity (``pool_max >= max_inflight + 1``).
 
-**What is never logged.** Operation, tier, status, error code and duration — never an argument, a request id derived
-from content, or a response body. The structlog event names are lowercase_with_underscores and the values are all
-enums or numbers, which is what makes the log safe to ship.
+**What is never logged.** Operation, tier, status, error code and duration — never an argument, principal, token,
+request id derived from content, or a response body. The structlog event names are lowercase_with_underscores and the
+values are all enums or numbers, which is what makes the log safe to ship.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from custom_memory_engine.api.entry import EntryError
+from custom_memory_engine.host.metrics import PROMETHEUS_CONTENT_TYPE
 from custom_memory_engine.host.service import HostService
 
 logger = structlog.get_logger(__name__)
@@ -59,8 +65,16 @@ def create_app(service: HostService) -> Starlette:
     """Build the ASGI application around an opened :class:`HostService`."""
 
     async def healthz(_request: Request) -> Response:
-        """Unauthenticated and content-free: it says the process is up, and nothing about the data."""
+        """Unauthenticated and content-free: verifies liveness and DB connectivity using reserved pool capacity."""
+        if not await service.probe_health():
+            return JSONResponse({"status": "unavailable"}, status_code=503)
         return JSONResponse({"status": "ok"})
+
+    async def metrics(_request: Request) -> Response:
+        """Unauthenticated Prometheus v0.0.4 scrape endpoint; never carries tenant ids or caller content."""
+        queue_counts = await service.collect_queue_metrics()
+        payload = service.metrics.render(queue_counts=queue_counts)
+        return Response(payload, media_type=PROMETHEUS_CONTENT_TYPE)
 
     async def call(request: Request) -> Response:
         started = time.perf_counter()
@@ -68,12 +82,28 @@ def create_app(service: HostService) -> Starlette:
         credential = service.credentials.authenticate(request.headers.get("authorization"))
         if credential is None:
             # 401 with no body detail: whether a token exists and whether it is close are not questions this answers.
-            return _error("forbidden", request_id, status=401, started=started, operation=None, tier=None)
+            return _error(
+                "forbidden",
+                request_id,
+                status=401,
+                started=started,
+                operation=None,
+                tier=None,
+                service=service,
+            )
         try:
             body = await _body(request, service.settings.max_body_bytes)
             operation, arguments = _envelope(body)
         except _BadRequest as refusal:
-            return _error(refusal.code, request_id, status=400, started=started, operation=None, tier=credential.tier)
+            return _error(
+                refusal.code,
+                request_id,
+                status=400,
+                started=started,
+                operation=None,
+                tier=credential.tier,
+                service=service,
+            )
         try:
             result = await service.call(credential, operation, arguments)
         except EntryError as error:
@@ -85,18 +115,32 @@ def create_app(service: HostService) -> Starlette:
                 operation=operation,
                 tier=credential.tier,
                 detail=error.detail,
+                service=service,
             )
         except Exception as error:  # noqa: BLE001 - the last resort, and it must not disclose the exception
             logger.error("host_call_crashed", operation=operation, error_type=type(error).__name__)
             return _error(
-                "internal_error", request_id, status=500, started=started, operation=operation, tier=credential.tier
+                "internal_error",
+                request_id,
+                status=500,
+                started=started,
+                operation=operation,
+                tier=credential.tier,
+                service=service,
             )
+        duration_seconds = time.perf_counter() - started
+        service.metrics.record_call(
+            operation=operation,
+            tier=credential.tier,
+            status=200,
+            duration_seconds=duration_seconds,
+        )
         logger.info(
             "host_call",
             operation=operation,
             tier=credential.tier,
             status=200,
-            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+            duration_ms=round(duration_seconds * 1000, 2),
         )
         return JSONResponse({"result": _jsonable(result)}, headers={"x-request-id": request_id})
 
@@ -111,7 +155,11 @@ def create_app(service: HostService) -> Starlette:
             await service.close()
 
     return Starlette(
-        routes=[Route("/healthz", healthz, methods=["GET"]), Route("/v1/call", call, methods=["POST"])],
+        routes=[
+            Route("/healthz", healthz, methods=["GET"]),
+            Route("/metrics", metrics, methods=["GET"]),
+            Route("/v1/call", call, methods=["POST"]),
+        ],
         lifespan=lifespan,
         # No `/docs`, no OpenAPI: the contract is `API_V2.md`, and a generated schema is a second source of truth.
     )
@@ -177,18 +225,28 @@ def _error(
     operation: str | None,
     tier: str | None,
     detail: str | None = None,
+    service: HostService | None = None,
 ) -> JSONResponse:
     """A static error body: the code, its sub-code when it is one, and a request id. Never a message."""
     payload: dict[str, object] = {"error": {"code": code}}
     if detail is not None and _is_static_code(detail):
         payload["error"] = {"code": code, "detail": detail}  # type: ignore[dict-item]
+    duration_seconds = time.perf_counter() - started
+    if service is not None:
+        service.metrics.record_call(
+            operation=operation,
+            tier=tier,
+            status=status,
+            duration_seconds=duration_seconds,
+            rate_limited=(status == 429),
+        )
     logger.info(
         "host_call",
         operation=operation,
         tier=tier,
         status=status,
         error_code=code,
-        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        duration_ms=round(duration_seconds * 1000, 2),
     )
     return JSONResponse(payload, status_code=status, headers={"x-request-id": request_id})
 

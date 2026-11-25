@@ -1,4 +1,4 @@
-# systemd unit for the slow-lane worker (`V2-D103`).
+# systemd unit for the slow-lane worker (`V2-D103`, `#253`).
 #
 # Install:
 #   sudo install -m 0644 deploy/cme-worker.service /etc/systemd/system/
@@ -16,8 +16,12 @@
 #                           would abandon a lease, which `recover_stale` repairs after the lease window instead
 #   TimeoutStopSec=60       longer than one extraction (a model call with retries) so a graceful stop can finish
 #   WatchdogSec             reserved: a `sd_notify` heartbeat is not wired, so the unit does not claim one
+#   Health probe            do NOT run `worker_healthcheck.py` in ExecStartPost: a temporarily degraded backlog
+#                           would cause systemd to restart a healthy worker. Run `scripts/worker_healthcheck.py` from
+#                           external monitoring/timer probes instead.
 #   NoNewPrivileges, ProtectSystem, PrivateTmp
-#                           the worker needs the network (the model) and its environment, nothing else
+#                           the worker needs the network (the model) and its environment, nothing else; model cache is
+#                           strictly read-only.
 [Unit]
 Description=ChronaMind memory engine — slow-lane worker
 Documentation=file:///opt/chronamind/custom-memory-engine/deploy/README.md
@@ -37,16 +41,14 @@ Restart=always
 RestartSec=5
 KillSignal=SIGTERM
 TimeoutStopSec=60
-# Health: the probe reads the queue, so it fails when the loop is not draining it — not merely when the process is gone.
-ExecStartPost=/bin/sh -c 'sleep 10; /opt/chronamind/custom-memory-engine/.venv/bin/python scripts/worker_healthcheck.py'
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/chronamind/custom-memory-engine/.model-cache
+ReadOnlyPaths=/opt/chronamind/custom-memory-engine/.model-cache
 # Environment (see deploy/README.md): CME_DATABASE_URL, CME_RUNTIME_ROLE, CME_SCHEMA, CME_WORKER_USERS,
-# CME_PROVISIONING_KEYS, CME_LLM_BASE_URL/CME_LLM_API_KEY, CME_LLM_PROTOCOL, CME_EXTRACTOR_MODEL,
-# CME_ADJUDICATOR_MODEL, CME_EMBEDDING_ASSET, CME_EMBEDDING_DIR.
+# CME_LLM_BASE_URL, CME_LLM_API_KEY, CME_LLM_PROTOCOL, CME_EXTRACTOR_MODEL, CME_ADJUDICATOR_MODEL,
+# CME_ENTITY_ADJUDICATOR_MODEL, CME_ADJUDICATE, CME_WORKER_IDLE_POLL, CME_EMBEDDING_ASSET, CME_EMBEDDING_DIR.
 
 [Install]
 WantedBy=multi-user.target

@@ -236,18 +236,29 @@ def _read_source() -> tuple[str, str]:
 
 # Live structure is checked independently of the ledger's source checksum. Row
 # data, statistics, relation sizes and sequence counters intentionally do not enter it.
+_LEGACY_INDEX_ATTR_QUERY = """SELECT c.relname, a.attnum, a.attname, pg_catalog.format_type(a.atttypid,a.atttypmod),
+              a.attnotnull, a.attidentity, a.attgenerated,
+              pg_catalog.pg_get_expr(d.adbin,d.adrelid)
+       FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+       LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
+       WHERE n.nspname=%s AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname,a.attnum"""
+
 _CATALOG_QUERIES = (
     """SELECT c.relname, c.relkind, c.relrowsecurity, c.relforcerowsecurity,
               pg_catalog.pg_get_userbyid(c.relowner)
        FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
        WHERE n.nspname=%s ORDER BY c.relname""",
+    # Exclude index relations (relkind = 'i'): pg_index + pg_get_indexdef below already capture every index column
+    # and definition, while PostgreSQL keeps pre-rename index attnames across ALTER TABLE RENAME COLUMN (009/015)
+    # that pg_dump/pg_restore recreates with post-rename names.
     """SELECT c.relname, a.attnum, a.attname, pg_catalog.format_type(a.atttypid,a.atttypmod),
               a.attnotnull, a.attidentity, a.attgenerated,
               pg_catalog.pg_get_expr(d.adbin,d.adrelid)
        FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
        LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
-       WHERE n.nspname=%s AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname,a.attnum""",
+       WHERE n.nspname=%s AND c.relkind <> 'i' AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname,a.attnum""",
     """SELECT c.relname, con.conname, con.contype, con.condeferrable, con.condeferred, con.convalidated,
               pg_catalog.pg_get_constraintdef(con.oid,true)
        FROM pg_catalog.pg_constraint con JOIN pg_catalog.pg_namespace n ON n.oid=con.connamespace
@@ -378,9 +389,14 @@ class MigrationRunner:
         if relations:
             await self._restore_force(connection, relations)
 
-    async def _catalog(self, connection: AsyncConnection) -> str:
+    async def _catalog(self, connection: AsyncConnection, *, include_index_attrs: bool = False) -> str:
         rows = []
-        for query in _CATALOG_QUERIES:
+        queries = (
+            (_CATALOG_QUERIES[0], _LEGACY_INDEX_ATTR_QUERY, *_CATALOG_QUERIES[2:])
+            if include_index_attrs
+            else _CATALOG_QUERIES
+        )
+        for query in queries:
             cursor = await connection.execute(cast(LiteralString, query), (self.config.schema_name,))
             rows.append(await cursor.fetchall())
         cursor = await connection.execute(
@@ -431,7 +447,10 @@ class MigrationRunner:
         for row, (_, _, _, checksum) in zip(history, sources, strict=False):
             if row[2] != checksum:
                 return MigrationStatus(**fields, state="drifted", reason="source_checksum_mismatch")
-        if history[-1][3] != await self._catalog(connection):
+        current_catalog = await self._catalog(connection)
+        if history[-1][3] != current_catalog and not (
+            current < 32 and history[-1][3] == await self._catalog(connection, include_index_attrs=True)
+        ):
             return MigrationStatus(**fields, state="drifted", reason="catalog_drift")
         if len(history) < len(sources):
             return MigrationStatus(**fields, state="pending", reason="newer_migrations_available")

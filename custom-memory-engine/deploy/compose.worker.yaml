@@ -1,8 +1,8 @@
-# A production-shaped worker deployment beside an existing database (V2-D103).
+# A production-shaped worker deployment beside an existing database (V2-D103, #253, #255).
 #
 # This is *not* the compatibility stack: `../compose.yaml` is the disposable test database and says so. This file runs the
-# slow lane against a database the operator already has, with the model cache as a volume and a health check that reads
-# the queue.
+# slow lane against a database the operator already has, with the model cache as a read-only volume and a queue-based
+# health check. Host `/metrics` is served by `scripts/run_host.py` (port 8100 by default) and scraped by Prometheus.
 #
 #   docker compose -f deploy/compose.worker.yaml --env-file /etc/chronamind/worker.env up -d
 #
@@ -16,8 +16,26 @@ services:
     image: chronamind/worker:dev
     restart: unless-stopped
     stop_grace_period: 60s
+    read_only: true
+    tmpfs:
+      - /tmp
     env_file:
       - ${WORKER_ENV_FILE:-/etc/chronamind/worker.env}
+    environment:
+      CME_DATABASE_URL: ${CME_DATABASE_URL:?CME_DATABASE_URL is required}
+      CME_RUNTIME_ROLE: ${CME_RUNTIME_ROLE:?CME_RUNTIME_ROLE is required}
+      CME_SCHEMA: ${CME_SCHEMA:-cme_engine}
+      CME_WORKER_USERS: ${CME_WORKER_USERS:?CME_WORKER_USERS is required}
+      CME_LLM_BASE_URL: ${CME_LLM_BASE_URL:?CME_LLM_BASE_URL is required}
+      CME_LLM_API_KEY: ${CME_LLM_API_KEY:?CME_LLM_API_KEY is required}
+      CME_LLM_PROTOCOL: ${CME_LLM_PROTOCOL:-}
+      CME_EXTRACTOR_MODEL: ${CME_EXTRACTOR_MODEL:?CME_EXTRACTOR_MODEL is required}
+      CME_ADJUDICATOR_MODEL: ${CME_ADJUDICATOR_MODEL:-}
+      CME_ENTITY_ADJUDICATOR_MODEL: ${CME_ENTITY_ADJUDICATOR_MODEL:-}
+      CME_ADJUDICATE: ${CME_ADJUDICATE:-1}
+      CME_WORKER_IDLE_POLL: ${CME_WORKER_IDLE_POLL:-5}
+      CME_EMBEDDING_ASSET: ${CME_EMBEDDING_ASSET:-}
+      CME_EMBEDDING_DIR: ${CME_EMBEDDING_DIR:-/models/bge-m3}
     volumes:
       # The embedding model, read-only: the image must not carry weights, and a rebuild must not change the model under a
       # running deployment.

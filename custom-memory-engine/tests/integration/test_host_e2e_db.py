@@ -122,7 +122,18 @@ async def make_inferred(
 
 
 @asynccontextmanager
-async def live(database, *, embedder: object = None, judge: object = None) -> AsyncIterator[Live]:  # noqa: F811
+async def live(
+    database,  # noqa: F811
+    *,
+    embedder: object = None,
+    judge: object = None,
+    pool_max: int = 8,
+    max_inflight: int = 6,
+    per_principal_max_inflight: int | None = None,
+    rate_limit_rps: float = 0.0,
+    rate_limit_burst: int = 20,
+    inflight_acquire_timeout: float = 0.05,
+) -> AsyncIterator[Live]:
     """A provisioned schema, a restricted role, a real uvicorn server on an ephemeral port, and three credentials.
 
     ``embedder`` is the deployment's model (``V2-D98``); ``None`` is a lexical-only deployment, which is what every
@@ -139,6 +150,12 @@ async def live(database, *, embedder: object = None, judge: object = None) -> As
             dsn=config.database_url.get_secret_value(),
             role=role,
             schema_name=schema,
+            pool_max=pool_max,
+            max_inflight=max_inflight,
+            per_principal_max_inflight=per_principal_max_inflight,
+            rate_limit_rps=rate_limit_rps,
+            rate_limit_burst=rate_limit_burst,
+            inflight_acquire_timeout=inflight_acquire_timeout,
             provenance_key=PROVENANCE,
             deletion_key=DELETION,
             embedder=embedder,  # type: ignore[arg-type]
@@ -643,3 +660,100 @@ async def test_a_result_handle_and_the_cost_record_survive_across_http_requests(
         cost = await call(host.client, host.alice_b, "cost", window=None)
         assert cost.status_code == 200, cost.text
         assert cost.json()["result"]["query_count"] >= 2, cost.text
+
+
+# ------------------------------------------------------ rate limits, concurrency isolation & Prometheus /metrics
+
+
+async def test_rate_limit_returns_static_429_and_never_throttles_other_principals(database) -> None:  # noqa: F811
+    async with live(database, rate_limit_rps=0.05, rate_limit_burst=2) as host:
+        r1 = await call(host.client, host.alice_b, "query", request={"scope": "/u/alice/"})
+        r2 = await call(host.client, host.alice_b, "query", request={"scope": "/u/alice/"})
+        assert r1.status_code == 200 and r2.status_code == 200
+
+        r3 = await call(host.client, host.alice_b, "query", request={"scope": "/u/alice/"})
+        assert r3.status_code == 429
+        assert r3.json() == {"error": {"code": "resource_limit", "detail": "rate_limit_exceeded"}}
+        assert "alice" not in r3.text
+
+        # Bob's per-principal bucket is unaffected.
+        bob = await call(host.client, host.bob_b, "query", request={"scope": "/u/bob/"})
+        assert bob.status_code == 200
+
+
+async def test_concurrency_bound_isolates_callers_and_reserves_healthz_capacity(database) -> None:  # noqa: F811
+    """When Alice saturates her default per-principal slots, Bob's read and /healthz still succeed."""
+    async with live(database, pool_max=4, max_inflight=3, inflight_acquire_timeout=0.05) as host:
+        # Hold Alice's PostgreSQL per-user advisory lock so her concurrent writes wait inside PG.
+        async with connect(database) as blocker, blocker.transaction():
+            await blocker.execute("SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('alice'))")
+
+            # Default per_principal_max_inflight for max_inflight=3 is 2: both enter and block on PG lock.
+            t1 = asyncio.create_task(assert_claim(host.client, host.alice_b, "Alice concurrent one", "c-conc-1"))
+            t2 = asyncio.create_task(assert_claim(host.client, host.alice_b, "Alice concurrent two", "c-conc-2"))
+            for _ in range(100):
+                async with connect(database) as probe:
+                    cur = await probe.execute(
+                        "SELECT count(*) FROM pg_catalog.pg_locks WHERE locktype = 'advisory' AND NOT granted"
+                    )
+                    row = await cur.fetchone()
+                    if row and int(row[0]) >= 2:
+                        break
+                await asyncio.sleep(0.02)
+
+            # 3rd concurrent request from Alice fails fast with 429 resource_limit without consuming slot 3.
+            saturated = await call(host.client, host.alice_b, "query", request={"scope": "/u/alice/"})
+            assert saturated.status_code == 429
+            assert saturated.json() == {"error": {"code": "resource_limit", "detail": "concurrency_limit_exceeded"}}
+
+            # Bob still succeeds via the 3rd global slot; /healthz succeeds via the 4th reserved pool connection.
+            bob = await call(host.client, host.bob_b, "query", request={"scope": "/u/bob/"})
+            assert bob.status_code == 200
+            health = await host.client.get("/healthz")
+            assert health.status_code == 200
+            assert health.json() == {"status": "ok"}
+
+        # Lock released -> Alice's two in-flight requests finish cleanly.
+        res1, res2 = await asyncio.gather(t1, t2)
+        assert res1.status_code == 200 and res2.status_code == 200
+
+
+async def test_metrics_endpoint_renders_prometheus_text_without_tenant_or_content_leak(database) -> None:  # noqa: F811
+    secret_content = "Secret passport X998877 in Berlin"  # pragma: allowlist secret
+    async with live(database, rate_limit_rps=0.05, rate_limit_burst=2) as host:
+        await assert_claim(host.client, host.alice_b, secret_content, "c-met-1")
+        # 3rd call hits 429 rate limit.
+        limited = await call(host.client, host.alice_b, "query", request={"scope": "/u/alice/", "text": "Berlin"})
+        assert limited.status_code == 429
+
+        resp = await host.client.get("/metrics")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/plain; version=0.0.4")
+        body = resp.text
+
+        assert "# TYPE cme_host_calls_total counter" in body
+        assert 'cme_host_calls_total{operation="ingest_episode",tier="B",status="200"} 1' in body
+        assert 'cme_host_calls_total{operation="assert",tier="B",status="200"} 1' in body
+        assert 'cme_host_calls_total{operation="query",tier="B",status="429"} 1' in body
+        assert 'cme_host_rate_limited_total{operation="query",tier="B"} 1' in body
+        assert 'cme_host_call_duration_seconds_bucket{operation="assert",tier="B",le="+Inf"} 1' in body
+        assert "# TYPE cme_queue_depth gauge" in body
+        assert "cme_queue_dead_letters_total 0" in body
+        assert "# TYPE cme_degradations_total counter" in body
+
+        for forbidden_text in ("alice", "bob", TOKENS["alice-b"], TOKENS["bob-b"], secret_content, "Berlin"):
+            assert forbidden_text not in body
+
+
+async def test_read_scopes_argument_is_stripped_and_honored_over_http(database) -> None:  # noqa: F811
+    async with live(database) as host:
+        await assert_claim(host.client, host.alice_b, "Alice lives in Vienna", "c-rs-1")
+        resp = await call(
+            host.client,
+            host.alice_b,
+            "query",
+            request={"scope": "/u/alice/", "text": "Vienna"},
+            read_scopes=["/u/alice/"],
+        )
+        assert resp.status_code == 200, resp.text
+        assert {item["content"] for item in resp.json()["result"]["facts"]} == {"Alice lives in Vienna"}
