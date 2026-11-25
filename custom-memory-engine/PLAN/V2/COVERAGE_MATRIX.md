@@ -39,10 +39,10 @@
 | `I6` | §11 | `enforced` |
 | `I7` | §11 | `E-023`, `E-033` |
 | `I8` | §11 | `enforced` |
-| `I9` | §11 | `A-014` |
+| `I9` | §11 | `enforced` |
 | `I10` | §11 | `E-016`, `E-037` |
 | `I11` | §11 | `enforced` |
-| `I12` | §11 | `E-025` |
+| `I12` | §11 | `enforced` |
 | `I13` | §11 | `enforced` |
 | `I14` | §11 | `enforced` |
 | `I15` | §11 | `C-010`, `C-021` |
@@ -114,7 +114,7 @@
 - `M2`: SYNC_LOG §3 ['E-011', 'MA-011'] → now ['E-011']
 - `M9`: SYNC_LOG §3 ['E-011', 'MA-011'] → now ['E-011']
 - `M8`: SYNC_LOG §3 ['E-018', 'E-020'] → now ['E-020']
-- `I12`: SYNC_LOG §3 ['E-004'] → now ['E-025']
+- `I12`: SYNC_LOG §3 ['E-004'] → now ['enforced']
 - `I1′`: SYNC_LOG §3 ['E-004'] → now ['enforced']
 - `I13`: SYNC_LOG §3 ['E-017', 'E-037', 'E-038', 'MA-011', 'UM-012'] → now ['enforced']
 - `I17`: SYNC_LOG §3 ['E-017', 'E-037', 'E-038', 'MA-011', 'UM-012'] → now ['enforced']

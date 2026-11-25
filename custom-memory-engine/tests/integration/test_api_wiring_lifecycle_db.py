@@ -392,6 +392,22 @@ async def test_expire_stamps_the_policy_window_and_destroys_nothing(database) ->
         assert await rows(conn, "SELECT count(*) FROM memory_version WHERE id = 'v-old'") == [(1,)]
 
 
+async def test_a_retried_expire_changes_nothing_the_first_one_did(database) -> None:  # noqa: F811
+    """``I9`` for the maintenance path: a client that retries ``expire`` after a timeout must not move the stamp."""
+    profile = parse_profile(PROFILE)
+    async with world(database) as (conn, engine, _):
+        await inferred(conn, "v-retry", facet="preference", content="alice prefers mornings")
+        await conn.execute("UPDATE memory_version SET event_range = tstzrange(%s, NULL) WHERE id = 'v-retry'", (T0,))
+        with_policy = wire_engine(engine.resolver.runtime, profile=profile)  # type: ignore[attr-defined]
+        admin = caller("alice", "C", admin=True)
+        first = await with_policy.call(admin, "expire", {"scope": "/u/alice/"})
+        stamped = await rows(conn, "SELECT expires_at FROM abstraction_stats WHERE version_id = 'v-retry'")
+        again = await with_policy.call(admin, "expire", {"scope": "/u/alice/"})
+        assert isinstance(first, ExpiryReceipt) and isinstance(again, ExpiryReceipt)
+        assert first.expired == 1 and again.expired == 0, "the retry finds the stamp already there"
+        assert await rows(conn, "SELECT expires_at FROM abstraction_stats WHERE version_id = 'v-retry'") == stamped
+
+
 async def test_expire_without_a_policy_expires_nothing_and_says_so(database) -> None:  # noqa: F811
     """``V2-D14``'s numbers are not this handler's to invent: no policy means zero, with the count that shows why."""
     async with world(database) as (conn, engine, _):
