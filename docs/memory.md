@@ -64,7 +64,7 @@ classified (one model call per turn). Any model failure, and `MEMORY_SLOT_CLASSI
 | Setting | Default | Meaning |
 |---|---|---|
 | `MEMORY_SLOT_CLASSIFIER` | `llm` | `llm`: the semantic classifier; `off`: every claim is multi-valued |
-| `MEMORY_SLOT_CLASSIFIER_MODEL` | *(default model)* | the model the classifier asks |
+| `MEMORY_SLOT_CLASSIFIER_MODEL` | *(default model)* | the model the classifier asks; one the app's LLM registry does not serve turns the classifier off with a start-up warning |
 
 ## No cache
 

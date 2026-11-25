@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.observability import langfuse_callback_handler
-from app.services.llm import llm_service
+from app.services.llm import LLMRegistry, llm_service
 
 type Cardinality = Literal["single", "multi"]
 
@@ -226,5 +226,10 @@ async def llm_service_extract(messages: list[BaseMessage], config: RunnableConfi
 def configured_classifier() -> SlotClassifier:
     """The classifier the settings select: the semantic one unless ``MEMORY_SLOT_CLASSIFIER=off``."""
     if settings.MEMORY_SLOT_CLASSIFIER == "off":
+        return NullSlotClassifier()
+    model = settings.MEMORY_SLOT_CLASSIFIER_MODEL
+    if model and model not in LLMRegistry.get_all_names():
+        # said once at start-up, rather than as one failed model call per turn that silently records every claim multi
+        logger.warning("memory_slot_classifier_model_unknown", model=model)
         return NullSlotClassifier()
     return LLMSlotClassifier(llm_service_extract)

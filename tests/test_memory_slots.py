@@ -145,6 +145,9 @@ def test_the_settings_select_the_classifier(monkeypatch: pytest.MonkeyPatch) -> 
     assert isinstance(configured_classifier(), NullSlotClassifier)
     monkeypatch.setattr(settings, "MEMORY_SLOT_CLASSIFIER", "llm")
     assert isinstance(configured_classifier(), LLMSlotClassifier)
+    # a model the app's registry does not serve is refused once, here, not on every turn
+    monkeypatch.setattr(settings, "MEMORY_SLOT_CLASSIFIER_MODEL", "no-such-model")
+    assert isinstance(configured_classifier(), NullSlotClassifier)
 
 
 def test_the_model_sees_recent_context_but_labels_only_the_newest_message() -> None:
