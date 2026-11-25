@@ -1,8 +1,8 @@
 """Deletion leak scanner probes for the evaluation harness (#46 / RL-070, E-037).
 
 Supplies caller/harness probes for channels 3, 5, 6, 7, 1 (cache surface) and V2 cognition channels 8, 9 (rendered
-statements and bounds), and 11 (pre-deletion export snapshots), so ``scan_deleted_key`` can return a fully measured
-7-channel or 11-channel report without ever reporting an unmeasured channel as zero.
+statements and bounds), 11 (pre-deletion export snapshots), and 12 (entity registry), so ``scan_deleted_key`` can
+return a fully measured 7-channel or 12-channel report without ever reporting an unmeasured channel as zero.
 """
 
 from __future__ import annotations
@@ -78,6 +78,12 @@ class ExportSnapshotSource(Protocol):
     def servable_snapshots(self, user_id: str) -> Sequence[str]: ...
 
 
+class EntityRegistrySource(Protocol):
+    """Provides entity names, aliases, and alias provenance labels still present for a user (channel 12)."""
+
+    def entity_registry_entries(self, user_id: str) -> Sequence[str]: ...
+
+
 type LogSink = Callable[[], Iterable[str]]
 
 
@@ -106,7 +112,7 @@ def _count_occurrences(haystacks: Iterable[str], canary: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Channel probes 3, 5, 6, 7, 1 (cache) and V2 cognition channels 8, 9, 11
+# Channel probes 3, 5, 6, 7, 1 (cache) and V2 cognition channels 8, 9, 11, 12
 # ---------------------------------------------------------------------------
 
 
@@ -218,6 +224,20 @@ def export_snapshot_probe(source: ExportSnapshotSource) -> MeasuringProbe:
     return probe
 
 
+def entity_registry_probe(source: EntityRegistrySource) -> MeasuringProbe:
+    """Channel 12: deleted entities, aliases, and alias provenance must not retain the canary."""
+
+    async def probe(context: ScanContext) -> ProbeMeasurement:
+        canary = _require_canary(context.canary)
+        entries = tuple(source.entity_registry_entries(context.user_id))
+        for item in entries:
+            if not isinstance(item, str):
+                raise LeakScannerError("entity_registry_entries_must_be_strings", "channel_12_entity_registry")
+        return ProbeMeasurement(_count_occurrences(entries, canary), complete=True)
+
+    return probe
+
+
 # ---------------------------------------------------------------------------
 # Composition and detection verification
 # ---------------------------------------------------------------------------
@@ -233,6 +253,7 @@ def harness_probes(
     hypotheses: HypothesisSource | None = None,
     abstractions: AbstractionRenderSource | None = None,
     export_snapshots: ExportSnapshotSource | None = None,
+    entity_registry: EntityRegistrySource | None = None,
 ) -> dict[LeakChannel, ChannelProbe]:
     """Assemble the probes a caller has surfaces for, keyed by channel.
 
@@ -256,6 +277,8 @@ def harness_probes(
         probes["channel_9_abstraction_statements_and_bounds"] = abstraction_bounds_probe(abstractions)
     if export_snapshots is not None:
         probes["channel_11_export_snapshots"] = export_snapshot_probe(export_snapshots)
+    if entity_registry is not None:
+        probes["channel_12_entity_registry"] = entity_registry_probe(entity_registry)
     return probes
 
 
@@ -325,6 +348,7 @@ __all__ = [
     "AnswerSource",
     "AssembledContextSource",
     "DetectionVerification",
+    "EntityRegistrySource",
     "ExportSnapshotSource",
     "HypothesisSource",
     "LeakScannerError",
@@ -335,6 +359,7 @@ __all__ = [
     "abstraction_bounds_probe",
     "answer_probe",
     "assembled_context_probe",
+    "entity_registry_probe",
     "export_snapshot_probe",
     "external_cache_probe",
     "hypothesis_rendering_probe",

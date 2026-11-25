@@ -62,7 +62,8 @@ async def test_eleven_channel_scan_distinguishes_measured_and_unmeasured() -> No
         probes,
         channels=ALL_CHANNELS,
     )
-    assert len(report.findings) == 11
+    assert len(report.findings) == 12
+    assert "channel_12_entity_registry" in ALL_CHANNELS
     assert not report.leaks
     assert not report.inconclusive
 
@@ -71,9 +72,29 @@ async def test_eleven_channel_scan_distinguishes_measured_and_unmeasured() -> No
         {},
         channels=ALL_CHANNELS,
     )
-    assert len(partial.findings) == 11
+    assert len(partial.findings) == 12
     assert tuple(f.channel for f in partial.inconclusive) == ALL_CHANNELS
     assert all(f.measured is False and f.residual_count is None for f in partial.findings)
+
+
+@pytest.mark.asyncio
+async def test_channel_12_entity_registry_leak_is_reported() -> None:
+    async def clean_probe(context: ScanContext) -> int:
+        _ = context
+        return 0
+
+    async def leaky_entity_probe(context: ScanContext) -> int:
+        _ = context
+        return 1
+
+    probes: dict[LeakChannel, ChannelProbe] = {ch: clean_probe for ch in ALL_CHANNELS}
+    probes["channel_12_entity_registry"] = leaky_entity_probe
+    report = await scan_deleted_key(
+        ScanContext("user-1", "deleted-key", "CANARY-12", deletion_epoch=6),
+        probes,
+        channels=ALL_CHANNELS,
+    )
+    assert [finding.channel for finding in report.leaks] == ["channel_12_entity_registry"]
 
 
 def test_a8_is_the_only_lineage_disabling_ablation() -> None:

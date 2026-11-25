@@ -202,8 +202,8 @@ class SuiteReport:
             "ablation": self.ablation,
             "embedding_model": self.embedding_model,
             "answerer": self.answerer,
-            # The channel set this run measured (7 v1 or all 11). A channel that was targeted but could not be
-            # measured is counted in ``incomplete_measurements``; it is never reported as a zero.
+            # The channel set this run measured (7 v1, or all 12 cognition channels). A channel that was targeted
+            # but could not be measured is counted in ``incomplete_measurements``; it is never reported as a zero.
             "channels": list(self.channels),
             "scenario_count": n,
             "leaking_scenarios": k,
@@ -726,12 +726,12 @@ def render(report: SuiteReport, console: Console) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Suite D deletion run (#46 seven-channel / E-037 eleven-channel).")
+    parser = argparse.ArgumentParser(description="Suite D deletion run (#46 seven-channel / 12-channel cognition).")
     parser.add_argument("--ablation", choices=("P", "A8"), required=True)
     parser.add_argument("--assets", type=Path, required=True, help="verified BGE asset directory")
     parser.add_argument("--split", default="dev")
     parser.add_argument("--limit", type=int)
-    parser.add_argument("--channels", type=int, choices=(7, 11), default=7)
+    parser.add_argument("--channels", type=int, choices=(7, 11, 12), default=7)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     database_url = os.environ.get("CME_TEST_DATABASE_URL", "")
@@ -745,7 +745,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             embed=onnx_embedder(args.assets),
             split=args.split,
             limit=args.limit,
-            include_cognition_channels=args.channels == 11,
+            include_cognition_channels=args.channels in (11, 12),
         )
     )
     if args.out:

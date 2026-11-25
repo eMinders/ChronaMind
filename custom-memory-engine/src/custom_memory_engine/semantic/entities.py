@@ -43,6 +43,11 @@ from uuid import uuid4
 from psycopg import AsyncConnection, sql
 from psycopg.rows import tuple_row
 
+from custom_memory_engine.engine.artifact_provenance import (
+    ResolutionStage,
+    WritableOriginKind,
+    record_entity_provenance,
+)
 from custom_memory_engine.engine.hybrid import trgm_schema
 
 #: ``pg_trgm`` similarity above which a label is a *candidate* worth adjudicating. Below it, no relation.
@@ -98,6 +103,7 @@ class ResolutionOutcome:
     stage: MatchStage
     entity_id: str | None = None
     ambiguous: tuple[str, ...] = ()
+    mention_stage: ResolutionStage | None = None
 
     @property
     def resolved(self) -> bool:
@@ -166,17 +172,19 @@ async def resolve_mention(
         # alias is a caller's *declared* identity, which is evidence, not a guess.
         await cursor.execute(
             sql.SQL(
-                "SELECT id, canonical_name FROM {e} WHERE user_id = %s AND scope_path = %s AND ("
+                "SELECT id, (pg_catalog.lower(pg_catalog.btrim(canonical_name)) = %s) AS is_canonical "
+                "FROM {e} WHERE user_id = %s AND scope_path = %s AND ("
                 "  pg_catalog.lower(pg_catalog.btrim(canonical_name)) = %s"
                 "  OR EXISTS (SELECT 1 FROM pg_catalog.unnest(aliases) AS a WHERE pg_catalog.lower("
                 "      pg_catalog.btrim(a)) = %s)"
                 ") ORDER BY id LIMIT %s"
             ).format(e=entities),
-            (user_id, scope_path, normalized, normalized, CANDIDATE_LIMIT),
+            (normalized, user_id, scope_path, normalized, normalized, CANDIDATE_LIMIT),
         )
         exact = await cursor.fetchall()
     if len(exact) == 1:
-        return ResolutionOutcome(label, "exact", str(exact[0][0]))
+        mention_stage: ResolutionStage = "exact" if bool(exact[0][1]) else "alias"
+        return ResolutionOutcome(label, "exact", str(exact[0][0]), mention_stage=mention_stage)
     if len(exact) > 1:
         # Two entities already share this label. That is a caller's mistake, and resolving it by picking the
         # lexicographically smaller id would attach claims to an arbitrary one of them.
@@ -192,7 +200,7 @@ async def resolve_mention(
             connection, entities, user_id, scope_path, embedding, embedding_model, schema_name
         )
     if not candidates:
-        return ResolutionOutcome(label, "created")
+        return ResolutionOutcome(label, "created", mention_stage="created")
     best = candidates[0]
     rivals = tuple(
         candidate.entity_id for candidate in candidates[1:] if abs(candidate.score - best.score) <= AMBIGUITY_MARGIN
@@ -206,7 +214,8 @@ async def resolve_mention(
     if adjudicator is None:
         if needs_confirmation:
             return ResolutionOutcome(label, "unresolved", None, proposed)
-        return ResolutionOutcome(label, best.stage, best.entity_id)
+        direct_stage: ResolutionStage = "vector" if best.stage == "vector" else "trigram"
+        return ResolutionOutcome(label, best.stage, best.entity_id, mention_stage=direct_stage)
     # With an adjudicator, every proposal is confirmed: the deterministic stages propose, and a merge the engine
     # performs should be one it was allowed to perform. An abstention is `unresolved`, for the reason above.
     offered = [(item.entity_id, item.label) for item in candidates]
@@ -215,7 +224,9 @@ async def resolve_mention(
         # An id the resolver did not offer is an abstention, never an attach (`V2-D106`): a model must not be able to
         # name an entity the scoped stages did not find, even one that exists in this scope.
         return ResolutionOutcome(label, "unresolved", None, proposed)
-    return ResolutionOutcome(label, "adjudicated", chosen)
+    chosen_candidate = next(item for item in candidates if item.entity_id == chosen)
+    adjudicated_stage: ResolutionStage = "vector" if chosen_candidate.stage == "vector" else "trigram"
+    return ResolutionOutcome(label, "adjudicated", chosen, mention_stage=adjudicated_stage)
 
 
 async def _vector_candidates(
@@ -315,6 +326,11 @@ async def create_entity(
     embedding: Sequence[float] | None = None,
     embedding_model: str | None = None,
     schema_name: str = "cme_engine",
+    origin: Literal["declared", "mention"] = "declared",
+    source_version_id: str | None = None,
+    origin_kind: WritableOriginKind = "tier_c_call",
+    created_by: str = "semantic-entities",
+    record_provenance: bool = True,
 ) -> str:
     """Create one entity for a mention that resolved to nothing, and return its id.
 
@@ -325,41 +341,57 @@ async def create_entity(
     adding one would be a migration with a duplicate-cleanup question attached — a decision, not a side effect of
     wiring this in.
     """
+    if origin not in ("declared", "mention"):
+        raise ResolutionError("entity_origin_invalid")
     normalized = normalize_label(label)
     identifier = f"ent_{uuid4().hex}"
     if (embedding is None) != (embedding_model is None):
         # Paired or absent (migration 26's CHECK says the same): a vector without its model cannot be compared, and a
         # model without its vector is a claim about nothing.
         raise ResolutionError("embedding_and_model_must_be_paired")
-    if embedding is not None:
-        from custom_memory_engine.engine.hybrid import vector_literal
+    async with connection.transaction():
+        if embedding is not None:
+            from custom_memory_engine.engine.hybrid import vector_literal
 
-        async with connection.cursor() as cursor:
-            await cursor.execute(
-                sql.SQL(
-                    "INSERT INTO {e} (id, user_id, scope_path, canonical_name, entity_type, aliases, "
-                    "embedding_1024, embedding_model) VALUES (%s, %s, %s, %s, %s, %s, %s::halfvec(1024), %s)"
-                ).format(e=sql.Identifier(schema_name, "entity")),
-                (
-                    identifier,
-                    user_id,
-                    scope_path,
-                    normalized,
-                    entity_type or "thing",
-                    list(aliases),
-                    vector_literal(embedding),
-                    embedding_model,
-                ),
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {e} (id, user_id, scope_path, canonical_name, entity_type, aliases, "
+                        "origin, embedding_1024, embedding_model) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s::halfvec(1024), %s)"
+                    ).format(e=sql.Identifier(schema_name, "entity")),
+                    (
+                        identifier,
+                        user_id,
+                        scope_path,
+                        normalized,
+                        entity_type or "thing",
+                        list(aliases),
+                        origin,
+                        vector_literal(embedding),
+                        embedding_model,
+                    ),
+                )
+        else:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {e} (id, user_id, scope_path, canonical_name, entity_type, aliases, origin) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                    ).format(e=sql.Identifier(schema_name, "entity")),
+                    (identifier, user_id, scope_path, normalized, entity_type or "thing", list(aliases), origin),
+                )
+        if record_provenance:
+            await record_entity_provenance(
+                connection,
+                user_id=user_id,
+                entity_id=identifier,
+                aliases=aliases,
+                origin_kind=("evidence_version" if source_version_id is not None else origin_kind),
+                source_version_ids=((source_version_id,) if source_version_id is not None else ()),
+                created_by=created_by,
+                schema_name=schema_name,
             )
-        return identifier
-    async with connection.cursor() as cursor:
-        await cursor.execute(
-            sql.SQL(
-                "INSERT INTO {e} (id, user_id, scope_path, canonical_name, entity_type, aliases) "
-                "VALUES (%s, %s, %s, %s, %s, %s)"
-            ).format(e=sql.Identifier(schema_name, "entity")),
-            (identifier, user_id, scope_path, normalized, entity_type or "thing", list(aliases)),
-        )
     return identifier
 
 

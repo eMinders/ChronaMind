@@ -52,19 +52,27 @@ async def seal(conn: AsyncConnection, cache: ClosureCache, schema: str, version_
     """Verify ``version_id`` the way ``verify`` (C-021) will: a held-out record, the ledger, and the sealed closure."""
     closure = await cache.closure_of(conn, "u1", version_id, schema_name=schema)
     s, k, u = GOOD_LEDGER
-    await conn.execute(
-        "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
-        "negative_control_slice_id, support_window, held_out_window, support_context_key, "
-        "held_out_context_key, outcome) "
-        "VALUES (%s, %s, 'u1', 'split-1', now(), 'neg-1', %s::tstzrange, %s::tstzrange, 'ctx-a', 'ctx-b', 'verified')",
-        ("ver-" + version_id, version_id, WINDOW_A, WINDOW_B),
-    )
-    await conn.execute(
-        "UPDATE abstraction_stats SET support_count = %s, counter_count = %s, undetermined_count = %s, "
-        "opportunity_count = %s, refutation_attempts = 3, closed_over_hash = %s, verification_status = 'verified', "
-        "confidence_method_id = 'm-test' WHERE version_id = %s",
-        (s, k, u, s + k + u, closure.digest, version_id),
-    )
+    ver_id = "ver-" + version_id
+    async with conn.transaction():
+        await conn.execute(
+            "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
+            "negative_control_slice_id, support_window, held_out_window, support_context_key, "
+            "held_out_context_key, outcome) "
+            "VALUES (%s, %s, 'u1', 'split-1', now(), 'neg-1', %s::tstzrange, %s::tstzrange, 'ctx-a', 'ctx-b', "
+            "'verified')",
+            (ver_id, version_id, WINDOW_A, WINDOW_B),
+        )
+        await conn.execute(
+            "INSERT INTO verification_artifact (verification_id, user_id, role, artifact_id) "
+            "VALUES (%s, 'u1', 'support', %s), (%s, 'u1', 'held_out', %s)",
+            (ver_id, f"sup-{version_id}", ver_id, f"held-{version_id}"),
+        )
+        await conn.execute(
+            "UPDATE abstraction_stats SET support_count = %s, counter_count = %s, undetermined_count = %s, "
+            "opportunity_count = %s, refutation_attempts = 3, closed_over_hash = %s, "
+            "verification_status = 'verified', confidence_method_id = 'm-test' WHERE version_id = %s",
+            (s, k, u, s + k + u, closure.digest, version_id),
+        )
     return closure.digest
 
 

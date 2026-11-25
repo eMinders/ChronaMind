@@ -66,6 +66,9 @@ EVIDENCE_REFERENCES: tuple[tuple[str, str, str], ...] = (
     # knowledge, so the evidence is retained like the other two.
     ("negative_constraint", "dissented_version_id", "id"),
     ("memory_conflict", "existing_version_id", "candidate_version_id"),
+    # M29 (V2-D110): artifact_provenance references source_version_id ON DELETE RESTRICT; retaining working episodes
+    # still cited by surviving associations/entities/entity_links preserves Rule PW-1 without rewriting provenance.
+    ("artifact_provenance", "source_version_id", "id"),
 )
 
 #: The origins whose ``contradicts`` edge routes its grounded endpoints to ``conflicts`` (``V2-D48`` C-P4, the same

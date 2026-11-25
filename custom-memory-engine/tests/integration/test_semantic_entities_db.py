@@ -183,11 +183,13 @@ async def test_an_adjudicator_breaks_a_tie_but_an_abstention_does_not(database) 
 async def test_resolution_is_scoped_to_the_callers_own_scope(database) -> None:  # noqa: F811
     """An entity in another scope of the same principal is not a candidate: the claim would move across scopes."""
     async with world(database) as (conn, schema, _):
-        await conn.execute(
-            pg_sql.SQL(
-                "INSERT INTO {e} (id, user_id, scope_path, canonical_name, entity_type) "
-                "VALUES ('ent_other', 'alice', '/u/alice/proj/', 'Ahmed', 'person')"
-            ).format(e=pg_sql.Identifier(schema, "entity"))
+        await entities.create_entity(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/proj/",
+            label="Ahmed",
+            entity_type="person",
+            schema_name=schema,
         )
         found = await entities.resolve_mention(
             conn, user_id="alice", scope_path="/u/alice/", label="Ahmed", schema_name=schema

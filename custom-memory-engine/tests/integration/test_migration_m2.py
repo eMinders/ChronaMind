@@ -164,10 +164,17 @@ async def test_the_full_universe_with_sub_scopes_holds_on_the_real_entity_table(
         for number, (path, visibility) in enumerate(ROWS):
             owner = path.split("/")[2]
             async with tenant_scope(conn, owner, role=role):
+                entity_id = f"e{number}"
                 await conn.execute(
                     "INSERT INTO entity (id, user_id, scope_path, canonical_name, entity_type, visibility) "
                     "VALUES (%s, %s, %s, 'n', 't', %s)",
-                    (f"e{number}", owner, path, visibility),
+                    (entity_id, owner, path, visibility),
+                )
+                await conn.execute(
+                    "INSERT INTO artifact_provenance "
+                    "(id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+                    "VALUES (%s, %s, 'entity', %s, 'tier_c_call', 'test')",
+                    (f"ap-e{number}", owner, entity_id),
                 )
         for user in USERS:
             assert await visible_entities(conn, role, user) == frozenset(

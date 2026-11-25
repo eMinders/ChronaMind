@@ -1,7 +1,7 @@
-"""Structured deletion verification across 7 v1 + 4 cognition channels (RL-070, E-037; ``ARCHITECTURE_V2.md`` §10.3).
+"""Structured deletion verification across 7 v1 + 5 cognition channels (RL-070, E-037; ``ARCHITECTURE_V2.md`` §10.3).
 
 ``CHANNELS`` preserves the 7 v1 channels intact so all existing ``RL-070`` 7-channel ``ENFORCED`` tests stay untouched.
-``COGNITION_CHANNELS`` adds channels 8–11 for V2 deletion through cognition:
+``COGNITION_CHANNELS`` adds channels 8–12 for V2 deletion through cognition:
 
 * **Channel 8** (``channel_8_hypothesis_rendering``): hypothesis-channel rendering (``QueryResult.hypotheses``).
 * **Channel 9** (``channel_9_abstraction_statements_and_bounds``): abstraction statements **including their rendered
@@ -9,8 +9,10 @@
 * **Channel 10** (``channel_10_verification_records_and_methods``): ``verification`` records and ``method``
   registry metadata/parameters.
 * **Channel 11** (``channel_11_export_snapshots``): export snapshots generated before the deletion (F11).
+* **Channel 12** (``channel_12_entity_registry``): ``entity`` registry names, aliases, embeddings, and
+  ``artifact_provenance`` alias attribution rows (``I8``, ``V2-D111``).
 
-``ALL_CHANNELS = (*CHANNELS, *COGNITION_CHANNELS)`` is the complete 11-channel surface. Unmeasured or partially
+``ALL_CHANNELS = (*CHANNELS, *COGNITION_CHANNELS)`` is the complete 12-channel surface. Unmeasured or partially
 measured channels are always reported as ``inconclusive`` (``measured=False`` / ``complete=False``), never as zero.
 """
 
@@ -39,6 +41,7 @@ COGNITION_CHANNELS = (
     "channel_9_abstraction_statements_and_bounds",
     "channel_10_verification_records_and_methods",
     "channel_11_export_snapshots",
+    "channel_12_entity_registry",
 )
 
 ALL_CHANNELS = (*CHANNELS, *COGNITION_CHANNELS)
@@ -55,6 +58,7 @@ type LeakChannel = Literal[
     "channel_9_abstraction_statements_and_bounds",
     "channel_10_verification_records_and_methods",
     "channel_11_export_snapshots",
+    "channel_12_entity_registry",
 ]
 
 
@@ -134,7 +138,8 @@ def database_channel_probes(
 
     Channel 1 is marked partial unless a caller supplements it with an external-cache probe.
     When ``include_cognition=True``, adds database probes for channel 9 (marked partial until supplemented with a
-    rendered-abstraction/bounds probe) and channel 10 (``verification`` records and ``method`` metadata, complete).
+    rendered-abstraction/bounds probe), channel 10 (``verification`` records and ``method`` metadata, complete),
+    and channel 12 (``entity`` canonical names, aliases, embeddings, and ``artifact_provenance`` aliases, complete).
     """
     if (
         not isinstance(schema_name, str)
@@ -152,6 +157,8 @@ def database_channel_probes(
     stats = sql.Identifier(schema_name, "abstraction_stats")
     verifications = sql.Identifier(schema_name, "verification")
     methods = sql.Identifier(schema_name, "method")
+    entities = sql.Identifier(schema_name, "entity")
+    artifact_prov = sql.Identifier(schema_name, "artifact_provenance")
 
     async def storage_probe(context: ScanContext) -> ProbeMeasurement:
         canary_pattern = f"%{context.canary}%"
@@ -295,8 +302,43 @@ def database_channel_probes(
                 row = await cursor.fetchone()
             return ProbeMeasurement(int(row[0]) if row else 0, complete=True)
 
+        async def entity_registry_db_probe(context: ScanContext) -> ProbeMeasurement:
+            canary_pattern = f"%{context.canary}%"
+            async with connection.cursor(row_factory=tuple_row) as cursor:
+                await cursor.execute(
+                    sql.SQL(
+                        "SELECT count(*) FROM {e} AS e WHERE e.user_id = %s AND ("
+                        "e.canonical_name ILIKE %s "
+                        "OR EXISTS (SELECT 1 FROM pg_catalog.unnest(e.aliases) AS al WHERE al ILIKE %s) "
+                        "OR (e.embedding_1024 IS NOT NULL AND ("
+                        "  e.canonical_name ILIKE %s "
+                        "  OR EXISTS (SELECT 1 FROM pg_catalog.unnest(e.aliases) AS al WHERE al ILIKE %s)"
+                        "))"
+                        ")"
+                    ).format(e=entities),
+                    (context.user_id, canary_pattern, canary_pattern, canary_pattern, canary_pattern),
+                )
+                entity_hits = int((await cursor.fetchone() or (0,))[0])
+                await cursor.execute(
+                    "SELECT pg_catalog.to_regclass(%s) IS NOT NULL",
+                    (f"{schema_name}.artifact_provenance",),
+                )
+                has_ap = bool((await cursor.fetchone() or (False,))[0])
+                ap_hits = 0
+                if has_ap:
+                    await cursor.execute(
+                        sql.SQL(
+                            "SELECT count(*) FROM {p} AS p WHERE p.user_id = %s "
+                            "AND p.artifact_kind = 'entity_alias' AND p.alias_value ILIKE %s"
+                        ).format(p=artifact_prov),
+                        (context.user_id, canary_pattern),
+                    )
+                    ap_hits = int((await cursor.fetchone() or (0,))[0])
+            return ProbeMeasurement(entity_hits + ap_hits, complete=True)
+
         probes["channel_9_abstraction_statements_and_bounds"] = abstraction_db_probe
         probes["channel_10_verification_records_and_methods"] = verification_and_method_probe
+        probes["channel_12_entity_registry"] = entity_registry_db_probe
 
     return probes
 
@@ -324,9 +366,9 @@ async def scan_deleted_key(
 ) -> DeletionScanReport:
     """Run configured probes and return one structured finding for each targeted channel.
 
-    When ``channels`` is omitted and no probe names a cognition channel (8–11), scans the 7 v1 ``CHANNELS`` so
+    When ``channels`` is omitted and no probe names a cognition channel (8–12), scans the 7 v1 ``CHANNELS`` so
     existing 7-channel callers keep exact compatibility. Passing ``channels=ALL_CHANNELS`` (or supplying any probe in
-    ``COGNITION_CHANNELS``) scans all 11 channels, reporting any missing channel as unmeasured, never zero.
+    ``COGNITION_CHANNELS``) scans all 12 channels, reporting any missing channel as unmeasured, never zero.
     """
     if not isinstance(context.user_id, str) or not context.user_id.strip():
         raise ScannerError("nonblank_user_id_required", "channel_1_storage_index_queue_cache_scan")

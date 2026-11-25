@@ -145,6 +145,8 @@ class DeletionReceipt:
     deleted_turns: int = 0
     #: Entities this deletion orphaned and erased (V2-D108): a count, never a name.
     deleted_entities: int = 0
+    #: Mention links removed by this deletion (`V2-D111`): a count, never a name.
+    deleted_mentions: int = 0
 
 
 class _ClosureGrewError(Exception):
@@ -480,6 +482,8 @@ async def _delete_memory_once(
                         external_exclusion_count=int(details.get("external_exclusions", 0)),
                         retired_dependents=int(details.get("retired_dependents", 0)),
                         deleted_turns=int(details.get("deleted_turns", 0)),
+                        deleted_entities=int(details.get("deleted_entities", 0)),
+                        deleted_mentions=int(details.get("deleted_mentions", 0)),
                     )
 
             tick = clock_tick or await allocate_clock(
@@ -540,13 +544,23 @@ async def _delete_memory_once(
                                     "dependents": 0,
                                     "re_derived_versions": 0,
                                     "purged_jobs": 0,
-                                    **({"deleted_entities": orphaned} if orphaned else {}),
+                                    **({"deleted_entities": orphaned, "deleted_mentions": 0} if orphaned else {}),
                                 }
                             )
                         ),
                     ),
                 )
-                return DeletionReceipt(request_id, scope, epoch, 0, 0, 0, 0, deleted_entities=orphaned)
+                return DeletionReceipt(
+                    request_id,
+                    scope,
+                    epoch,
+                    0,
+                    0,
+                    0,
+                    0,
+                    deleted_entities=orphaned,
+                    deleted_mentions=0,
+                )
 
             # Phase A (F3): read ALL derivation edges and node statuses BEFORE removing any edge.
             edges_by_dependent: dict[str, list[str]] = {dep: [] for dep in dependents}
@@ -680,7 +694,40 @@ async def _delete_memory_once(
                     (user_id, edges_to_unlink, edges_to_unlink),
                 )
 
+            deleted_mentions = 0
+            candidate_mention_entity_ids: list[str] = []
+            has_entity_mentions = False
             if plan.to_delete:
+                await cursor.execute(
+                    "SELECT count(*) = 3 FROM pg_catalog.pg_attribute AS a "
+                    "JOIN pg_catalog.pg_class AS c ON c.oid = a.attrelid "
+                    "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = %s AND c.relname = 'entity_mention' "
+                    "AND a.attname IN ('id', 'version_id', 'entity_id') "
+                    "AND NOT a.attisdropped",
+                    (schema_name,),
+                )
+                has_entity_mentions = bool((await cursor.fetchone() or (False,))[0])
+                mention_entities: set[str] = set()
+                if has_entity_mentions:
+                    await cursor.execute(
+                        sql.SQL("SELECT id, entity_id FROM {m} WHERE user_id = %s AND version_id = ANY(%s)").format(
+                            m=sql.Identifier(schema_name, "entity_mention")
+                        ),
+                        (user_id, list(plan.to_delete)),
+                    )
+                    mention_rows = await cursor.fetchall()
+                    deleted_mentions = len(mention_rows)
+                    mention_entities.update(str(row[1]) for row in mention_rows)
+                    await cursor.execute(
+                        sql.SQL(
+                            "SELECT DISTINCT subject_entity_id FROM {v} "
+                            "WHERE user_id = %s AND id = ANY(%s) AND subject_entity_id IS NOT NULL"
+                        ).format(v=versions),
+                        (user_id, list(plan.to_delete)),
+                    )
+                    mention_entities.update(str(row[0]) for row in await cursor.fetchall())
+                    candidate_mention_entity_ids = sorted(mention_entities)
                 await cursor.execute(
                     sql.SQL(
                         "UPDATE {c} SET existing_version_id = NULL "
@@ -762,10 +809,9 @@ async def _delete_memory_once(
                 turn_row = await cursor.fetchone()
                 deleted_turns = int(turn_row[0]) if turn_row else 0
 
-            # V2-D108: the entities this deletion orphans. `all` erases every entity of the user that no surviving
-            # memory cites; a `topic` deletion whose target is an entity id (the subject key of the claims about it)
-            # erases that entity. Narrower deletions leave the user's declared structure alone. Runs while the
-            # deletion marker is still set, because the SECURITY DEFINER function is gated on it.
+            # V2-D108 & V2-D111: entities this deletion orphans. `all` and `topic` erase matching declared/mention
+            # entities when unreferenced; narrower deletions (`memory`, or non-entity `topic`) additionally erase
+            # mention-derived (`origin = 'mention'`) entities whose last mention or subject reference was removed.
             deleted_entities = 0
             if scope in ("all", "topic"):
                 await cursor.execute(
@@ -773,7 +819,16 @@ async def _delete_memory_once(
                     (user_id, None if scope == "all" else [target_ref]),
                 )
                 entity_row = await cursor.fetchone()
-                deleted_entities = int(entity_row[0]) if entity_row else 0
+                deleted_entities += int(entity_row[0]) if entity_row else 0
+            if scope != "all" and has_entity_mentions and candidate_mention_entity_ids:
+                await cursor.execute(
+                    sql.SQL("SELECT {fn}(%s, %s)").format(
+                        fn=sql.Identifier(schema_name, "delete_orphaned_mention_entities")
+                    ),
+                    (user_id, candidate_mention_entity_ids),
+                )
+                mention_entity_row = await cursor.fetchone()
+                deleted_entities += int(mention_entity_row[0]) if mention_entity_row else 0
 
             # Close the narrowed privilege path (S-08, V2-D50 rule 3) before returning: the marker is transaction-
             # local, so without this reset it would stay set for the rest of a caller's enclosing transaction.
@@ -796,8 +851,9 @@ async def _delete_memory_once(
                 audit_payload["retired_dependents"] = len(plan.to_retire)
             if deleted_turns:
                 audit_payload["deleted_turns"] = deleted_turns
-            if deleted_entities:
+            if deleted_entities or deleted_mentions:
                 audit_payload["deleted_entities"] = deleted_entities
+                audit_payload["deleted_mentions"] = deleted_mentions
 
             await cursor.execute(
                 sql.SQL(
@@ -824,6 +880,7 @@ async def _delete_memory_once(
         purged_jobs=purged_jobs,
         deleted_turns=deleted_turns,
         deleted_entities=deleted_entities,
+        deleted_mentions=deleted_mentions,
         external_exclusions=len(external_exclusions),
     )
     return DeletionReceipt(
@@ -839,6 +896,7 @@ async def _delete_memory_once(
         retired_dependents=len(plan.to_retire),
         deleted_turns=deleted_turns,
         deleted_entities=deleted_entities,
+        deleted_mentions=deleted_mentions,
     )
 
 

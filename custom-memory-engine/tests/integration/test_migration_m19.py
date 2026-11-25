@@ -28,6 +28,11 @@ async def entity(conn: AsyncConnection, entity_id: str, user: str, scope: str) -
         "VALUES (%s, %s, %s, 'Ada', 'person')",
         (entity_id, user, scope),
     )
+    await conn.execute(
+        "INSERT INTO artifact_provenance (id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+        "VALUES (%s, %s, 'entity', %s, 'tier_c_call', 'test')",
+        (f"ap-{entity_id}", user, entity_id),
+    )
 
 
 async def claim(

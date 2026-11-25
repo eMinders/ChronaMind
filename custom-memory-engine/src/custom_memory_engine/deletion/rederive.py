@@ -81,6 +81,7 @@ _CARRIED_TABLES = ("memory_evidence", "memory_conflict", "association")
 class _CarriedRows:
     rows: tuple[tuple[str, str], ...]  # (table, row as JSON text) to re-insert after the rebuild
     gate_refs: tuple[str, ...]  # memory_conflict ids whose existing_version_id names the rebuilt version
+    provenance_rows: tuple[str, ...] = ()  # carried artifact_provenance JSON rows for carried associations
 
 
 async def _relation_exists(cursor: object, schema_name: str, table: str) -> bool:
@@ -128,13 +129,25 @@ async def _detach_carried_rows(
 ) -> _CarriedRows:
     """Read every carried row of ``version_id`` and clear the gate references that would block deleting it."""
     rows: list[tuple[str, str]] = []
+    association_ids: list[str] = []
+    provenance_rows: list[str] = []
     async with connection.cursor(row_factory=tuple_row) as cursor:
         for table in _CARRIED_TABLES:
             if not await _relation_exists(cursor, schema_name, table):
                 continue
             if table == "association":
                 where, params = sql.SQL("(t.from_id = %s OR t.to_id = %s)"), (user_id, version_id, version_id)
-            elif table == "memory_conflict":
+                await cursor.execute(
+                    sql.SQL(
+                        "SELECT t.id, pg_catalog.to_jsonb(t)::text FROM {t} AS t WHERE t.user_id = %s AND {w}"
+                    ).format(t=sql.Identifier(schema_name, table), w=where),
+                    params,
+                )
+                for record in await cursor.fetchall():
+                    association_ids.append(str(record[0]))
+                    rows.append((table, str(record[1])))
+                continue
+            if table == "memory_conflict":
                 where, params = sql.SQL("t.candidate_version_id = %s"), (user_id, version_id)
             else:
                 where, params = sql.SQL("t.version_id = %s"), (user_id, version_id)
@@ -145,6 +158,16 @@ async def _detach_carried_rows(
                 params,
             )
             rows.extend((table, str(record[0])) for record in await cursor.fetchall())
+        if association_ids and await _relation_exists(cursor, schema_name, "artifact_provenance"):
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT pg_catalog.to_jsonb(p)::text FROM {ap} AS p "
+                    "WHERE p.user_id = %s AND p.artifact_kind = 'association' AND p.artifact_id = ANY(%s) "
+                    "ORDER BY p.created_at, p.id"
+                ).format(ap=sql.Identifier(schema_name, "artifact_provenance")),
+                (user_id, association_ids),
+            )
+            provenance_rows = [str(record[0]) for record in await cursor.fetchall()]
         conflicts = sql.Identifier(schema_name, "memory_conflict")
         await cursor.execute(
             sql.SQL(
@@ -154,7 +177,7 @@ async def _detach_carried_rows(
             (user_id, version_id, version_id),
         )
         gate_refs = tuple(str(record[0]) for record in await cursor.fetchall())
-    return _CarriedRows(tuple(rows), gate_refs)
+    return _CarriedRows(tuple(rows), gate_refs, tuple(provenance_rows))
 
 
 async def _insertable_columns(cursor: Any, schema_name: str, table: str) -> tuple[str, ...]:
@@ -193,6 +216,20 @@ async def _restore_carried_rows(
                 ).format(t=target, columns=columns),
                 (record,),
             )
+        if carried.provenance_rows and await _relation_exists(cursor, schema_name, "artifact_provenance"):
+            ap_target = sql.Identifier(schema_name, "artifact_provenance")
+            ap_columns = sql.SQL(", ").join(
+                sql.Identifier(name) for name in await _insertable_columns(cursor, schema_name, "artifact_provenance")
+            )
+            for prov_record in carried.provenance_rows:
+                await cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {t} ({columns}) SELECT {columns} "
+                        "FROM pg_catalog.jsonb_populate_record(NULL::{t}, %s::jsonb) "
+                        "ON CONFLICT (id) DO NOTHING"
+                    ).format(t=ap_target, columns=ap_columns),
+                    (prov_record,),
+                )
         if carried.gate_refs:
             await cursor.execute(
                 sql.SQL("UPDATE {c} SET existing_version_id = %s WHERE user_id = %s AND id = ANY(%s)").format(
@@ -353,6 +390,8 @@ async def rederive_version(
     async with connection.cursor(row_factory=tuple_row) as cursor:
         prior_stats = None
         prior_verifications: list[tuple[object, ...]] = []
+        has_verification_artifacts = False
+        prior_verification_artifacts: list[tuple[object, ...]] = []
         if meta[11] == "abstraction":
             await cursor.execute(
                 sql.SQL(
@@ -364,15 +403,39 @@ async def rederive_version(
                 (user_id, version_id),
             )
             prior_stats = await cursor.fetchone()
-            await cursor.execute(
-                sql.SQL(
-                    "SELECT id, held_out_split_id, verified_on, negative_control_slice_id, "
-                    "support_window, held_out_window, support_context_key, held_out_context_key, outcome "
-                    "FROM {ver} WHERE user_id = %s AND version_id = %s ORDER BY verified_on, id"
-                ).format(ver=verif_tbl),
-                (user_id, version_id),
-            )
-            prior_verifications = list(await cursor.fetchall())
+            has_verification_artifacts = await _relation_exists(cursor, schema_name, "verification_artifact")
+            if has_verification_artifacts:
+                await cursor.execute(
+                    sql.SQL(
+                        "SELECT id, held_out_split_id, verified_on, negative_control_slice_id, "
+                        "support_window, held_out_window, support_context_key, held_out_context_key, "
+                        "outcome, artifact_pinning_status "
+                        "FROM {ver} WHERE user_id = %s AND version_id = %s ORDER BY verified_on, id"
+                    ).format(ver=verif_tbl),
+                    (user_id, version_id),
+                )
+                prior_verifications = list(await cursor.fetchall())
+                verif_ids = [str(row[0]) for row in prior_verifications]
+                if verif_ids:
+                    await cursor.execute(
+                        sql.SQL(
+                            "SELECT verification_id, role, artifact_id, created_at "
+                            "FROM {va} WHERE user_id = %s AND verification_id = ANY(%s) "
+                            "ORDER BY created_at, role, artifact_id"
+                        ).format(va=sql.Identifier(schema_name, "verification_artifact")),
+                        (user_id, verif_ids),
+                    )
+                    prior_verification_artifacts = list(await cursor.fetchall())
+            else:
+                await cursor.execute(
+                    sql.SQL(
+                        "SELECT id, held_out_split_id, verified_on, negative_control_slice_id, "
+                        "support_window, held_out_window, support_context_key, held_out_context_key, outcome "
+                        "FROM {ver} WHERE user_id = %s AND version_id = %s ORDER BY verified_on, id"
+                    ).format(ver=verif_tbl),
+                    (user_id, version_id),
+                )
+                prior_verifications = list(await cursor.fetchall())
 
     try:
         rebuilt = await builder(version_id, active_sources)
@@ -480,15 +543,37 @@ async def rederive_version(
         )
         if kind == "abstraction" and prior_stats is not None:
             for vrow in prior_verifications:
-                await cursor.execute(
-                    sql.SQL(
-                        "INSERT INTO {ver} ("
-                        "id, version_id, user_id, held_out_split_id, verified_on, negative_control_slice_id, "
-                        "support_window, held_out_window, support_context_key, held_out_context_key, outcome"
-                        ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                    ).format(ver=verif_tbl),
-                    (vrow[0], version_id, user_id, *vrow[1:]),
-                )
+                if has_verification_artifacts:
+                    await cursor.execute(
+                        sql.SQL(
+                            "INSERT INTO {ver} ("
+                            "id, version_id, user_id, held_out_split_id, verified_on, negative_control_slice_id, "
+                            "support_window, held_out_window, support_context_key, held_out_context_key, "
+                            "outcome, artifact_pinning_status"
+                            ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        ).format(ver=verif_tbl),
+                        (vrow[0], version_id, user_id, *vrow[1:]),
+                    )
+                else:
+                    await cursor.execute(
+                        sql.SQL(
+                            "INSERT INTO {ver} ("
+                            "id, version_id, user_id, held_out_split_id, verified_on, negative_control_slice_id, "
+                            "support_window, held_out_window, support_context_key, held_out_context_key, outcome"
+                            ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        ).format(ver=verif_tbl),
+                        (vrow[0], version_id, user_id, *vrow[1:]),
+                    )
+            if has_verification_artifacts and prior_verification_artifacts:
+                va_tbl = sql.Identifier(schema_name, "verification_artifact")
+                for varow in prior_verification_artifacts:
+                    await cursor.execute(
+                        sql.SQL(
+                            "INSERT INTO {va} (verification_id, user_id, role, artifact_id, created_at) "
+                            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (verification_id, artifact_id) DO NOTHING"
+                        ).format(va=va_tbl),
+                        (varow[0], user_id, varow[1], varow[2], varow[3]),
+                    )
             await cursor.execute(
                 sql.SQL(
                     "INSERT INTO {s} (version_id, user_id) VALUES (%s, %s) ON CONFLICT (version_id) DO NOTHING"

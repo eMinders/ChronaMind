@@ -23,6 +23,13 @@ from psycopg.types.json import Jsonb
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Receipt, Runtime, new_id, now, remember, replayed
 from custom_memory_engine.clock import allocate_clock
+from custom_memory_engine.engine.artifact_provenance import (
+    ArtifactProvenanceError,
+    WritableOriginKind,
+    merge_entity_provenance,
+    record_artifact_provenance,
+    record_entity_provenance,
+)
 from custom_memory_engine.engine.transactions import archive_version, resolve_conflict_pending
 from custom_memory_engine.scope.paths import ScopeError, parse_scope, user_scope
 from custom_memory_engine.security.audit_guard import content_free_details
@@ -46,6 +53,48 @@ def _text(call: Call, name: str, *, limit: int = 256) -> str:
 
 def _key(call: Call) -> str:
     return _text(call, "idempotency_key")
+
+
+def _optional_source_version_ids(call: Call) -> tuple[str, ...]:
+    raw = call.arguments.get("source_version_ids")
+    if raw is None:
+        return ()
+    if isinstance(raw, str | bytes) or not isinstance(raw, list | tuple):
+        raise EntryError("validation_error", "source_version_ids_invalid")
+    ids: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip() or len(item) > 256:
+            raise EntryError("validation_error", "source_version_ids_invalid")
+        if item not in ids:
+            ids.append(item)
+    return tuple(ids)
+
+
+def _optional_aliases(call: Call) -> tuple[str, ...]:
+    raw = call.arguments.get("aliases")
+    if raw is None:
+        return ()
+    if isinstance(raw, str | bytes) or not isinstance(raw, list | tuple):
+        raise EntryError("validation_error", "aliases_invalid")
+    aliases: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip() or len(item) > 256:
+            raise EntryError("validation_error", "aliases_invalid")
+        if item not in aliases:
+            aliases.append(item)
+    return tuple(aliases)
+
+
+def _call_origin_kind(call: Call, source_version_ids: tuple[str, ...]) -> WritableOriginKind:
+    if source_version_ids:
+        return "evidence_version"
+    return "tier_b_call" if call.ctx.tier == "B" else "tier_c_call"
+
+
+def _translate_provenance_error(exc: ArtifactProvenanceError) -> EntryError:
+    if exc.code in ("source_version_unreadable", "method_not_found"):
+        return EntryError("forbidden")
+    return EntryError("validation_error", exc.code)
 
 
 def _scope(call: Call, name: str = "scope") -> str:
@@ -113,22 +162,41 @@ class Handlers:
 
     async def create_entity(self, call: Call) -> str:
         scope, kind, label, key = _scope(call), _text(call, "entity_type"), _text(call, "label"), _key(call)
+        source_version_ids = _optional_source_version_ids(call)
+        aliases = _optional_aliases(call)
+        origin_kind = _call_origin_kind(call, source_version_ids)
         user = call.ctx.principal
-        async with self.runtime.session(user) as connection:
-            if (found := await replayed(self.runtime, connection, user, "create_entity", key)) is not None:
-                return found
-            async with connection.cursor(row_factory=tuple_row) as cursor:
-                await cursor.execute(
-                    sql.SQL(
-                        "INSERT INTO {t} (user_id, scope_path, canonical_name, entity_type) VALUES (%s, %s, %s, %s) "
-                        "RETURNING id"
-                    ).format(t=self.runtime.table("entity")),
-                    (user, scope, label, kind),
+        try:
+            async with self.runtime.session(user) as connection:
+                if (found := await replayed(self.runtime, connection, user, "create_entity", key)) is not None:
+                    return found
+                async with connection.cursor(row_factory=tuple_row) as cursor:
+                    await cursor.execute(
+                        sql.SQL(
+                            "INSERT INTO {t} "
+                            "(user_id, scope_path, canonical_name, entity_type, aliases, origin) "
+                            "VALUES (%s, %s, %s, %s, %s, 'declared') RETURNING id"
+                        ).format(t=self.runtime.table("entity")),
+                        (user, scope, label, kind, list(aliases)),
+                    )
+                    row = await cursor.fetchone()
+                assert row is not None
+                entity_id = str(row[0])
+                await record_entity_provenance(
+                    connection,
+                    user_id=user,
+                    entity_id=entity_id,
+                    aliases=aliases,
+                    origin_kind=origin_kind,
+                    source_version_ids=source_version_ids,
+                    created_by=user,
+                    read_set=call.ctx.read_set,
+                    schema_name=self.runtime.schema_name,
                 )
-                row = await cursor.fetchone()
-            assert row is not None
-            await remember(self.runtime, connection, user, "create_entity", key, str(row[0]))
-            return str(row[0])
+                await remember(self.runtime, connection, user, "create_entity", key, entity_id)
+                return entity_id
+        except ArtifactProvenanceError as exc:
+            raise _translate_provenance_error(exc) from None
 
     async def link_entity(self, call: Call) -> Receipt:
         """``link_entity(entity_a, entity_b, relation)`` -> ``Receipt`` (``API_V2.md`` 4.5, architecture 5.2).
@@ -145,6 +213,8 @@ class Handlers:
         if entity_a == entity_b:
             raise EntryError("validation_error", "entity_link_requires_two_entities")
         entity_a, entity_b = sorted((entity_a, entity_b))
+        source_version_ids = _optional_source_version_ids(call)
+        origin_kind = _call_origin_kind(call, source_version_ids)
         user = call.ctx.principal
         try:
             async with self.runtime.session(user) as connection, connection.cursor(row_factory=tuple_row) as cursor:
@@ -156,6 +226,7 @@ class Handlers:
                     (new_id("elink"), user, entity_a, entity_b, relation),
                 )
                 row = await cursor.fetchone()
+                created = row is not None
                 if row is None:
                     await cursor.execute(
                         sql.SQL(
@@ -165,10 +236,25 @@ class Handlers:
                         (user, entity_a, entity_b, relation),
                     )
                     row = await cursor.fetchone()
+                if row is None:
+                    raise EntryError("forbidden")
+                if created:
+                    await merge_entity_provenance(
+                        connection,
+                        user_id=user,
+                        link_id=str(row[0]),
+                        entity_a=entity_a,
+                        entity_b=entity_b,
+                        origin_kind=origin_kind,
+                        source_version_ids=source_version_ids,
+                        created_by=user,
+                        read_set=call.ctx.read_set,
+                        schema_name=self.runtime.schema_name,
+                    )
         except ForeignKeyViolation:  # an entity of another principal: the same answer as a missing one
             raise EntryError("forbidden") from None
-        if row is None:
-            raise EntryError("forbidden")
+        except ArtifactProvenanceError as exc:
+            raise _translate_provenance_error(exc) from None
         return Receipt(str(row[0]), "linked", row[1])
 
     # -- ASSOCIATION -------------------------------------------------------------------------------------------
@@ -178,6 +264,8 @@ class Handlers:
         weight = call.arguments.get("weight", 1)
         if isinstance(weight, bool) or not isinstance(weight, int | float) or not 0 <= weight <= 1:
             raise EntryError("validation_error", "weight_out_of_range")
+        source_version_ids = _optional_source_version_ids(call)
+        origin_kind = _call_origin_kind(call, source_version_ids)
         origin = call.contradiction_origin or ("tier_b" if call.ctx.tier == "B" else "tier_c")
         user = call.ctx.principal
         try:
@@ -192,7 +280,19 @@ class Handlers:
                 )
                 created = await cursor.fetchone()
                 if created is not None:
-                    return str(created[0])
+                    assoc_id = str(created[0])
+                    await record_artifact_provenance(
+                        connection,
+                        user_id=user,
+                        artifact_kind="association",
+                        artifact_id=assoc_id,
+                        origin_kind=origin_kind,
+                        source_version_ids=source_version_ids,
+                        created_by=user,
+                        read_set=call.ctx.read_set,
+                        schema_name=self.runtime.schema_name,
+                    )
+                    return assoc_id
                 await cursor.execute(
                     sql.SQL(
                         "SELECT id FROM {t} WHERE user_id = %s AND from_id = %s AND to_id = %s AND type = %s"
@@ -204,6 +304,8 @@ class Handlers:
             ForeignKeyViolation
         ):  # an endpoint that is not the caller's own cannot be linked, and looks like a missing one
             raise EntryError("forbidden") from None
+        except ArtifactProvenanceError as exc:
+            raise _translate_provenance_error(exc) from None
         assert existing is not None
         return str(existing[0])  # linking the same edge twice is the same edge
 

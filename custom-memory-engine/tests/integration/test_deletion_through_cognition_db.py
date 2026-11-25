@@ -214,13 +214,14 @@ async def _add_verified_abstraction(
         (version_id, MODEL, user, VEC_LIT),
     )
     closure = await compute_closure(conn, user, version_id, schema_name=schema)
+    ver_id = f"ver-{version_id}"
     await conn.execute(
         "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
         "negative_control_slice_id, support_window, held_out_window, support_context_key, held_out_context_key, "
         "outcome) VALUES (%s, %s, %s, %s, %s, %s, tstzrange(%s, %s), tstzrange(%s, %s), 'sup-ctx', 'held-ctx', "
         "'verified')",
         (
-            f"ver-{version_id}",
+            ver_id,
             version_id,
             user,
             split_id,
@@ -231,6 +232,11 @@ async def _add_verified_abstraction(
             START + timedelta(days=3),
             START + timedelta(days=5),
         ),
+    )
+    await conn.execute(
+        "INSERT INTO verification_artifact (verification_id, user_id, role, artifact_id) "
+        "VALUES (%s, %s, 'support', %s), (%s, %s, 'held_out', %s)",
+        (ver_id, user, f"sup-{version_id}", ver_id, user, f"held-{version_id}"),
     )
     await conn.execute(
         "UPDATE abstraction_stats SET support_count = 50, counter_count = 0, undetermined_count = 0, "
@@ -702,6 +708,11 @@ async def test_deleting_an_artifact_removes_its_associations_but_not_the_associa
                 "INSERT INTO association (id, user_id, from_id, to_id, type, weight, created_by, origin) "
                 "VALUES ('assoc-1', 'u1', 'x', 'y', 'contradicts', 1.0, 'u1', 'tier_c')"
             )
+            await conn.execute(
+                "INSERT INTO artifact_provenance "
+                "(id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+                "VALUES ('ap-assoc-1', 'u1', 'association', 'assoc-1', 'tier_c_call', 'u1')"
+            )
         async with conn.transaction():
             receipt = await delete_memory(conn, "u1", target_ref="x", schema_name=schema)
         assert receipt.deleted_versions == 1
@@ -1073,7 +1084,7 @@ async def test_eleven_channel_scan_clean_on_v2_deletion_and_a8_leaks_through_abs
                 channels=ALL_CHANNELS,
             )
             p_verdict = verdict(p_report)
-            assert len(p_report.findings) == 11
+            assert len(p_report.findings) == 12
             assert p_verdict.complete is True, (
                 f"incomplete: {p_verdict.unmeasured_channels} {p_verdict.partial_channels}"
             )
@@ -1312,6 +1323,11 @@ async def test_rederived_dependent_keeps_its_gate_references_evidence_and_associ
             await conn.execute(
                 "INSERT INTO association (id, user_id, from_id, to_id, type, weight, created_by, origin) "
                 "VALUES ('assoc-dep', 'u1', 'dep', 'other', 'contradicts', 1.0, 'u1', 'tier_c')"
+            )
+            await conn.execute(
+                "INSERT INTO artifact_provenance "
+                "(id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+                "VALUES ('ap-assoc-dep', 'u1', 'association', 'assoc-dep', 'tier_c_call', 'u1')"
             )
         async with conn.transaction():
             receipt = await delete_memory(

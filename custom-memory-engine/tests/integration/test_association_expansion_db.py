@@ -75,10 +75,16 @@ async def link(
     # Keep the edge's scope independent of its endpoints' scopes.
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.user_id', %s, true)", (user,))
+        edge_id = f"{origin}:{endpoint}:{edge_type}"
         await conn.execute(
             "INSERT INTO association (id, user_id, from_id, to_id, type, created_by, scope_path, visibility) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (f"{origin}:{endpoint}:{edge_type}", user, origin, endpoint, edge_type, user, scope, visibility),
+            (edge_id, user, origin, endpoint, edge_type, user, scope, visibility),
+        )
+        await conn.execute(
+            "INSERT INTO artifact_provenance (id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+            "VALUES (%s, %s, 'association', %s, 'tier_c_call', %s)",
+            (f"ap-{edge_id}", user, edge_id, user),
         )
 
 
