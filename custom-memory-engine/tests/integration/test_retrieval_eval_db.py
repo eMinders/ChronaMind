@@ -247,7 +247,16 @@ def write_report(results: dict[str, dict[str, tuple[str, ...]]], scores: list[Sc
             for result in scores
         },
     }
-    (REPORT / "evaluation.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", "utf-8")
+    target = REPORT / "evaluation.json"
+    if target.is_file():
+        # A re-run that measures the same numbers must not dirty the tree: keep the recorded timestamp unless a
+        # measurement actually changed, so a diff of this file is always a diff of results.
+        previous = json.loads(target.read_text("utf-8"))
+        if {k: v for k, v in previous.items() if k != "generated_at"} == {
+            k: v for k, v in json.loads(json.dumps(payload, ensure_ascii=False)).items() if k != "generated_at"
+        }:
+            payload["generated_at"] = previous.get("generated_at", payload["generated_at"])
+    target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", "utf-8")
     lines = [
         "# Retrieval evaluation (`V2-D100`, `V2-D104`)",
         "",
