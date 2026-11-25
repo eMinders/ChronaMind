@@ -3379,7 +3379,8 @@ per-user epoch). It is copied *out of the database* and replayed after a restore
    original request id, digest and epoch, so a second replay finds it and does nothing. The target is found by
    recomputing the digest over the user's restored keys (`memory_key`; for `topic` also `subject_key` and entity ids):
    the journal never holds a plaintext target (`T-29`). A target the backup never held is recorded with nothing to
-   erase. A journalled user the backup predates is re-provisioned first, exactly as the host provisions one, so their
+   erase. An `all` request needs no target (its digest may cover a `target_ref` the caller sent, which selects
+   nothing), so only a resolved target is checked against the digest. A journalled user the backup predates is re-provisioned first, exactly as the host provisions one, so their
    epochs are taken and their next deletion continues after them. A replay under another deletion key is refused
    before it writes (it would otherwise match nothing and
    record every deletion as done); a restored database holding a *different* request at a journalled epoch is refused

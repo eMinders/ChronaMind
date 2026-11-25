@@ -455,7 +455,12 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 # a user the backup predates entirely: created, writes, deletes everything
                 await src_conn.execute("INSERT INTO app_user VALUES ('carol', 'ext-carol', %s)", (T0,))
                 await _write_claim(src_conn, src_role, schema_name, "Carol collects stamps", "reh-carol", user="carol")
-                await engine.call(_context("C", user="carol"), "delete", {"scope": "all", "deletion_epoch": None})
+                # with a target_ref: the API accepts one on `all` and its digest covers it; the replay must not refuse
+                await engine.call(
+                    _context("C", user="carol"),
+                    "delete",
+                    {"scope": "all", "target_ref": "everything-of-carol", "deletion_epoch": None},
+                )
                 if BOB_TEXT in await _query_facts(src_conn, src_role, schema_name, "cello", user="bob"):
                     raise RuntimeError("source_delete_all_failed")
 

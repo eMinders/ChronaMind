@@ -163,17 +163,22 @@ def read_journal(path: Path) -> Journal:
     lines = path.read_text(encoding="utf-8").splitlines()
     if not lines:
         raise JournalError("journal_header_missing")
-    header = json.loads(lines[0])
-    if header.get("format") != JOURNAL_FORMAT or header.get("version") != JOURNAL_VERSION:
-        raise JournalError("journal_format_unsupported")
-    entries: list[JournalEntry] = []
-    for line in lines[1:]:
-        if not line.strip():
-            continue
-        fields = json.loads(line)
-        if fields.get("scope") not in ("memory", "topic", "all"):
-            raise JournalError("journal_entry_invalid")
-        entries.append(JournalEntry(**fields))
+    try:
+        header = json.loads(lines[0])
+        if header.get("format") != JOURNAL_FORMAT or header.get("version") != JOURNAL_VERSION:
+            raise JournalError("journal_format_unsupported")
+        entries: list[JournalEntry] = []
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            fields = json.loads(line)
+            if fields.get("scope") not in ("memory", "topic", "all"):
+                raise JournalError("journal_entry_invalid")
+            entries.append(JournalEntry(**fields))
+    except JournalError:
+        raise
+    except (ValueError, TypeError, AttributeError):  # malformed JSON, a missing or unknown field, a non-object line
+        raise JournalError("journal_entry_invalid") from None
     check = header.get("key_check")
     return Journal(tuple(merge_journal([], entries)), check if isinstance(check, str) else None)
 

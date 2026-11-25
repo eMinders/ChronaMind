@@ -78,6 +78,20 @@ def test_a_file_that_is_not_a_journal_is_refused(tmp_path: Path) -> None:
     assert wrong_format.value.code == "journal_format_unsupported"
 
 
+@pytest.mark.parametrize(
+    "line",
+    ["not json", '{"user_id": "alice"}', '{"unknown": 1, "scope": "all"}', "[1, 2]"],
+    ids=["invalid-json", "missing-fields", "unknown-field", "not-an-object"],
+)
+def test_a_malformed_entry_is_refused_with_a_static_code(tmp_path: Path, line: str) -> None:
+    path = tmp_path / "journal.jsonl"
+    write_journal(path, [entry()], schema_name="cme_engine", key=KEY)
+    path.write_text(path.read_text() + line + "\n")
+    with pytest.raises(JournalError) as refused:
+        read_journal(path)
+    assert refused.value.code == "journal_entry_invalid"
+
+
 def test_the_key_check_tells_keys_apart_and_is_not_the_key() -> None:
     assert key_check(KEY) == key_check(KEY)
     assert key_check(KEY) != key_check(b"w" * 32)

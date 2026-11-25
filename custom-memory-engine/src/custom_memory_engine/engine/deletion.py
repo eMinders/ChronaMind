@@ -328,7 +328,9 @@ async def delete_memory(
 
     key = receipt_key if receipt_key is not None else default_receipt_key()
     computed_target_ref = target_ref_digest(key, user_id, scope, target_ref)
-    if stored_target_ref is not None and (scope == "all" or target_ref.strip()):
+    # only a resolved (non-blank) target is checked against the journalled digest: an `all` request's digest also
+    # covers whatever `target_ref` the caller sent, which selects nothing and cannot be recovered from the digest
+    if stored_target_ref is not None and target_ref.strip():
         if not hmac.compare_digest(stored_target_ref, computed_target_ref):
             raise DeletionError("replay_target_mismatch")
     stored_target_ref = stored_target_ref if stored_target_ref is not None else computed_target_ref
