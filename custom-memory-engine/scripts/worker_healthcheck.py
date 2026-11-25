@@ -19,11 +19,12 @@ import sys
 from psycopg import AsyncConnection
 
 
-async def probe(dsn: str, schema: str, *, users: tuple[str, ...]) -> int:
+async def probe(dsn: str, schema: str, *, users: tuple[str, ...], role: str | None) -> int:
     from custom_memory_engine.queue.health import queue_health
 
     async with await AsyncConnection.connect(dsn, autocommit=True, connect_timeout=5) as connection:
-        health = await queue_health(connection, users=users, schema_name=schema)
+        # under the same role as the worker's own transactions: `job` forces row-level security
+        health = await queue_health(connection, users=users, schema_name=schema, role=role)
     print(health.describe(), file=sys.stderr)
     return health.exit_code
 
@@ -32,11 +33,12 @@ def main() -> int:
     dsn = os.environ.get("CME_DATABASE_URL", "").strip()
     schema = os.environ.get("CME_SCHEMA", "cme_engine")
     users = tuple(item.strip() for item in os.environ.get("CME_WORKER_USERS", "").split(",") if item.strip())
+    role = os.environ.get("CME_RUNTIME_ROLE", "").strip() or None
     if not dsn or not users:
         print("CME_DATABASE_URL and CME_WORKER_USERS are required", file=sys.stderr)
         return 2
     try:
-        return asyncio.run(probe(dsn, schema, users=users))
+        return asyncio.run(probe(dsn, schema, users=users, role=role))
     except Exception as error:  # noqa: BLE001 - a probe's only output is an exit code
         print(f"unhealthy: {type(error).__name__}", file=sys.stderr)
         return 2

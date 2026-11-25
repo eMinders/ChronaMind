@@ -3002,3 +3002,49 @@ survives both the retirement and the deletion of the belief that provoked it.
 guard withdraws the whole lift, so the dissent is active again and `infer` refuses the element again —
 `test_api_wiring_lifecycle_db.py::test_deleting_the_lift_evidence_withdraws_the_lift_and_the_element_blocks_again`.
 `I16` moves to `ENFORCED`.
+
+## V2-D106 — The slow lane asks its models before it writes, under the tenant's role, inside the deletion fence
+
+**Context.** A review of the worker found six defects that no test reached, because the loop lived in
+`scripts/run_worker.py` and `tests/` may not import `scripts/`:
+
+1. **Model calls inside the write transaction.** `apply_extraction` was documented as pure database work, but the
+   worker handed it the embedder and the relation adjudicator, which it called after `allocate_clock` had locked the
+   tenant's watermark — seconds of lock per adjudicated claim, during which the fast lane for the same user queued.
+2. **No restricted role.** `CME_RUNTIME_ROLE` was read and never used; every slow-lane write ran as the connecting owner.
+3. **Vector proposals merged without confirmation.** With no entity adjudicator — the state of every deployment, since
+   none was wired — `resolve_mention` returned a single vector candidate as *resolved*, merging "Munich office" into
+   "Berlin office" on a 0.769 cosine: the exact case `V2-D101` forbids. And an adjudicator's answer was trusted even if
+   it named an entity that was never offered.
+4. **No deletion fence.** A turn read at deletion epoch *E* and written after a deletion committed would resurrect what
+   the user removed; `process_one` fences this (`F5`) and the slow lane did not.
+5. **Recovery only at start-up**, so a lease held by a dead worker stayed `running` until some worker restarted; and an
+   extractor exception left its job `running` for the whole ten-minute lease instead of backing off.
+6. **A probe that could not see the queue.** `job` forces RLS and the probe never bound `app.user_id`, so in any
+   non-superuser deployment it reported "healthy" over any backlog. The test DSN is a superuser, which hid it.
+
+**Decision.**
+
+* The loop is engine code (`custom_memory_engine.worker`); the script is the process around it.
+* **Ask, then write** (`semantic.judgements`): embed every text up front; dry-run the write in a rolled-back
+  transaction with *recording* adapters to collect exactly the questions it asks; answer them with no transaction open;
+  write with *replay* adapters that cannot call a model and abstain on anything unrecorded. A second dry run is made
+  only when an entity answer could move a claim's subject.
+* Every slow-lane transaction runs under `SET LOCAL ROLE` + `app.user_id` (`security.scoping.tenant_scope`); only
+  `REINDEX ... CONCURRENTLY` keeps the owner, because it needs the index owner.
+* `EntityAdjudicator.choose` is asynchronous, and an LLM implementation exists
+  (`integrations.openai_compatible.OpenAiCompatibleEntityAdjudicator`) that shows the model numbered candidates and
+  never an id. A vector proposal without confirmation is `unresolved`; an answer outside the offered set is an
+  abstention.
+* The turn and the deletion epoch are read in one snapshot; the write requires the epoch unchanged, and a stale one
+  dead-letters the job with the same content-free audit event `process_one` writes.
+* Expired leases are returned on every idle cycle; a pre-write failure is recorded through `complete_one`'s backoff.
+* The probe reads each tenant inside its own scope, under the runtime role.
+
+**Tests.** `test_worker_loop_db.py` (every model call asserted to see an idle connection — fails with
+`embed:in_transaction` if the write is handed live adapters; cross-script confirmation; unconfirmed proposal left
+unattached; backoff; recovery by a live loop; graceful stop mid-call; RLS on another tenant's turn; deletion during the
+model call dead-letters). `test_worker_process_db.py` runs the real script as a child: SIGTERM exit 0, SIGTERM mid-call
+still commits, SIGKILL then restart recovers, missing variable is exit 2. `test_semantic_entities_db.py` pins the merge
+regression and the offered-set fence; `test_worker_deployment_db.py` runs the probe as the restricted role with a control
+proving the unbound read sees nothing. Each regression test was run against the old code and failed.

@@ -145,7 +145,7 @@ async def test_an_adjudicator_breaks_a_tie_but_an_abstention_does_not(database) 
             self.answer = answer
             self.seen: tuple[tuple[str, str], ...] = ()
 
-        def choose(self, mention: str, candidates: Any) -> str | None:
+        async def choose(self, mention: str, candidates: Any) -> str | None:
             self.seen = tuple(candidates)
             return self.answer
 
@@ -334,7 +334,7 @@ class ConfirmAll:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[tuple[str, str]]]] = []
 
-    def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> str | None:
+    async def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> str | None:
         self.calls.append((mention, list(candidates)))
         return candidates[0][0] if candidates else None
 
@@ -344,7 +344,7 @@ class RejectAll:
 
     __test__ = False
 
-    def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> None:
+    async def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> None:
         del mention, candidates
         return None
 
@@ -463,3 +463,67 @@ async def test_without_an_embedding_the_cascade_behaves_exactly_as_before(databa
         )
         # the trigram stage may still propose it; what must not happen is a *vector* proposal without a vector
         assert outcome.stage in ("created", "unresolved", "trigram")
+
+
+async def test_a_vector_proposal_is_never_a_merge_without_an_adjudicator(database) -> None:  # noqa: F811
+    """The regression this closes: with no adjudicator configured, a single vector candidate used to *resolve*.
+
+    The resolver's final line returned ``best.stage`` with ``best.entity_id`` whenever no adjudicator was given, and
+    the vector stage produced exactly one candidate for "Munich office" — "Berlin office", at the 0.769 a real model
+    scored. So a deployment with an embedder and no entity adjudicator (every deployment, until ``V2-D106``) merged two
+    offices on cosine alone, which is the case `V2-D101` was written to forbid. It now stays unresolved.
+    """
+    async with world(database) as (conn, schema, role):
+        await as_role(conn, role, schema)
+        berlin = await entities.create_entity(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="Berlin office",
+            embedding=[1.0, 0.0] + [0.0] * 1022,
+            embedding_model="test/axes",
+            schema_name=schema,
+        )
+        outcome = await entities.resolve_mention(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="Munich office",
+            embedding=[0.769, 0.639] + [0.0] * 1022,
+            embedding_model="test/axes",
+            schema_name=schema,
+        )
+        assert outcome.stage == "unresolved" and not outcome.resolved
+        assert outcome.ambiguous == (berlin,), "the proposal is reported, so an operator can see what was not merged"
+
+
+async def test_an_adjudicator_cannot_attach_a_mention_to_an_entity_it_was_not_offered(database) -> None:  # noqa: F811
+    """A model's answer is a choice among the proposals, never an id of its own.
+
+    Both entities exist in the caller's scope, so a scope check would not catch it: the adjudicator is offered only
+    the trigram match and answers with the *other* id. That must be an abstention, or a hallucinated id — or a
+    prompt-injected one — could point a claim at any entity the model has heard of.
+    """
+
+    class Rogue:
+        async def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> str | None:
+            del mention, candidates
+            return rogue_target
+
+    async with world(database) as (conn, schema, role):
+        await as_role(conn, role, schema)
+        await entities.create_entity(
+            conn, user_id="alice", scope_path="/u/alice/", label="Ahmed Kamal", schema_name=schema
+        )
+        rogue_target = await entities.create_entity(
+            conn, user_id="alice", scope_path="/u/alice/", label="Zainab Idris", schema_name=schema
+        )
+        outcome = await entities.resolve_mention(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="Ahmed Kamaal",
+            adjudicator=Rogue(),
+            schema_name=schema,
+        )
+        assert outcome.stage == "unresolved" and outcome.entity_id is None

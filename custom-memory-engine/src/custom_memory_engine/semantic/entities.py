@@ -111,9 +111,13 @@ class EntityAdjudicator(Protocol):
     Given the surface form and a short list of ``(entity_id, label)`` candidates, return the one id it is confident
     about, or ``None``. ``None`` is a valid and common answer: "my boss" with three bosses in the scope is genuinely
     undecidable from the mention alone, and a wrong attach is worse than no attach.
+
+    Asynchronous because the real implementation is a model call (``V2-D106``). An answer that is not one of the
+    offered ids is treated as an abstention by :func:`resolve_mention`, never as an attach: a model that invents an id
+    must not be able to point a claim at an entity the deterministic stages did not propose.
     """
 
-    def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> str | None: ...
+    async def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> str | None: ...
 
 
 def normalize_label(label: object) -> str:
@@ -193,23 +197,25 @@ async def resolve_mention(
     rivals = tuple(
         candidate.entity_id for candidate in candidates[1:] if abs(candidate.score - best.score) <= AMBIGUITY_MARGIN
     )
-    if rivals:
-        if adjudicator is None:
-            return ResolutionOutcome(label, "unresolved", None, (best.entity_id, *rivals))
-        chosen = adjudicator.choose(label, [(item.entity_id, item.label) for item in candidates])
-        if chosen is None:
-            return ResolutionOutcome(label, "unresolved", None, (best.entity_id, *rivals))
-        return ResolutionOutcome(label, "adjudicated", chosen)
-    if adjudicator is not None:
-        # A single clear candidate still gets one confirmation when an adjudicator exists: the deterministic stages
-        # propose, and a merge the engine performs should be the one it was allowed to perform. An *abstention* on a
-        # candidate is `unresolved`, not `created`: creating would mint a second row next to one the resolver had
-        # already found, and a duplicate identity is worse than an unattached mention.
-        chosen = adjudicator.choose(label, [(item.entity_id, item.label) for item in candidates])
-        if chosen is None:
-            return ResolutionOutcome(label, "unresolved", None, (best.entity_id,))
-        return ResolutionOutcome(label, "adjudicated", chosen)
-    return ResolutionOutcome(label, best.stage, best.entity_id)
+    proposed = (best.entity_id, *rivals)
+    # A vector proposal is never a merge on its own (`V2-D101`): the bi-encoder scored "Munich office" 0.769 against
+    # "Berlin office", so a cosine above the floor is a reason to *ask*, not an identity. Without an adjudicator the
+    # mention stays unresolved — not created (a second row beside one the resolver already found is a duplicate
+    # identity), and not attached (a guess).
+    needs_confirmation = bool(rivals) or best.stage == "vector"
+    if adjudicator is None:
+        if needs_confirmation:
+            return ResolutionOutcome(label, "unresolved", None, proposed)
+        return ResolutionOutcome(label, best.stage, best.entity_id)
+    # With an adjudicator, every proposal is confirmed: the deterministic stages propose, and a merge the engine
+    # performs should be one it was allowed to perform. An abstention is `unresolved`, for the reason above.
+    offered = [(item.entity_id, item.label) for item in candidates]
+    chosen = await adjudicator.choose(label, offered)
+    if chosen is None or chosen not in {entity_id for entity_id, _ in offered}:
+        # An id the resolver did not offer is an abstention, never an attach (`V2-D106`): a model must not be able to
+        # name an entity the scoped stages did not find, even one that exists in this scope.
+        return ResolutionOutcome(label, "unresolved", None, proposed)
+    return ResolutionOutcome(label, "adjudicated", chosen)
 
 
 async def _vector_candidates(

@@ -20,16 +20,22 @@ the queue, which is the same trade every durable queue makes and the reason the 
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import structlog
 from psycopg import AsyncConnection, pq, sql
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from custom_memory_engine.clock import ClockTick, allocate_clock
+from custom_memory_engine.deletion.closure import StaleDeletionEpoch
 from custom_memory_engine.queue.contracts import Job, NewJob, QueueError, WorkerResult
 from custom_memory_engine.queue.worker import JOB_COLUMNS, MAX_ATTEMPTS, _schema, _user
+from custom_memory_engine.security.audit_guard import content_free_details
+from custom_memory_engine.security.scoping import tenant_scope
 
 logger = structlog.get_logger(__name__)
 
@@ -41,20 +47,37 @@ LEASE = timedelta(minutes=10)
 type ResultWriter = Callable[[AsyncConnection, Job, ClockTick], Awaitable[None]]
 
 
+@asynccontextmanager
+async def _tenant(connection: AsyncConnection, user_id: str, role: str | None) -> AsyncIterator[None]:
+    """One transaction bound to ``user_id``, under the restricted ``role`` when one is given (``V2-D106``).
+
+    The worker connects with an owner-level DSN (it must, to ``REINDEX``), so without a role every slow-lane write ran
+    as the owner and row-level security was a promise the caller had to keep. With one, each transaction is exactly the
+    host's: ``SET LOCAL ROLE`` plus ``app.user_id`` (`security.scoping.tenant_scope`), and both end with it.
+    """
+    if role is None:
+        async with connection.transaction():
+            await connection.execute("SELECT pg_catalog.set_config('app.user_id', %s, true)", (user_id,))
+            yield
+        return
+    async with tenant_scope(connection, user_id, role=role):
+        yield
+
+
 async def claim_one(
     connection: AsyncConnection,
     user_id: str,
     *,
     schema_name: str = "cme_engine",
     kinds: Sequence[str] | None = None,
+    role: str | None = None,
 ) -> Job | None:
     """Take one queued job, or ``None``. Returns with the job ``running`` and its attempt counted."""
     _user(user_id)
     table = _schema(schema_name)
     if connection.info.transaction_status != pq.TransactionStatus.IDLE:
         raise QueueError("claim_requires_idle_connection")
-    async with connection.transaction():
-        await connection.execute("SELECT pg_catalog.set_config('app.user_id', %s, true)", (user_id,))
+    async with _tenant(connection, user_id, role):
         kind_filter = ""
         params: list[object] = [user_id]
         if kinds:
@@ -93,6 +116,7 @@ async def complete_one(
     work: ResultWriter,
     *,
     schema_name: str = "cme_engine",
+    role: str | None = None,
 ) -> WorkerResult:
     """Run ``work`` and mark the job done — or record the failure with backoff / dead-letter it.
 
@@ -104,8 +128,7 @@ async def complete_one(
     if connection.info.transaction_status != pq.TransactionStatus.IDLE:
         raise QueueError("completion_requires_idle_connection")
     try:
-        async with connection.transaction():
-            await connection.execute("SELECT pg_catalog.set_config('app.user_id', %s, true)", (user_id,))
+        async with _tenant(connection, user_id, role):
             tick = await allocate_clock(connection, user_id, schema_name=schema_name)
             await work(connection, job, tick)
             await connection.execute(
@@ -119,7 +142,7 @@ async def complete_one(
     except Exception as error:  # noqa: BLE001 - a failed job is data, not a crash
         if connection.closed or connection.info.transaction_status != pq.TransactionStatus.IDLE:
             raise QueueError("completion_failure_unavailable") from None
-        return await _record_failure(connection, user_id, table, job, error)
+        return await _record_failure(connection, user_id, table, job, error, role, schema_name)
     logger.info("slow_lane_job_done", user_id=user_id, kind=job.kind, attempts=job.attempts)
     return WorkerResult(status="done", job_id=job.id, attempts=job.attempts)
 
@@ -130,13 +153,23 @@ async def _record_failure(
     table: sql.Identifier,
     job: Job,
     error: BaseException,
+    role: str | None = None,
+    schema_name: str = "cme_engine",
 ) -> WorkerResult:
-    """Back off, or give up. Only the exception *type* is recorded: a message can carry the turn's text."""
+    """Back off, or give up. Only the exception *type* is recorded: a message can carry the turn's text.
+
+    **A stale deletion epoch is terminal at once** (``F5``, ``V2-D106``). The slow lane reads a turn, calls a model
+    with no transaction open, and writes afterwards; a deletion that commits in between makes the prepared write a
+    resurrection of what the user just removed. Retrying would not help — a retry re-reads the retained turn and
+    re-derives the same belief — so the job is dead-lettered with the same content-free audit event ``process_one``
+    writes, and re-prepared work needs a fresh job.
+    """
+    if isinstance(error, StaleDeletionEpoch):
+        return await _discard_stale(connection, user_id, table, job, error, role, schema_name)
     terminal = job.attempts >= MAX_ATTEMPTS
     status = "dead_letter" if terminal else "queued"
     delay = timedelta(0) if terminal else timedelta(seconds=min(300, 2**job.attempts))
-    async with connection.transaction():
-        await connection.execute("SELECT pg_catalog.set_config('app.user_id', %s, true)", (user_id,))
+    async with _tenant(connection, user_id, role):
         # No `error_type` column exists and none is added: the failure reason is a log line (content-free) and the
         # attempt count is the durable fact. A migration to persist a reason would have to solve its own deletion
         # question, which is not worth it for a diagnostic.
@@ -165,19 +198,58 @@ async def _record_failure(
     )
 
 
+async def _discard_stale(
+    connection: AsyncConnection,
+    user_id: str,
+    table: sql.Identifier,
+    job: Job,
+    stale: StaleDeletionEpoch,
+    role: str | None,
+    schema_name: str,
+) -> WorkerResult:
+    async with _tenant(connection, user_id, role):
+        await connection.execute(
+            sql.SQL("UPDATE {} SET status='dead_letter', payload=NULL WHERE id=%s AND user_id=%s").format(table),
+            (job.id, user_id),
+        )
+        await connection.execute(
+            sql.SQL(
+                "INSERT INTO {} (id, user_id, memory_ref, event_type, event_at, details) "
+                "VALUES (%s, %s, %s, 'job_discarded_stale_deletion_epoch', pg_catalog.transaction_timestamp(), %s)"
+            ).format(sql.Identifier(schema_name, "audit_event")),
+            (
+                f"audit-{uuid4().hex}",
+                user_id,
+                uuid4().hex,
+                Jsonb(
+                    content_free_details(
+                        {
+                            "job_id": job.id,
+                            "kind": job.kind,
+                            "epoch_start": stale.epoch_start,
+                            "current_epoch": stale.current_epoch,
+                        }
+                    )
+                ),
+            ),
+        )
+    logger.warning("slow_lane_job_discarded_stale_epoch", user_id=user_id, kind=job.kind)
+    return WorkerResult(status="dead_letter", job_id=job.id, attempts=job.attempts, reason="stale_deletion_epoch")
+
+
 async def recover_stale(
     connection: AsyncConnection,
     user_id: str,
     *,
     schema_name: str = "cme_engine",
+    role: str | None = None,
 ) -> int:
     """Return jobs whose lease expired to the queue and report how many. Called at worker start-up."""
     _user(user_id)
     table = _schema(schema_name)
     if connection.info.transaction_status != pq.TransactionStatus.IDLE:
         raise QueueError("recovery_requires_idle_connection")
-    async with connection.transaction():
-        await connection.execute("SELECT pg_catalog.set_config('app.user_id', %s, true)", (user_id,))
+    async with _tenant(connection, user_id, role):
         async with connection.cursor() as cursor:
             await cursor.execute(
                 sql.SQL(

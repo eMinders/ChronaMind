@@ -1,12 +1,9 @@
-"""The worker's deployment contract, tested against a real queue (`V2-D103`).
+"""The worker's deployment contract, tested against a real queue (`V2-D103`, `V2-D106`).
 
-Deployment behaviour is code, so it is tested like code. Three of the four guarantees `deploy/README.md` states are
-observable without a process supervisor — lease recovery, dead-lettering after the attempt budget, and the health
-probe's verdict — and the fourth (graceful stop) is the loop's own SIGTERM handling: three lines of
-`loop.add_signal_handler` around the same `STOP` event these tests drive.
-
-What a *green* test here would not prove, said plainly: that systemd or Docker restarts the process. That is the
-supervisor's contract, and the unit and compose file are reviewed rather than executed.
+Deployment behaviour is code, so it is tested like code: lease recovery, dead-lettering after the attempt budget, the
+health probe's verdict under the restricted role, and the maintenance branch. The process itself — a real
+`scripts/run_worker.py` child, SIGTERM, a crash with a held lease and the restart that recovers it — is driven in
+`test_worker_process_db.py`.
 """
 
 from __future__ import annotations
@@ -59,21 +56,27 @@ async def test_a_lease_past_its_window_is_returned_to_the_queue(database) -> Non
 
 
 async def test_the_probe_reports_healthy_degraded_and_unhealthy(database) -> None:  # noqa: F811
-    """`scripts/worker_healthcheck.py`: exit 0 / 1 / 2 from the queue's own state.
+    """`scripts/worker_healthcheck.py`: exit 0 / 1 / 2 from the queue's own state — **under the restricted role**.
 
     The probe is deployment code, but its verdict is what an operator pages on, so it is asserted rather than assumed:
-    an empty queue is healthy, a backlog older than the window is degraded, and a lease past its window is unhealthy —
-    the last being exactly the state a hung model call leaves behind inside a live process.
+    an empty queue is healthy, a backlog older than the window is degraded, and a lease expired past its grace is
+    unhealthy. It runs as the provisioned runtime role because that is where the first version was wrong: `job` forces
+    row-level security, and the probe asked without `app.user_id`. The test DSN is a superuser, which bypasses RLS,
+    so the bug was invisible here and would have reported "healthy" over any backlog in a real deployment.
     """
     from custom_memory_engine.queue.health import queue_health
+    from custom_memory_engine.security import provision_runtime_role
 
     async with world(database) as (conn, schema):
         config, _ = database
         dsn = config.database_url.get_secret_value()
+        role = "cme_rt_probe_" + schema[-8:]
+        await provision_runtime_role(conn, schema, role)
+        await conn.commit()
 
         async def verdict() -> str:
             async with await AsyncConnection.connect(dsn, autocommit=True) as probe:
-                return (await queue_health(probe, users=("alice",), schema_name=schema)).verdict
+                return (await queue_health(probe, users=("alice",), schema_name=schema, role=role)).verdict
 
         assert await verdict() == "healthy"
         await job_for(conn, schema=schema)
@@ -86,7 +89,13 @@ async def test_the_probe_reports_healthy_degraded_and_unhealthy(database) -> Non
             )
         )
         assert await verdict() == "degraded"
-        # a lease past the lease window: unhealthy
+        # the control that makes this test meaningful: under the role, an *unbound* read of the queue sees nothing, so
+        # a probe that forgot `app.user_id` would answer "healthy" to the backlog asserted above
+        async with await AsyncConnection.connect(dsn, autocommit=True) as unbound, unbound.transaction():
+            await unbound.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+            cursor = await unbound.execute(sql.SQL("SELECT count(*) FROM {t}").format(t=sql.Identifier(schema, "job")))
+            assert await cursor.fetchone() == (0,)
+        # a lease that expired an hour ago and was never returned: no loop is running, so unhealthy
         await conn.execute(
             sql.SQL(
                 "UPDATE {t} SET status = 'running', next_run_at = pg_catalog.transaction_timestamp()"

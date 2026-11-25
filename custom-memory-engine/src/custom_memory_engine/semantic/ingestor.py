@@ -127,6 +127,7 @@ async def ingest_turn(
     extractor: StructuredExtractor | None = None,
     embedder: Embedder | None = None,
     adjudicator: RelationAdjudicator | None = None,
+    entity_adjudicator: entities.EntityAdjudicator | None = None,
     schema_name: str = "cme_engine",
     context: Sequence[str] = (),
     language: str | None = None,
@@ -169,6 +170,7 @@ async def ingest_turn(
         extraction=result,
         embedder=embedder,
         adjudicator=adjudicator,
+        entity_adjudicator=entity_adjudicator,
         schema_name=schema_name,
         language=language,
         similarity_floor=similarity_floor,
@@ -185,18 +187,22 @@ async def apply_extraction(
     extraction: ExtractionResult,
     embedder: Embedder | None = None,
     adjudicator: RelationAdjudicator | None = None,
+    entity_adjudicator: entities.EntityAdjudicator | None = None,
     schema_name: str = "cme_engine",
     language: str | None = None,
     similarity_floor: float | None = None,
     clock_tick: ClockTick | None = None,
 ) -> IngestionReport:
-    """Write one already-computed extraction. **No model is called here.**
+    """Write one already-computed extraction.
 
     This is the seam the asynchronous lane needs (``E-047``). A worker must not hold a database transaction open
     across a network call to a model: the row locks, the clock watermark and the pooled connection would all be
     held for seconds, and a serialization retry would re-bill the model. So extraction happens outside the
-    transaction and this function — pure database work — runs inside it. ``ingest_turn`` is exactly
-    ``fast lane + extract + apply_extraction``.
+    transaction, and so do the *judgements*: the worker passes the replay adapters of a
+    :class:`~custom_memory_engine.semantic.judgements.AnswerSheet` prepared before the transaction opened
+    (``V2-D106``), which answer from memory and never call a model. Passing live model adapters here is still
+    possible — ``ingest_turn`` does, for in-process callers that own their latency — but it holds the tenant's clock
+    for every call they make.
     """
     result = extraction
     # One belief instant for the whole transaction. `allocate_clock` allocates **once** per tenant transaction (the
@@ -217,6 +223,7 @@ async def apply_extraction(
             claim=claim,
             embedder=embedder,
             adjudicator=adjudicator,
+            entity_adjudicator=entity_adjudicator,
             clock_tick=tick,
             schema_name=schema_name,
             language=result.language or language,
@@ -252,6 +259,7 @@ async def _ingest_claim(
     claim: ExtractedClaim,
     embedder: Embedder | None,
     adjudicator: RelationAdjudicator | None,
+    entity_adjudicator: entities.EntityAdjudicator | None,
     clock_tick: ClockTick,
     schema_name: str,
     language: str | None,
@@ -307,6 +315,7 @@ async def _ingest_claim(
         schema_name=schema_name,
         embedder=embedder,
         mention_embeddings=mention_embeddings,
+        adjudicator=entity_adjudicator,
     )
 
     # 5. Embedding, when the deployment has one. Computed before the conflict recall so the recall can use it.
@@ -451,6 +460,7 @@ async def _resolve_entities(
     schema_name: str,
     embedder: Embedder | None = None,
     mention_embeddings: Mapping[str, tuple[float, ...]] | None = None,
+    adjudicator: entities.EntityAdjudicator | None = None,
 ) -> tuple[str, str | None, dict[str, int]]:
     """Resolve every mention, create the unknown ones, and decide the claim's subject.
 
@@ -460,7 +470,8 @@ async def _resolve_entities(
       only if the extractor named it as the subject; otherwise the subject stays ``self``.
     * **created**: the mention is new, so an entity row is written in the claim's own scope. Creating eagerly is what
       makes the *second* mention cheap; it costs one row and no belief, and the row is inside the deletion closure.
-    * **unresolved**: two or more candidates tied. Nothing is created and nothing is attached — a wrong attach is worse
+    * **unresolved**: two or more candidates tied, or a vector proposal was not confirmed. Nothing is created and
+      nothing is attached — a wrong attach is worse
       than no attach (``V2-D90``), and the count is reported so an operator can see it happening.
 
     The returned counts are content-free by construction (integers keyed by stage), so they can go in the report.
@@ -481,6 +492,8 @@ async def _resolve_entities(
                 # proposes: a merge still needs an exact match or an adjudicated confirmation
                 embedding=mention_embeddings.get(mention.label),
                 embedding_model=embedder.model if embedder is not None else None,
+                # confirms a proposal, never invents one: an answer outside the offered set is an abstention
+                adjudicator=adjudicator,
                 schema_name=schema_name,
             )
             if outcome.stage == "created":

@@ -419,8 +419,66 @@ class OpenAiCompatibleAdjudicator:
         return tuple(relations)
 
 
+ENTITY_SYSTEM = """You decide whether a mention in a user's message refers to one of the user's known entities.
+
+You get the mention and a numbered list of candidates. The mention and a candidate may be written in different scripts
+or languages (Arabic and English, a transliteration, a nickname): judge whether they denote the same real-world person,
+place, organisation or thing.
+
+Return JSON only: {"match": N} where N is the number of the one candidate the mention certainly refers to, or
+{"match": null} when none does or you cannot be sure. Two different things with similar names (two offices in two
+cities, "Project Alpha" and "Project Beta", two people who share a first name) are NOT a match. When in doubt, answer
+null: a missed match is repaired later, a wrong match attaches the user's memories to the wrong entity."""
+
+
+class OpenAiCompatibleEntityAdjudicator:
+    """An :class:`~custom_memory_engine.semantic.entities.EntityAdjudicator` backed by a chat model (``V2-D106``).
+
+    **The model sees numbers, never ids.** Candidates are presented as ``1..n`` and the answer is mapped back here, so
+    an entity id never enters a prompt (where it would be one more identifier a provider logs) and a model cannot
+    answer with an id it was not offered: anything but an in-range integer or ``null`` is an abstention. The resolver
+    re-checks membership too (`semantic.entities.resolve_mention`), so the fence holds even for another adapter.
+
+    A model failure is an abstention, not an error: the mention stays unresolved, which is the safe outcome.
+    """
+
+    def __init__(self, client: ModelClient) -> None:
+        self.client = client
+
+    async def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> str | None:
+        if not candidates:
+            return None
+        messages = [
+            {"role": "system", "content": ENTITY_SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "mention": mention,
+                        "candidates": [
+                            {"n": index, "name": label} for index, (_, label) in enumerate(candidates, start=1)
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+        try:
+            document = await self.client.complete_json(messages, max_tokens=64)
+        except ModelError:
+            return None
+        if not isinstance(document, Mapping):
+            return None
+        match = document.get("match")
+        if isinstance(match, bool) or not isinstance(match, int) or not 1 <= match <= len(candidates):
+            return None
+        return candidates[match - 1][0]
+
+
 __all__ = [
     "ADJUDICATION_SYSTEM",
+    "ENTITY_SYSTEM",
+    "OpenAiCompatibleEntityAdjudicator",
     "EXTRACTION_SYSTEM",
     "ChatClient",
     "Completion",

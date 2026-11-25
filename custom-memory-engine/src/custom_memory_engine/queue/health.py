@@ -20,6 +20,8 @@ the failure this lane is most likely to have.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Literal
@@ -30,6 +32,10 @@ from psycopg.rows import tuple_row
 #: How long a due job may wait before the worker is "degraded". Well above the loop's five-second idle poll, so a
 #: healthy worker never trips it, and low enough to page someone before a backlog matters.
 BACKLOG_ALERT = timedelta(minutes=30)
+#: How long an expired lease may survive before the worker is "unhealthy". The loop runs ``recover_stale`` on every
+#: idle cycle (``worker.RECOVERY_INTERVAL``), so a live worker returns an expired lease within a minute; one that is
+#: still there after this long means no loop is running.
+STALE_LEASE_GRACE = timedelta(minutes=2)
 
 type Verdict = Literal["healthy", "degraded", "unhealthy"]
 #: The exit code each verdict maps to, so a container `HEALTHCHECK` and a systemd check agree without translation.
@@ -63,45 +69,56 @@ async def queue_health(
     *,
     users: tuple[str, ...],
     schema_name: str = "cme_engine",
-    lease_seconds: float | None = None,
+    role: str | None = None,
+    stale_grace_seconds: float | None = None,
     backlog_seconds: float | None = None,
 ) -> QueueHealth:
-    """Measure the queue for ``users`` and return the verdict. The caller owns the transaction and the role.
+    """Measure the queue for ``users`` and return the verdict. ``connection`` must be idle; this owns its transactions.
 
-    ``lease_seconds`` defaults to the slow lane's own lease, imported lazily so this module stays importable without
-    the semantic layer.
+    **One transaction per tenant, each bound to that tenant.** ``job`` forces row-level security, so a statement
+    without ``app.user_id`` sees *no* rows — and an empty queue is "healthy". The first version of this probe asked
+    once, unbound, and was only ever tested through a superuser DSN (which bypasses RLS), so in a real deployment it
+    would have reported healthy over any backlog and any stale lease. Each tenant is now read inside its own scope —
+    under ``role`` when given, exactly as the worker's own transactions run.
+
+    A lease is *expired* when its ``next_run_at`` has passed; it is a fault only after :data:`STALE_LEASE_GRACE`,
+    because a live loop returns expired leases on its own (``recover_stale`` runs every idle cycle).
     """
     if not users:
         raise ValueError("at_least_one_user_required")
-    if lease_seconds is None:
-        from custom_memory_engine.semantic.slow_lane import LEASE
-
-        lease_seconds = LEASE.total_seconds()
+    if stale_grace_seconds is None:
+        stale_grace_seconds = STALE_LEASE_GRACE.total_seconds()
     if backlog_seconds is None:
         backlog_seconds = BACKLOG_ALERT.total_seconds()
-    async with connection.cursor(row_factory=tuple_row) as cursor:
-        await cursor.execute(
-            sql.SQL(
-                "SELECT count(*) FILTER (WHERE status = 'queued'"
-                " AND next_run_at <= pg_catalog.transaction_timestamp()),"
-                " COALESCE(EXTRACT(EPOCH FROM (pg_catalog.transaction_timestamp()"
-                " - min(next_run_at) FILTER (WHERE status = 'queued'"
-                " AND next_run_at <= pg_catalog.transaction_timestamp()))), 0)::float,"
-                " count(*) FILTER (WHERE status = 'running'"
-                " AND next_run_at < pg_catalog.transaction_timestamp()),"
-                " COALESCE(EXTRACT(EPOCH FROM (pg_catalog.transaction_timestamp()"
-                " - min(next_run_at) FILTER (WHERE status = 'running'"
-                " AND next_run_at < pg_catalog.transaction_timestamp()))), 0)::float"
-                " FROM {t} WHERE user_id = ANY(%s)"
-            ).format(t=sql.Identifier(schema_name, "job")),
-            (list(users),),
-        )
-        row = await cursor.fetchone()
-    due = int(row[0]) if row else 0
-    oldest_due = float(row[1]) if row else 0.0
-    stale = int(row[2]) if row else 0
-    oldest_lease = float(row[3]) if row else 0.0
-    if stale and oldest_lease > lease_seconds:
+    due = stale = 0
+    oldest_due = oldest_lease = 0.0
+    for user in users:
+        async with _scope(connection, user, role), connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT count(*) FILTER (WHERE status = 'queued'"
+                    " AND next_run_at <= pg_catalog.transaction_timestamp()),"
+                    " COALESCE(EXTRACT(EPOCH FROM (pg_catalog.transaction_timestamp()"
+                    " - min(next_run_at) FILTER (WHERE status = 'queued'"
+                    " AND next_run_at <= pg_catalog.transaction_timestamp()))), 0)::float,"
+                    " count(*) FILTER (WHERE status = 'running'"
+                    " AND next_run_at < pg_catalog.transaction_timestamp()),"
+                    " COALESCE(EXTRACT(EPOCH FROM (pg_catalog.transaction_timestamp()"
+                    " - min(next_run_at) FILTER (WHERE status = 'running'"
+                    " AND next_run_at < pg_catalog.transaction_timestamp()))), 0)::float"
+                    " FROM {t} WHERE user_id = %s"
+                ).format(t=sql.Identifier(schema_name, "job")),
+                (user,),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            continue
+        due += int(row[0])
+        oldest_due = max(oldest_due, float(row[1]))
+        stale += int(row[2])
+        oldest_lease = max(oldest_lease, float(row[3]))
+    # `next_run_at` of a running job is its lease *expiry*, so `oldest_lease` is how long ago the oldest one expired.
+    if stale and oldest_lease > stale_grace_seconds:
         verdict: Verdict = "unhealthy"
     elif oldest_due > backlog_seconds:
         verdict = "degraded"
@@ -110,4 +127,17 @@ async def queue_health(
     return QueueHealth(verdict, due, stale, oldest_due, oldest_lease)
 
 
-__all__ = ["BACKLOG_ALERT", "EXIT_CODES", "QueueHealth", "Verdict", "queue_health"]
+@asynccontextmanager
+async def _scope(connection: AsyncConnection, user: str, role: str | None) -> AsyncIterator[None]:
+    if role is None:
+        async with connection.transaction():
+            await connection.execute("SELECT pg_catalog.set_config('app.user_id', %s, true)", (user,))
+            yield
+        return
+    from custom_memory_engine.security.scoping import tenant_scope
+
+    async with tenant_scope(connection, user, role=role):
+        yield
+
+
+__all__ = ["STALE_LEASE_GRACE", "BACKLOG_ALERT", "EXIT_CODES", "QueueHealth", "Verdict", "queue_health"]
