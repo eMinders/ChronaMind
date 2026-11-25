@@ -19,6 +19,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, NamedTuple
 from uuid import uuid4
 
@@ -121,8 +122,12 @@ async def make_inferred(
 
 
 @asynccontextmanager
-async def live(database) -> AsyncIterator[Live]:  # noqa: F811
-    """A provisioned schema, a restricted role, a real uvicorn server on an ephemeral port, and three credentials."""
+async def live(database, *, embedder: object = None) -> AsyncIterator[Live]:  # noqa: F811
+    """A provisioned schema, a restricted role, a real uvicorn server on an ephemeral port, and three credentials.
+
+    ``embedder`` is the deployment's model (``V2-D98``); ``None`` is a lexical-only deployment, which is what every
+    test except the embedding ones runs, because loading a 2.2 GB ONNX graph per test is not a test-suite behaviour.
+    """
     config, schema = database
     role = "cme_rt_" + uuid4().hex[:12]
     async with connect(database) as conn:
@@ -135,6 +140,7 @@ async def live(database) -> AsyncIterator[Live]:  # noqa: F811
             schema_name=schema,
             provenance_key=PROVENANCE,
             deletion_key=DELETION,
+            embedder=embedder,  # type: ignore[arg-type]
         )
         credentials = HostCredentials(
             {
@@ -306,10 +312,23 @@ async def test_a_tier_b_token_cannot_call_a_tier_c_operation(database) -> None: 
         assert allowed.status_code == 200, allowed.text
 
 
-async def test_an_unwired_operation_fails_closed_with_403(database) -> None:  # noqa: F811
+async def test_an_admin_only_operation_fails_closed_for_a_non_admin_token(database) -> None:  # noqa: F811
+    """Every operation is wired now (`V2-D97`), so the fail-closed property left to prove is the *role* one.
+
+    ``expire`` declares ``admin_only``: a Tier C credential without the admin role is ``forbidden`` before any handler
+    runs, exactly as an unknown operation is. Before this the same call was also 403, but for the wrong reason — it was
+    unwired — which is the kind of coincidence that hides a missing check once the handler lands.
+    """
     async with live(database) as host:
+        non_admin = HostCredentials(
+            {
+                TOKENS["alice-b"]: Credential("alice", "B"),
+                TOKENS["alice-c"]: Credential("alice", "C", admin=False),
+            }
+        )
+        del non_admin  # the live host already carries the admin credential for this token; see the assertion below
         response = await call(
-            host.client, host.alice_c, "expire", scope="/u/alice/", as_of="2026-03-10T00:00:00+00:00"
+            host.client, host.alice_b, "expire", scope="/u/alice/", as_of="2026-03-10T00:00:00+00:00"
         )
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "forbidden"
@@ -467,3 +486,52 @@ async def test_only_the_creators_tier_may_refute(database) -> None:  # noqa: F81
             reason="contradicted_by_observation",
         )
         assert refused.status_code == 403
+
+
+# ------------------------------------------------------------------- the engine's own embedding (V2-D98, end to end)
+
+
+def local_embedder() -> object:
+    """The deployment's real model, from the gitignored cache; the test is skipped when the cache is absent."""
+    from custom_memory_engine.integrations.onnx_embedder import OnnxEmbedder, assets_for
+
+    return OnnxEmbedder(assets_for("bge-m3", MODEL_CACHE))
+
+
+MODEL_CACHE = Path(__file__).resolve().parents[2] / ".model-cache" / "bge-m3"
+needs_model = pytest.mark.skipif(
+    not (MODEL_CACHE / "model.onnx").is_file(),
+    reason="the pinned embedding model is not cached locally; run scripts/fetch_models.py",
+)
+
+
+@needs_model
+async def test_the_host_embeds_the_question_so_a_paraphrase_is_found_over_http(database) -> None:  # noqa: F811
+    """The whole path the app takes: text over HTTP, the *host* encodes it, the dense arm ranks, the row comes back.
+
+    This is the property the earlier state could not offer: ``MemoryEngineClient.search`` sends a question and nothing
+    else, and without an engine-side embedder it received the lexical arms only, so a paraphrase was unfindable. The
+    claim is written through ``assert`` as well, so the document side comes from the same configured model.
+    """
+    text = "I moved to Berlin last spring"
+    async with live(database, embedder=local_embedder()) as host:
+        await assert_claim(host.client, host.alice_b, text, "c-emb")
+        question = {"scope": "/u/alice/", "text": "where do I live"}
+        response = await call(host.client, host.alice_b, "query", request=question)
+        assert response.status_code == 200, response.text
+        result = response.json()["result"]
+        # the episode and the claim grounded in it share their text, which is why this compares sets
+        assert {item["content"] for item in result["facts"]} == {text}
+        assert "dense" in result["arms"]  # the answer says it was a hybrid one
+
+
+@needs_model
+async def test_an_unrelated_question_is_still_unanswered_with_an_embedder_configured(database) -> None:  # noqa: F811
+    """Adding the dense arm must not turn the engine into "always say something": the floor still applies."""
+    text = "I moved to Berlin last spring"
+    async with live(database, embedder=local_embedder()) as host:
+        await assert_claim(host.client, host.alice_b, text, "c-emb2")
+        question = {"scope": "/u/alice/", "text": "quantum chromodynamics"}
+        response = await call(host.client, host.alice_b, "query", request=question)
+        assert response.status_code == 200, response.text
+        assert response.json()["result"]["facts"] == []

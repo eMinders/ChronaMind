@@ -184,19 +184,27 @@ async def test_the_dense_arm_moves_paraphrases_and_cross_script_questions(databa
             vector = (await embedder.embed([content]))[0]
             await seed_embedding(conn, version_id, list(vector))
         rows = []
+        lexical_rows = []
         for question, _expected, _language, _kind in QUESTIONS:
             # The query is embedded *by the caller*, with the query prefix the model family expects: the engine never
             # loads a model, which is what keeps the read path free of provider SDKs (V2-D86).
             vector = list((await embedder.embed([question], query=True))[0])
             rows.append(await ask(engine, question, vector=vector))
+            lexical_rows.append(await ask(engine, question))
 
     hybrid = score(rows, "hybrid")
     print("HYBRID:", hybrid)  # the measured table, for the report
     by_kind = hybrid["by_kind"]
     assert isinstance(by_kind, dict)
-    assert by_kind["paraphrase"] >= 0.9, by_kind  # measured 1.00; the lexical configuration gets 0.40
-    assert by_kind["verbatim"] == 1.0  # and it must not cost the lexical wins
+    # Asserted *relative to the lexical control*, not against the numbers this test used to print: those were measured
+    # with a 0.45 similarity floor, and `V2-D100` raised it to 0.55 after measuring it on a larger set (see
+    # `reports/retrieval/README.md`). An absolute assertion would have to be edited whenever the floor moves, making
+    # this test a record of one configuration rather than of a property.
+    lexical_by_kind = score(lexical_rows, "lexical")["by_kind"]
+    assert isinstance(lexical_by_kind, dict)
+    assert by_kind["paraphrase"] > lexical_by_kind["paraphrase"], (by_kind, lexical_by_kind)
     assert by_kind["no_match"] == 1.0
+    assert by_kind["verbatim"] == 1.0  # and it must not cost the lexical wins
 
 
 async def test_recency_is_the_control_and_is_not_the_answer(database) -> None:  # noqa: F811

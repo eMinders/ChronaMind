@@ -61,3 +61,18 @@ def test_the_trigram_overlap_is_script_neutral() -> None:
 )
 def test_the_schema_check_accepts_only_what_the_ingestor_can_use(document: object, ok: bool) -> None:
     assert schema_ok(document)[0] is ok
+
+
+def test_every_adjudication_label_is_a_relation_a_model_may_emit() -> None:
+    """The failure this catches, verbatim: the second case block used the engine's *strategy* names as expected labels.
+
+    ``supersede`` and ``reinforce`` are what ``conflict.commit_strategy`` decides; a model is asked for
+    ``duplicate|update|correction|contradiction|additive|unrelated`` and can never answer either. Three candidates were
+    therefore scored wrong for correct answers until this test existed -- the same class of defect as the reversed
+    ``quote_grounded`` arguments, in a different part of the instrument.
+    """
+    from custom_memory_engine.semantic.contracts import RELATIONS
+
+    labels = {case.adjudication[2] for case in ALL_CASES if case.adjudication is not None}
+    assert labels, "the harness has no adjudication cases"
+    assert labels <= RELATIONS, labels - RELATIONS

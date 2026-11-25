@@ -50,6 +50,8 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (22, "022_deletion_through_cognition.sql"),
     (23, "023_multilingual_index.sql"),
     (24, "024_semantic_slot.sql"),
+    (25, "025_export_snapshot.sql"),
+    (26, "026_entity_embedding.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -79,6 +81,7 @@ TABLES = (
     "entity_link",
     "outcome_stats",  # migration 20 (E-027): the minimal procedure-stats substrate E-030 extends
     "procedure_shape",  # migration 21 (E-030): a procedure's preconditions and steps
+    "export_snapshot",  # migration 25 (E-038/F11): the durable, epoch-bound export manifest
 )
 FUNCTIONS = (
     "clock_now",
@@ -107,6 +110,7 @@ FUNCTIONS = (
     "enforce_entry_records",
     "guard_outcome_stats",  # migration 20 (E-027)
     "guard_procedure_shape",  # migration 21 (E-030): kind, immutability and the precondition grammar
+    "guard_export_snapshot_append_only",  # migration 25 (E-038/F11): a manifest is evidence of what was exported
     "prevent_derivation_cycle",  # migration 22 (E-037): acyclic memory_derivation at write time (F9)
     "delete_exclusive_turns",  # migration 22 (E-037): S-08 exclusive turn deletion inside a deletion transaction
     "clear_retired_tombstone_content",  # migration 22 (E-037): V2-D50 rule 3 tombstone vector/shape removal

@@ -2688,3 +2688,261 @@ recovery, tenant scoping, idle-connection requirement); `tests/integration/test_
 
 **Status:** implemented (2026-11-21). `dissent`, `verify`, `expire`, `rebuild_index`, `export` and `stats` remain
 unwired with their reasons recorded in `api/wiring.UNWIRED_OPERATIONS`.
+
+---
+
+## V2-D97 — Every operation is wired: the six, and what each one's missing piece actually was
+
+**Status:** adopted (2026-11-25). Supersedes the "remain unwired" paragraph of `V2-D96`. Closes `A-014`'s handler half
+and the `I11`/`I15` rows that read "`verify`/`stats` are not wired, so the ledger is not reachable through `Engine.call`".
+
+`api.wiring.UNWIRED_OPERATIONS` is now **empty**. That is not a bookkeeping change: each entry had a stated reason, and
+each reason named a missing *piece of machinery*, not missing plumbing. This decision records what that machinery is and
+where it lives, because the alternative — a handler that satisfies the signature — would have turned six honest gaps into
+six silent lies.
+
+| operation | why it was unwired | what was actually built |
+|---|---|---|
+| `stats` | "needs an outcome-stats reader" | `engine/statistics.py`: the ledger, the verification record behind the status, the derivation ids, the derived staleness causes and procedure outcomes, in one report that returns **ids and never content** |
+| `verify` | "the `verification` wire shape is unspecified while the schema requires held-out splits, disjoint windows and context keys" | `engine/verification.py`: a `VerificationRecord` with exactly `I11`'s six facts, a disjointness assessment, the append-only insert, the status move, and the `F5` epoch fence |
+| `dissent` | "needs a `negative_constraint` reader in inference; a constraint nothing consults would be a write-only column" | the handler **and** the reader: `refute`'s sibling in `api/lifecycle_handlers.py`, plus `InferHandlers._blocked`, so `infer` answers `Rejected("negative_constraint_active")` |
+| `expire` | "`V2-D14` is still open on the retention values" | `engine/expiry.py` + a handler that reads the window from `profile.abstraction_expiry` and stamps `abstraction_stats.expires_at`; no defaults are compiled in, so an unconfigured deployment expires nothing and says so |
+| `rebuild_index` | "returns a job id and needs the queue's index-maintenance handler" | `engine/index_maintenance.py`: three logical indexes, two execution shapes (`REINDEX … CONCURRENTLY` outside a transaction for `fts`/`vector`, an in-transaction reseal for `closure_hash`), and the job the handler enqueues |
+| `export` | "`ExportSnapshotStore` exists, the handler does not" | migration 25 + `engine/export.py`: the store was a **process-local dict**, which cannot implement channel 11 at all; a manifest is now a durable, epoch-bound, append-only row |
+
+**Three declarations were corrected, and each correction is a safety change rather than a convenience.**
+
+1. `expire` no longer declares `deletes=True`. It stamps a derived-cause column and destroys nothing; a declared deletion
+   that never happens invites a reviewer to assume a guarantee, and aims `TB1` at an operation that deletes nothing.
+2. `expire`'s output is `ExpiryReceipt` (two counts and the belief time) instead of `Receipt`. `PurgeReceipt`'s reasoning
+   applies unchanged: an expiry touches no caller-named artifact, so there is no id to return and an id is the one thing
+   `API_V2.md` §1.1 forbids in a maintenance receipt. It also gains `precondition_failed`, because a caller's `as_of` can
+   be well-formed and still not a legal observation of the clock.
+3. `dissent` records its constraint against the method **family** (the method's name, not its id), so a user's rejection
+   survives a method version upgrade. Lifting a constraint needs grounded evidence and has no operation yet, so a dissent
+   is currently permanent — the conservative direction, since silently re-learning what a user rejected is the failure
+   this mechanism exists to prevent.
+
+**`verify`'s disjointness algorithm** is the part `INVARIANT_LEDGER.md` recorded as "not built". `I11` requires the
+held-out split to be genuinely held out, which the schema alone cannot check: overlapping **windows** re-check the same
+evidence, and a shared **context key** is the near-duplicate leakage that makes a finite-sample bound meaningless. Both
+are refused before the insert, with distinct codes, so the two faults stay distinguishable in an incident. One split is
+recorded once per artifact: re-running a split until it agrees is not verification.
+
+**Evidence.** `tests/integration/test_api_wiring_lifecycle_db.py` (23 tests through `Engine.call` as the restricted role:
+ledger and ids without content, cross-tenant `forbidden`, a grounded artifact's empty ledger, the verification record
+behind the status, disjoint/leaky/duplicate/invalid splits, dissent's retirement and constraint, the re-learn refusal,
+the expiry stamp with and without a policy, `as_of` in the future, the queued rebuild, the empty `UNWIRED_OPERATIONS`,
+the export manifest and its replay, the tier check, and channel 11); `tests/integration/test_migration_m25.py` (6:
+self-consistency, the count constraint, the digest constraint, append-only on `UPDATE`/`DELETE`, RLS under the runtime
+role, and the rollback fingerprint); `tests/integration/test_migration_m24.py` (rollback composition through 25).
+
+---
+
+## V2-D98 — The engine embeds the query, and the write path embeds the document
+
+**Status:** adopted (2026-11-25). Completes `V2-D86`'s dense arm, which was measured but unreachable from a deployment.
+
+`V2-D86` gave the read path a dense arm and `hybrid.RecallQuery` an `embedding` field, and `V2-D93` gave the app an HTTP
+client. The gap between them was decisive: **the caller had to supply the vector**, so the app would have had to own a
+model to receive hybrid recall — and it does not. In practice every app query ran the two lexical arms, and the dense arm
+was reachable only from a test that hand-built a vector.
+
+**The engine now owns both sides of one model.** `ReadHandlers` takes an optional `semantic.contracts.Embedder`;
+`wire_engine` passes the deployment's and `host.HostService` builds it from `CME_EMBEDDING_ASSET`/`CME_EMBEDDING_DIR`.
+`ingest_episode` and `assert` embed the **document**, `query` embeds the **question** (`embed=True` → `query=True`), and
+both name `embedder.model`, which is what the dense arm's `embedding_model = %(model)s` predicate joins on. A vector
+stored under one model is invisible to a question encoded by another; there is no silent cross-model cosine.
+
+**Failure degrades and says so.** A model that cannot load must not turn every question into `internal_error`, and it
+must not degrade silently either: the read logs `query_embedding_unavailable` with a static code and the result reports
+exactly which arms ran (`QueryResult.arms`). That field is the reason the degradation is honest — a benchmark, a test and
+a caller can all see whether an answer was hybrid. On the write path the rule is the opposite and deliberate: a model
+failure never fails the write (a lost user message is far worse than a row the lexical arms must find), and the failure
+is logged instead.
+
+**Advanced callers still win.** A request that supplies `embedding`/`embedding_model` keeps them; the engine's embedder is
+only consulted when the caller sent text and no vector. A supplied vector is validated against `hybrid.EMBEDDING_SLOTS`
+at the boundary, so a width the schema cannot index is refused rather than dropped.
+
+**One model, one process.** The embedder is a single object per process (it owns a loaded ONNX session); building one per
+request would reload a 2.2 GB graph per request. A width the schema cannot index is refused at **start-up**
+(`embedder_from_environment`), which is the only place it can be refused without answering a caller's question with an
+error about a vector they never sent.
+
+**Evidence.** `tests/integration/test_hybrid_recall_db.py` (a configured embedder finds a paraphrase with no caller
+vector and reports `("dense","lexical","trigram")`; a failing embedder degrades to `("lexical","trigram")`; a
+caller-supplied vector still wins; the ingest path stores the vector under the configured model);
+`tests/integration/test_host_e2e_db.py` (the real `bge-m3` model through the real HTTP host: a paraphrase is found over
+the wire, `arms` contains `dense`, and an unrelated question still answers nothing).
+
+---
+
+## V2-D99 — An export is a durable manifest, not a copy of the memories
+
+**Status:** adopted (2026-11-25). Supersedes `deletion.closure.ExportSnapshotStore` as the export mechanism (the class
+remains as the in-memory helper the deletion suite uses).
+
+`API_V2.md` §4.9 asks for three things — a manifest of the caller's read set, exclusion of deletion-pending content, and
+"a snapshot made before a deletion must not be served after it (channel 11)". What existed was a Python dict: correct
+enough to prove `F11` inside one process, and useless as an implementation, because the host builds its wiring per call
+and a second worker would not see the dict at all.
+
+**The design decision is what a snapshot contains.** A manifest: the sorted ids the caller could read, a SHA-256 over
+them, the count, the read set's scope paths and the deletion epoch. **Not** the content. A second copy of content is
+exactly what a deletion cannot reach, so an export that copies is an export that leaks on channel 11; serving a snapshot
+re-reads through the ordinary read path, so every deletion, retraction and expiry lands in it as it lands everywhere
+else. Migration 25 makes the manifest append-only, self-consistent (count = array length, digest = SHA-256) and
+user-isolated under `FORCE ROW LEVEL SECURITY`.
+
+**Channel 11 is a comparison, not a trigger.** `captured_epoch` against `current_deletion_epoch` (the `MAX` over the
+append-only `deletion_request` log), checked through the same `require_current_deletion_epoch` guard a verification
+commit uses — so a serve racing a deletion either completes before it or is refused after it, and there is no third
+outcome. A replay of the same read set at the same epoch returns the existing manifest: the row already there *is* the
+answer, and re-inserting would mint a second id for the same fact.
+
+**Evidence.** `tests/integration/test_migration_m25.py`; `tests/integration/test_api_wiring_lifecycle_db.py`
+(`test_export_manifests_what_the_caller_can_read_and_replays_the_same_manifest`,
+`test_export_is_tier_c_only_and_refuses_a_malformed_selector`,
+`test_a_snapshot_made_before_a_deletion_is_not_served_after_it`, which drives the real `delete` operation).
+
+---
+
+## V2-D100 — The retrieval decision, re-made on 64 labelled questions
+
+**Status:** adopted (2026-11-25). Supersedes the numbers in `reports/retrieval/README.md`'s first round and the "BM25 is not
+implemented" paragraph's reasoning; the *decision* (no BM25, no reranker) survives, on much stronger evidence.
+
+The first round measured 16 questions and concluded that the dense arm earns its place. It could not answer the question
+the plan left open — whether a term-weighting ranker or a second-stage reranker improves the *order* — because a set with
+two unanswerable questions cannot measure a precision claim, and it did not: the 0.45 similarity floor chosen there
+answered **7 of 8** unanswerable questions on the larger set.
+
+**What was measured.** 49 memories and 64 questions (20 lexical, 12 paraphrase, 8 cross-script, 8 with no answer), six
+configurations through the real read path, `bm25` and both rerank rows computed offline over the same candidates so they
+cannot win by retrieving what the engine could not.
+
+| configuration | recall@5 | top-1 | nDCG@5 | no-match FP |
+|---|---|---|---|---|
+| recency | 0.089 | 0.018 | 0.053 | 1.000 |
+| lexical only | 0.393 | 0.375 | 0.386 | 0.000 |
+| **hybrid (shipped)** | **0.982** | **0.732** | **0.882** | 0.125 |
+| bm25 over the corpus | 0.143 | 0.071 | 0.106 | 1.000 |
+| hybrid → rerank by BM25 | 0.982 | 0.482 | 0.765 | 0.125 |
+| hybrid → rerank by recency (control) | 0.982 | 0.411 | 0.726 | 0.125 |
+
+**Three decisions.**
+
+1. **BM25 is rejected.** Standalone it recalls 0.143 — term weighting cannot connect a paraphrase to its memory. As a
+   reranker it keeps recall and destroys ranking (top-1 0.732 → 0.482), because it pulls lexical overlap above meaning.
+   The recency control degrades too (0.726), so the method is sound and BM25 is simply worse informed than the fusion.
+2. **No reranker is shipped.** The two cheapest rerankers both make the order worse; a cross-encoder is one model call
+   per *read* for a gain the first round measured inside noise. `Reranker` stays a seam.
+3. **`DENSE_SIMILARITY_FLOOR` is 0.55, measured, and the constant is asserted against its sweep.** The criterion is
+   stated before the numbers: minimise the no-match false-positive rate subject to recall@5 ≥ 0.90. 0.55 gives 0.982
+   recall and one FP in eight; 0.62 gives zero FP and 0.768 recall. The residual is not hidden: the weakest *true*
+   match on this set is 0.46 and the strongest *false* one is 0.605, so no single cosine threshold separates them, and
+   that is a limit of a bi-encoder rather than of the threshold.
+
+**One read-path defect the measurement found.** With `simple` as the FTS configuration (no stopword list, by design, since
+a stopword list is language-specific), a question like "what is the wifi password at the office" matched every row
+containing "the". The lexical arm now prunes query terms whose document frequency in the caller's own rows exceeds
+`TERM_PRUNING_DF_RATIO = 0.35` — a statistic computed inside the same temporal and read predicate, so it is a statistic
+about rows the caller may already read and never a cross-tenant oracle. Membership was the defect; ranking was not.
+
+**Evidence.** `tests/integration/test_retrieval_eval_db.py` (the set's own coverage, the floor sweep asserted against the
+constant, and the relative claim that the fusion dominates what it replaced and is not beaten by any alternative),
+`evaluation/retrieval/`, `reports/retrieval/{evaluation.json,evaluation.md,floor_sweep.json}`.
+
+---
+
+## V2-D101 — Entity embeddings propose, and never merge
+
+**Status:** adopted (2026-11-25). Migration 26.
+
+`semantic/entities.py` documented a four-stage cascade with a vector stage that was dead code: it queried
+`entity.embedding`, a column that never existed. The earlier fix removed the query and recorded that restoring the stage
+needs a migration. Migration 26 adds `entity.embedding_1024 halfvec(1024)`, `embedding_model` and an HNSW index, and the
+stage is implemented.
+
+**Why it earns its place.** A cross-script mention shares no trigram with its entity: `ليلى حسن` scores 0.0 with
+`Layla Hassan` under `pg_trgm` and 0.573 under the model. `مكتب برلين` scores 0.791 against `Berlin office`. No amount of
+string matching serves that case.
+
+**Why it may not merge.** The same measurement produced the counter-examples that decide the design: `Munich office`
+scores **0.769** against `Berlin office`, and `Project Beta` scores **0.791** against `Project Alpha`. Two *different*
+entities that differ by one token are nearly identical in embedding space — exactly the pairs where a merge is
+destructive and permanent. So the stage runs **only** when exact, alias and trigram found nothing, requires
+`VECTOR_FLOOR = 0.75`, filters by `embedding_model`, and returns a *candidate*. The existing fence is unchanged: a merge
+needs an exact match or an adjudicated confirmation, which is why `Munich office` proposes Berlin and stays `unresolved`.
+
+**What this does not claim.** A deployment with no adjudicator resolves no cross-script mention (it reports them
+`unresolved`). That is the correct half of the capability, and the alternative — merging on cosine — is the failure the
+measurement exists to prevent.
+
+**Evidence.** `tests/integration/test_semantic_entities_db.py::test_a_cross_script_mention_can_be_proposed_and_needs_confirmation_to_merge`,
+`::test_a_different_entity_of_the_same_shape_is_proposed_but_never_merged`,
+`::test_without_an_embedding_the_cascade_behaves_exactly_as_before`;
+`tests/integration/test_migration_m25.py`'s composed-rollback check; `reports/entity_resolution/README.md`.
+
+---
+
+## V2-D102 — The model evaluation set is 46 cases, and one of its labels was wrong
+
+**Status:** adopted (2026-11-25). Supersedes the 21-case selection in `reports/model_selection/README.md`.
+
+Extraction and adjudication were being chosen from 21 cases, 12 of them extraction. The set is now 46 (28 extraction
+across English, Arabic and mixed-script, 3 schema, 14 adjudication, 1 rewrite) and it separates the candidates where the
+old one could not:
+
+| model | ext-en | ext-ar | ext-mixed | schema | adjudication (corrected labels) | p50 |
+|---|---|---|---|---|---|---|
+| `gpt-6.2-sol` | **13/14** | **10/10** | **6/6** | 3/3 | **13/14** | 9.0 s |
+| `claude-sonnet-5-5` | 10/14 | 8/10 | 3/6 | 3/3 | 11/14 | 6.4 s |
+| `claude-haiku-5-5` | 12/14 | 8/10 | 2/6 | 3/3 | 10/14 | 2.5 s |
+
+The adjudication column is the *second* run, after the label defect below was fixed: the first run's figures (5-6 of 14
+for every model) were the instrument failing, not the models. `claude-haiku-5-5` stays the documented choice for a
+latency-bound deployment — 10 of 14 at 2.5 s against 13 of 14 at 9.0 s — and `CLAUDE.md` records that trade explicitly
+rather than hiding it behind "gpt is better".
+
+**The defect the expansion exposed.** The second adjudication block used the engine's *strategy* names as its expected
+labels: `supersede` and `reinforce`, which are what `conflict.commit_strategy` decides. The models are asked for
+`duplicate|update|correction|contradiction|additive|unrelated` and can never answer either, so three candidates were
+scored wrong for correct answers (a move answered `update`, which is exactly right). Every adjudication figure before
+this correction is therefore void, and the earlier conclusion "all three models score 4/6, so the choice is a tie" was an
+artefact of the instrument. `tests/test_eval_harness.py::test_every_adjudication_label_is_a_relation_a_model_may_emit`
+now fails if a label is outside the vocabulary.
+
+**Selection.** Both stages go to `gpt-6.2-sol`: extraction 29 of 30 against 21 and 22, adjudication 13 of 14 against 10
+and 11, with 100% verbatim-quote grounding and no JSON parse failures across either run — a margin no longer inside
+noise. `claude-haiku-5-5` is recorded as the latency fallback (2.5 s against 9.0 s at four points of adjudication
+accuracy), because adjudication runs once per conflicting candidate and a deployment with a tight write budget may
+legitimately prefer it.
+
+---
+
+## V2-D103 — The worker is deployed, probed from the queue, and tested
+
+**Status:** adopted (2026-11-25).
+
+The slow lane existed and nothing ran it. `deploy/` now holds a systemd unit (`cme-worker.service`), a container image
+(`Dockerfile.worker`) and a compose file (`compose.worker.yaml`), and `scripts/worker_healthcheck.py` is the probe all
+three use.
+
+**The probe reads the queue, not the process.** Exit 0 healthy, 1 degraded (the oldest due job is older than 30 minutes),
+2 unhealthy (a lease past `semantic.slow_lane.LEASE`, or the database is unreachable). A PID check passes through the
+failure this lane is most likely to have — a worker alive but stuck behind a hung model call — so the probe measures the
+property that matters: is the queue being drained.
+
+**Graceful stop is the loop's own.** `SIGTERM` sets the loop's stop event, the job in flight finishes, and the process
+exits; `TimeoutStopSec=60`/`stop_grace_period: 60s` outlive one extraction with retries. A hard kill loses only a lease,
+which `recover_stale` returns.
+
+**Deployment stays outside the engine.** No import of `deploy/` from `src/`, and the probe imports only the queue and the
+lease constant, so it never loads the embedding model to answer "is the loop alive".
+
+**What is tested and what is not.** `tests/integration/test_worker_deployment_db.py` drives a real queue: a lease past its
+window is returned to `queued`; the probe returns 0/1/2 for healthy/degraded/unhealthy; a job that fails repeatedly
+reaches `dead_letter` after `MAX_ATTEMPTS`. What is *not* tested is that systemd or Docker restarts the process — that is
+the supervisor's contract, and the unit and compose file are reviewed rather than executed.

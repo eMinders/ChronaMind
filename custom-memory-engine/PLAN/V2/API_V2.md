@@ -410,9 +410,15 @@ claims and abstractions are untouched (retention floors). The receipt carries th
 nothing else: a purge touches no caller-named artifact, so there is no artifact id to return and an id would be the one
 thing §1.1 forbids. A repeated purge returns `(0, retained)` and is not an error; the counts also appear, content-free,
 in the scope event (an `audit_event` of type `working_purged`). An episode that a surviving row cites as evidence is
-retained, not promoted or demoted: rule PW-1 in `engine/purge.py`, logged as `E-026-F1` for a decision record. **`expire(ctx, scope, as_of?) → Receipt`** — applies
-retention expiry; recorded as a scope event, not a deletion of knowledge. **`rebuild_index(ctx, index:
-fts|vector|closure_hash) → JobId`** — queues an index rebuild. *Errors:* `forbidden`, `validation_error`.
+retained, not promoted or demoted: rule PW-1 in `engine/purge.py`, logged as `E-026-F1` for a decision record. **`expire(ctx, scope, as_of?) → ExpiryReceipt`** — applies retention expiry: an abstraction whose
+`profile.abstraction_expiry` window has elapsed gets `abstraction_stats.expires_at` stamped, which is what derives the
+`expired` stale cause (`V2-D24`), and one content-free scope event (`retention_expired`) records two counts. Nothing is
+deleted — the contract's `deletes` flag was corrected to `false` (`V2-D97`) — and the numbers come only from the
+profile, so a deployment without a policy expires nothing (`V2-D14`). `as_of` may not be in the future (the engine's own
+clock is the observation, `V2-D73`). *Errors:* `forbidden`, `validation_error`, `precondition_failed`.
+**`rebuild_index(ctx, index: fts|vector|closure_hash) → JobId`** — queues an index rebuild; the worker runs
+`REINDEX ... CONCURRENTLY` for `fts`/`vector` (outside any transaction) and reseals `closed_over_hash` for
+`closure_hash` (`engine/index_maintenance.py`). *Errors:* `forbidden`, `validation_error`.
 All Maintain operations are **admin-only** (`V2-D47`).
 
 **`register_method(ctx, name, version, params_schema_hash, description, idempotency_key) → MethodId`** (`V2-D46`)

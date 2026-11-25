@@ -228,6 +228,7 @@ async def test_full_schema_creates_twelve_tables_and_named_constraints(
             "entity_link",
             "outcome_stats",
             "procedure_shape",  # migration 21 (E-030)
+            "export_snapshot",  # migration 25 (E-038/F11)
         }
         cursor = await conn.execute(
             """

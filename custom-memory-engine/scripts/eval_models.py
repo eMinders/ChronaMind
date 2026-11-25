@@ -43,10 +43,14 @@ from custom_memory_engine.integrations.provider import ModelClient, client_for
 from custom_memory_engine.semantic.grounding import quote_grounded
 from evaluation.model_selection.cases import (
     ADJUDICATION,
+    ADJUDICATION_V2,
     ALL_CASES,
     ARABIC,
+    ARABIC_V2,
     ENGLISH,
+    ENGLISH_V2,
     MIXED,
+    MIXED_V2,
     REWRITE,
     Case,
     overlap,
@@ -271,15 +275,15 @@ async def evaluate(model: str, base_url: str, api_key: str, *, tasks: Sequence[s
     object.__setattr__(client, "on_completion", on_completion)
     try:
         if "extraction_en" in tasks:
-            await score_extraction(candidate, client, ENGLISH, "extraction_en")
+            await score_extraction(candidate, client, ENGLISH + ENGLISH_V2, "extraction_en")
         if "extraction_ar" in tasks:
-            await score_extraction(candidate, client, ARABIC, "extraction_ar")
+            await score_extraction(candidate, client, ARABIC + ARABIC_V2, "extraction_ar")
         if "extraction_mixed" in tasks:
-            await score_extraction(candidate, client, MIXED, "extraction_mixed")
+            await score_extraction(candidate, client, MIXED + MIXED_V2, "extraction_mixed")
         if "schema" in tasks:
             await score_schema(candidate, client)
         if "adjudication" in tasks:
-            await score_adjudication(candidate, client, ADJUDICATION)
+            await score_adjudication(candidate, client, ADJUDICATION + ADJUDICATION_V2)
         if "query_rewrite" in tasks:
             await score_rewrite(candidate, client, REWRITE)
     finally:

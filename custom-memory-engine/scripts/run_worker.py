@@ -29,10 +29,12 @@ import sys
 import structlog
 from psycopg import AsyncConnection
 
+from custom_memory_engine.engine.index_maintenance import JOB_KIND, perform_inline
 from custom_memory_engine.engine.ingest import TurnInput
 from custom_memory_engine.integrations.onnx_embedder import OnnxEmbedder, assets_from_environment
 from custom_memory_engine.integrations.openai_compatible import OpenAiCompatibleAdjudicator, OpenAiCompatibleExtractor
 from custom_memory_engine.integrations.provider import client_for
+from custom_memory_engine.queue.contracts import Job
 from custom_memory_engine.semantic.contracts import ExtractionRequest
 from custom_memory_engine.semantic.ingestor import apply_extraction
 from custom_memory_engine.semantic.slow_lane import claim_one, complete_one, recover_stale
@@ -70,12 +72,59 @@ async def load_turn(connection: AsyncConnection, user_id: str, turn_id: str, sch
     )
 
 
+#: The job kinds this worker serves. `index_rebuild` is enqueued by the `rebuild_index` operation (`A-014`,
+#: `engine/index_maintenance.py`); a worker claiming only extraction would leave every maintenance job queued for ever.
+KINDS = ("semantic_extraction", JOB_KIND)
+
+
 async def run_once(connection: AsyncConnection, user_id: str) -> str:
-    """One claim, one model call, one write. Returns what happened, for the log and for a test."""
+    """One claim and the work it names, in whichever shape that work needs. Returns what happened, for a test."""
     settings = _settings()
-    job = await claim_one(connection, user_id, schema_name=settings.schema)
+    job = await claim_one(connection, user_id, schema_name=settings.schema, kinds=KINDS)
     if job is None:
         return "idle"
+    if job.kind == JOB_KIND:
+        return await _rebuild(connection, user_id, job, settings)
+    return await _extract(connection, user_id, job, settings)
+
+
+async def _rebuild(connection: AsyncConnection, user_id: str, job: Job, settings: Settings) -> str:
+    """`rebuild_index`: two shapes that cannot share a transaction boundary.
+
+    `fts`/`vector` must run ``REINDEX ... CONCURRENTLY``, which PostgreSQL refuses inside a transaction block, so it is
+    performed on the worker's **own autocommit connection** with no transaction open, and the job is then completed by
+    a writer that has nothing left to write. `closure_hash` is the opposite: it recomputes a derived column row by
+    row, so it runs inside the job's transaction like any other database work.
+    """
+    from custom_memory_engine.engine.index_maintenance import logical_index, reindex_concurrently
+
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    index = logical_index(payload.get("index"))
+    if index == "closure_hash":
+
+        async def reseal(conn: AsyncConnection, claimed: object, tick: object) -> None:
+            del claimed, tick
+            await perform_inline(conn, job, schema_name=settings.schema)
+
+        result = await complete_one(connection, user_id, job, reseal, schema_name=settings.schema)
+        return f"{result.status}:{job.id}"
+    outcome = await reindex_concurrently(connection, index, schema_name=settings.schema)
+    logger.info(
+        "index_rebuild_completed",
+        index=index,
+        rebuilt=len(outcome.rebuilt),
+        absent=len(outcome.absent),
+    )
+
+    async def nothing(conn: AsyncConnection, claimed: object, tick: object) -> None:
+        del conn, claimed, tick
+
+    result = await complete_one(connection, user_id, job, nothing, schema_name=settings.schema)
+    return f"{result.status}:{job.id}"
+
+
+async def _extract(connection: AsyncConnection, user_id: str, job: Job, settings: Settings) -> str:
+    """`semantic_extraction`: claim, model outside any transaction, write inside one."""
     assert job.turn_id is not None  # a `semantic_extraction` job always names its turn (queue contract)
     turn = await load_turn(connection, user_id, job.turn_id, settings.schema)
 

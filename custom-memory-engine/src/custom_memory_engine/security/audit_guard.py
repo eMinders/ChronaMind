@@ -84,6 +84,10 @@ AUDIT_DETAIL_KEYS = frozenset(
         "counter_evidence_linked",
         # procedure outcome feedback (E-027): a boolean that an episode was cited, never the episode's id (a locator)
         "episode_referenced",
+        # abstraction expiry (V2-D97): two counts. The window itself is not audited -- it is a policy value, and the
+        # recommendation is a scope event about a scope, not a record of which beliefs expired.
+        "expired",
+        "considered",
         # cross-scope reads (E-011): counts only, never a path or a principal
         "selector_count",
         "cross_scope_count",

@@ -2,49 +2,69 @@
   {
     "model": "claude-haiku-5-5",
     "tasks": {
-      "extraction_ar": {
-        "passed": 4,
-        "attempts": 4,
-        "rate": 1.0,
-        "json_errors": 0,
-        "quote_grounded": 0,
-        "quotes_offered": 5,
-        "failures": []
-      },
-      "extraction_en": {
-        "passed": 6,
-        "attempts": 6,
-        "rate": 1.0,
-        "json_errors": 0,
-        "quote_grounded": 0,
-        "quotes_offered": 11,
-        "failures": []
-      },
-      "extraction_mixed": {
-        "passed": 2,
-        "attempts": 3,
-        "rate": 0.667,
-        "json_errors": 1,
-        "quote_grounded": 0,
-        "quotes_offered": 4,
-        "failures": [
-          "mix_switch:model_output_not_json"
-        ]
-      },
-      "schema": {
-        "passed": 3,
-        "attempts": 3,
-        "rate": 1.0,
+      "adjudication": {
+        "passed": 10,
+        "attempts": 14,
+        "rate": 0.714,
         "json_errors": 0,
         "quote_grounded": 0,
         "quotes_offered": 0,
-        "failures": []
+        "failures": [
+          "adj_contradiction:said_update",
+          "adj_ar_contradiction:said_update",
+          "adj2_reinforce_ar:said_unrelated",
+          "adj2_different_person:said_None"
+        ]
       }
     },
-    "p50_ms": 6983.9,
-    "p95_ms": 13072.3,
-    "prompt_tokens": 10501,
-    "completion_tokens": 9140,
+    "p50_ms": 2511.2,
+    "p95_ms": 4300.5,
+    "prompt_tokens": 4311,
+    "completion_tokens": 1326,
+    "errors": []
+  },
+  {
+    "model": "claude-sonnet-5-5",
+    "tasks": {
+      "adjudication": {
+        "passed": 11,
+        "attempts": 14,
+        "rate": 0.786,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 0,
+        "failures": [
+          "adj_contradiction:said_None",
+          "adj_ar_contradiction:said_update",
+          "adj2_reinforce_ar:said_unrelated"
+        ]
+      }
+    },
+    "p50_ms": 3737.5,
+    "p95_ms": 8171.6,
+    "prompt_tokens": 2947,
+    "completion_tokens": 1174,
+    "errors": []
+  },
+  {
+    "model": "gpt-6.2-sol",
+    "tasks": {
+      "adjudication": {
+        "passed": 13,
+        "attempts": 14,
+        "rate": 0.929,
+        "json_errors": 0,
+        "quote_grounded": 0,
+        "quotes_offered": 0,
+        "failures": [
+          "adj2_reinforce_ar:said_unrelated"
+        ]
+      }
+    },
+    "p50_ms": 9134.2,
+    "p95_ms": 16976.2,
+    "prompt_tokens": 78578,
+    "completion_tokens": 513,
     "errors": []
   }
 ]

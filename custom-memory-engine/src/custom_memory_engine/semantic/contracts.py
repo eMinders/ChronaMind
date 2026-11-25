@@ -304,7 +304,15 @@ class Embedder(Protocol):
     @property
     def dimensions(self) -> int: ...
 
-    async def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]: ...
+    async def embed(self, texts: Sequence[str], *, query: bool = False) -> Sequence[Sequence[float]]:
+        """One vector per text. ``query`` distinguishes a question from a stored document.
+
+        Some families need it (E5-family assets are trained with ``query:``/``passage:`` prefixes and lose a large
+        amount of recall when either is dropped); others ignore it. It is a parameter rather than two methods because
+        it is one model, one session and one lock, and a second entry point would let a deployment forget which side
+        of the corpus it is embedding.
+        """
+        ...
 
 
 __all__ = [

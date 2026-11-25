@@ -1,8 +1,8 @@
-# Model selection — measured, not assumed (2026-11-22)
+# Model selection — measured, not assumed (revised 2026-11-25, `V2-D102`)
 
-Everything below was measured through the provider's own API by `scripts/eval_models.py`, on the same 21 case set, with
-the same prompts the engine ships. The raw results are in `final/evaluation.json` (per-case failures included) and the
-sweep history is in `sweep1/` and `sweep2/`. **No model was selected from a description or a leaderboard.**
+Everything below was measured through the provider's own API by `scripts/eval_models.py`, on the same 46-case set, with
+the prompts the engine ships. The raw results are in `evaluation.json` (per-case failures included); the earlier sweeps
+are kept in `sweep1/`, `sweep2/` and `final/`. **No model was selected from a description or a leaderboard.**
 
 ## What the provider can and cannot do
 
@@ -11,11 +11,54 @@ sweep history is in `sweep1/` and `sweep2/`. **No model was selected from a desc
 | chat completions | yes, **one protocol per model family**: Claude on `/v1/messages`, GPT on `/v1/chat/completions`. The other shape returns `400 protocol_mismatch`. |
 | `/embeddings` | **no** — `403` for every candidate name tried (`text-embedding-3-small`, `text-embedding-3-large`, `bge-m3`, `multilingual-e5-small`, `qwen3-embedding-8b`, `embed-v3`). |
 | `response_format: json_object` | accepted by GPT-6.x; **not** by Claude models (`400`), which is why `integrations/anthropic_messages.py` asks for JSON in the system prompt instead. |
-| `temperature` | rejected by several models (`400 Omit temperature for this model`). The client learns this per model and drops the field, rather than every deployment hard-coding a matrix. |
+| `temperature` | rejected by several models (`400 Omit temperature for this model`). The client learns this per model and drops the field rather than hard-coding a matrix. |
 
 Because embeddings are unavailable, the dense arm is served by a **local `bge-m3`** (`integrations/onnx_embedder.py`,
-1024-d, CLS pooling, `halfvec(1024)` slot). That is not a workaround for convenience: without it the engine has no dense
-arm at all, and the retrieval measurement below shows what that costs.
+1024-d, CLS pooling, `halfvec(1024)` slot). Without it the engine has no dense arm at all, and `reports/retrieval/`
+shows what that costs (recall@5 0.393 lexical against 0.982 hybrid).
+
+## The set, and the defect the expansion found
+
+46 cases: 28 extraction (14 English, 10 Arabic, 6 mixed-script including Arabizi and code-switching), 3 schema checks,
+14 adjudication pairs (including an Arabic pair and a cross-language pair), 1 query rewrite.
+
+**A real harness defect surfaced when the set grew.** The first adjudication block used the engine's *strategy* names
+(`supersede`, `reinforce`) as expected labels. Models are asked for `duplicate|update|correction|contradiction|additive|
+unrelated` and can never emit either, so correct answers were scored as failures — every model looked like it scored 5-6 of
+14, when a move answered `update` is exactly right. After remapping the labels to the model vocabulary the same run scores
+10-13 of 14. `tests/test_eval_harness.py::test_every_adjudication_label_is_a_relation_a_model_may_emit` fails if a label
+leaves the vocabulary again. **Every adjudication figure published before this correction is void**, including the
+"all three models tie" conclusion in the previous revision of this file.
+
+## What was measured (46 cases, `evaluation.json`)
+
+| model | ext-en | ext-ar | ext-mixed | schema | adjudication | quote grounded | JSON failures | p50 | p95 | tokens |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `gpt-6.2-sol` | **13/14** | **10/10** | **6/6** | 3/3 | **13/14** | **100%** | **0** | 9.0 s | 19.2 s | 288 k |
+| `claude-sonnet-5-5` | 10/14 | 8/10 | 3/6 | 3/3 | 11/14 | 100% | 0 | 6.4 s | 11.1 s | 47 k |
+| `claude-haiku-5-5` | 12/14 | 8/10 | 2/6 | 3/3 | 10/14 | 100% | 0 | 4.9 s | 10.3 s | 61 k |
+
+## Selection
+
+| capability | model | why |
+|---|---|---|
+| semantic extraction | **`gpt-6.2-sol`** | 29 of 30 extraction cases against 21 and 22; 100% verbatim-quote grounding; zero JSON parse failures. The margin is no longer inside noise. |
+| relationship adjudication | **`gpt-6.2-sol`** | 13 of 14, against 11 and 10. |
+| entity adjudication | `gpt-6.2-sol` (same client) | the cascade's last stage asks a yes/no question about a short candidate list; the same model, no second selection to justify |
+| embeddings | **local `bge-m3`** | the provider serves none; measured in `reports/retrieval/` |
+| reranking | **none** | measured and rejected in `reports/retrieval/` (nDCG 0.882 fused against 0.765 BM25-reranked, 0.726 recency-reranked) |
+
+**The documented alternative.** `claude-haiku-5-5` costs 2.5-4.9 s per call against 9.0 s and scores four adjudication
+points lower. Adjudication runs once per conflicting candidate on the write path, so a deployment with a tight write
+budget may legitimately choose it; that trade is recorded rather than hidden behind "gpt is better".
+
+## Cost, tokens and context
+
+Token counts are the harness's own accounting (`usage` summed over calls), and they explain the latency difference:
+`gpt-6.2-sol` used 288 k tokens for the same run `claude-sonnet-5-5` did in 47 k, because its extraction prompt asks for
+more fields and it re-reads more context. Context windows were **not** measured: the harness never approaches one (the
+largest request is under 3 k tokens), so a context-window figure here would be copied from a specification rather than
+measured, and this file does not publish numbers it did not produce.
 
 ## Extraction quality (21 cases: 6 English, 4 Arabic, 3 code-switched, 6 adjudication pairs, 2 questions with no answer)
 

@@ -1,0 +1,1526 @@
+{
+  "generated_at": "2026-11-25T02:37:12.627783+00:00",
+  "corpus_size": 49,
+  "questions": 64,
+  "questions_by_kind": {
+    "lexical": 15,
+    "paraphrase": 33,
+    "cross_script": 8,
+    "no_match": 8
+  },
+  "top_k": 5,
+  "embedding_model": "BAAI/bge-m3 (local ONNX, halfvec(1024))",
+  "configurations": [
+    {
+      "configuration": "recency",
+      "recall@5": 0.0893,
+      "top1": 0.0179,
+      "mrr@5": 0.0408,
+      "ndcg@5": 0.0527,
+      "no_match_false_positive": 1.0,
+      "misses": 59,
+      "by_kind": {
+        "lexical": 0.3333,
+        "paraphrase": 0.0,
+        "cross_script": 0.0,
+        "no_match": 0.0
+      }
+    },
+    {
+      "configuration": "lexical",
+      "recall@5": 0.3929,
+      "top1": 0.375,
+      "mrr@5": 0.3839,
+      "ndcg@5": 0.3863,
+      "no_match_false_positive": 0.0,
+      "misses": 34,
+      "by_kind": {
+        "lexical": 0.7333,
+        "paraphrase": 0.3333,
+        "cross_script": 0.0,
+        "no_match": 1.0
+      }
+    },
+    {
+      "configuration": "hybrid",
+      "recall@5": 0.9821,
+      "top1": 0.7321,
+      "mrr@5": 0.8473,
+      "ndcg@5": 0.8819,
+      "no_match_false_positive": 0.125,
+      "misses": 2,
+      "by_kind": {
+        "lexical": 1.0,
+        "paraphrase": 0.9697,
+        "cross_script": 1.0,
+        "no_match": 0.875
+      }
+    },
+    {
+      "configuration": "bm25",
+      "recall@5": 0.1429,
+      "top1": 0.0714,
+      "mrr@5": 0.0943,
+      "ndcg@5": 0.1062,
+      "no_match_false_positive": 1.0,
+      "misses": 56,
+      "by_kind": {
+        "lexical": 0.0667,
+        "paraphrase": 0.1818,
+        "cross_script": 0.125,
+        "no_match": 0.0
+      }
+    },
+    {
+      "configuration": "hybrid_then_bm25",
+      "recall@5": 0.9821,
+      "top1": 0.4821,
+      "mrr@5": 0.6914,
+      "ndcg@5": 0.7649,
+      "no_match_false_positive": 0.125,
+      "misses": 2,
+      "by_kind": {
+        "lexical": 1.0,
+        "paraphrase": 0.9697,
+        "cross_script": 1.0,
+        "no_match": 0.875
+      }
+    },
+    {
+      "configuration": "hybrid_then_recency",
+      "recall@5": 0.9821,
+      "top1": 0.4107,
+      "mrr@5": 0.6396,
+      "ndcg@5": 0.7259,
+      "no_match_false_positive": 0.125,
+      "misses": 2,
+      "by_kind": {
+        "lexical": 1.0,
+        "paraphrase": 0.9697,
+        "cross_script": 1.0,
+        "no_match": 0.875
+      }
+    }
+  ],
+  "misses": {
+    "recency": [
+      {
+        "question": "where do I live now",
+        "kind": "paraphrase",
+        "expected": "residence_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "which address did I change when I relocated",
+        "kind": "paraphrase",
+        "expected": "residence_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "أين أعيش الآن",
+        "kind": "paraphrase",
+        "expected": "residence_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "where did I live before moving to Berlin",
+        "kind": "paraphrase",
+        "expected": "residence_old",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "when should nobody schedule a meeting for me",
+        "kind": "paraphrase",
+        "expected": "meeting_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "ما هو الوقت الذي لا أحب أن يُحجز لي فيه اجتماع",
+        "kind": "paraphrase",
+        "expected": "meeting_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "why do I protect the early morning",
+        "kind": "paraphrase",
+        "expected": "meeting_why",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "how do I take my coffee",
+        "kind": "paraphrase",
+        "expected": "coffee_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "كيف أفضل قهوتي",
+        "kind": "paraphrase",
+        "expected": "coffee_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what does Sara drink",
+        "kind": "paraphrase",
+        "expected": "coffee_other",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "which foods are off the table for me",
+        "kind": "paraphrase",
+        "expected": "diet_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "ما الأطعمة التي لا آكلها",
+        "kind": "paraphrase",
+        "expected": "diet_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what should be checked before I eat something",
+        "kind": "paraphrase",
+        "expected": "allergy",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what do I write code in",
+        "kind": "paraphrase",
+        "expected": "editor",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "which languages is my editor configured for",
+        "kind": "paraphrase",
+        "expected": "editor_language",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "بأي لغة أحب أن تكون الإجابة",
+        "kind": "paraphrase",
+        "expected": "language_pref",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what must happen before a deployment",
+        "kind": "paraphrase",
+        "expected": "deploy",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "ماذا يحتاج النشر قبل أن يعمل",
+        "kind": "paraphrase",
+        "expected": "deploy_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "how often am I on call",
+        "kind": "paraphrase",
+        "expected": "oncall",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what time is my day off",
+        "kind": "paraphrase",
+        "expected": "friday",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "ما هو يومي الذي لا أعمل فيه",
+        "kind": "paraphrase",
+        "expected": "friday_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "where does my sister live",
+        "kind": "paraphrase",
+        "expected": "sister",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "أين تعيش أختي",
+        "kind": "paraphrase",
+        "expected": "sister_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "when does my passport run out",
+        "kind": "paraphrase",
+        "expected": "passport",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what is broken on the car",
+        "kind": "paraphrase",
+        "expected": "car",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what am I reading about",
+        "kind": "paraphrase",
+        "expected": "book",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "عن ماذا أقرأ هذه الأيام",
+        "kind": "paraphrase",
+        "expected": "book_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what am I listening to on the train",
+        "kind": "paraphrase",
+        "expected": "podcast",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "where do I want to stay when I travel",
+        "kind": "paraphrase",
+        "expected": "hotel",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "where do I exercise",
+        "kind": "paraphrase",
+        "expected": "gym",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "أين أتمرن",
+        "kind": "paraphrase",
+        "expected": "gym_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what does my father do",
+        "kind": "paraphrase",
+        "expected": "father",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "when is the rent payable",
+        "kind": "paraphrase",
+        "expected": "rent",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "who is my dentist",
+        "kind": "lexical",
+        "expected": "doctor",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "موعد طبيب الأسنان",
+        "kind": "lexical",
+        "expected": "dentist_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what is the daily standup",
+        "kind": "lexical",
+        "expected": "standup",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "billing provider",
+        "kind": "lexical",
+        "expected": "billing",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "infrastructure budget",
+        "kind": "lexical",
+        "expected": "budget",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "project alpha",
+        "kind": "lexical",
+        "expected": "project_alpha",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "project beta",
+        "kind": "lexical",
+        "expected": "project_beta",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "flight to Berlin",
+        "kind": "lexical",
+        "expected": "flight",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "where do I live",
+        "kind": "lexical",
+        "expected": "residence_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "أين يقع عنواني الحالي",
+        "kind": "cross_script",
+        "expected": "residence_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "متى أستيقظ في الصباح للعمل",
+        "kind": "cross_script",
+        "expected": "meeting_why",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "هل أشرب القهوة بالسكر",
+        "kind": "cross_script",
+        "expected": "coffee_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "هل أنا نباتي",
+        "kind": "cross_script",
+        "expected": "diet_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "متى تزورني أختي",
+        "kind": "cross_script",
+        "expected": "sister",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "where is the gym I go to",
+        "kind": "cross_script",
+        "expected": "gym_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "which day do I not work",
+        "kind": "cross_script",
+        "expected": "friday_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "when is the deploy pipeline allowed to run",
+        "kind": "cross_script",
+        "expected": "deploy_ar",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "coffee with no sugar",
+        "kind": "lexical",
+        "expected": "coffee_en",
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what colour is the paint in my flat",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "جيراننا يشكون من الضجيج كل ليلة",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "which visa do I need for Japan",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "my bicycle chain keeps slipping",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what did the doctor say about my knee",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "how much do I owe the tax office",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "what is the wifi password at the office",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      },
+      {
+        "question": "من هو مدير المشروع الجديد",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "weather",
+          "piano",
+          "crypto"
+        ]
+      }
+    ],
+    "lexical": [
+      {
+        "question": "where do I live now",
+        "kind": "paraphrase",
+        "expected": "residence_en",
+        "returned": []
+      },
+      {
+        "question": "which address did I change when I relocated",
+        "kind": "paraphrase",
+        "expected": "residence_en",
+        "returned": []
+      },
+      {
+        "question": "أين أعيش الآن",
+        "kind": "paraphrase",
+        "expected": "residence_ar",
+        "returned": []
+      },
+      {
+        "question": "when should nobody schedule a meeting for me",
+        "kind": "paraphrase",
+        "expected": "meeting_en",
+        "returned": []
+      },
+      {
+        "question": "why do I protect the early morning",
+        "kind": "paraphrase",
+        "expected": "meeting_why",
+        "returned": []
+      },
+      {
+        "question": "كيف أفضل قهوتي",
+        "kind": "paraphrase",
+        "expected": "coffee_ar",
+        "returned": []
+      },
+      {
+        "question": "which foods are off the table for me",
+        "kind": "paraphrase",
+        "expected": "diet_en",
+        "returned": []
+      },
+      {
+        "question": "ما الأطعمة التي لا آكلها",
+        "kind": "paraphrase",
+        "expected": "diet_ar",
+        "returned": []
+      },
+      {
+        "question": "what should be checked before I eat something",
+        "kind": "paraphrase",
+        "expected": "allergy",
+        "returned": []
+      },
+      {
+        "question": "which languages is my editor configured for",
+        "kind": "paraphrase",
+        "expected": "editor_language",
+        "returned": []
+      },
+      {
+        "question": "بأي لغة أحب أن تكون الإجابة",
+        "kind": "paraphrase",
+        "expected": "language_pref",
+        "returned": []
+      },
+      {
+        "question": "what must happen before a deployment",
+        "kind": "paraphrase",
+        "expected": "deploy",
+        "returned": []
+      },
+      {
+        "question": "how often am I on call",
+        "kind": "paraphrase",
+        "expected": "oncall",
+        "returned": []
+      },
+      {
+        "question": "what time is my day off",
+        "kind": "paraphrase",
+        "expected": "friday",
+        "returned": []
+      },
+      {
+        "question": "ما هو يومي الذي لا أعمل فيه",
+        "kind": "paraphrase",
+        "expected": "friday_ar",
+        "returned": []
+      },
+      {
+        "question": "what is broken on the car",
+        "kind": "paraphrase",
+        "expected": "car",
+        "returned": []
+      },
+      {
+        "question": "عن ماذا أقرأ هذه الأيام",
+        "kind": "paraphrase",
+        "expected": "book_ar",
+        "returned": []
+      },
+      {
+        "question": "what am I listening to on the train",
+        "kind": "paraphrase",
+        "expected": "podcast",
+        "returned": []
+      },
+      {
+        "question": "where do I want to stay when I travel",
+        "kind": "paraphrase",
+        "expected": "hotel",
+        "returned": []
+      },
+      {
+        "question": "where do I exercise",
+        "kind": "paraphrase",
+        "expected": "gym",
+        "returned": []
+      },
+      {
+        "question": "أين أتمرن",
+        "kind": "paraphrase",
+        "expected": "gym_ar",
+        "returned": []
+      },
+      {
+        "question": "when is the rent payable",
+        "kind": "paraphrase",
+        "expected": "rent",
+        "returned": []
+      },
+      {
+        "question": "billing provider",
+        "kind": "lexical",
+        "expected": "billing",
+        "returned": []
+      },
+      {
+        "question": "piano practice",
+        "kind": "lexical",
+        "expected": "piano",
+        "returned": []
+      },
+      {
+        "question": "weather in Berlin",
+        "kind": "lexical",
+        "expected": "weather",
+        "returned": []
+      },
+      {
+        "question": "where do I live",
+        "kind": "lexical",
+        "expected": "residence_en",
+        "returned": []
+      },
+      {
+        "question": "أين يقع عنواني الحالي",
+        "kind": "cross_script",
+        "expected": "residence_en",
+        "returned": [
+          "residence_ar"
+        ]
+      },
+      {
+        "question": "متى أستيقظ في الصباح للعمل",
+        "kind": "cross_script",
+        "expected": "meeting_why",
+        "returned": []
+      },
+      {
+        "question": "هل أشرب القهوة بالسكر",
+        "kind": "cross_script",
+        "expected": "coffee_en",
+        "returned": [
+          "coffee_ar"
+        ]
+      },
+      {
+        "question": "هل أنا نباتي",
+        "kind": "cross_script",
+        "expected": "diet_en",
+        "returned": [
+          "diet_ar"
+        ]
+      },
+      {
+        "question": "متى تزورني أختي",
+        "kind": "cross_script",
+        "expected": "sister",
+        "returned": []
+      },
+      {
+        "question": "where is the gym I go to",
+        "kind": "cross_script",
+        "expected": "gym_ar",
+        "returned": []
+      },
+      {
+        "question": "which day do I not work",
+        "kind": "cross_script",
+        "expected": "friday_ar",
+        "returned": []
+      },
+      {
+        "question": "when is the deploy pipeline allowed to run",
+        "kind": "cross_script",
+        "expected": "deploy_ar",
+        "returned": [
+          "deploy"
+        ]
+      }
+    ],
+    "hybrid": [
+      {
+        "question": "أين أتمرن",
+        "kind": "paraphrase",
+        "expected": "gym_ar",
+        "returned": []
+      },
+      {
+        "question": "جيراننا يشكون من الضجيج كل ليلة",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "oncall",
+          "rent"
+        ]
+      }
+    ],
+    "bm25": [
+      {
+        "question": "why do I protect the early morning",
+        "kind": "paraphrase",
+        "expected": "meeting_why",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "how do I take my coffee",
+        "kind": "paraphrase",
+        "expected": "coffee_en",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "كيف أفضل قهوتي",
+        "kind": "paraphrase",
+        "expected": "coffee_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what does Sara drink",
+        "kind": "paraphrase",
+        "expected": "coffee_other",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "which foods are off the table for me",
+        "kind": "paraphrase",
+        "expected": "diet_en",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "ما الأطعمة التي لا آكلها",
+        "kind": "paraphrase",
+        "expected": "diet_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what should be checked before I eat something",
+        "kind": "paraphrase",
+        "expected": "allergy",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what do I write code in",
+        "kind": "paraphrase",
+        "expected": "editor",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "which languages is my editor configured for",
+        "kind": "paraphrase",
+        "expected": "editor_language",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "بأي لغة أحب أن تكون الإجابة",
+        "kind": "paraphrase",
+        "expected": "language_pref",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what must happen before a deployment",
+        "kind": "paraphrase",
+        "expected": "deploy",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "ماذا يحتاج النشر قبل أن يعمل",
+        "kind": "paraphrase",
+        "expected": "deploy_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "how often am I on call",
+        "kind": "paraphrase",
+        "expected": "oncall",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what time is my day off",
+        "kind": "paraphrase",
+        "expected": "friday",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "ما هو يومي الذي لا أعمل فيه",
+        "kind": "paraphrase",
+        "expected": "friday_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "where does my sister live",
+        "kind": "paraphrase",
+        "expected": "sister",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "أين تعيش أختي",
+        "kind": "paraphrase",
+        "expected": "sister_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "when does my passport run out",
+        "kind": "paraphrase",
+        "expected": "passport",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what is broken on the car",
+        "kind": "paraphrase",
+        "expected": "car",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what am I reading about",
+        "kind": "paraphrase",
+        "expected": "book",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "عن ماذا أقرأ هذه الأيام",
+        "kind": "paraphrase",
+        "expected": "book_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what am I listening to on the train",
+        "kind": "paraphrase",
+        "expected": "podcast",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "where do I want to stay when I travel",
+        "kind": "paraphrase",
+        "expected": "hotel",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "where do I exercise",
+        "kind": "paraphrase",
+        "expected": "gym",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "أين أتمرن",
+        "kind": "paraphrase",
+        "expected": "gym_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what does my father do",
+        "kind": "paraphrase",
+        "expected": "father",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "when is the rent payable",
+        "kind": "paraphrase",
+        "expected": "rent",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "who is my dentist",
+        "kind": "lexical",
+        "expected": "doctor",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "موعد طبيب الأسنان",
+        "kind": "lexical",
+        "expected": "dentist_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what is the daily standup",
+        "kind": "lexical",
+        "expected": "standup",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "billing provider",
+        "kind": "lexical",
+        "expected": "billing",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "infrastructure budget",
+        "kind": "lexical",
+        "expected": "budget",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "project alpha",
+        "kind": "lexical",
+        "expected": "project_alpha",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "project beta",
+        "kind": "lexical",
+        "expected": "project_beta",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "quarterly report deadline",
+        "kind": "lexical",
+        "expected": "deadline",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "flight to Berlin",
+        "kind": "lexical",
+        "expected": "flight",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "conference talk",
+        "kind": "lexical",
+        "expected": "talk",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "piano practice",
+        "kind": "lexical",
+        "expected": "piano",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "cryptocurrency",
+        "kind": "lexical",
+        "expected": "crypto",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "weather in Berlin",
+        "kind": "lexical",
+        "expected": "weather",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "متى أستيقظ في الصباح للعمل",
+        "kind": "cross_script",
+        "expected": "meeting_why",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "هل أشرب القهوة بالسكر",
+        "kind": "cross_script",
+        "expected": "coffee_en",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "هل أنا نباتي",
+        "kind": "cross_script",
+        "expected": "diet_en",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "متى تزورني أختي",
+        "kind": "cross_script",
+        "expected": "sister",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "where is the gym I go to",
+        "kind": "cross_script",
+        "expected": "gym_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "which day do I not work",
+        "kind": "cross_script",
+        "expected": "friday_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "when is the deploy pipeline allowed to run",
+        "kind": "cross_script",
+        "expected": "deploy_ar",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "coffee with no sugar",
+        "kind": "lexical",
+        "expected": "coffee_en",
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what colour is the paint in my flat",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "جيراننا يشكون من الضجيج كل ليلة",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "which visa do I need for Japan",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "my bicycle chain keeps slipping",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what did the doctor say about my knee",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "how much do I owe the tax office",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "what is the wifi password at the office",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      },
+      {
+        "question": "من هو مدير المشروع الجديد",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "residence_en",
+          "residence_ar",
+          "residence_old"
+        ]
+      }
+    ],
+    "hybrid_then_bm25": [
+      {
+        "question": "أين أتمرن",
+        "kind": "paraphrase",
+        "expected": "gym_ar",
+        "returned": []
+      },
+      {
+        "question": "جيراننا يشكون من الضجيج كل ليلة",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "oncall",
+          "rent"
+        ]
+      }
+    ],
+    "hybrid_then_recency": [
+      {
+        "question": "أين أتمرن",
+        "kind": "paraphrase",
+        "expected": "gym_ar",
+        "returned": []
+      },
+      {
+        "question": "جيراننا يشكون من الضجيج كل ليلة",
+        "kind": "no_match",
+        "expected": null,
+        "returned": [
+          "rent",
+          "oncall"
+        ]
+      }
+    ]
+  }
+}

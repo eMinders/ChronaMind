@@ -145,8 +145,12 @@ OPERATIONS: tuple[Operation, ...] = (
         ("targets_readable",), transitions=frozenset({("inferred", "retired")})),
     _op("purge_working", "Maintain", "C", ("scope",), "PurgeReceipt", conditions=("scope_writable",), deletes=True,
         admin_only=True),
-    _op("expire", "Maintain", "C", ("scope", "as_of"), "Receipt", conditions=("scope_writable",), deletes=True,
-        admin_only=True),
+    # `deletes=False` (V2-D97): expiry stamps `abstraction_stats.expires_at` and derives the `expired` stale cause. It
+    # destroys nothing, so declaring a deletion would be a guarantee nothing enforces.
+    # `precondition_failed` is declared because the caller's `as_of` can be refused as an unmet precondition
+    # (`V2-D97`): a timestamp in the future is well formed and still not a legal observation of the clock.
+    _op("expire", "Maintain", "C", ("scope", "as_of"), "ExpiryReceipt", ("precondition_failed",),
+        ("scope_writable",), admin_only=True),
     _op("rebuild_index", "Maintain", "C", ("index",), "JobId", admin_only=True),
     _op("register_method", "Maintain", "C", ("name", "version", "params_schema_hash", "description",
         "idempotency_key"), "MethodId", ("precondition_failed",), admin_only=True),

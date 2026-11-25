@@ -39,6 +39,7 @@ USER_TABLES = (
     "entity_link",  # migration 18 (E-024): explicit links between two scope-local entity ids
     "outcome_stats",  # migration 20 (E-027): procedure outcome counters
     "procedure_shape",  # migration 21 (E-030): preconditions and steps, written once with the procedure
+    "export_snapshot",  # migration 25 (E-038/F11): the durable export manifest, user-isolated
 )
 
 
@@ -75,6 +76,7 @@ TABLE_GRANTS: dict[str, frozenset[str]] = {
     "entity_link": _APPEND,
     "outcome_stats": _MUTABLE,  # counters move; a row goes with its version by cascade (owner-run)
     "procedure_shape": _APPEND,  # asserted content: read and appended, never updated (guard_procedure_shape)
+    "export_snapshot": _APPEND,  # a manifest is evidence of what was exported: appended, never rewritten
     # the method registry is shared and append-only: anyone may read it, `register_method` appends, nobody changes it
     "method": _APPEND,
 }

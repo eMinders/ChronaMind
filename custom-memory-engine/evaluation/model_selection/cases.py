@@ -221,7 +221,180 @@ REWRITE: tuple[Case, ...] = (
     ),
 )
 
-ALL_CASES: tuple[Case, ...] = ENGLISH + ARABIC + MIXED + ADJUDICATION + REWRITE
+
+#: A second block added for `V2-D102`. The first 20 cases were enough to choose a model for *extraction*; they were not
+#: enough to separate the candidates on the three things that actually differ in a deployment: entities (a mention has
+#: to be named, and named the way the text writes it), facets (the user-model facet is what routes an artifact into the
+#: evolving user model, and a model that never emits one leaves that half of the schema unpopulated), and
+#: contradictions phrased the way a person phrases them rather than as bare assertion pairs.
+ENGLISH_V2: tuple[Case, ...] = (
+    Case(
+        "en2_employer",
+        "I started at Northwind Traders in February as a data engineer.",
+        "2026-02-14T10:00:00+00:00",
+        "en",
+        ("northwind", "data engineer"),
+    ),  # fmt: skip
+    Case(
+        "en2_pronoun",
+        "We adopted a dog called Rufus last weekend.",
+        "2026-04-02T16:00:00+00:00",
+        "en",
+        ("rufus", "dog"),
+    ),  # fmt: skip
+    Case(
+        "en2_negation", "I don't drink coffee any more, only tea.", "2026-05-01T08:00:00+00:00", "en", ("coffee",)
+    ),  # fmt: skip
+    Case(
+        "en2_number",
+        "The flat is 74 square metres and the rent is 1450 euros.",
+        "2026-01-09T12:00:00+00:00",
+        "en",
+        ("74", "1450"),
+    ),  # fmt: skip
+    Case(
+        "en2_name_change",
+        "My new manager is Priya, she replaced Tom in March.",
+        "2026-03-20T09:30:00+00:00",
+        "en",
+        ("priya",),
+    ),  # fmt: skip
+    Case(
+        "en2_location_rel",
+        "My brother Karim moved to Lisbon and works remotely.",
+        "2026-06-11T14:00:00+00:00",
+        "en",
+        ("karim", "lisbon"),
+    ),  # fmt: skip
+    Case(
+        "en2_constraint",
+        "Never schedule anything for me on Friday afternoons.",
+        "2026-02-02T11:00:00+00:00",
+        "en",
+        ("friday",),
+    ),  # fmt: skip
+    Case(
+        "en2_preference",
+        "I would rather get a short answer than a long one.",
+        "2026-07-07T19:00:00+00:00",
+        "en",
+        ("short",),
+    ),  # fmt: skip
+)
+
+ARABIC_V2: tuple[Case, ...] = (
+    Case(
+        "ar2_employer",
+        "بدأت العمل في شركة النور في يناير كمهندس برمجيات.",
+        "2026-01-15T08:00:00+00:00",
+        "ar",
+        ("النور",),
+    ),  # fmt: skip
+    Case(
+        "ar2_family", "أمي تسكن في عمّان وتزورنا في رمضان.", "2026-03-01T20:00:00+00:00", "ar", ("عمّان",)
+    ),  # fmt: skip
+    Case(
+        "ar2_negation", "لم أعد أشرب القهوة، أشرب الشاي فقط.", "2026-04-04T07:30:00+00:00", "ar", ("القهوة", "الشاي")
+    ),  # fmt: skip
+    Case(
+        "ar2_number", "الإيجار ١٤٥٠ يورو شهريًا والشقة ٧٤ مترًا.", "2026-02-20T13:00:00+00:00", "ar", ("١٤٥٠",)
+    ),  # fmt: skip
+    Case(
+        "ar2_place", "سافرت إلى دبي في مايو لحضور مؤتمر تقني.", "2026-05-19T09:00:00+00:00", "ar", ("دبي",)
+    ),  # fmt: skip
+    Case(
+        "ar2_constraint", "لا تحجز لي أي شيء يوم الجمعة بعد الظهر.", "2026-02-02T11:05:00+00:00", "ar", ("الجمعة",)
+    ),  # fmt: skip
+)
+
+MIXED_V2: tuple[Case, ...] = (
+    Case(
+        "mx2_arabizi",
+        "Bossi 3ayez report el 3asher el gai, ya3ni next Sunday.",
+        "2026-06-01T15:00:00+00:00",
+        "mixed",
+        ("report",),
+    ),  # fmt: skip
+    Case(
+        "mx2_code_switch",
+        "المشروع اسمه Atlas، والـ deadline يوم 15 نوفمبر.",
+        "2026-09-09T10:00:00+00:00",
+        "mixed",
+        ("atlas", "نوفمبر"),
+    ),  # fmt: skip
+    Case(
+        "mx2_transliteration",
+        "My landlord is called Herr Weber, sa7eb el shaqqa.",
+        "2026-03-03T17:20:00+00:00",
+        "mixed",
+        ("weber",),
+    ),  # fmt: skip
+)
+
+ADJUDICATION_V2: tuple[Case, ...] = (
+    # a move: `update` in the model's vocabulary ("a later value of the same attribute"). `supersede` is the engine's
+    # *strategy* name, not a relation a model may emit -- the first version of this block used it, and every candidate
+    # was scored wrong for answering "update", which is correct.
+    Case("adj2_move", "", "", "", (), adjudication=("I live in Munich now", "I live in Berlin", "update")),
+    Case(
+        "adj2_reinforce_ar",
+        "",
+        "",
+        "",
+        (),
+        adjudication=("أنا نباتي ولا آكل اللحوم", "أنا نباتي ولا آكل السمك", "duplicate"),
+    ),  # fmt: skip
+    Case(
+        "adj2_unrelated",
+        "",
+        "",
+        "",
+        (),
+        adjudication=("I bought a new laptop", "I prefer dark roast coffee", "unrelated"),
+    ),  # fmt: skip
+    Case(
+        "adj2_refinement",
+        "",
+        "",
+        "",
+        (),
+        # the new statement is narrower than the old one: it does not contradict it, so it is the same belief said
+        # more precisely -- `duplicate`, not a new value
+        adjudication=("I work remotely three days a week", "I work remotely", "duplicate"),
+    ),  # fmt: skip
+    Case(
+        "adj2_time_change",
+        "",
+        "",
+        "",
+        (),
+        adjudication=("The standup moved to eleven", "The daily standup is at nine thirty", "update"),
+    ),  # fmt: skip
+    Case(
+        "adj2_negation",
+        "",
+        "",
+        "",
+        (),
+        adjudication=("I stopped eating fish", "I am vegetarian and I do not eat fish", "duplicate"),
+    ),  # fmt: skip
+    Case(
+        "adj2_cross_lang", "", "", "", (), adjudication=("I moved to Berlin", "انتقلت إلى برلين", "duplicate")
+    ),  # fmt: skip
+    Case(
+        "adj2_different_person",
+        "",
+        "",
+        "",
+        (),
+        adjudication=("Sara likes dark roast", "I prefer dark roast coffee", "unrelated"),
+    ),  # fmt: skip
+)
+
+
+ALL_CASES: tuple[Case, ...] = (
+    ENGLISH + ARABIC + MIXED + ADJUDICATION + REWRITE + ENGLISH_V2 + ARABIC_V2 + MIXED_V2 + ADJUDICATION_V2
+)
 
 
 def overlap(left: str, right: str) -> float:

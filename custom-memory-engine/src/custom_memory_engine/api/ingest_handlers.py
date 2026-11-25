@@ -26,6 +26,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Literal, cast
 
+import structlog
 from psycopg import AsyncConnection, sql
 from psycopg.errors import ForeignKeyViolation
 from psycopg.rows import tuple_row
@@ -33,14 +34,18 @@ from psycopg.rows import tuple_row
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Receipt, Rejected, Runtime, new_id, now, remember, replayed
 from custom_memory_engine.engine.gate import AssertionMode as AssertMode
-from custom_memory_engine.engine.ingest import apply_candidate
+from custom_memory_engine.engine.hybrid import RecallError, slot_for_dimension
+from custom_memory_engine.engine.ingest import apply_candidate, attach_embedding
 from custom_memory_engine.engine.procedure_shape import ProcedureShape, ProcedureShapeError, parse_shape, record_shape
 from custom_memory_engine.engine.transactions import CandidateVersionInput, EvidenceInput, commit_initial_version
 from custom_memory_engine.grounding.sources import canonical_hash
 from custom_memory_engine.model.axes import FACETS, Kind, Retention
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
+from custom_memory_engine.semantic.contracts import Embedder
 from custom_memory_engine.semantic.slots import SlotError, normalize_slot
+
+logger = structlog.get_logger(__name__)
 
 # V2-D41 + V2-D66: tool/file/event are the coding-profile source types; turn and external are the W1 originals.
 _SOURCE_TYPES = ("turn", "external", "tool", "file", "event")
@@ -239,9 +244,41 @@ async def _original_answer(
 class IngestHandlers:
     """The W1 write handlers, bound to one :class:`Runtime`."""
 
-    def __init__(self, runtime: Runtime, profile: Profile | None = None) -> None:
+    def __init__(self, runtime: Runtime, profile: Profile | None = None, embedder: Embedder | None = None) -> None:
         self.runtime = runtime
         self.profile = profile
+        # The deployment's embedder (``V2-D98``), used here as the *document* side: the vector stored with a row must
+        # come from the same model that will encode the questions that read it. ``None`` writes no vector, and the row
+        # is then findable by the lexical arms only -- which is the pre-W3.5 behaviour, not a silent failure.
+        self.embedder: Embedder | None = embedder
+
+    async def _document_vector(self, content: str) -> tuple[tuple[float, ...], str] | None:
+        """The row's vector and model id, or ``None`` when the deployment embeds nothing.
+
+        Called **before** the write transaction opens: encoding is CPU-bound and takes tens of milliseconds, and a
+        transaction held open across it holds a pooled connection for the duration. A model failure does not fail the
+        write -- the user's message is durable whether or not the model is up, and losing it to a model hiccup would be
+        a far worse outcome than a row the lexical arms must find -- but it is logged with a static code so the gap is
+        visible, and the row stays findable by the two language-agnostic arms.
+        """
+        if self.embedder is None:
+            return None
+        try:
+            vectors = await self.embedder.embed([content])
+        except Exception as error:  # noqa: BLE001 - the write must not depend on the model being up
+            logger.warning(
+                "ingest_embedding_unavailable",
+                code=getattr(error, "code", "embedding_failed"),
+                error_type=type(error).__name__,
+            )
+            return None
+        vector = tuple(float(value) for value in vectors[0]) if vectors else ()
+        try:
+            slot_for_dimension(len(vector))
+        except RecallError as error:
+            logger.warning("ingest_embedding_unavailable", code=error.code, error_type="RecallError")
+            return None
+        return vector, self.embedder.model
 
     # -- profile configuration (E-019): data, never a branch on the profile's name ------------------------------
 
@@ -283,6 +320,7 @@ class IngestHandlers:
         scope = _scope_path(call.arguments.get("scope"), user)
         self._require_kind("episode")
         span = _text(source.get("span") or source["ref"], "source_span")
+        document = await self._document_vector(content)
         try:
             async with self.runtime.session(user) as connection:
                 if (found := await replayed(self.runtime, connection, user, "ingest_episode", key)) is not None:
@@ -314,6 +352,15 @@ class IngestHandlers:
                     evidence=(evidence,),
                 )
                 await commit_initial_version(connection, candidate, schema_name=self.runtime.schema_name)
+                if document is not None:
+                    await attach_embedding(
+                        connection,
+                        version_id=version_id,
+                        user_id=user,
+                        embedding=document[0],
+                        embedding_model=document[1],
+                        schema_name=self.runtime.schema_name,
+                    )
                 await _stamp_creator(self.runtime, connection, call, version_id)
                 await self._apply_retention(connection, user, version_id, "episode")
                 await remember(self.runtime, connection, user, "ingest_episode", key, version_id)
@@ -385,6 +432,7 @@ class IngestHandlers:
             if not isinstance(event_range, Sequence) or isinstance(event_range, str | bytes) or len(event_range) != 2:
                 raise EntryError("validation_error", "event_range_invalid")
             start, end = _when(event_range[0], "event_range"), _when(event_range[1], "event_range")
+        document = await self._document_vector(content)
         async with self.runtime.session(user) as connection:
             if (found := await replayed(self.runtime, connection, user, "assert", key)) is not None:
                 return await _original_answer(self.runtime, connection, user, found, "asserted")
@@ -437,6 +485,8 @@ class IngestHandlers:
                 # every turn cited, as `(role, content)`: the gate's span check needs the text of each
                 evidence_turns=[turns[turn_id] for turn_id in dict.fromkeys(turn_ids)],
                 schema_name=self.runtime.schema_name,
+                embedding=None if document is None else document[0],
+                embedding_model=None if document is None else document[1],
             )
             if shape is not None and await _stored(self.runtime, connection, user, version_id):
                 # E-030: the procedure's preconditions and steps, in the same transaction as the procedure itself. The
@@ -476,9 +526,19 @@ class IngestHandlers:
         )
 
 
-def register_ingest_handlers(engine: Engine, runtime: Runtime, profile: Profile | None = None) -> IngestHandlers:
-    """Wire ``ingest_episode``, ``assert`` and ``ingest_artifact`` onto ``engine`` (configured by ``profile``)."""
-    handlers = IngestHandlers(runtime, profile)
+def register_ingest_handlers(
+    engine: Engine,
+    runtime: Runtime,
+    profile: Profile | None = None,
+    *,
+    embedder: Embedder | None = None,
+) -> IngestHandlers:
+    """Wire ``ingest_episode``, ``assert`` and ``ingest_artifact`` onto ``engine``.
+
+    ``profile`` decides the enabled kinds and the retention defaults; ``embedder`` is the deployment's model, used for
+    the **document** side of the dense arm so a row written here is findable by the vector the read path computes.
+    """
+    handlers = IngestHandlers(runtime, profile, embedder)
     table: Mapping[str, Handler] = {
         "ingest_episode": handlers.ingest_episode,
         "assert": handlers.assert_,

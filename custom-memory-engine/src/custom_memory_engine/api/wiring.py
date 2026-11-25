@@ -13,6 +13,7 @@ from custom_memory_engine.api.entry import Engine, Handler
 from custom_memory_engine.api.runtime import DbMethods, DbTargets, ForeignKeyPrincipals, Runtime
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.audit import ConnectionScopeReads
+from custom_memory_engine.semantic.contracts import Embedder
 
 
 def build_engine(runtime: Runtime, *, handlers: dict[str, Handler] | None = None) -> Engine:
@@ -34,16 +35,9 @@ __all__ = ["build_engine"]
 #: Operations the contract declares that no handler owns yet, each with the reason it is not wired. `wire_engine`
 #: registers everything else, and `tests/test_api_wiring.py` fails if this list and reality disagree, so an operation
 #: cannot quietly stay unwired after its task lands.
-UNWIRED_OPERATIONS: dict[str, str] = {
-    "verify": "the `verification` wire shape is unspecified (API_V2.md 3 gives one opaque argument), while the "
-    "schema's row requires held-out split ids, disjoint temporal windows and context keys (I11)",
-    "dissent": "needs a `negative_constraint` reader in inference (I16); a constraint nothing consults would be the "
-    "write-only column this project keeps finding",
-    "expire": "A-014 (abstraction expiry); V2-D14 is still open on the retention values",
-    "rebuild_index": "A-014; returns a job id and needs the queue's index-maintenance handler",
-    "export": "E-038 (epoch-bound export snapshots); ExportSnapshotStore exists, the handler does not",
-    "stats": "E-036's cost report covers the read path; per-artifact statistics need an outcome-stats reader",
-}
+#: Empty: every operation in the contract now has a handler. The dict stays as the *place* a future gap is declared,
+#: and `tests/test_api_wiring.py` fails if it ever disagrees with reality in either direction.
+UNWIRED_OPERATIONS: dict[str, str] = {}
 
 
 def wire_engine(
@@ -52,6 +46,7 @@ def wire_engine(
     profile: Profile | None = None,
     tau_confidence: float = 0.6,
     tau_coverage: float = 0.5,
+    embedder: Embedder | None = None,
 ) -> Engine:
     """Build the engine and register **every** handler that exists (``E-046``).
 
@@ -61,6 +56,7 @@ def wire_engine(
     statement of what is missing.
     """
     from custom_memory_engine.api.delete_handlers import register_delete_handlers
+    from custom_memory_engine.api.export_handlers import register_export_handlers
     from custom_memory_engine.api.handlers import Handlers, register_structure_handlers
     from custom_memory_engine.api.infer_handlers import register_infer_handlers
     from custom_memory_engine.api.ingest_handlers import register_ingest_handlers
@@ -71,13 +67,14 @@ def wire_engine(
 
     engine = build_engine(runtime)
     structure: Handlers = register_structure_handlers(engine, runtime)
-    register_ingest_handlers(engine, runtime, profile)
-    register_read_handlers(engine, runtime)
+    register_ingest_handlers(engine, runtime, profile, embedder=embedder)
+    register_read_handlers(engine, runtime, embedder=embedder)
     register_infer_handlers(engine, runtime, tau_confidence=tau_confidence, tau_coverage=tau_coverage, profile=profile)
     register_delete_handlers(engine, runtime)
-    register_maintain_handlers(engine, runtime)
+    register_maintain_handlers(engine, runtime, profile)
     register_outcome_handlers(engine, runtime)
     register_lifecycle_handlers(engine, structure)
+    register_export_handlers(engine, runtime)
     return engine
 
 

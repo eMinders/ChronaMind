@@ -99,12 +99,42 @@ type ArmName = Literal["dense", "lexical", "trigram", "graph"]
 #: here, so it never appears in a recall statement.
 RANKING_ARMS: tuple[ArmName, ...] = ("dense", "lexical", "trigram")
 
-#: Cosine similarity below which the dense arm keeps nothing. **Measured, not guessed**: on the labelled multilingual
-#: set in `tests/integration/test_retrieval_quality_db.py`, unrelated question/memory pairs top out at 0.364 while the
-#: weakest true match sits at 0.512, so 0.45 separates them with margin on both sides. Without a floor the dense arm
-#: answers *every* question with its nearest neighbour, which is the "always say something" failure the engine exists
-#: to avoid: a question about quantum chromodynamics must come back empty, not with the closest thing in the corpus.
-DENSE_SIMILARITY_FLOOR = 0.45
+#: The share of the caller's own authorized rows a query term may appear in and still count as **evidence** for the
+#: lexical arm. Measured, not guessed (`V2-D100`): the ``simple`` configuration has no stopword list — by design, since
+#: a stopword list is language-specific — so a question like "what is the wifi password at the office" shares "the",
+#: "is" and "at" with most of the corpus and matched memories that answer nothing. On the labelled set this ratio is
+#: what separates a question's informative terms from its function words without a single language rule.
+TERM_PRUNING_DF_RATIO = 0.35
+#: How many query terms the pruning statistic is computed for: the longest ones, which are the most informative in
+#: every script. A bound, because the statistic is one bounded index scan per term.
+MAX_STATISTIC_TERMS = 6
+
+#: Cosine similarity below which the dense arm keeps nothing. **Measured on the labelled set** in
+#: `evaluation/retrieval` (`V2-D100`) by sweeping the constant through the real read path. The criterion is stated
+#: before the numbers:
+#: minimise the no-match false-positive rate subject to recall@5 >= 0.90, because answering an unanswerable question
+#: confidently is the failure this engine exists to avoid.
+#:
+#: ======  =========  ========  ============================
+#: floor   recall@5   nDCG@5    no-match false positives
+#: ======  =========  ========  ============================
+#: 0.45    1.000      0.900     0.875
+#: 0.55    0.982      0.882     0.125
+#: 0.60    0.875      0.812     0.125
+#: 0.62    0.768      0.728     0.000
+#: 0.65    0.714      0.688     0.000
+#: 0.70    0.607      0.594     0.000
+#: ======  =========  ========  ============================
+#:
+#: The earlier value (0.45) came from a 16-question set whose two unanswerable questions shared no vocabulary with
+#: anything; on the larger set it answered 7 of 8 unanswerable questions with their nearest neighbour. At 0.55 one
+#: remains, and going further costs more recall than it buys precision.
+#:
+#: **What this cannot do.** The weakest *true* match on this set sits at 0.46 and the strongest *false* one at 0.605,
+#: so no single cosine threshold separates them: an unanswerable question whose nearest neighbour is unusually close is
+#: indistinguishable from a genuine cross-script paraphrase without a cross-encoder. That is a measured limit of the
+#: model, not of the threshold, and it is why `Reranker` stays a seam rather than a guarantee.
+DENSE_SIMILARITY_FLOOR = 0.55
 
 
 class RecallError(InvalidParameterValue):
@@ -218,6 +248,72 @@ def vector_literal(values: Sequence[float]) -> str:
             raise RecallError("vector_component_must_be_finite")
         rendered.append(repr(number))
     return "[" + ",".join(rendered) + "]"
+
+
+def statistic_terms(text: str, *, limit: int = MAX_STATISTIC_TERMS) -> tuple[str, ...]:
+    """The query's distinct word tokens worth a document-frequency probe: the longest, up to ``limit``.
+
+    Length is the only language-agnostic proxy for informativeness this module is allowed to use: a two-character token
+    is a word in many scripts and a prefix in Latin ones, so the floor is the same one the trigram arm uses, and the
+    ranking heuristic prefers longer tokens rather than applying a stopword list.
+    """
+    if not isinstance(text, str):
+        raise RecallError("nonblank_query_text_required")
+    seen: dict[str, int] = {}
+    for token in findall(r"\w+", text):
+        lowered = token.casefold()
+        minimum = MIN_TRIGRAM_TOKEN if lowered.isascii() else MIN_TRIGRAM_TOKEN_NON_ASCII
+        if len(lowered) < minimum:
+            continue
+        seen.setdefault(lowered, len(lowered))
+    ordered = sorted(seen, key=lambda token: (-seen[token], token))
+    return tuple(ordered[:limit])
+
+
+async def informative_terms(
+    connection: AsyncConnection,
+    where: sql.Composable,
+    parameters: Mapping[str, object],
+    schema_name: str,
+    text: str,
+    *,
+    limit: int = MAX_STATISTIC_TERMS,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split the query's terms into ``(informative, pruned)`` by their document frequency in the caller's own rows.
+
+    This is the statistical replacement for a stopword list, and it lives here rather than in a table because the
+    statistic must be *the caller's*: it is computed inside the same temporal + read predicate the arms use, under
+    row-level security, so the counts a question reveals are counts of rows that caller may already read. A global IDF
+    table would be both a write-path cost and a cross-tenant oracle.
+
+    One statement, one bounded index scan per term. An empty term list is an empty answer: a question made only of
+    words that appear everywhere in the caller's corpus has no lexical evidence to offer, which is exactly what
+    "answer nothing rather than the nearest thing" requires.
+    """
+    terms = statistic_terms(text, limit=limit)
+    if not terms:
+        return (), ()
+    # Named placeholders, because the statement also binds the arm's own `%(...)s` parameters (the temporal and read
+    # predicates). Psycopg cannot mix the two styles in one statement.
+    values = sql.SQL(", ").join(sql.SQL("(%(term_{})s)").format(sql.Literal(index)) for index in range(len(terms)))
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL(
+                "SELECT t.term, (SELECT count(*) FROM {table} AS m WHERE {where}"
+                " AND m.content_fts_simple @@ pg_catalog.plainto_tsquery('simple', t.term)) AS df,"
+                " (SELECT count(*) FROM {table} AS m WHERE {where}) AS total"
+                " FROM (VALUES {values}) AS t(term)"
+            ).format(table=sql.Identifier(schema_name, "memory_version"), where=where, values=values),
+            {**parameters, **{f"term_{index}": term for index, term in enumerate(terms)}},
+        )
+        rows = await cursor.fetchall()
+    total = int(rows[0][2]) if rows else 0
+    if not total:
+        return (), terms
+    ceiling = max(1, int(total * TERM_PRUNING_DF_RATIO))
+    informative = tuple(str(term) for term, df, _ in rows if int(df) <= ceiling)
+    pruned = tuple(term for term in terms if term not in informative)
+    return informative, pruned
 
 
 def trigram_token(text: str) -> str | None:
@@ -364,21 +460,40 @@ async def hybrid_recall(
             arms.append(ArmRanking("dense", tuple(str(row[0]) for row in await cursor.fetchall())))
 
     if "lexical" in query.arms:
+        # Prune function words by document frequency before the arm runs (`V2-D100`). The arm's *membership* is what
+        # needs this: `simple` has no stopword list (a stopword list would be language-specific), so without it a
+        # question like "what is the wifi password at the office" matches every row containing "the". Ranking was never
+        # the problem; the candidate set was.
+        informative, _pruned = await informative_terms(
+            connection, where, {**compiled.parameters, **read_parameters}, schema_name, query.text
+        )
         async with connection.cursor(row_factory=tuple_row) as cursor:
-            # `websearch_to_tsquery` never raises on user input (unlike `to_tsquery`), which is what makes this arm
-            # safe on arbitrary natural language: a query of punctuation yields an empty tsquery and no matches,
-            # rather than a syntax error that would turn a question into a failure.
-            await cursor.execute(
-                sql.SQL(
-                    "SELECT m.id FROM {table} AS m WHERE {where} "
-                    "AND m.content_fts_simple @@ pg_catalog.websearch_to_tsquery('simple', %(query_text)s) "
-                    "ORDER BY pg_catalog.ts_rank_cd("
-                    "m.content_fts_simple, pg_catalog.websearch_to_tsquery('simple', %(query_text)s)"
-                    ") DESC, m.id LIMIT %(depth)s"
-                ).format(table=table, where=where),
-                {**compiled.parameters, **read_parameters, "query_text": query.text, "depth": depth},
-            )
-            arms.append(ArmRanking("lexical", tuple(str(row[0]) for row in await cursor.fetchall())))
+            if informative:
+                # `websearch_to_tsquery` never raises on user input (unlike `to_tsquery`), which is what makes this arm
+                # safe on arbitrary natural language: a query of punctuation yields an empty tsquery and no matches,
+                # rather than a syntax error that would turn a question into a failure.
+                await cursor.execute(
+                    sql.SQL(
+                        "SELECT m.id FROM {table} AS m WHERE {where} "
+                        "AND m.content_fts_simple @@ pg_catalog.websearch_to_tsquery('simple', %(query_text)s) "
+                        "ORDER BY pg_catalog.ts_rank_cd("
+                        "m.content_fts_simple, pg_catalog.websearch_to_tsquery('simple', %(query_text)s)"
+                        ") DESC, m.id LIMIT %(depth)s"
+                    ).format(table=table, where=where),
+                    {
+                        **compiled.parameters,
+                        **read_parameters,
+                        # the informative terms only: the pruned ones are the ones that match everything
+                        "query_text": " ".join(informative),
+                        "depth": depth,
+                    },
+                )
+                arms.append(ArmRanking("lexical", tuple(str(row[0]) for row in await cursor.fetchall())))
+            else:
+                # No informative term: the question offers no lexical evidence at all. The dense and trigram arms may
+                # still find an answer; if one of those finds nothing, the page is empty, which is the truthful answer
+                # for a question this corpus cannot answer.
+                arms.append(ArmRanking("lexical", ()))
             await cursor.execute(
                 sql.SQL("SELECT count(*) FROM {table} AS m WHERE {where}").format(table=table, where=where),
                 {**compiled.parameters, **read_parameters},

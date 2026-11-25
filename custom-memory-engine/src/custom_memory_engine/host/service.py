@@ -25,10 +25,12 @@ from psycopg_pool import AsyncConnectionPool
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.api.wiring import wire_engine
+from custom_memory_engine.engine.hybrid import RecallError, slot_for_dimension
 from custom_memory_engine.host.credentials import HostCredentials
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.access import Selector, resolve_read_set
 from custom_memory_engine.scope.paths import ScopeError, parse_scope, user_scope
+from custom_memory_engine.semantic.contracts import Embedder
 
 logger = structlog.get_logger(__name__)
 
@@ -52,6 +54,9 @@ class HostSettings:
     pool_max: int = 8
     provenance_key: bytes | None = None
     deletion_key: bytes | None = None
+    #: The dense arm's query embedder (``V2-D98``). ``None`` leaves the engine lexical-only, which is honest: it
+    #: ranks by the two language-agnostic arms rather than pretending a vector it does not have.
+    embedder: Embedder | None = None
 
 
 class HostService:
@@ -121,6 +126,7 @@ class HostService:
                 profile=self.settings.profile,
                 tau_confidence=self.settings.tau_confidence,
                 tau_coverage=self.settings.tau_coverage,
+                embedder=self.settings.embedder,
             )
             context = await self._context(engine, runtime, credential, arguments)
             return await engine.call(context, operation, arguments)
@@ -194,6 +200,31 @@ class HostService:
         return tuple(str(row[0]) for row in rows)
 
 
+def embedder_from_environment(environment: Mapping[str, str]) -> Embedder | None:
+    """The deployment's query embedder, or ``None`` when ``CME_EMBEDDING_ASSET`` is unset.
+
+    Two failures are refused at start-up rather than at the first question, because both are deployment mistakes that
+    would otherwise surface as a permanently lexical engine (reads still answer, so nothing looks broken) or as a
+    vector stored in a slot nothing indexes:
+
+    * the asset's declared width must be one ``hybrid.EMBEDDING_SLOTS`` can index;
+    * the asset's files must exist, which :func:`assets_for` checks.
+
+    The model is *not* loaded here: :class:`~custom_memory_engine.integrations.onnx_embedder.OnnxEmbedder` loads its
+    session on first use and then keeps it, so start-up does not pay for it and every request afterwards reuses it.
+    """
+    from custom_memory_engine.integrations.onnx_embedder import OnnxEmbedder, assets_from_environment
+
+    assets = assets_from_environment(dict(environment))
+    if assets is None:
+        return None
+    try:
+        slot_for_dimension(assets.dimensions)
+    except RecallError:
+        raise EntryError("validation_error", "embedding_dimensions_unsupported") from None
+    return OnnxEmbedder(assets)
+
+
 def settings_from_environment(environment: Mapping[str, str] | None = None) -> HostSettings:
     """Read the host's configuration. Every failure names a variable and never its value."""
     env = dict(os.environ if environment is None else environment)
@@ -224,7 +255,14 @@ def settings_from_environment(environment: Mapping[str, str] | None = None) -> H
         pool_max=int(env.get("CME_HOST_POOL_MAX", "8")),
         provenance_key=key(PROVENANCE_KEY_ENV),
         deletion_key=key("CME_DELETION_RECEIPT_KEY"),
+        embedder=embedder_from_environment(env),
     )
 
 
-__all__ = ["HostService", "HostSettings", "MAX_READ_SELECTORS", "settings_from_environment"]
+__all__ = [
+    "HostService",
+    "HostSettings",
+    "MAX_READ_SELECTORS",
+    "embedder_from_environment",
+    "settings_from_environment",
+]

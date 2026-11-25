@@ -126,5 +126,9 @@ with its defects named.
 | asynchronous lane | **adapt**: `queue` + `semantic/slow_lane.py` | the durable queue already existed (`D-18`); the model call must live outside its transaction | `claim_one`/`complete_one`/`recover_stale` |
 | model transport | **build**: `integrations/` (`wire`, `openai_compatible`, `anthropic_messages`, `provider`) | *refused* the provider SDKs: two protocols, no dependency tree, no vendor pin | learns per-model parameter refusals instead of encoding a matrix |
 | embeddings | **reuse + run**: `onnxruntime` + `tokenizers` with a pinned `bge-m3` ONNX file | *reused* the runner the evaluation baselines already use | the provider serves no `/embeddings`; measured in `reports/retrieval/` |
-| ranking | **build**: RRF over three arms, `hybrid.DENSE_SIMILARITY_FLOOR` | *refused* BM25 and a host-side reranker | both measured: recall@5 1.00 without them; an LLM rerank bought 0.69 -> 0.71 top-1 |
+| ranking | **build**: RRF over three arms, `hybrid.DENSE_SIMILARITY_FLOOR`, `hybrid.TERM_PRUNING_DF_RATIO` | *refused* BM25 and a host-side reranker | re-measured on 64 questions (`V2-D100`): hybrid nDCG 0.882 against BM25-reranked 0.765 and recency-reranked 0.726 |
+| query embedding | **adapt**: `ReadHandlers(embedder=)` + `host.embedder_from_environment` | *moves* the dense arm's query side into the engine (`V2-D98`) | a client sends text; both sides name one model and the dense arm joins on `embedding_model` |
+| completion of the contract | **build**: `engine/{statistics,verification,expiry,index_maintenance,export}.py` | *completes* six operations, each with the machinery its stated reason named (`V2-D97`) | `UNWIRED_OPERATIONS` is empty and asserted |
+| entity vectors | **build**: migration 26 + `semantic/entities._vector_candidates` | *proposes* only — measured false merges (`Munich office` 0.769 against `Berlin office`) rule out merging on cosine (`V2-D101`) | cross-script mentions become resolvable where an adjudicator confirms |
+| worker deployment | **build**: `deploy/` + `scripts/worker_healthcheck.py` | *keeps* the process model out of `src/` (`V2-D103`) | the probe reads the queue, not the PID |
 

@@ -36,7 +36,7 @@ the provenance trigger in charge.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC
 from typing import Literal, Protocol, runtime_checkable
@@ -285,18 +285,31 @@ async def _ingest_claim(
     except slots.SlotError as error:
         return ClaimOutcome("rejected", error.code), {}
 
+    embedding: Sequence[float] | None = None
+    mention_embeddings: dict[str, tuple[float, ...]] = {}
+    if embedder is not None:
+        # One batched call for the claim and every distinct mention label (`V2-D101`): the mention vector lets the
+        # resolver propose a cross-script or transliterated identity, and a second round trip per mention would make
+        # the write path slower than the model it calls.
+        labels = list(dict.fromkeys(mention.label for mention in claim.entities))
+        vectors = await embedder.embed([claim.content, *labels])
+        embedding = tuple(vectors[0])
+        mention_embeddings = {label: tuple(vector) for label, vector in zip(labels, vectors[1:], strict=True)}
+
     # 4b. Entity resolution (E-041): every mention is resolved to one identity, or created, or left unresolved when
     #     two candidates tie. This is what makes a later mention of the same thing land on the same row instead of
     #     minting a second one; an ambiguity is reported, never guessed, so two people called "Sara" do not merge.
     subject_key, subject_entity_id, entity_outcomes = await _resolve_entities(
-        connection, user_id=user_id, scope_path=scope_path, claim=claim, schema_name=schema_name
+        connection,
+        user_id=user_id,
+        scope_path=scope_path,
+        claim=claim,
+        schema_name=schema_name,
+        embedder=embedder,
+        mention_embeddings=mention_embeddings,
     )
 
     # 5. Embedding, when the deployment has one. Computed before the conflict recall so the recall can use it.
-    embedding: Sequence[float] | None = None
-    if embedder is not None:
-        embedding = tuple((await embedder.embed([claim.content]))[0])
-
     # 6. Three-stage conflict resolution: recall, adjudicate, decide.
     neighbours = await conflict.recall_neighbours(
         connection,
@@ -436,6 +449,8 @@ async def _resolve_entities(
     scope_path: str,
     claim: ExtractedClaim,
     schema_name: str,
+    embedder: Embedder | None = None,
+    mention_embeddings: Mapping[str, tuple[float, ...]] | None = None,
 ) -> tuple[str, str | None, dict[str, int]]:
     """Resolve every mention, create the unknown ones, and decide the claim's subject.
 
@@ -453,6 +468,7 @@ async def _resolve_entities(
     counts: dict[str, int] = {}
     subject_key, subject_entity_id = "self", None
     cache: dict[str, entities.ResolutionOutcome] = {}
+    mention_embeddings = mention_embeddings or {}
     for mention in claim.entities:
         outcome = cache.get(mention.label)
         if outcome is None:
@@ -461,6 +477,10 @@ async def _resolve_entities(
                 user_id=user_id,
                 scope_path=scope_path,
                 label=mention.label,
+                # the vector stage only runs when the deterministic stages found nothing (`V2-D101`), and it only
+                # proposes: a merge still needs an exact match or an adjudicated confirmation
+                embedding=mention_embeddings.get(mention.label),
+                embedding_model=embedder.model if embedder is not None else None,
                 schema_name=schema_name,
             )
             if outcome.stage == "created":
@@ -470,6 +490,9 @@ async def _resolve_entities(
                     scope_path=scope_path,
                     label=mention.label,
                     entity_type=mention.entity_type or "thing",
+                    # the new row carries its vector, so the *next* cross-script mention of it can be proposed
+                    embedding=mention_embeddings.get(mention.label),
+                    embedding_model=embedder.model if embedder is not None else None,
                     schema_name=schema_name,
                 )
                 outcome = entities.ResolutionOutcome(mention.label, "created", created)

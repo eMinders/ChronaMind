@@ -211,3 +211,26 @@ def test_a_reranker_returning_a_non_finite_score_is_refused() -> None:
 def test_an_empty_page_is_returned_unchanged_by_a_reranker() -> None:
     empty = Recall(ordered=(), scored=(), arms=(), candidates=0)
     assert rerank(empty, "question", _Reverse(), limit=3) is empty
+
+
+# ------------------------------------------------------- function-word pruning (V2-D100, `informative_terms`)
+
+
+def test_the_pruning_statistic_selects_the_longest_terms_and_is_language_agnostic() -> None:
+    """The candidate terms the document-frequency probe asks about: the longest, deduplicated, per script.
+
+    Length is the only proxy this module may use for informativeness — a stopword list would be language-specific —
+    so the *order* matters: a question with more than `MAX_STATISTIC_TERMS` tokens probes its longest ones, and a
+    two-letter Latin token is dropped while a two-letter Arabic or CJK token is kept, because there it is a word.
+    """
+    from custom_memory_engine.engine.hybrid import MAX_STATISTIC_TERMS, statistic_terms
+
+    assert statistic_terms("what is the wifi password at the office")[:3] == ("password", "office", "what")
+    assert "is" not in statistic_terms("what is the wifi password at the office")
+    # non-ASCII two-character tokens survive; ASCII ones do not
+    assert "في" in statistic_terms("في البيت")
+    assert "in" not in statistic_terms("in the house")
+    # bounded, deterministic, deduplicated
+    many = statistic_terms("alpha beta gamma delta epsilon zeta eta theta")
+    assert len(many) == MAX_STATISTIC_TERMS
+    assert statistic_terms("coffee coffee coffee") == ("coffee",)

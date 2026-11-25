@@ -99,7 +99,7 @@ from custom_memory_engine.engine.cost import (
     StageSpan,
 )
 from custom_memory_engine.engine.expansion import expand_associations
-from custom_memory_engine.engine.hybrid import Recall, RecallError, RecallQuery, hybrid_recall
+from custom_memory_engine.engine.hybrid import Recall, RecallError, RecallQuery, hybrid_recall, slot_for_dimension
 from custom_memory_engine.engine.outcomes import stats_for as outcome_stats_for
 from custom_memory_engine.engine.planning import (
     ASSOCIATION_EXPANSION,
@@ -143,6 +143,7 @@ from custom_memory_engine.engine.provenance import (
     sources_for_artifacts,
 )
 from custom_memory_engine.engine.staleness import ClosureCache, staleness_inputs
+from custom_memory_engine.engine.statistics import ArtifactStats, StatsError, read_stats
 from custom_memory_engine.model.axes import Kind, Lifecycle
 from custom_memory_engine.scope.access import (
     ReadEntry,
@@ -155,6 +156,7 @@ from custom_memory_engine.scope.access import (
 )
 from custom_memory_engine.scope.paths import ScopeError, parse_scope
 from custom_memory_engine.scope.provenance import ProvenanceReference, ProvenanceSource, opaque_handle
+from custom_memory_engine.semantic.contracts import Embedder
 
 logger = structlog.get_logger(__name__)
 
@@ -258,8 +260,8 @@ class QueryResult:
     """
 
     __slots__ = (
-        "audit", "changes", "conflicts", "coverage", "cost", "facts", "hypotheses", "is_audit", "procedures",
-        "refused", "result_id", "stage_costs",
+        "arms", "audit", "changes", "conflicts", "coverage", "cost", "facts", "hypotheses", "is_audit",
+        "procedures", "refused", "result_id", "stage_costs",
     )  # fmt: skip
 
     def __init__(
@@ -277,6 +279,7 @@ class QueryResult:
         changes: Sequence[Change] = (),
         result_id: str | None = None,
         stage_costs: QueryCost | None = None,
+        arms: Sequence[str] = (),
     ) -> None:
         self.facts = tuple(facts)
         self.hypotheses = tuple(hypotheses)
@@ -288,6 +291,11 @@ class QueryResult:
         self.is_audit = is_audit
         self.result_id = result_id
         self.stage_costs = stage_costs
+        # Which ranking arms actually ran (`dense`, `lexical`, `trigram`), in a fixed order; empty when the plan was
+        # the recency scan or the answer was a shortcut. It exists so "was this answer ranked, and was the dense arm
+        # part of it" is a *reported fact* rather than an inference from a latency number: a query whose embedding
+        # was unavailable answers from the lexical arms and says so here (V2-D98).
+        self.arms = tuple(arms)
         empty = ChannelCoverage(0, 0, (), 0, 0, 0, 0)
         self.coverage = coverage or CoverageReport(empty, empty, empty, empty)
         self.cost = cost or AssemblyCost(0, 0, 0, 0)
@@ -435,6 +443,7 @@ class ReadHandlers:
         costs: CostStore | None = None,
         clock: Callable[[], float] | None = None,
         collect_cost: bool = True,
+        embedder: Embedder | None = None,
     ) -> None:
         self.runtime = runtime
         # E-031: the model seam, defaulted to the rule-based planner and therefore unused (criterion 9). The recorder
@@ -450,6 +459,9 @@ class ReadHandlers:
         self.costs: CostStore = costs if costs is not None else CostStore()
         self._clock: Callable[[], float] | None = clock
         self._collect_cost: bool = collect_cost
+        # The engine's own query embedder (V2-D98). ``None`` keeps the pre-W3.5 behaviour: text-only queries rank by
+        # the two language-agnostic lexical arms, and a caller that wants the dense arm supplies its own vector.
+        self.embedder: Embedder | None = embedder
         # E-038 (V2-D24): the closure-hash cache the read path derives `stale` through. One per handler, so repeated
         # reads of an unchanged abstraction hash its closure once; the deletion token invalidates it (F6).
         self.closure_cache = ClosureCache()
@@ -910,13 +922,15 @@ class ReadHandlers:
         raw = request.get(field)
         return None if raw is None else self._parse_instant(raw, field)
 
-    def _recall_query_for(self, request: Mapping[str, object]) -> RecallQuery | None:
+    async def _recall_query_for(self, request: Mapping[str, object]) -> RecallQuery | None:
         """The relevance query a request asks for, or ``None`` when it asks only for a temporal read (``V2-D86``).
 
-        ``text`` is the caller's own words. ``embedding``/``embedding_model`` are the caller's own vector for the dense
-        arm: the engine never loads a model, so a request that supplies text and no vector gets the two lexical arms
-        (``'simple'`` full-text and trigram, both language-agnostic) rather than a silent fallback to recency. A
-        malformed vector is refused instead of dropped -- a caller who sent one believes it was used.
+        ``text`` is the caller's own words. When the deployment configured an
+        :class:`~custom_memory_engine.semantic.contracts.Embedder`, the engine computes the query vector itself
+        (``V2-D98``), so a caller sends a question and receives full hybrid recall without owning a model. A caller
+        that supplies ``embedding``/``embedding_model`` still wins: that is the advanced path, and the vector it sent
+        is the one that ranks. A malformed supplied vector is refused instead of dropped -- a caller who sent one
+        believes it was used.
         """
         text = request.get("text")
         if text is None:
@@ -936,6 +950,14 @@ class ReadHandlers:
                 raise EntryError("validation_error", "embedding_invalid")
             embedding = tuple(raw_embedding)  # type: ignore[arg-type]
         model = request.get("embedding_model")
+        if embedding is None and self.embedder is not None:
+            embedded = await self._query_vector(text)
+            if embedded is not None:
+                embedding, embedding_model = embedded
+                try:
+                    return RecallQuery(text=text, embedding=embedding, embedding_model=embedding_model)
+                except RecallError as exc:
+                    raise EntryError("validation_error", exc.code) from None
         try:
             return RecallQuery(
                 text=text,
@@ -944,6 +966,37 @@ class ReadHandlers:
             )
         except RecallError as exc:
             raise EntryError("validation_error", exc.code) from None
+
+    async def _query_vector(self, text: str) -> tuple[tuple[float, ...], str] | None:
+        """The dense arm's query vector, from the deployment's embedder, or ``None`` to rank lexically.
+
+        **Failure degrades, and says so.** A model that cannot load (a missing file, a corrupt graph, an exhausted
+        thread pool) must not turn every read into ``internal_error``: the lexical arms are still correct, they are
+        just less capable. What must not happen is a *silent* degradation, so the failure is logged with a static code
+        and the result reports the arms that actually ran (:attr:`QueryResult.arms`), which is what a caller or a
+        benchmark reads to know whether it received a hybrid answer.
+
+        A width the schema cannot index is refused here for the same reason: it is a deployment fault (a model file
+        swapped under the pinned asset), and the honest response is to rank lexically and log the mismatch rather than
+        to answer every caller with ``validation_error`` about a vector they never sent.
+        """
+        assert self.embedder is not None
+        try:
+            vectors = await self.embedder.embed([text], query=True)
+        except Exception as error:  # noqa: BLE001 - any model failure degrades the arm, never the read
+            logger.warning(
+                "query_embedding_unavailable",
+                code=getattr(error, "code", "embedding_failed"),
+                error_type=type(error).__name__,
+            )
+            return None
+        vector = tuple(float(value) for value in vectors[0]) if vectors else ()
+        try:
+            slot_for_dimension(len(vector))
+        except RecallError as error:
+            logger.warning("query_embedding_unavailable", code=error.code, error_type="RecallError")
+            return None
+        return vector, self.embedder.model
 
     def _intent_for(self, mode: str, request: Mapping[str, object], limit: int, scope: str | None) -> Intent:
         """Derive the planner's :class:`Intent` from the request's own fields (``E-031`` §5.1: no second vocabulary).
@@ -1144,6 +1197,8 @@ class ReadHandlers:
         and would drop exactly the rows an audit exists to show.
         """
         user = call.ctx.principal
+        # Which ranking arms ran, reported on the result (see `QueryResult.arms`); empty unless the plan ranked.
+        ranked_arms: tuple[str, ...] = ()
         is_audit = plan.route == "audit"
         if is_audit and call.ctx.tier != "C":
             raise EntryError("forbidden")  # API_V2.md §4.2: audit_as_of is Tier C only
@@ -1238,6 +1293,8 @@ class ReadHandlers:
                             )
                             position = {version_id: index for index, version_id in enumerate(recall.ordered)}
                             rows = tuple(sorted(fetched, key=lambda row: position.get(row.id, len(position))))
+                        if recall is not None:
+                            ranked_arms = tuple(arm.arm for arm in recall.arms)
                     if span is not None:
                         span.candidates_out = len(rows)
                 with self._stage(collector, "expansion") as span:
@@ -1480,6 +1537,7 @@ class ReadHandlers:
             cost=assembled.cost,
             changes=changes,
             stage_costs=stage_costs,
+            arms=ranked_arms,
         )
 
     async def query(self, call: Call) -> QueryResult:
@@ -1519,7 +1577,7 @@ class ReadHandlers:
             effective_read_set = call.ctx.read_set
         if mode == "audit_as_of" and call.ctx.tier != "C":
             raise EntryError("forbidden")  # checked before the empty-read-set shortcut, so it never answers
-        recall_query = self._recall_query_for(request)
+        recall_query = await self._recall_query_for(request)
         intent = self._intent_for(str(mode), request, limit, requested_path)
         if effective_read_set.empty:
             # Nothing can be read, so nothing runs; the answer is still an answer and still gets a handle, so a
@@ -1633,6 +1691,32 @@ class ReadHandlers:
             depth=snapshot.depth + 1,
         )
 
+    async def stats(self, call: Call) -> ArtifactStats:
+        """One artifact's counts, coverage, verification and lineage ids — never its content (§4.11).
+
+        ``targets_readable`` has already proved the caller may read ``artifact_id``; this reads under the caller's own
+        row-level security as well, so every id the ledger names is one the caller could have fetched through ``get``.
+        The staleness causes are derived here exactly as the read path derives them (``V2-D24``): a stored flag would
+        be the second source of truth this operation exists to avoid.
+        """
+        artifact_id = call.arguments.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id.strip():
+            raise EntryError("validation_error", "artifact_id_required")
+        user = call.ctx.principal
+        async with self.runtime.session(user) as connection:
+            try:
+                return await read_stats(
+                    connection,
+                    user_id=user,
+                    artifact_id=artifact_id,
+                    cache=self.closure_cache,
+                    schema_name=self.runtime.schema_name,
+                )
+            except StatsError as exc:
+                # `targets_readable` resolved this id for an authorised caller, so a missing row here is the same
+                # "absent and unreadable are one answer" case the rest of the read path answers with `forbidden`.
+                raise EntryError("forbidden") from exc
+
     async def cost(self, call: Call) -> CostReport:
         """Return per-stage latency, candidate counts and tokens for the caller's own queries (``API_V2.md`` §4.11)."""
         try:
@@ -1693,12 +1777,15 @@ def register_read_handlers(
     costs: CostStore | None = None,
     clock: Callable[[], float] | None = None,
     collect_cost: bool = True,
+    embedder: Embedder | None = None,
 ) -> ReadHandlers:
     """Wire ``get``, ``query``, ``refine``, ``provenance`` and ``cost`` onto ``engine``.
 
     The optional keyword arguments are the ``E-031``/``E-034``/``E-036`` seams so tests can inject a planner,
     recorder, observer, result store, cost store or monotonic clock without patching module state. ``results`` and
-    ``costs`` default to the engine's own stores so every call through ``engine`` sees one shared view.
+    ``costs`` default to the engine's own stores so every call through ``engine`` sees one shared view. ``embedder``
+    is the deployment's query embedder (``V2-D98``): the engine owns the dense arm's query side, so a client sends
+    text and receives hybrid recall.
     """
     # `is not None`, not `or`: a store is a seam (it may carry an injected clock or capacity), and an empty one is
     # falsy, so `or` would silently swap it for the engine's own map.
@@ -1718,9 +1805,11 @@ def register_read_handlers(
         costs=cost_store,
         clock=clock,
         collect_cost=collect_cost,
+        embedder=embedder,
     )
     table: Mapping[str, Handler] = {
         "get": handlers.get,
+        "stats": handlers.stats,
         "query": handlers.query,
         "refine": handlers.refine,
         "provenance": handlers.provenance,

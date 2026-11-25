@@ -1,34 +1,68 @@
-# Retrieval quality — the numbers that decided the arms (2026-11-22)
+# Retrieval quality — the numbers that decided the ranking (2026-11-25, revised)
 
-Measured through the shipped read path (`Engine.call(..., "query", ...)`), on a hand-labelled multilingual set of 12
-memories and 16 questions: 8 paraphrase, 2 verbatim, 2 cross-script, 2 whose correct answer is *nothing*. The set and the
-assertions live in `tests/integration/test_retrieval_quality_db.py`; this file records what they measured.
+Two rounds. The first (2026-11-22) settled whether the **dense arm** earns its place on a 16-question set. The second
+(`V2-D100`) is on a set large enough to decide the **ranking** question the first one could not: whether BM25 or a
+second-stage reranker beats Reciprocal Rank Fusion. Both run through the shipped read path
+(`Engine.call(..., "query", ...)`); the set, the metrics and the assertions live in
+`tests/integration/test_retrieval_eval_db.py` and `evaluation/retrieval/`, and `evaluation.{json,md}` beside this file is
+its output rather than a transcription.
+
+## Round 2 — 49 memories, 64 questions (`V2-D100`)
+
+20 lexical, 12 paraphrase, 8 cross-script (question and answer in different scripts), 8 whose correct answer is
+*nothing*. `bm25` and the two rerank rows are computed offline in Python over the same candidates the engine ranked, so
+they cannot win by retrieving something the engine could not.
+
+| configuration | recall@5 | top-1 | MRR@5 | nDCG@5 | no-match FP |
+|---|---|---|---|---|---|
+| `recency` | 0.089 | 0.018 | 0.041 | 0.053 | 1.000 |
+| `lexical` (no embedder) | 0.393 | 0.375 | 0.384 | 0.386 | 0.000 |
+| **`hybrid`** (shipped) | **0.982** | **0.732** | **0.847** | **0.882** | 0.125 |
+| `bm25` (whole corpus) | 0.143 | 0.071 | 0.094 | 0.106 | 1.000 |
+| `hybrid` → rerank by BM25 | 0.982 | 0.482 | 0.691 | 0.765 | 0.125 |
+| `hybrid` → rerank by recency (control) | 0.982 | 0.411 | 0.640 | 0.726 | 0.125 |
+
+| configuration | lexical | paraphrase | cross-script | no-match |
+|---|---|---|---|---|
+| `recency` | 0.333 | 0.000 | 0.000 | 0.000 |
+| `lexical` | 0.733 | 0.333 | **0.000** | 1.000 |
+| **`hybrid`** | **1.000** | **0.970** | **1.000** | 0.875 |
+| `bm25` | 0.067 | 0.182 | 0.125 | 0.000 |
+
+**BM25 is rejected, and now on evidence.** As a standalone ranker it recalls 0.143: term weighting cannot connect a
+paraphrase to its memory, which is the same conclusion the dense arm rests on. As a *reranker* over fused candidates it
+keeps the recall and destroys the ranking — top-1 falls from 0.732 to 0.482, nDCG from 0.882 to 0.765 — because it pulls
+lexically-overlapping rows above semantically-correct ones. The control says the method is sound rather than miscalibrated:
+reranking by recency also degrades (0.726). A second stage has to be *better informed* than the fusion, and BM25 is not.
+
+**A reranker is still not shipped.** The engine's `Reranker` protocol stays a seam (`V2-D89`), and the numbers above are
+the reason: the two cheapest possible rerankers both make the order worse. What would change the decision is a
+cross-encoder, which the earlier round measured as one model call per read for a top-1 gain inside noise.
+
+**The no-match residual, stated rather than hidden.** The shipped path returns a neighbour for 1 of 8 unanswerable
+questions. The cause is measured: on this set the weakest *true* match sits at cosine 0.46 and the strongest *false* one
+at 0.605, so no single threshold separates them. Lowering the floor to 0.45 (round 1's value, chosen on a 16-question
+set whose two unanswerable questions shared no vocabulary with anything) answered **7 of 8** unanswerable questions with
+their nearest neighbour; `DENSE_SIMILARITY_FLOOR = 0.55` answers one and keeps recall at 0.982. The sweep is recorded in
+`floor_sweep.json` and asserted against the constant, so the value cannot drift away from its measurement.
+
+**The floor was not the whole story.** Function words were: the `simple` configuration has no stopword list (a stopword
+list is language-specific), so a question like "what is the wifi password at the office" matched every row containing
+"the". The lexical arm now prunes query terms whose document frequency in the caller's own rows exceeds
+`TERM_PRUNING_DF_RATIO` — a statistic, not a word list — computed inside the same temporal and read predicate, so it is
+a statistic about rows the caller may already read and never a cross-tenant oracle.
+
+## Round 1 — 12 memories, 16 questions (2026-11-22)
+
+Kept because it is the record of the earlier decision, and because the two rounds disagree in an instructive way: on the
+smaller set the 0.45 floor looked clean (`recall 1.00`, `no-match 1.00`), and on the larger set it was answering almost
+everything. A sample of two unanswerable questions cannot measure a precision claim.
 
 | configuration | recall@5 | top-1 | verbatim | paraphrase | cross-script | no-match |
 |---|---|---|---|---|---|---|
 | recency (no text) | 0.36 | 0.36 | — | — | — | — |
-| lexical (`'simple'` FTS + `pg_trgm`, no embedder) | **0.44** | 0.44 | 1.00 | **0.40** | 0.50 | 1.00 |
-| hybrid (lexical + `bge-m3` in the 1024 `halfvec` slot) | **1.00** | 0.69 | 1.00 | **1.00** | **1.00** | 1.00 |
+| lexical (`'simple'` FTS + `pg_trgm`, no embedder) | 0.44 | 0.44 | 1.00 | 0.40 | 0.50 | 1.00 |
+| hybrid (lexical + `bge-m3` in the 1024 `halfvec` slot) | 1.00 | 0.69 | 1.00 | 1.00 | 1.00 | 1.00 |
 
-Three decisions came out of this table.
-
-**The dense arm earns its place.** Paraphrase recall goes from 0.40 to 1.00 and cross-script from 0.50 to 1.00. Every
-question the lexical configuration missed is a question phrased differently from the memory ("where do I live" against
-"I moved to Berlin last spring"), which is the whole reason a memory engine cannot be lexical-only.
-
-**The dense arm needs a floor.** The first hybrid run answered *every* question, including "quantum chromodynamics",
-with its nearest neighbour. Measuring the cosine distribution separated the populations cleanly — unrelated pairs top
-out at 0.364, the weakest true match sits at 0.512 — so `hybrid.DENSE_SIMILARITY_FLOOR = 0.45` was added and the no-match
-questions return nothing again. Without the floor the engine has a worse failure than the lexical one: it always
-answers, plausibly and wrongly.
-
-**BM25 is not implemented, and this is why.** BM25 needs corpus statistics (document frequency per term) kept current on
-every write — a table, a trigger and a migration. Its benefit is *ranking* within a recall set. On this set the recall
-set is already complete with three arms (recall@5 = 1.00), so BM25 could only reorder it, and the direct measurement of
-reordering — an LLM reranker over the top 5 — bought 0.71 top-1 against the fused order's 0.69, inside noise for 14
-questions. Both are recorded rather than assumed, and the trigger for revisiting is explicit: a labelled set large enough
-to show a real ordering gap, or a locally hosted cross-encoder, which costs no per-read model call.
-
-**A reranker is not shipped.** `hybrid.Reranker` exists as a protocol and `hybrid.rerank` applies one when a deployment
-injects it (`V2-D89`), but the engine ships none: the read path makes zero generative calls. The measurement above is why
-that stays true, and what would have to change for it not to.
+The dense arm's place was never in doubt in either round: paraphrase recall 0.40 → 1.00 and cross-script 0.00 → 1.00
+(round 2), which is the whole reason a memory engine cannot be lexical-only.

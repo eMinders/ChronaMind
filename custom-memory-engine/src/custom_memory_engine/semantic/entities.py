@@ -47,10 +47,13 @@ from custom_memory_engine.engine.hybrid import trgm_schema
 
 #: ``pg_trgm`` similarity above which a label is a *candidate* worth adjudicating. Below it, no relation.
 TRIGRAM_FLOOR = 0.45
-#: Cosine similarity above which an entity embedding is a candidate. Entities are short strings, so a paraphrased
-#: mention ("my boss") scores far lower against a name than a sentence does against a sentence; the floor is
-#: correspondingly lower than the claim-recall floor.
-VECTOR_FLOOR = 0.60
+#: Cosine similarity above which an entity embedding is a *candidate*. **Measured, and deliberately high**
+#: (`V2-D101`, `reports/entity_resolution/README.md`): a cross-script or transliterated mention sits at 0.50-0.79
+#: against its entity and 0.35-0.49 against the rest, so 0.75 keeps the strongest cross-script proposals while
+#: filtering the merely-similar. The floor is not a merge threshold — see :func:`resolve_mention` — because two
+#: *different* entities of the same shape are nearly identical in embedding space ("Munich office" scores 0.769 against
+#: "Berlin office").
+VECTOR_FLOOR = 0.75
 #: Two candidates this close to each other are ambiguous, and ambiguity is reported rather than guessed.
 AMBIGUITY_MARGIN = 0.02
 #: How many candidates each stage may produce.
@@ -135,7 +138,8 @@ async def resolve_mention(
     user_id: str,
     scope_path: str,
     label: str,
-    embedding: Sequence[float] | None = None,  # accepted and unused until `entity` has an embedding column
+    embedding: Sequence[float] | None = None,
+    embedding_model: str | None = None,
     adjudicator: EntityAdjudicator | None = None,
     schema_name: str = "cme_engine",
 ) -> ResolutionOutcome:
@@ -149,7 +153,6 @@ async def resolve_mention(
         raise ResolutionError("user_id_required")
     if not isinstance(scope_path, str) or not scope_path.startswith("/"):
         raise ResolutionError("scope_path_required")
-    del embedding  # see `_similar_candidates`: the vector stage needs a column the schema does not have
     normalized = normalize_label(label)
     entities = sql.Identifier(schema_name, "entity")
 
@@ -176,6 +179,14 @@ async def resolve_mention(
         return ResolutionOutcome(label, "unresolved", None, tuple(str(row[0]) for row in exact))
 
     candidates = await _similar_candidates(connection, entities, user_id, scope_path, normalized, schema_name)
+    if not candidates and embedding is not None:
+        # The vector stage runs **only** when the deterministic stages found nothing, which is the cascade's whole
+        # point: a mention the trigram stage could match never reaches a model-derived score. And what it produces is a
+        # candidate, never a merge: the code below requires an exact match or an adjudicated confirmation, so a false
+        # proposal ("Munich office" against "Berlin office") is refused unless a model confirms it — which it does not.
+        candidates = await _vector_candidates(
+            connection, entities, user_id, scope_path, embedding, embedding_model, schema_name
+        )
     if not candidates:
         return ResolutionOutcome(label, "created")
     best = candidates[0]
@@ -199,6 +210,52 @@ async def resolve_mention(
             return ResolutionOutcome(label, "unresolved", None, (best.entity_id,))
         return ResolutionOutcome(label, "adjudicated", chosen)
     return ResolutionOutcome(label, best.stage, best.entity_id)
+
+
+async def _vector_candidates(
+    connection: AsyncConnection,
+    entities: sql.Identifier,
+    user_id: str,
+    scope_path: str,
+    embedding: Sequence[float],
+    embedding_model: str | None,
+    schema_name: str,
+) -> tuple[EntityCandidate, ...]:
+    """The vector stage: the nearest entities by cosine, above :data:`VECTOR_FLOOR`.
+
+    ``embedding_model`` is filtered when supplied, so a vector from one model is never compared against a query vector
+    from another -- the same rule the claim-recall dense arm applies. A row with a NULL model cannot match a non-NULL
+    request: an unlabelled vector's provenance is unknown, so comparing it would be a guess about its space.
+    """
+    from custom_memory_engine.engine.hybrid import vector_literal
+
+    if not embedding:
+        return ()
+    if embedding_model is not None and (not isinstance(embedding_model, str) or not embedding_model.strip()):
+        raise ResolutionError("embedding_model_required")
+    statement = (
+        "SELECT id, canonical_name, 1 - (embedding_1024 <=> %(q)s::halfvec(1024)) AS score FROM {e} "
+        "WHERE user_id = %(user)s AND scope_path = %(scope)s AND embedding_1024 IS NOT NULL"
+    )
+    parameters: dict[str, object] = {
+        "user": user_id,
+        "scope": scope_path,
+        "q": vector_literal(embedding),
+        "limit": CANDIDATE_LIMIT,
+    }
+    if embedding_model is not None:
+        statement += " AND embedding_model = %(model)s"
+        parameters["model"] = embedding_model
+    statement += " ORDER BY embedding_1024 <=> %(q)s::halfvec(1024), id LIMIT %(limit)s"
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(sql.SQL(statement).format(e=entities), parameters)
+        rows = await cursor.fetchall()
+    del schema_name  # the identifier already carries the schema; kept for signature symmetry with the other stages
+    return tuple(
+        EntityCandidate(str(row[0]), str(row[1]), "vector", float(row[2]))
+        for row in rows
+        if float(row[2]) >= VECTOR_FLOOR
+    )
 
 
 async def _similar_candidates(
@@ -249,6 +306,8 @@ async def create_entity(
     label: str,
     entity_type: str = "thing",
     aliases: Sequence[str] = (),
+    embedding: Sequence[float] | None = None,
+    embedding_model: str | None = None,
     schema_name: str = "cme_engine",
 ) -> str:
     """Create one entity for a mention that resolved to nothing, and return its id.
@@ -262,6 +321,31 @@ async def create_entity(
     """
     normalized = normalize_label(label)
     identifier = f"ent_{uuid4().hex}"
+    if (embedding is None) != (embedding_model is None):
+        # Paired or absent (migration 26's CHECK says the same): a vector without its model cannot be compared, and a
+        # model without its vector is a claim about nothing.
+        raise ResolutionError("embedding_and_model_must_be_paired")
+    if embedding is not None:
+        from custom_memory_engine.engine.hybrid import vector_literal
+
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "INSERT INTO {e} (id, user_id, scope_path, canonical_name, entity_type, aliases, "
+                    "embedding_1024, embedding_model) VALUES (%s, %s, %s, %s, %s, %s, %s::halfvec(1024), %s)"
+                ).format(e=sql.Identifier(schema_name, "entity")),
+                (
+                    identifier,
+                    user_id,
+                    scope_path,
+                    normalized,
+                    entity_type or "thing",
+                    list(aliases),
+                    vector_literal(embedding),
+                    embedding_model,
+                ),
+            )
+        return identifier
     async with connection.cursor() as cursor:
         await cursor.execute(
             sql.SQL(

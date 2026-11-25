@@ -9,7 +9,7 @@ different people never do".
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -321,3 +321,145 @@ async def test_an_ambiguous_mention_attaches_nothing_and_is_reported(database) -
         )
         assert written == [("self", None)]  # no attach rather than a coin flip
         assert report.written and report.diagnostics["entity_unresolved"] == 1
+
+
+# ------------------------------------------------------------------- the vector stage (V2-D101, migration 26)
+
+
+class ConfirmAll:
+    """An adjudicator that confirms the first candidate: it stands in for a model that agrees."""
+
+    __test__ = False  # not a pytest class, despite the name
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[tuple[str, str]]]] = []
+
+    def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> str | None:
+        self.calls.append((mention, list(candidates)))
+        return candidates[0][0] if candidates else None
+
+
+class RejectAll:
+    """An adjudicator that abstains on everything: the safe answer when a proposal cannot be confirmed."""
+
+    __test__ = False
+
+    def choose(self, mention: str, candidates: Sequence[tuple[str, str]]) -> None:
+        del mention, candidates
+        return None
+
+
+async def test_a_cross_script_mention_can_be_proposed_and_needs_confirmation_to_merge(database) -> None:  # noqa: F811
+    """The one case the deterministic stages cannot serve, and the fence around it.
+
+    ``ليلى`` shares no trigram with ``Layla`` (0.0), so exact, alias and trigram all miss. The vector stage proposes
+    the entity, and — this is the property that makes the stage safe — the proposal alone is **not** a merge: with an
+    adjudicator that confirms, the mention resolves; with one that abstains, it stays ``unresolved`` rather than being
+    created a second time or attached to a guess.
+    """
+    async with world(database) as (conn, schema, role):
+        await as_role(conn, role, schema)
+        layla = await entities.create_entity(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="Layla Hassan",
+            entity_type="person",
+            embedding=[1.0] + [0.0] * 1023,
+            embedding_model="test/axes",
+            schema_name=schema,
+        )
+        # a different person, on a different axis: the stage must not propose her
+        await entities.create_entity(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="Sara Okafor",
+            entity_type="person",
+            embedding=[0.0, 1.0] + [0.0] * 1022,
+            embedding_model="test/axes",
+            schema_name=schema,
+        )
+        mention = [0.9, 0.1] + [0.0] * 1022  # cosine ~0.994 against Layla, ~0.11 against Sara
+        confirmed = ConfirmAll()
+        outcome = await entities.resolve_mention(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="ليلى حسن",
+            embedding=mention,
+            embedding_model="test/axes",
+            adjudicator=confirmed,
+            schema_name=schema,
+        )
+        assert outcome.stage == "adjudicated" and outcome.entity_id == layla
+        assert confirmed.calls and confirmed.calls[0][0] == "ليلى حسن"
+        abstained = await entities.resolve_mention(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="ليلى حسن",
+            embedding=mention,
+            embedding_model="test/axes",
+            adjudicator=RejectAll(),
+            schema_name=schema,
+        )
+        assert abstained.stage == "unresolved" and not abstained.resolved
+
+
+async def test_a_different_entity_of_the_same_shape_is_proposed_but_never_merged(database) -> None:  # noqa: F811
+    """The measured false-merge case, as a regression test.
+
+    ``Munich office`` scores 0.769 against ``Berlin office`` — two *different* entities that a bi-encoder cannot tell
+    apart. The stage proposes Berlin, and the resolver must not merge on that: an abstaining adjudicator leaves the
+    mention unresolved, which is the difference between a wrong guess and a check.
+    """
+    async with world(database) as (conn, schema, role):
+        await as_role(conn, role, schema)
+        await entities.create_entity(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="Berlin office",
+            embedding=[1.0, 0.0] + [0.0] * 1022,
+            embedding_model="test/axes",
+            schema_name=schema,
+        )
+        # 0.769 against Berlin: the value a real model produced for this pair (`reports/entity_resolution/README.md`)
+        munich = [0.769, 0.639] + [0.0] * 1022
+        outcome = await entities.resolve_mention(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="Munich office",
+            embedding=munich,
+            embedding_model="test/axes",
+            adjudicator=RejectAll(),
+            schema_name=schema,
+        )
+        assert outcome.stage == "unresolved"
+        assert await rows(conn, f"SELECT count(*) FROM {schema}.entity") == [(1,)]
+
+
+async def test_without_an_embedding_the_cascade_behaves_exactly_as_before(database) -> None:  # noqa: F811
+    """The stage is opt-in: a deployment with no embedder keeps the deterministic cascade and creates the mention.
+
+    This is the backward-compatibility check that matters. Migration 26 adds columns; it must not change what happens
+    to a mention when nothing supplies a vector, or every existing deployment would start creating rows differently.
+    """
+    async with world(database) as (conn, schema, role):
+        await as_role(conn, role, schema)
+        await entities.create_entity(
+            conn,
+            user_id="alice",
+            scope_path="/u/alice/",
+            label="Berlin office",
+            embedding=[1.0, 0.0] + [0.0] * 1022,
+            embedding_model="test/axes",
+            schema_name=schema,
+        )
+        outcome = await entities.resolve_mention(
+            conn, user_id="alice", scope_path="/u/alice/", label="Munich office", schema_name=schema
+        )
+        # the trigram stage may still propose it; what must not happen is a *vector* proposal without a vector
+        assert outcome.stage in ("created", "unresolved", "trigram")

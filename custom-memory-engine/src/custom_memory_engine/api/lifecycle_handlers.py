@@ -35,7 +35,14 @@ from custom_memory_engine.api.entry import Call, Engine, EntryError
 from custom_memory_engine.api.handlers import Handlers
 from custom_memory_engine.api.runtime import Receipt, new_id, now
 from custom_memory_engine.clock import allocate_clock
+from custom_memory_engine.deletion.closure import current_deletion_epoch
 from custom_memory_engine.engine.transactions import archive_version
+from custom_memory_engine.engine.verification import (
+    VerificationError,
+    VerificationRecord,
+    record_verification,
+    windows_from,
+)
 from custom_memory_engine.security.audit_guard import content_free_details
 
 _CODE = re.compile(r"[a-z0-9_]{1,64}")
@@ -74,7 +81,11 @@ def _counter_evidence(call: Call) -> tuple[Mapping[str, object], ...]:
 
 
 class LifecycleHandlers:
-    """``refute``: retire an inferred artifact against the evidence that contradicts it."""
+    """``refute``, ``dissent`` and ``verify``: the three ways a belief the engine derived is answered.
+
+    ``refute`` is Tier B and evidenced; ``dissent`` is Tier C and unevidenced (the user is the authority over their own
+    model, ``USER_MODEL.md`` §3); ``verify`` records the held-out check that lets a status say ``verified``.
+    """
 
     def __init__(self, handlers: Handlers) -> None:
         self.runtime = handlers.runtime
@@ -99,6 +110,158 @@ class LifecycleHandlers:
             linked = await self._link_counter_evidence(connection, user, artifact_id, refs)
             await self._audit(connection, user, reason, len(refs), linked)
             return Receipt(artifact_id, "retired", await now(connection))
+
+    async def dissent(self, call: Call) -> Receipt:
+        """The user rejects an inference: ``inferred -> retired`` plus the constraint that stops it re-learning.
+
+        ``API_V2.md`` §4.6 and ``V2-D46``: Tier C only (TB2 — a cognition service must not dissent on the user's
+        behalf), no evidence required, and the rejection is **recorded as a constraint** rather than only as a
+        retirement. That is the difference between this and ``refute``: a refutation says "this is wrong", a dissent
+        says "stop deriving this", and ``I16`` makes the second one stick —
+        :meth:`api.infer_handlers.InferHandlers.infer` consults :meth:`active_constraint` and answers
+        ``negative_constraint_active`` instead of writing the row again.
+
+        The constraint's key is the triple ``(scope, predicate, method family)`` the schema enforces as unique while
+        active, and the family is the method's *name* — versions of one method are one family, which is what makes the
+        rejection survive a method upgrade. Lifting it needs new grounded evidence and has no operation yet
+        (``V2-D97``), so a dissent is currently permanent: the conservative direction, since re-learning something a
+        user rejected is the failure mode worth preventing.
+        """
+        artifact_id, user = str(call.arguments["artifact_id"]), call.ctx.principal
+        reason = _optional_code(call.arguments.get("note"))
+        async with self.runtime.session(user) as connection:
+            _, lifecycle, _ = await self.own_version(connection, user, artifact_id)
+            if lifecycle == "retired":
+                raise EntryError("precondition_failed", "already_retired")
+            if lifecycle != "inferred":
+                raise EntryError("precondition_failed", "artifact_not_inferable")
+            element = await self._dissented_element(connection, user, artifact_id)
+            tick = await allocate_clock(connection, user, schema_name=self.runtime.schema_name)
+            await self._close(connection, user, artifact_id)
+            await archive_version(
+                connection, user_id=user, version_id=artifact_id, schema_name=self.runtime.schema_name, clock_tick=tick
+            )
+            await self._record_constraint(connection, user, artifact_id, element, reason)
+            await self._event(
+                connection, user, artifact_id, "lifecycle_dissented", {"reason_code": reason or "dissent"}
+            )
+            return Receipt(artifact_id, "retired", await now(connection))
+
+    async def verify(self, call: Call) -> Receipt:
+        """Post a held-out verification result and let the ledger's status move (``I11``).
+
+        The split's disjointness is decided by :func:`engine.verification.assess_split` before anything is written: a
+        leaky split is refused, because the status it would justify would be a claim the data does not support. The
+        commit is fenced against a concurrent deletion at the epoch this call observed, so a verification prepared
+        before a deletion cannot land after it (``F5``).
+        """
+        artifact_id, user = str(call.arguments["artifact_id"]), call.ctx.principal
+        record = _verification_record(call.arguments.get("verification"))
+        async with self.runtime.session(user) as connection:
+            _, lifecycle, _ = await self.own_version(connection, user, artifact_id)
+            if lifecycle != "inferred":
+                raise EntryError("precondition_failed", "artifact_not_inferable")
+            epoch = await current_deletion_epoch(connection, user, schema_name=self.runtime.schema_name)
+            try:
+                await record_verification(
+                    connection,
+                    user_id=user,
+                    artifact_id=artifact_id,
+                    record=record,
+                    schema_name=self.runtime.schema_name,
+                    epoch_start=epoch,
+                )
+            except VerificationError as exc:
+                raise EntryError("precondition_failed", exc.code) from exc
+            return Receipt(artifact_id, record.outcome, await now(connection))
+
+    # -- dissent's constraint ----------------------------------------------------------------------------------
+
+    async def _dissented_element(
+        self, connection: AsyncConnection, user: str, artifact_id: str
+    ) -> tuple[str, str, str]:
+        """``(scope_path, predicate_key, method_family)`` for an inferred artifact: what the constraint blocks."""
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT v.scope_path, v.predicate_key, m.name FROM {v} AS v"
+                    " JOIN {m} AS m ON m.id = v.method_id"
+                    " WHERE v.id = %s AND v.user_id = %s"
+                ).format(v=self.runtime.table("memory_version"), m=self.runtime.table("method")),
+                (artifact_id, user),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            # An inferred artifact without a registered method cannot exist (I1'); if it somehow does, the dissent
+            # cannot be recorded against a family it does not name, and guessing one would block the wrong element.
+            raise EntryError("precondition_failed", "method_family_unknown")
+        return str(row[0]), str(row[1]), str(row[2])
+
+    async def _record_constraint(
+        self,
+        connection: AsyncConnection,
+        user: str,
+        artifact_id: str,
+        element: tuple[str, str, str],
+        reason: str | None,
+    ) -> None:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "INSERT INTO {t} (id, user_id, predicate_key, scope_path, method_family, dissented_at, reason,"
+                    " dissented_version_id) "
+                    "VALUES (%s, %s, %s, %s, %s, pg_catalog.transaction_timestamp(), %s, %s) "
+                    "ON CONFLICT (user_id, scope_path, predicate_key, method_family) WHERE lifted_at IS NULL"
+                    " DO NOTHING"
+                ).format(t=self.runtime.table("negative_constraint")),
+                (
+                    new_id("nc"),
+                    user,
+                    element[1],
+                    element[0],
+                    element[2],
+                    reason or "user_dissent",
+                    artifact_id,
+                ),
+            )
+
+    async def active_constraint(
+        self,
+        connection: AsyncConnection,
+        user: str,
+        *,
+        scope_path: str,
+        predicate_key: str,
+        method_family: str,
+    ) -> bool:
+        """Whether an un-lifted constraint blocks this element (`I16`). Read by ``infer``, never by a read path."""
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT EXISTS (SELECT 1 FROM {t} WHERE user_id = %s AND scope_path = %s AND predicate_key = %s"
+                    " AND method_family = %s AND lifted_at IS NULL)"
+                ).format(t=self.runtime.table("negative_constraint")),
+                (user, scope_path, predicate_key, method_family),
+            )
+            row = await cursor.fetchone()
+        return bool(row is not None and row[0])
+
+    async def _event(
+        self,
+        connection: AsyncConnection,
+        user: str,
+        artifact_id: str,
+        event_type: str,
+        details: dict[str, object],
+    ) -> None:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "INSERT INTO {a} (id, user_id, memory_ref, event_type, event_at, details) "
+                    "VALUES (%s, %s, %s, %s, pg_catalog.transaction_timestamp(), %s)"
+                ).format(a=self.runtime.table("audit_event")),
+                (new_id("audit"), user, artifact_id, event_type, Jsonb(content_free_details(details))),
+            )
 
     # -- helpers -----------------------------------------------------------------------------------------------
 
@@ -196,10 +359,49 @@ class LifecycleHandlers:
             )
 
 
+def _optional_code(value: object) -> str | None:
+    """A declared reason code, or ``None``. Free text is refused: audit rows are content-free (``V2-D54``)."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or _CODE.fullmatch(value) is None:
+        raise EntryError("validation_error", "note_must_be_a_code")
+    return value
+
+
+def _verification_record(raw: object) -> VerificationRecord:
+    """Validate the ``verification`` argument into a :class:`VerificationRecord`.
+
+    ``API_V2.md`` gives ``verification`` one opaque argument, so its shape is this operation's own — the same way
+    ``assert``'s ``evidence`` and ``ingest_artifact``'s ``candidate`` are. It carries exactly the six facts `I11`
+    names: the split id, the negative-control slice, both windows and both context keys, plus the outcome.
+    """
+    if not isinstance(raw, Mapping):
+        raise EntryError("validation_error", "verification_invalid")
+    try:
+        support, held_out = windows_from(raw.get("support_window"), raw.get("held_out_window"))
+        record = VerificationRecord(
+            held_out_split_id=str(raw.get("held_out_split_id") or ""),
+            negative_control_slice_id=str(raw.get("negative_control_slice_id") or ""),
+            support_window=support,
+            held_out_window=held_out,
+            support_context_key=str(raw.get("support_context_key") or ""),
+            held_out_context_key=str(raw.get("held_out_context_key") or ""),
+            outcome=raw.get("outcome"),  # type: ignore[arg-type]
+        )
+    except VerificationError as exc:
+        raise EntryError("validation_error", exc.code) from exc
+    return record
+
+
 def register_lifecycle_handlers(engine: Engine, handlers: Handlers) -> LifecycleHandlers:
-    """Wire ``refute`` onto ``engine``; the entry point's contract owns the rest of the guards."""
+    """Wire the lifecycle operations onto ``engine``; the entry point's contract owns the rest of the guards."""
     lifecycle = LifecycleHandlers(handlers)
-    engine.register("refute", lifecycle.refute)
+    for name, handler in {
+        "refute": lifecycle.refute,
+        "dissent": lifecycle.dissent,
+        "verify": lifecycle.verify,
+    }.items():
+        engine.register(name, handler)
     return lifecycle
 
 
