@@ -52,6 +52,9 @@ DOMAIN_TABLES = frozenset(
         "outcome_stats",
         "procedure_shape",  # migration 21 (E-030)
         "export_snapshot",  # migration 25 (E-038/F11)
+        "artifact_provenance",  # migration 29 (I2, V2-D110)
+        "entity_mention",  # migration 30 (I8, V2-D111)
+        "verification_artifact",  # migration 31 (I11, V2-D112)
     }
 )
 HISTORY_TABLE = "_cme_schema_migrations"

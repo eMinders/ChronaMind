@@ -41,6 +41,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
 GRANT SELECT ON {{schema}}.predicate_schema TO {{role}};
 -- verification is an append-only record, and method is the shared append-only registry (E-014).
 GRANT SELECT, INSERT ON {{schema}}.verification, {{schema}}.method TO {{role}};
+-- migrations 29-31 (V2-D110..V2-D112): artifact provenance, entity mentions, and pinned verification artifacts.
+GRANT SELECT, INSERT ON
+  {{schema}}.artifact_provenance, {{schema}}.entity_mention, {{schema}}.verification_artifact
+  TO {{role}};
 
 -- @verify-rls
 -- Returns one row per user-scoped table that lacks ENABLE or FORCE ROW LEVEL SECURITY.

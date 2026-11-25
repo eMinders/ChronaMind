@@ -476,16 +476,30 @@ the mechanism is what produces the result.
 | ID | Question | Owner | Needed before |
 |---|---|---|---|
 | ~~V2-D13~~ | ~~Association-types cap per artifact (default suggestion: 32)~~ — **resolved (r7)**, see §5 | engine lead | W1 |
-| V2-D14 | Retention default per profile and abstraction expiry (suggest: 180 d for preferences, 365 d for constraints and decision patterns, 14 d for context; re-verified rather than renewed) | product + methods | W5 |
+| ~~V2-D14~~ | ~~Retention default per profile and abstraction expiry~~ — **resolved (2026-11-25)**, see §4.1 | product + methods | W5 |
 | V2-D16 | Whether `S8` (fact/hypothesis labelling detectability) runs at all; ethics determination required first | supervisor | W7 |
 | V2-D17 | Public API stability policy: semver with deprecation windows vs "experimental" prefix for Tier B | engine lead | W7 |
-| V2-D30 | `tau_confidence` and `tau_coverage` defaults (suggest 0.90 / 0.60, frozen in the pilot like v1's `D-09`-`D-14`) | methods | W4 |
-| V2-D31 | `mu`/`kappa` estimation window for hierarchical pooling: all users, or a rolling window to handle population drift | methods | W4 |
+| ~~V2-D30~~ | ~~`tau_confidence` and `tau_coverage` defaults~~ — **resolved (2026-11-25)**, see §4.1 | methods | W4 |
+| ~~V2-D31~~ | ~~`mu`/`kappa` estimation window for hierarchical pooling~~ — **resolved (2026-11-25)**, see §4.1 | methods | W4 |
 | V2-D32 | Whether abstraction expiry triggers automatic re-derivation or a user prompt in the PDT profile (privacy-relevant in the personal profile) | product | W7 |
-| V2-D34 | `K` (dissent persistence window) confirmation: default 7 reflection cycles, frozen pre-test | methods | W4 |
+| ~~V2-D34~~ | ~~`K` (dissent persistence window) confirmation~~ — **resolved (2026-11-25)**, see §4.1 | methods | W4 |
 
 `V2-D15` is **resolved** by `V2-D23` (conformal is for intervals only; admission uses CP bounds).
-`V2-D13` is **resolved** in §5 (r7). The other rows remain open; r7 did not decide them.
+`V2-D13` is **resolved** in §5 (r7). `V2-D14`, `V2-D30`, `V2-D31`, and `V2-D34` are **resolved** in §4.1 (2026-11-25).
+
+### 4.1 Open decisions resolved for W4/W5/post-W3.7 (2026-11-25)
+
+#### V2-D30 — Default confidence and coverage thresholds (`tau_confidence = 0.90`, `tau_coverage = 0.60`)
+Matches `STATISTICS.md` §4.2, `soundness.admission`, and `scripts/check_statistics.py`; one-sided 97.5% Clopper–Pearson threshold (`o >= 36` at zero counters/unknowns).
+
+#### V2-D31 — Hierarchical pooling estimation window (90-day rolling window)
+Hierarchical beta-binomial pooling (`mu`, `kappa`) uses a rolling 90-day aggregate window across users with a minimum cohort of 10 users; below 10 users, each facet falls back to an unpooled Beta(1, 1) prior.
+
+#### V2-D34 — Dissent persistence window (`K = 7` reflection cycles)
+Dissent persistence window is fixed at `K = 7` scheduler reflection cycles (`UM8 = 0` throughout).
+
+#### V2-D14 — Retention and per-facet abstraction expiry defaults
+Profile abstraction expiry defaults: `preference` = 180 days, `goal` = 90 days, `constraint` = 365 days, `context` = 14 days, `decision_pattern` = 365 days, `meta_preference` = 180 days; expired abstractions demote to `hypotheses` and must be re-verified rather than silently renewed.
 
 
 ---
@@ -3084,9 +3098,9 @@ scanner never looked at `entity`, which is why nothing reported it.
 appended a `deletion_request`; the marker GUC alone is refused). It deletes only entities no surviving memory cites as
 subject; the `ON DELETE RESTRICT` foreign key stays the guarantee. `delete(scope='all')` erases every such entity of the
 user, including when no memory matched; a `topic` deletion whose target is an entity id — the subject key of the claims
-about it — erases that entity: per-person erasure. A `memory` deletion leaves entities alone, because without a record
+about it — erases that entity: per-person erasure. ~~A `memory` deletion leaves entities alone, because without a record
 of which claim *mentioned* which entity the engine cannot tell a by-product from the user's declared structure; that
-boundary is stated here rather than guessed at. The receipt and the audit row carry `deleted_entities`, a count.
+boundary is stated here rather than guessed at.~~ (**Superseded by `V2-D111` (migration 30):** `entity_mention` and `entity.origin` now record mentions vs declared structure explicitly, so `delete(scope='memory')` erases unreferenced `origin='mention'` entities.) The receipt and the audit row carry `deleted_entities`, a count.
 
 **Tests.** `test_api_wiring_lifecycle_db.py`: `delete all` erases declared and mentioned names and audits only a count;
 a topic deletion by entity id erases that entity and nothing else, and a memory deletion erases none; the function is
@@ -3105,3 +3119,107 @@ body: a `DELETE` is admitted when the parent `app_user` row is no longer visible
 `UPDATE` and `TRUNCATE` are refused as before. Tests: an export after an epoch change with an identical read set is
 servable and gets a new id; two users' empty exports get distinct ids; a direct delete is refused and the user cascade
 succeeds; migration 28 rolls back to the recorded version-27 fingerprint.
+
+---
+
+## 7. Decisions closing post-W3.7 audit gaps and Phase completion (2026-11-25)
+
+### V2-D110 — Structural artifacts record commit-time provenance in `artifact_provenance`
+
+**Status:** adopted (2026-11-25). Migration 29. Closes `I2` remainder (#243).
+
+`memory_version` enforced provenance since migrations 1/7/10, while `association`, `entity` (and its aliases), and
+`entity_link` recorded no attribution to the evidence or API call that produced them. Migration 29 adds one generic
+table `artifact_provenance` (`artifact_kind IN ('association', 'entity', 'entity_alias', 'entity_link')`), enforced at
+commit by deferred constraint triggers (`enforce_artifact_provenance()`). When a cited `memory_version` is deleted,
+`BEFORE DELETE` transitions matching rows to `source_version_id = NULL, origin_kind = 'source_deleted'` ("provenance
+removed by deletion") with no dangling ID; deleting an `association`, `entity`, or `entity_link` cascades its
+provenance rows (including `entity_alias` rows). Pre-migration rows are labelled `"unattributed (pre-migration)"`.
+
+### V2-D111 — Entity mentions and `origin` enable per-memory entity erasure
+
+**Status:** adopted (2026-11-25). Migration 30. Supersedes `V2-D108`'s memory-scope boundary (#247).
+
+Migration 30 adds `entity.origin IN ('declared', 'mention')` and `entity_mention(user_id, version_id, entity_id,
+resolution_stage)` inside the deletion closure. `delete(scope='memory')` counts removed mentions (`deleted_mentions`),
+calls `delete_orphaned_mention_entities` to erase any `origin='mention'` entity left with zero surviving mentions and
+zero `subject_entity_id` references (preserving declared entities and cited subjects), and the leak scanner adds Channel
+12 (`channel_12_entity_registry`) covering `entity` and `artifact_provenance` aliases.
+
+### V2-D112 — Verification records pin their support and held-out artifact IDs
+
+**Status:** adopted (2026-11-25). Migration 31 (#246).
+
+`VerificationRecord` requires non-empty, caller-readable, ID-disjoint `support_artifact_ids` and `held_out_artifact_ids`.
+Migration 31 adds `verification.artifact_pinning_status` (`pinned` vs `unpinned_pre_migration`) and child table
+`verification_artifact(verification_id, user_id, role, artifact_id)` with `PRIMARY KEY (verification_id, artifact_id)`
+and a deferred commit guard requiring both roles on every `'pinned'` record. `artifact_id` carries no foreign key so
+append-only verification records outlive deleted artifacts (IDs are opaque and content-free).
+
+### V2-D113 — Visibility writing, cross-user grant reads, and `move` composition
+
+**Status:** adopted (2026-11-25). Migration 32. Closes `I7` (#244).
+
+Adds Tier C Scope operation `set_visibility(ctx, artifact_id, visibility)` backed by `set_artifact_visibility` (syncing
+child `memory_evidence`, `memory_derivation`, `memory_embedding`, `abstraction_stats`, and `verification` rows within
+the caller's own `/u/<caller>/` namespace) plus optional `visibility` on `assert`, `ingest_episode`, `create_entity`,
+and `link`. Fixes cross-user read queries (`compile_predicate`, `read_handlers`, `provenance`, `expansion`,
+`statistics`, `staleness`, and `HostService` `read_scopes` forwarding) so granted reads actually succeed under RLS
+while recording content-free `scope_read` rows. Implements the documented 3-step `move` composition (`api/move.py`).
+
+### V2-D114 — Abstraction ledgers are derived from evidence and gated on verification
+
+**Status:** adopted (2026-11-25). Closes `I15` (#245) under Amendment 3 authorization.
+
+Adds W4 instruments (`evaluation/stats/abstraction_metrics.py`, `admission.py`, `dependence.py`,
+`evaluation/suites/null_suite.py`, G4 null-suite proof `FAR_τ <= 0.05`) and engine evidence derivation
+(`engine/abstraction_ledger.py`, `engine/refutation.py`). `infer` derives `(s, k, u, o)` directly from the named
+evidence sources and structured predicate (refusing zero/contradictory ledgers), runs active refutation probes, and
+`verify` enforces `soundness.admission.assess` for `'verified'` outcomes while sealing `confidence`,
+`confidence_method_id`, `counter_absence_basis`, and `closed_over_hash`.
+
+### V2-D115 — Fast-lane vs slow-lane cardinality and slot ownership
+
+**Status:** adopted (2026-11-25). Fixes `#248`.
+
+Flipping `assert` unconditionally to `cardinality='single'` with `semantic_slot=None` would collapse every unrelated user
+message onto `COALESCE(NULL, 'statement')` under `no_bitemporal_overlap` (`I5`). Instead: explicit per-message
+`cardinality`/`semantic_slot` hints pass through, a deterministic high-precision fast-lane classifier assigns single-valued
+slots for clear state updates (e.g. `residence`) without any LLM call (`event` claims stay non-single-valued), and
+general open-domain extraction stays in the async slow lane.
+
+### V2-D116 — No plaintext memory content cache in the FastAPI client
+
+**Status:** adopted (2026-11-25). Fixes `#249`.
+
+Removes the 60s TTL content cache in `app/services/memory_engine.py::search` so deleted, retracted, or unshared memories
+can never be served from client memory after an engine change. Documents client-side caching in `THREAT_MODEL.md` and
+`CHANNELS.md`.
+
+### V2-D117 — Transport-layer rate limits and concurrency bounds on `host/`
+
+**Status:** adopted (2026-11-25). Fixes `#251`.
+
+Adds a per-principal token-bucket rate limiter (off by default, `rate_limit_rps = 0.0`) and an `asyncio.Semaphore`
+concurrency guard (`pool_max >= max_inflight + 1` validated at startup) in `host/limits.py` and `host/service.py`,
+returning `429 resource_limit` with static codes only so one caller cannot exhaust all pool connections.
+
+### V2-D118 — Asset-derived judge floor verification and exact power analysis
+
+**Status:** adopted (2026-11-25). Fixes `#254`.
+
+Replaces censored `N=1` unanswerable max-logit reporting with full-set evaluation (`evaluation/retrieval/judge_floor.py`
+and `scripts/check_judge_floor.py`), adds live-asset floor tests in `tests/test_hybrid.py`, and provides exact
+binomial/two-proportion power calculations (`evaluation/stats/power.py`).
+
+### V2-D119 — Operational backup/restore policy, maintenance scheduler, and metrics
+
+**Status:** adopted (2026-11-25). Completes `#255` (`A-014`).
+
+Records the backup/restore policy in `deploy/README.md` (dumps require `BYPASSRLS`, separate secret backup of
+`CME_PROVENANCE_KEY`/`CME_DELETION_RECEIPT_KEY`, `public` extensions bootstrapped before schema restore, runtime role
+re-provisioned post-restore; pre-deletion backups resurrect rows deleted after the backup until retention expiry because
+no automated deletion-log replay ships). Adds `worker/maintenance.py` + `scripts/run_maintenance.py` + systemd timer for
+scheduled `expire`/`purge_working`/`rebuild_index`, dependency-free Prometheus `/metrics` (`host/metrics.py`) without
+tenant/content labels, and a real `pg_dump`/`pg_restore` rehearsal (`scripts/rehearse_restore.py`).
+

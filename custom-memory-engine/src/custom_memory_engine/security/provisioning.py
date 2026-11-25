@@ -40,6 +40,9 @@ USER_TABLES = (
     "outcome_stats",  # migration 20 (E-027): procedure outcome counters
     "procedure_shape",  # migration 21 (E-030): preconditions and steps, written once with the procedure
     "export_snapshot",  # migration 25 (E-038/F11): the durable export manifest, user-isolated
+    "artifact_provenance",  # migration 29 (I2, V2-D110): attribution for structural artifacts
+    "entity_mention",  # migration 30 (I8, V2-D111): claim-to-entity mentions
+    "verification_artifact",  # migration 31 (I11, V2-D112): pinned support and held-out artifacts
 )
 
 
@@ -79,6 +82,11 @@ TABLE_GRANTS: dict[str, frozenset[str]] = {
     "export_snapshot": _APPEND,  # a manifest is evidence of what was exported: appended, never rewritten
     # the method registry is shared and append-only: anyone may read it, `register_method` appends, nobody changes it
     "method": _APPEND,
+    # migration 29-31: attribution, entity mentions, and pinned verification
+    # artifacts (cascades and tombstones run as owner)
+    "artifact_provenance": _APPEND,
+    "entity_mention": _APPEND,
+    "verification_artifact": _APPEND,
 }
 
 

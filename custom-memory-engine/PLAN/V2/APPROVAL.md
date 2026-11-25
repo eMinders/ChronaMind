@@ -84,3 +84,15 @@ The original record and Amendment 1 are unchanged. This amendment records a late
 | **Boundary (absolute)** | **W1 is not authorized.** No W1 task (`E-010`-`E-020`) is started: no schema migration, no new table, no change to the engine's runtime read/write paths. Permitted, as in Amendment 1: specifications, decision records, pure contract modules (`api.contract`, `model.axes`, `scope.*`) and their tests, CI and tooling. Clearing G0b does not authorize W1; W1 starts only on a separate explicit instruction |
 | **Constraint honoured** | No security, statistical, temporal, provenance, deletion or isolation guarantee was weakened; no gate threshold or acceptance criterion was lowered; frozen research records unchanged (`validation/document_hashes.txt` 5/5) |
 
+## Amendment 3 — Post-W3.7 phase completion & W4/W5/A-014 authorization (2026-11-25)
+
+The original record and Amendments 1–2 are unchanged. This amendment records a later Project Owner instruction.
+
+| Field | Value |
+|---|---|
+| **Authority** | The Project Owner explicitly authorized full engineering authority to resolve Issues #243–#257, complete required prerequisite work including updating `DECISIONS_V2.md`, close the remaining W3.x/post-W3.7 invariant and boundary gaps (`I2`, `I7`, `I8`, `I11`, `I15`), authorize the needed W4/W5 statistical/ledger prerequisites (`V2-D30`, `V2-D31`, `V2-D34`, `V2-D14`) and `A-014` operations (`#255`), and deliver one verified PR targeting `main`. |
+| **Recorded by** | `elewashy` |
+| **Decisions** | `DECISIONS_V2.md` §4 (`V2-D14`, `V2-D30`, `V2-D31`, `V2-D34` adopted) and `V2-D110`–`V2-D119` |
+| **Constraint honoured** | No security, RLS, temporal, provenance, deletion, or `G-TS` confirmatory split guarantee is weakened; frozen research records unchanged (`validation/document_hashes.txt` 5/5). |
+
+

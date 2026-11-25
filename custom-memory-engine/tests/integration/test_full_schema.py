@@ -229,6 +229,9 @@ async def test_full_schema_creates_twelve_tables_and_named_constraints(
             "outcome_stats",
             "procedure_shape",  # migration 21 (E-030)
             "export_snapshot",  # migration 25 (E-038/F11)
+            "artifact_provenance",  # migration 29 (I2, V2-D110)
+            "entity_mention",  # migration 30 (I8, V2-D111)
+            "verification_artifact",  # migration 31 (I11, V2-D112)
         }
         cursor = await conn.execute(
             """

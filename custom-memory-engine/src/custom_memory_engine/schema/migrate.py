@@ -54,6 +54,10 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (26, "026_entity_embedding.sql"),
     (27, "027_entity_erasure.sql"),
     (28, "028_export_snapshot_cascade.sql"),
+    (29, "029_artifact_provenance.sql"),
+    (30, "030_entity_mentions_and_erasure.sql"),
+    (31, "031_verification_artifacts.sql"),
+    (32, "032_visibility_sync.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -84,6 +88,9 @@ TABLES = (
     "outcome_stats",  # migration 20 (E-027): the minimal procedure-stats substrate E-030 extends
     "procedure_shape",  # migration 21 (E-030): a procedure's preconditions and steps
     "export_snapshot",  # migration 25 (E-038/F11): the durable, epoch-bound export manifest
+    "artifact_provenance",  # migration 29 (I2, V2-D110): provenance for non-memory structural artifacts
+    "entity_mention",  # migration 30 (I8, V2-D111): claim-to-entity mentions inside deletion closure
+    "verification_artifact",  # migration 31 (I11, V2-D112): pinned support & held-out artifacts
 )
 FUNCTIONS = (
     "clock_now",
@@ -117,7 +124,14 @@ FUNCTIONS = (
     "delete_exclusive_turns",  # migration 22 (E-037): S-08 exclusive turn deletion inside a deletion transaction
     "clear_retired_tombstone_content",  # migration 22 (E-037): V2-D50 rule 3 tombstone vector/shape removal
     "deletion_in_this_transaction",  # migration 22 (E-037): the gate of the two helpers and the tombstone exception
-    "delete_orphaned_entities",  # migration 27 (V2-D108): a deletion erases the entities it orphans
+    "delete_orphaned_entities",  # migration 27 (V2-D108) / 30 (V2-D111): a deletion erases the entities it orphans
+    "enforce_artifact_provenance",  # migration 29 (I2, V2-D110): deferred provenance check on association/entity/link
+    "mark_artifact_provenance_source_deleted",  # migration 29 (I2, V2-D110): source-deleted tombstoning on MV delete
+    "cascade_artifact_provenance_delete",  # migration 29 (I2, V2-D110): cleanup on artifact deletion
+    "delete_orphaned_mention_entities",  # migration 30 (I8, V2-D111): memory-scope erasure of mention entities
+    "guard_verification_artifact_append_only",  # migration 31 (I11, V2-D112): append-only verification artifacts
+    "enforce_verification_artifacts",  # migration 31 (I11, V2-D112): pinned verification requires both sides
+    "set_artifact_visibility",  # migration 32 (I7, V2-D113): owner-scoped visibility sync across child tables
 )
 # Parameterized SQL argument lists for non-zero-arg functions in FUNCTIONS so reset() drops them cleanly.
 FUNCTION_ARG_TYPES: Mapping[str, str] = {
@@ -125,6 +139,8 @@ FUNCTION_ARG_TYPES: Mapping[str, str] = {
     "clear_retired_tombstone_content": "text, text[]",
     "deletion_in_this_transaction": "text",
     "delete_orphaned_entities": "text, text[]",
+    "delete_orphaned_mention_entities": "text, text[]",
+    "set_artifact_visibility": "text, text, text",
 }
 logger = structlog.get_logger(__name__)
 
