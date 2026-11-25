@@ -3,10 +3,15 @@
 .gitignore
 .env
 .env.*
+**/.env
+**/.env.*
 .venv
 .model-cache
+# A bare pattern matches only at the context root; `**/` is what keeps a developer's bytecode out of src/ and scripts/.
 __pycache__/
 *.py[cod]
+**/__pycache__
+**/*.py[cod]
 .pytest_cache
 .ruff_cache
 .coverage

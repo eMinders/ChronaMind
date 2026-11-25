@@ -96,16 +96,52 @@ runtime extras with `uv sync --frozen --no-default-groups --extra host --extra e
 `/app/scripts`, and `/app/.venv` owned by `root:root` read-only, and runs as unprivileged `chronamind` (uid `10001`).
 
 **What is executed in CI vs. verified locally / out-of-band.**
-- **Executed in CI (`verify` job in `.github/workflows/custom-memory-engine.yaml`):**
+- **Executed in CI (`deploy-smoke` job in `.github/workflows/custom-memory-engine.yaml`, `#253`):** `deploy/ci_smoke.sh`,
+  which is also the local command (`CME_TEST_DATABASE_URL=postgresql://… bash deploy/ci_smoke.sh` from
+  `custom-memory-engine/`; it needs Docker with the compose plugin, `systemd-analyze`, and an owner-level URL):
+  1. `scripts/verify_deploy_artifacts.py --require-systemd`: `systemd-analyze verify` on `cme-worker.service`,
+     `cme-maintenance.service` and `cme-maintenance.timer` (non-zero on any unit error), plus the check that every
+     `CME_*` variable a unit, the compose file or the Dockerfile names is in `.env.example` and in this file.
+     `systemd-analyze verify` refuses an `ExecStart` binary that does not exist, so the units are verified against a
+     staged `--root` holding `/opt/chronamind/custom-memory-engine/.venv/bin/python` and `/etc/chronamind/worker.env`
+     at exactly the paths the units name; the units themselves are copied unchanged.
+  2. `docker build -f deploy/Dockerfile.worker` from `custom-memory-engine/`.
+  3. Image inspection: `Config.User` is `chronamind` and `id -u` in the image is `10001`; no secret-named variable in
+     `Config.Env` or in any layer's history; `/app` holds only `.venv`, `scripts`, `src`; no `.env`, `.env.*`,
+     `.model-cache`, `.git`, `PLAN` anywhere on the image filesystem, no tests, no host bytecode, an empty `/models`;
+     code and venv not writable by the runtime user. A derived image that breaks each rule must fail the same
+     inspection (the control).
+  4. A throwaway schema migrated by `python -m custom_memory_engine.schema.migrate apply` and its role provisioned by
+     `scripts/provision_role.py`; both are dropped when the script exits.
+  5. The image against that database (host network, read-only root, `/tmp` tmpfs): the worker starts and serves eight
+     idle polls with no failed tick; `scripts/worker_healthcheck.py` exits `0` on the empty queue and `2` on an
+     unreachable database (the control); `docker stop` (`SIGTERM`) exits `0` after `slow_lane_stopped`; and each of
+     `CME_DATABASE_URL`, `CME_RUNTIME_ROLE`, `CME_WORKER_USERS`, `CME_LLM_BASE_URL`, `CME_LLM_API_KEY`,
+     `CME_EXTRACTOR_MODEL` missing exits `2` with `<name>_required` on stderr and no configured value.
+  6. `docker compose -f deploy/compose.worker.yaml` builds through the file's own `build:`, then `up -d` and polls until
+     the file's healthcheck reports `healthy`. A one-file override sets only the image tag and `network_mode: host`
+     (so the container reaches the test database on `localhost`); healthcheck, `read_only`, `tmpfs`, `env_file`,
+     interpolated variables, the `/models` volume and the grace period are the shipped file's.
+- **Executed in CI (`verify` job):**
   - `tests/test_deploy_artifacts.py` runs `scripts/verify_deploy_artifacts.py` (cross-checks every `CME_*` env var across systemd units, compose, `.env.example`, and this document; inspects `Dockerfile.worker` and `.dockerignore`; and runs `systemd-analyze verify` against a staged `--root` on Linux hosts) plus mutation tests proving bogus `ExecStart` and unknown `CME_*` env vars fail loudly.
   - `tests/integration/test_worker_process_db.py` runs `scripts/run_worker.py` as a child process against PostgreSQL with `SIGTERM`, mid-call `SIGTERM`, `SIGKILL` lease recovery, and missing-env exit-2 assertions.
   - `tests/integration/test_slow_lane_concurrency_db.py` verifies `FOR UPDATE SKIP LOCKED`, concurrent `claim_one` / `recover_stale`, zombie worker lease fencing, and dead-lettering after `MAX_ATTEMPTS`.
   - `tests/integration/test_maintenance_scheduler_db.py` exercises `worker/maintenance.py` and `scripts/run_maintenance.py` (`--once`, `--dry-run`) against PostgreSQL.
   - `tests/integration/test_backup_restore_db.py` executes `scripts/rehearse_restore.py` (`pg_dump` / `pg_restore` round-trip, `BYPASSRLS` check, `public` extensions, role re-provisioning, and pre-deletion resurrection verification) against PostgreSQL.
   - `tests/integration/test_host_e2e_db.py` drives real HTTP requests over uvicorn for auth, rate/concurrency `429` isolation, and Prometheus `/metrics`.
-- **Verified locally / not executed automatically in CI:**
-  - `docker build -f deploy/Dockerfile.worker` container image build, image inspection (non-root `chronamind`, read-only `/app/src`, no `.env`/`.model-cache`), container smoke execution (`worker_healthcheck.py` / missing-env exit 2), and `docker compose -f deploy/compose.worker.yaml` validation/healthcheck are verified locally rather than inside GitHub Actions.
-  - Live `systemd` PID 1 daemon activation and `cme-maintenance.timer` scheduling on a production host are not booted in CI (`systemd-analyze verify` checks unit files statically).
+- **Not executed in CI:**
+  - systemd itself: no unit is started under a live PID 1, so `User=`, `EnvironmentFile=`, the sandboxing directives,
+    `Restart=always` and the timer's schedule are checked by `systemd-analyze verify`, never run. The process contract
+    the unit relies on (`SIGTERM` exit 0, `SIGKILL` lease recovery on restart, exit 2) is run by
+    `test_worker_process_db.py` outside systemd.
+  - A model call from the image: the smoke queue stays empty and `CME_LLM_BASE_URL` is never dialled. The model path is
+    run with a stub provider in `test_worker_process_db.py`, outside the image.
+  - The embedding model in the image: `CME_EMBEDDING_ASSET` is unset (lexical-only), so the ONNX runtime and a mounted
+    `/models` cache with real weights are not loaded in CI.
+  - The compose file's default networking: CI runs it with `network_mode: host`; reaching a database over a bridge
+    network or another host is the deployment's configuration and is not exercised.
+  - `cme-maintenance` (`scripts/run_maintenance.py`) in a container: it has no image of its own; it runs under
+    systemd only, and as a process in `test_maintenance_scheduler_db.py`.
 
 ## Backup and restore policy (`A-014`, `V2-D119`)
 
