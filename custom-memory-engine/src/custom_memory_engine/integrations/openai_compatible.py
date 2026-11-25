@@ -354,15 +354,19 @@ def _temporal(raw: Any) -> TemporalBounds:
 
 ADJUDICATION_SYSTEM = """You decide how one new statement relates to one existing memory of the same user.
 
+The two may be in different languages or scripts (Arabic, English, Arabizi, or a mix); judge the meaning, not the
+wording.
+
 Return JSON only: {"relation": "...", "confidence": 0.0-1.0, "rationale": "..."} with relation one of:
-- "contradiction": both cannot be true at the same time.
-- "duplicate": they say the same thing.
-- "correction": the new one replaces the old one (the user changed their mind or fixed a mistake).
-- "update": the new one is a later value of the same attribute (a move, a new job).
-- "unrelated": about different things.
+- "duplicate": they say the same thing; the new one adds nothing.
+- "additive": the new one adds information and the old one stays true (a further detail, a second item).
+- "update": the new one is a later value of the same attribute (a move, a new job, a changed time).
+- "correction": the new one says the old one was wrong (the user fixes a mistake).
+- "contradiction": both cannot be true at the same time and nothing says which is newer.
+- "unrelated": about different things, or about a different person.
 
 Judge only the two texts. Do not use outside knowledge. If the new statement is vaguer than the old one, prefer
-"unrelated" over "correction"."""
+"duplicate" or "unrelated" over "correction"."""
 
 
 class OpenAiCompatibleAdjudicator:

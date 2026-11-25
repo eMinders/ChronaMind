@@ -41,28 +41,32 @@ from custom_memory_engine.integrations.openai_compatible import (
 )
 from custom_memory_engine.integrations.provider import ModelClient, client_for
 from custom_memory_engine.semantic.grounding import quote_grounded
-from evaluation.model_selection.cases import (
-    ADJUDICATION,
-    ADJUDICATION_V2,
-    ALL_CASES,
-    ARABIC,
-    ARABIC_V2,
-    ENGLISH,
-    ENGLISH_V2,
-    MIXED,
-    MIXED_V2,
-    REWRITE,
-    Case,
-    overlap,
-    schema_ok,
-)
 
 #: Every task the engine asks a model to do. A candidate is scored per task, never as one aggregate: a model that
 #: wins extraction can lose adjudication, and picking one for both is how a deployment ends up with a pipeline that
 #: is subtly wrong in one stage nobody measured.
 #: `query_rewrite` is measured but **advisory**, and deliberately not part of the selection: the only honest measure
 #: of a rewrite is whether it retrieves the right memory, which needs the retrieval harness.
-TASKS = ("extraction_en", "extraction_ar", "extraction_mixed", "schema", "adjudication", "query_rewrite")
+from evaluation.model_selection.cases import (
+    ADJUDICATION,
+    ADJUDICATION_V2,
+    ADJUDICATION_V3,
+    ALL_CASES,
+    ARABIC,
+    ARABIC_V2,
+    ENGLISH,
+    ENGLISH_V2,
+    ENTITY,
+    MIXED,
+    MIXED_V2,
+    MIXED_V3,
+    REWRITE,
+    TASKS,  # one definition, shared with the tests
+    Case,
+    adjudication_correct,
+    overlap,
+    schema_ok,
+)
 
 
 @dataclass
@@ -223,13 +227,34 @@ async def score_adjudication(candidate: Candidate, client: ModelClient, cases: I
             score.record(case.id, False, error.code)
             continue
         relation = document.get("relation") if isinstance(document, Mapping) else None
-        # `duplicate` and `update` are both "the same slot, a new value"; a model that says one instead of the other
-        # still made the decision the engine needs, so the pair is scored together. Contradiction and unrelated are
-        # not.
-        acceptable = {expected}
-        if expected in ("duplicate", "update"):
-            acceptable = {"duplicate", "update", "correction"}
-        score.record(case.id, relation in acceptable, f"said_{relation}")
+        # Scored by the write the engine would make (V2-D107), not by the label: `duplicate` reinforces and `update`
+        # supersedes, so accepting one for the other hid answers that keep a stale value.
+        del expected
+        said = relation if isinstance(relation, str) else None
+        score.record(case.id, adjudication_correct(case, said), f"said_{relation}")
+
+
+async def score_entities(candidate: Candidate, client: ModelClient) -> None:
+    """Entity adjudication through the **production adapter**, so the prompt and the parsing are the shipped ones.
+
+    Two failure kinds are counted separately, because they cost differently: a *false merge* (attached to a wrong
+    entity, or to any entity when none was right) corrupts identity; a *miss* (abstained when one was right) leaves a
+    mention unresolved until the next one. ``failures`` names which.
+    """
+    from custom_memory_engine.integrations.openai_compatible import OpenAiCompatibleEntityAdjudicator
+
+    adjudicator = OpenAiCompatibleEntityAdjudicator(client)
+    score = candidate.score("entity_adjudication")
+    for case in ENTITY:
+        ids = [f"e{index}" for index in range(1, len(case.candidates) + 1)]
+        chosen = await adjudicator.choose(case.mention, list(zip(ids, case.candidates, strict=True)))
+        expected = None if case.expected is None else ids[case.expected - 1]
+        if chosen == expected:
+            score.record(case.id, True)
+        elif chosen is None:
+            score.record(case.id, False, "miss")
+        else:
+            score.record(case.id, False, "false_merge")
 
 
 async def score_rewrite(candidate: Candidate, client: ModelClient, cases: Iterable[Case]) -> None:
@@ -279,11 +304,13 @@ async def evaluate(model: str, base_url: str, api_key: str, *, tasks: Sequence[s
         if "extraction_ar" in tasks:
             await score_extraction(candidate, client, ARABIC + ARABIC_V2, "extraction_ar")
         if "extraction_mixed" in tasks:
-            await score_extraction(candidate, client, MIXED + MIXED_V2, "extraction_mixed")
+            await score_extraction(candidate, client, MIXED + MIXED_V2 + MIXED_V3, "extraction_mixed")
         if "schema" in tasks:
             await score_schema(candidate, client)
         if "adjudication" in tasks:
-            await score_adjudication(candidate, client, ADJUDICATION + ADJUDICATION_V2)
+            await score_adjudication(candidate, client, ADJUDICATION + ADJUDICATION_V2 + ADJUDICATION_V3)
+        if "entity_adjudication" in tasks:
+            await score_entities(candidate, client)
         if "query_rewrite" in tasks:
             await score_rewrite(candidate, client, REWRITE)
     finally:

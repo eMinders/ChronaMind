@@ -1,7 +1,7 @@
-# Retrieval evaluation (`V2-D100`)
+# Retrieval evaluation (`V2-D100`, `V2-D104`)
 
 49 memories, 64 questions, top 5, measured through the real read path
-real read path; `bm25` and the two rerank rows are computed offline over the same candidates.
+`hybrid_judged` is the shipped path with the relevance judge; `bm25` and the two rerank rows are offline.
 
 | configuration | recall@5 | top-1 | MRR@5 | nDCG@5 | no-match FP | misses |
 |---|---|---|---|---|---|---|

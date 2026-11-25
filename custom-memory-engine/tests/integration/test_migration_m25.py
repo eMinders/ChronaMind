@@ -144,3 +144,31 @@ async def test_rollback_restores_version_24_exactly_and_reapply_works(database) 
     assert (await runner.status()).version == M25 - 1
     assert (await runner.apply()).action == "applied"
     assert (await runner.status()).version == migrate.VERSION
+
+
+async def test_rollback_refuses_while_a_manifest_exists_and_proceeds_only_when_the_loss_is_named(database) -> None:  # noqa: F811
+    """A downgrade that would discard export manifests is refused unless the operator names that exact loss.
+
+    The same rule rollbacks 8 and 11 follow, with one addition: the manifests have no other home, so the operator may
+    accept losing them — but only by naming *this* table, in *this* transaction. Acknowledging another table's loss is
+    not an acknowledgement of this one.
+    """
+    config, schema = database
+    runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
+    down = cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=M25 - 1))
+    async with connect(database) as conn:
+        await manifest(conn)  # `u1` is seeded by the fixture; the connection is autocommit
+        for setting in (None, "entity_embedding"):
+            async with conn.transaction():
+                if setting is not None:
+                    await conn.execute(sql.SQL("SET LOCAL cme.rollback_discard = {}").format(sql.Literal(setting)))
+                # 26 must come off first and has nothing to refuse here; 25 then refuses
+                with pytest.raises(RaiseException, match="m25_rollback_refused_export_snapshots_exist"):
+                    async with conn.transaction():
+                        await conn.execute(down, prepare=False)
+        assert await rows(conn, "SELECT count(*) FROM export_snapshot") == [(1,)]
+        async with conn.transaction():
+            await conn.execute("SET LOCAL cme.rollback_discard = 'export_snapshot'")
+            await conn.execute(down, prepare=False)
+    assert (await runner.status()).version == M25 - 1
+    assert (await runner.apply()).action == "applied"

@@ -249,10 +249,10 @@ def write_report(results: dict[str, dict[str, tuple[str, ...]]], scores: list[Sc
     }
     (REPORT / "evaluation.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", "utf-8")
     lines = [
-        "# Retrieval evaluation (`V2-D100`)",
+        "# Retrieval evaluation (`V2-D100`, `V2-D104`)",
         "",
         f"{len(MEMORIES)} memories, {len(QUESTIONS)} questions, top {TOP}, measured through the real read path",
-        "real read path; `bm25` and the two rerank rows are computed offline over the same candidates.",
+        "`hybrid_judged` is the shipped path with the relevance judge; `bm25` and the two rerank rows are offline.",
         "",
         "| configuration | recall@5 | top-1 | MRR@5 | nDCG@5 | no-match FP | misses |",
         "|---|---|---|---|---|---|---|",

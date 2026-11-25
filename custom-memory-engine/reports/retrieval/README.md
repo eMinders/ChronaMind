@@ -1,11 +1,42 @@
 # Retrieval quality — the numbers that decided the ranking (2026-11-25, revised)
 
-Two rounds. The first (2026-11-22) settled whether the **dense arm** earns its place on a 16-question set. The second
+Three rounds. Round 3 (`V2-D104`) adds a relevance judge that closes round 2's residual false positive. Earlier: The first (2026-11-22) settled whether the **dense arm** earns its place on a 16-question set. The second
 (`V2-D100`) is on a set large enough to decide the **ranking** question the first one could not: whether BM25 or a
 second-stage reranker beats Reciprocal Rank Fusion. Both run through the shipped read path
 (`Engine.call(..., "query", ...)`); the set, the metrics and the assertions live in
 `tests/integration/test_retrieval_eval_db.py` and `evaluation/retrieval/`, and `evaluation.{json,md}` beside this file is
 its output rather than a transcription.
+
+## Round 3 — the relevance judge (`V2-D104`)
+
+Round 2 left one residual it could not remove: one unanswerable question in eight returned a neighbour, because its
+nearest memory sat at cosine 0.605 while the weakest *genuine* paraphrase sat at 0.46. Before reaching for a model,
+three cheaper rules were measured on the full 64 × 49 cosine matrix, and each failed on the numbers:
+
+| rule | answerable (worst) | unanswerable (best) | verdict |
+|---|---|---|---|
+| corpus-relative z-score of the top hit | 2.16 | 3.44 | overlaps |
+| top-1 minus top-2 gap | 0.004 | 0.050 | overlaps |
+| require a lexical/trigram arm to agree | drops 30 of 56 answers | — | unusable |
+| embed only the question's informative terms | 0.361 | 0.569 | worse than the full question |
+
+A cross-encoder reads question and memory **together**. Two multilingual ones were measured over the same candidates:
+
+| judge | answerable (worst logit) | unanswerable (best logit) | separates? |
+|---|---|---|---|
+| `bge-reranker-v2-m3` (int8 ONNX) | -6.68 | -11.01 | **yes, by 4.3 logits** |
+| `jina-reranker-v2-base-multilingual` (int8 ONNX) | -2.91 | -2.38 | no |
+
+`bge-reranker-v2-m3` ships as an optional judge, applied to at most 10 fused candidates (~28 ms each on the reference
+CPU), with the floor at the midpoint, **-8.8**. `hybrid_judged` in `evaluation.md`: recall@5 0.982 (unchanged), top-1
+0.768 (from 0.732), nDCG@5 0.896 (from 0.882), **no-match false positives 0.000** (from 0.125). The extremes are
+written to `evaluation.json` (`judge`) by the test, and `tests/test_hybrid.py` asserts the constant sits between them.
+Unlike BM25 and the recency rerank of round 2, this second stage *improved* ranking as well as gating, because it is
+the only one that reads the pair rather than scoring the memory alone.
+
+**Cost and fallback.** A deployment without the asset (`CME_RERANKER_ASSET` unset) keeps round 2's behaviour and the
+result says `judgement: null`. A judge failure degrades to the same, logged. The model files are pinned by revision and
+SHA-256 in `scripts/fetch_models.py --check`.
 
 ## Round 2 — 49 memories, 64 questions (`V2-D100`)
 

@@ -19,7 +19,15 @@ from custom_memory_engine.semantic.slots import normalize_slot
 #: `query_rewrite` is measured but **advisory**, and deliberately not part of the selection: the only honest measure
 #: of a rewrite is whether it retrieves the right memory, which needs the retrieval harness. Scoring it by string
 #: overlap here would rank models on their phrasing rather than on their usefulness.
-TASKS = ("extraction_en", "extraction_ar", "extraction_mixed", "schema", "adjudication", "query_rewrite")
+TASKS = (
+    "extraction_en",
+    "extraction_ar",
+    "extraction_mixed",
+    "schema",
+    "adjudication",
+    "entity_adjudication",
+    "query_rewrite",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +44,9 @@ class Case:
     must_quote: tuple[str, ...] = ()
     #: For adjudication: `(new, existing, expected_relation)`.
     adjudication: tuple[str, str, str] | None = None
+    #: Other relations that lead the engine to the same *or an equally correct* write, each argued at the case. Scoring
+    #: is by the engine's strategy (`strategy_of`), so this lists only alternatives whose strategy differs.
+    alternatives: tuple[str, ...] = ()
     #: For query rewriting: the memory the rewritten query must retrieve.
     rewrite_target: str | None = None
 
@@ -342,7 +353,10 @@ ADJUDICATION_V2: tuple[Case, ...] = (
         "",
         "",
         (),
-        adjudication=("أنا نباتي ولا آكل اللحوم", "أنا نباتي ولا آكل السمك", "duplicate"),
+        # "vegetarian, no meat" against "vegetarian, no fish": the shared part is a duplicate, the rest is *new detail*
+        # (meat is not fish). Relabelled from `duplicate` (V2-D107): reinforcing would keep only the fish statement and
+        # lose the meat one, which is a wrong write. `additive` and `unrelated` both insert, so either is correct.
+        adjudication=("أنا نباتي ولا آكل اللحوم", "أنا نباتي ولا آكل السمك", "additive"),
     ),  # fmt: skip
     Case(
         "adj2_unrelated",
@@ -358,9 +372,12 @@ ADJUDICATION_V2: tuple[Case, ...] = (
         "",
         "",
         (),
-        # the new statement is narrower than the old one: it does not contradict it, so it is the same belief said
-        # more precisely -- `duplicate`, not a new value
-        adjudication=("I work remotely three days a week", "I work remotely", "duplicate"),
+        # The new statement is narrower than the old one and adds a detail ("three days a week"). It was labelled
+        # `duplicate` before the prompt offered `additive`; under that label the engine *reinforces* the old belief and
+        # the detail is lost. Relabelled `additive` (V2-D107): insert keeps both, and `update` (supersede with the more
+        # precise statement) is the documented alternative, because the new one entails the old.
+        adjudication=("I work remotely three days a week", "I work remotely", "additive"),
+        alternatives=("update",),
     ),  # fmt: skip
     Case(
         "adj2_time_change",
@@ -392,8 +409,165 @@ ADJUDICATION_V2: tuple[Case, ...] = (
 )
 
 
+#: Added with the `additive` relation (V2-D107): the cases the old vocabulary could not express, and more of the
+#: cross-language ones, since a multilingual memory's duplicates are often in the other script.
+ADJUDICATION_V3: tuple[Case, ...] = (
+    Case(
+        "adj3_additive", "", "", "", (), adjudication=("I also speak French", "I speak Arabic and English", "additive")
+    ),
+    Case(
+        "adj3_additive_ar", "", "", "", (), adjudication=("وعندي قطة اسمها لولو", "عندي كلب اسمه ماكس", "additive")
+    ),  # fmt: skip
+    Case(
+        "adj3_correction",
+        "",
+        "",
+        "",
+        (),
+        adjudication=("Sorry, my birthday is the 14th, not the 4th", "My birthday is on the 4th of May", "correction"),
+    ),  # fmt: skip
+    Case(
+        "adj3_cross_lang_update",
+        "",
+        "",
+        "",
+        (),
+        adjudication=("انتقلت الآن إلى لشبونة", "I live in Berlin", "update"),
+    ),  # fmt: skip
+    Case(
+        "adj3_arabizi_duplicate",
+        "",
+        "",
+        "",
+        (),
+        adjudication=("ana mesh ba7eb el ahwa el sada", "I do not like black coffee", "duplicate"),
+    ),  # fmt: skip
+    Case(
+        "adj3_cross_lang_contradiction",
+        "",
+        "",
+        "",
+        (),
+        # no change signal ("now", "moved"): two incompatible present-tense values, which the engine must not resolve
+        adjudication=("أنا لا أشرب القهوة أبدًا", "I drink two coffees every morning", "contradiction"),
+    ),  # fmt: skip
+)
+
+MIXED_V3: tuple[Case, ...] = (
+    Case(
+        "mx3_arabizi_move",
+        "Ana sakin fi Dubai delwa2ty, 2abl kda kont fi Cairo.",
+        "2026-04-01T10:00:00+00:00",
+        "mixed",
+        ("dubai",),
+    ),  # fmt: skip
+    Case(
+        "mx3_doctor",
+        "My doctor, Dr. Nabil, قال إني لازم أبطل القهوة.",
+        "2026-04-02T10:00:00+00:00",
+        "mixed",
+        ("nabil",),
+    ),  # fmt: skip
+    Case(
+        "mx3_allergy",
+        "Allergic to penicillin يا جماعة، اكتبوها عندكم.",
+        "2026-04-03T10:00:00+00:00",
+        "mixed",
+        ("penicillin",),
+    ),  # fmt: skip
+    Case(
+        "mx3_relocation",
+        "Moving to Lisbon fi September, el sha2a gahza.",
+        "2026-04-04T10:00:00+00:00",
+        "mixed",
+        ("lisbon",),
+    ),  # fmt: skip
+    Case(
+        "mx3_work",
+        "شغال على Kubernetes migration من أول الشهر.",
+        "2026-04-05T10:00:00+00:00",
+        "mixed",
+        ("kubernetes",),
+    ),  # fmt: skip
+)
+
+
+@dataclass(frozen=True, slots=True)
+class EntityCase:
+    """One entity-adjudication question: is ``mention`` one of ``candidates`` (stored, normalized names)?
+
+    ``expected`` is the 1-based index of the right candidate, or ``None`` when none is the mention — the case that
+    matters most, because a wrong attach merges two identities and a missed one is repaired by the next mention.
+    """
+
+    id: str
+    mention: str
+    candidates: tuple[str, ...]
+    expected: int | None
+
+
+#: Entity adjudication (V2-D106, V2-D107). Half the cases must *not* merge: the bi-encoder's measured false proposals
+#: (two offices, two projects) and an ambiguity a careful model must abstain on.
+ENTITY: tuple[EntityCase, ...] = (
+    EntityCase("ent_cross_script_person", "ليلى", ("layla hassan", "sara okafor"), 1),
+    EntityCase("ent_full_name_ar", "محمد علي", ("ahmed kamal", "mohamed ali"), 2),
+    EntityCase("ent_title_ar", "د. يوسف", ("herr weber", "dr. yusuf"), 2),
+    EntityCase("ent_city_ar", "القاهرة", ("cairo", "alexandria"), 1),
+    EntityCase("ent_project_ar", "مشروع أطلس", ("project apollo", "atlas"), 2),
+    EntityCase("ent_spelling", "Ahmed Kamal", ("ahmad kamaal",), 1),
+    EntityCase("ent_expansion", "VS Code", ("visual studio", "visual studio code"), 2),
+    EntityCase("ent_office_false", "Munich office", ("berlin office",), None),
+    EntityCase("ent_project_false", "Project Beta", ("project alpha",), None),
+    EntityCase("ent_city_vs_office", "Berlin", ("berlin office",), None),
+    EntityCase("ent_editor_false", "Neovim", ("vim",), None),
+    EntityCase("ent_ambiguous_first_name", "Sara", ("sara ahmed", "sara okafor"), None),
+)
+
+
+def strategy_of(relation: str | None) -> str:
+    """What the **engine** does with ``relation``: asked of ``conflict.commit_strategy`` itself, not restated here.
+
+    Scoring adjudication by label was lenient in a way that hid wrong writes: `duplicate`, `update` and `correction`
+    were accepted for each other, but the engine *reinforces* on `duplicate` and *supersedes* on the other two, so a
+    move answered "duplicate" kept the old address and still scored as correct. Scoring by strategy is the measure that
+    matches the consequence (V2-D107).
+    """
+    from custom_memory_engine.semantic.conflict import Neighbour, commit_strategy
+    from custom_memory_engine.semantic.contracts import AdjudicatedRelation, ExtractedClaim
+
+    claim = ExtractedClaim(content="x", verbatim_quote="x")
+    neighbour = Neighbour(version_id="n", content="y", similarity=1.0, authority=3)
+    relations = [] if relation is None else [AdjudicatedRelation(existing_id="n", relation=relation)]  # type: ignore[arg-type]
+    return commit_strategy(claim, 3, relations, [neighbour]).strategy
+
+
+def adjudication_correct(case: Case, said: str | None) -> bool:
+    """Whether ``said`` leads the engine to the write ``case`` expects (or to a documented alternative)."""
+    assert case.adjudication is not None
+    accepted = {strategy_of(case.adjudication[2]), *(strategy_of(label) for label in case.alternatives)}
+    # No answer is not a judgement. Production treats it as "insert", but crediting it here would score a model that
+    # failed to answer as right on every case whose correct write happens to be an insert.
+    if said is None or said not in RELATION_LABELS:
+        return False
+    return strategy_of(said) in accepted
+
+
+#: The relation vocabulary a model may emit; anything else is a wrong answer, not an "insert".
+RELATION_LABELS = frozenset({"duplicate", "update", "correction", "contradiction", "additive", "unrelated"})
+
+
 ALL_CASES: tuple[Case, ...] = (
-    ENGLISH + ARABIC + MIXED + ADJUDICATION + REWRITE + ENGLISH_V2 + ARABIC_V2 + MIXED_V2 + ADJUDICATION_V2
+    ENGLISH
+    + ARABIC
+    + MIXED
+    + ADJUDICATION
+    + REWRITE
+    + ENGLISH_V2
+    + ARABIC_V2
+    + MIXED_V2
+    + ADJUDICATION_V2
+    + MIXED_V3
+    + ADJUDICATION_V3
 )
 
 

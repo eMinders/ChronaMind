@@ -76,3 +76,80 @@ def test_every_adjudication_label_is_a_relation_a_model_may_emit() -> None:
     labels = {case.adjudication[2] for case in ALL_CASES if case.adjudication is not None}
     assert labels, "the harness has no adjudication cases"
     assert labels <= RELATIONS, labels - RELATIONS
+
+
+# ------------------------------------------------------------------- scoring by the engine's write (V2-D107)
+
+
+def test_adjudication_is_scored_by_the_write_the_engine_would_make() -> None:
+    """A move answered "duplicate" would *reinforce* the old address. The old scorer accepted it; this one does not."""
+    from evaluation.model_selection.cases import ADJUDICATION_V2, adjudication_correct
+
+    move = next(case for case in ADJUDICATION_V2 if case.id == "adj2_move")
+    assert adjudication_correct(move, "update")
+    assert adjudication_correct(move, "correction"), "both supersede: the same write"
+    assert not adjudication_correct(move, "duplicate"), "reinforcing keeps the stale value"
+    assert not adjudication_correct(move, "contradiction")
+
+
+def test_an_unanswered_or_invented_label_is_never_credited() -> None:
+    """Production inserts on no answer; the scorer must not turn that into a free point on every insert case."""
+    from evaluation.model_selection.cases import ADJUDICATION, adjudication_correct
+
+    unrelated = next(case for case in ADJUDICATION if case.id == "adj_unrelated")
+    assert adjudication_correct(unrelated, "unrelated")
+    assert adjudication_correct(unrelated, "additive"), "both insert"
+    assert not adjudication_correct(unrelated, None)
+    assert not adjudication_correct(unrelated, "maybe")
+
+
+def test_the_scorer_asks_the_engine_rather_than_restating_it() -> None:
+    """`strategy_of` is `conflict.commit_strategy` itself, so a change to the mapping changes the scoring with it."""
+    from evaluation.model_selection.cases import strategy_of
+
+    assert strategy_of("duplicate") == "reinforce"
+    assert {strategy_of("update"), strategy_of("correction")} == {"supersede"}
+    assert strategy_of("contradiction") == "open_conflict"
+    assert {strategy_of("additive"), strategy_of("unrelated"), strategy_of(None)} == {"insert"}
+
+
+def test_the_entity_set_tests_refusal_as_much_as_matching() -> None:
+    """A set where every answer is "match" would reward a model that always merges."""
+    from evaluation.model_selection.cases import ENTITY
+
+    refusals = sum(1 for case in ENTITY if case.expected is None)
+    assert refusals >= len(ENTITY) // 3
+    assert all(case.expected is None or 1 <= case.expected <= len(case.candidates) for case in ENTITY)
+    assert len({case.id for case in ENTITY}) == len(ENTITY)
+
+
+async def test_the_production_entity_adjudicator_maps_numbers_to_ids_and_rejects_anything_else() -> None:
+    """The model sees `1..n`, never an id; out-of-range, boolean or malformed answers are abstentions."""
+    from custom_memory_engine.integrations.openai_compatible import OpenAiCompatibleEntityAdjudicator
+
+    class Client:
+        model = "fake"
+
+        def __init__(self, answer: object) -> None:
+            self.answer = answer
+            self.prompts: list[str] = []
+
+        async def complete_json(self, messages, *, max_tokens: int = 0):
+            del max_tokens
+            self.prompts.append(messages[-1]["content"])
+            return self.answer
+
+    offered = [("ent_secret_1", "layla hassan"), ("ent_secret_2", "sara okafor")]
+    for answer, expected in (
+        ({"match": 1}, "ent_secret_1"),
+        ({"match": 2}, "ent_secret_2"),
+        ({"match": None}, None),
+        ({"match": 3}, None),
+        ({"match": 0}, None),
+        ({"match": True}, None),
+        ({"match": "ent_secret_1"}, None),
+        (["match", 1], None),
+    ):
+        client = Client(answer)
+        assert await OpenAiCompatibleEntityAdjudicator(client).choose("ليلى", offered) == expected, answer  # type: ignore[arg-type]
+        assert "ent_secret" not in client.prompts[0], "an entity id must never enter a prompt"

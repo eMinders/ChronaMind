@@ -44,27 +44,25 @@ Frozen and checksum-bound (`validation/document_hashes.txt`): `Graduation_Projec
 - Waves **W0–W3 complete**, gate **G3** signed off; **W3.5** (`E-040`–`E-045`) and **W3.6** (`E-046`–`E-052`) landed. W4
   and later are **not authorised** without the Project Owner's instruction (`PLAN/V2/APPROVAL.md`, `ROADMAP_V2.md` §4.1).
   The component map is [`PLAN/V2/COMPONENT_MAP.md`](PLAN/V2/COMPONENT_MAP.md).
-- **All 29** contract operations dispatch through `Engine.call`; `api/wiring.UNWIRED_OPERATIONS` is **empty** and is
-  asserted to agree with reality. `E-048` (`V2-D97`) wired the last six with the machinery each actually needed: `stats`
-  (`engine/statistics.py`, ids and never content), `verify` (`engine/verification.py`, the `I11` disjointness algorithm),
-  `dissent` **and** the `negative_constraint` reader in `infer` (`I16`), `expire` (profile-driven, stamps `expires_at` so
-  the `expired` stale cause exists, deletes nothing), `rebuild_index` (`engine/index_maintenance.py`: `REINDEX …
-  CONCURRENTLY` outside a transaction for `fts`/`vector`, an in-transaction reseal for `closure_hash`), and `export`
-  (migration 25: a durable, epoch-bound, append-only manifest — the old `ExportSnapshotStore` was a process-local dict and
-  could not implement channel 11 at all). `refute` and the HTTP host (`host/`) landed with `E-046`.
+- **All 31** contract operations dispatch through `Engine.call`; `api/wiring.UNWIRED_OPERATIONS` is **empty** and
+  asserted. `E-048` (`V2-D97`) wired `stats`, `verify` (`I11`), `dissent`, `expire`, `rebuild_index` and `export`
+  (migration 25, an epoch-bound manifest); `E-053` (`V2-D105`) added `lift` (reopen a dissent on *grounded* evidence;
+  deleting that evidence re-blocks) and `constraints`, so `I16` is `ENFORCED`. `refute` and `host/` landed in `E-046`.
 - **The engine owns the query embedding** (`V2-D98`): `ReadHandlers` takes the deployment's `Embedder`, so a client sends
   text and gets hybrid recall; `assert`/`ingest_episode` embed the document with the same model, and the dense arm joins
   on `embedding_model`. A model failure degrades to the lexical arms and `QueryResult.arms` says which ran.
-- **The asynchronous lane is deployed** (`E-047`, `V2-D103`): `semantic/slow_lane.py` claims in one transaction, the
-  model runs with **no transaction open**, `complete_one` writes in a second; `deploy/` holds the systemd unit and the
-  container, and `scripts/worker_healthcheck.py` probes the *queue* (0 healthy, 1 degraded, 2 unhealthy) rather than a
-  PID.
+- **The worker is engine code** (`custom_memory_engine.worker`, `V2-D106`); `scripts/run_worker.py` is only the
+  process. Every model call — extraction, embedding, both adjudicators — runs with **no transaction open**:
+  `semantic/judgements.py` dry-runs the write to collect its questions, answers them, then writes with replay adapters.
+  Every slow-lane transaction runs under `CME_RUNTIME_ROLE`; the turn and the deletion epoch are read together and a
+  stale epoch dead-letters the job (`F5`). Tested in-process and as a real child with SIGTERM/SIGKILL/restart.
 - **Models are chosen by measurement** (`V2-D102`, `reports/model_selection/README.md`): extraction **and** adjudication
   on `gpt-6.2-sol` (29/30 extraction, 13/14 adjudication, 100% quote grounding, zero JSON failures), with
   `claude-haiku-5-5` the documented latency fallback; embeddings **locally** (`bge-m3` ONNX), because the provider serves
-  no `/embeddings`. No reranker: measured and rejected (`reports/retrieval/`).
-- **Migrations 1–26** applied and registered (`schema/migrate.py::MIGRATIONS`); `026` is the newest. The suite is
-  **4,470+ passed / 21 skipped** against PostgreSQL 16.15 + pgvector 0.8.7 + `pg_trgm`; the three extensions are
+  no `/embeddings`. Read path: an optional **relevance judge** (`bge-reranker-v2-m3` ONNX, `V2-D104`) gates the fused
+  page at a measured floor; no-match false positives 0.125 → 0. BM25 and order-only reranking stay rejected.
+- **Migrations 1–26** applied and registered; rollbacks 25/26 refuse to discard data unless
+  `SET LOCAL cme.rollback_discard` names it. The suite is **4,520+ passed / 21 skipped** against PostgreSQL 16.15 + pgvector 0.8.7 + `pg_trgm`; the three extensions are
   bootstrapped into `public` by `migrate.EXTENSIONS`, so the catalog fingerprint never carries another project's
   functions.
 
@@ -108,10 +106,11 @@ through them. Removing the package degrades the engine to what it was before, it
 | `authority.py` | `USER > SYSTEM > ASSISTANT > THIRD_PARTY` | its Python twin must equal migration 24's generated `authority_rank`; a weaker source never supersedes a stronger one |
 | `slots.py` | one normalization of an open slot key | must equal the schema `CHECK` (`memory_version_semantic_slot_check`) |
 | `temporal.py` | bounds are aware, ordered, anchored, non-empty | only `planned` may begin after the utterance |
-| `entities.py` | cascaded mention resolution and creation | a merge needs an exact/alias/trigram match or an adjudicated one; the vector stage only *proposes* (`V2-D101`); ambiguity is `unresolved`, never a guess |
+| `entities.py` | cascaded mention resolution and creation | a vector proposal is `unresolved` unless an adjudicator confirms it; an answer outside the offered ids is an abstention (`V2-D106`) |
 | `conflict.py` | recall → adjudicate → commit | the GiST constraint gets the last word; a hallucinated id inserts |
 | `ingestor.py` | the two lanes | one clock tick per transaction; a refusal is a typed outcome, never a silent drop; `apply_extraction` is the pure-database half a worker calls |
-| `slow_lane.py` | claim → model → complete | the model call happens **outside** any transaction; a lease expires in `next_run_at`; `MAX_ATTEMPTS` then `dead_letter` |
+| `slow_lane.py` | claim → model → complete | every transaction under the runtime role; `MAX_ATTEMPTS` then `dead_letter`; a stale deletion epoch is terminal at once |
+| `judgements.py` | every model answer a write needs | asked before the write transaction; the write may only replay, and abstains on anything unrecorded |
 
 **Two traps here.** `halfvec` rejects PostgreSQL's `{...}` literal, so a vector always goes through
 `engine.hybrid.vector_literal` (`[...]`); psycopg's `list` adapter works for the legacy 384 slot and fails for every
@@ -127,10 +126,9 @@ names. `wire.py` holds the shared primitives, `openai_compatible.py`/`anthropic_
 **The trap.** One protocol per family: Claude on `/v1/messages`, GPT on `/v1/chat/completions`, the other answering
 `400 protocol_mismatch`. A cross-protocol retry would double-bill and hide it; family guess + `CME_LLM_PROTOCOL`.
 
-**And the trap in the instrument.** `evaluation/model_selection/cases.py` labels adjudication with the *model's*
-vocabulary (`duplicate|update|correction|contradiction|additive|unrelated`), never the engine's strategy names
-(`supersede`, `reinforce`): the first version used the latter and scored three candidates wrong for correct answers. A
-test pins every label to `semantic.contracts.RELATIONS`.
+**And the trap in the instrument.** Adjudication is scored by the *write the engine would make*
+(`cases.strategy_of` calls `conflict.commit_strategy`), never by label (`V2-D107`): accepting `duplicate` for `update`
+hid answers that keep a stale value. Labels stay in the model's vocabulary; a test pins them to `RELATIONS`.
 
 ## Things that will bite you
 
