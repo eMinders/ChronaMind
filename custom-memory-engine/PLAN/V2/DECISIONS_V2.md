@@ -3340,8 +3340,11 @@ matters.
 
 **Evidence.** `tests/test_memory_slots.py` (each refusal in Arabic, English and mixed text);
 `tests/integration/test_app_engine_boundary.py` (Arabic and English Berlin → Paris → Berlin and a mixed-language
-correction through the real host, one model call per turn); `tests/live/test_memory_slots_live.py` against a real model
-(opt-in; 34/34 on `gpt-5.6-luna` on 2026-11-26, no false `single`).
+correction through the real host, one model call per turn); `tests/live/test_memory_slots_live.py` against real models
+(opt-in): 34 cases (Arabic, English, mixed, corrections, historical facts, plans, questions, third parties, Berlin →
+Paris → Berlin), on 2026-11-26 through the production path on `gpt-5.6-luna` and through the gateway on `gpt-6.2-sol`,
+`claude-sonnet-5-5` and `claude-haiku-5-5`: 34/34 each, no false `single`, no failed call. Model choice matters less
+than the checks: a failed or malformed call is `multi`, never a false `single`.
 
 **Cost and limits.** One small structured call per user turn, off the response path (`add()` runs as a background
 task). The model's tense judgement is the remaining precision risk; the grounding check bounds what it can invent, not
