@@ -86,9 +86,10 @@ channel-ordered `(artifact_id, bundle)` view of those same items. Audit rows nev
 
 ## 3. Operations and tiers (the tier matrix, `MA-015`)
 
-`✓` = permitted, `—` = not permitted (calling it is `forbidden`). **29 operations, eleven capability classes**:
-the 23 of `ARCHITECTURE_V2.md` 8.1 as approved (`V2-D39`) plus the six added by `V2-D46` (`dissent`,
-`create_entity`, `register_method`, `create_scope`, `grant_access`, `revoke_access`). 18 are open to Tier B.
+`✓` = permitted, `—` = not permitted (calling it is `forbidden`). **32 operations, eleven capability classes**:
+the 23 of `ARCHITECTURE_V2.md` 8.1 as approved (`V2-D39`), the six added by `V2-D46` (`dissent`, `create_entity`,
+`register_method`, `create_scope`, `grant_access`, `revoke_access`), the two of `V2-D105` (`lift`, `constraints`), and
+`set_visibility` (`V2-D113`). 19 are open to Tier B.
 
 **Tiers (`V2-D47`).** There are two tiers, taken from the authenticated credential. **Admin is a role within
 Tier C**, not a third tier: an admin-only operation (`Admin` ✓, `Tier C` —) needs a Tier C credential that holds
@@ -134,6 +135,7 @@ lineage produced; Tier C: its own assertions), `scope_writable` (`scope.access.a
 | 25 | Scope | `create_scope` | — | ✓ | ✓ | `namespace_owner_only` |
 | 26 | Scope | `grant_access` | — | ✓ | ✓ | `namespace_owner_only` |
 | 27 | Scope | `revoke_access` | — | ✓ | ✓ | `namespace_owner_only` |
+| 32 | Scope | `set_visibility` | — | ✓ | ✓ | `namespace_owner_only` |
 | 28 | Observe | `stats` | ✓ | ✓ | ✓ | `targets_readable` |
 | 29 | Observe | `cost` | ✓ | ✓ | ✓ | — |
 
@@ -165,7 +167,7 @@ that is not permitted, and `validation_error`).
 
 ### 4.1 Ingest
 
-**`ingest_episode(ctx, scope, source: SourceRef, content: str, event_time?, idempotency_key) → Receipt`**
+**`ingest_episode(ctx, scope, source: SourceRef, content: str, event_time?, idempotency_key, visibility?) → Receipt`**
 Creates a `kind='episode'`, `lifecycle='observed'` artifact with `observed_at` from the clock. The source may be
 `external`; external content is outside the deletion boundary and is recorded as such. *Errors:* `validation_error`
 (empty content, bad source), `forbidden` (scope not writable).
@@ -281,7 +283,7 @@ channel gets its own reported budget; it does not retire or silently replace `re
 
 ### 4.3 Write (grounded)
 
-**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key, subject_entity?, preconditions?: Precondition[], steps?: str[], assertion_mode?, cardinality?, semantic_slot?, um_facet?) → Receipt | rejected`**
+**`assert(ctx, scope, kind, content|predicate, evidence: SourceRef[], event_range, idempotency_key, subject_entity?, preconditions?: Precondition[], steps?: str[], assertion_mode?, cardinality?, semantic_slot?, um_facet?, visibility?) → Receipt | rejected`**
 A grounded statement through the grounding policy. **`evidence` must be non-empty for Tier B and Tier C
 alike** (TB3). An optional `subject_entity` names an entity in the same scope as the claim; the claim's subject and
 entity remain scope-local. Result lifecycle: `asserted` or `contested`. *Errors:* `validation_error` (no evidence, bad
@@ -333,16 +335,23 @@ or absent), `precondition_failed` (already retired).
 
 ### 4.4 Write (inferred) — Tier B only
 
-**`infer(ctx, scope, method: {id, version, params_hash}, sources: ArtifactId[], statement, predicate?, ledger: {support, counter, undetermined, opportunity}, idempotency_key) → Receipt | rejected`**
-Submits to the **soundness policy**. Requires at least one readable source, a registered method, and a
-complete opportunity ledger (`STATISTICS.md`). Creates `lifecycle='inferred'`; **no parameter yields
-`asserted`**. *Errors:* `rejected` (below the confidence floor, coverage gate, missing ledger),
-`validation_error`, `forbidden` (unreadable source or scope).
+**`infer(ctx, scope, method: {id, version, params_hash}, sources: ArtifactId[], statement, predicate?, ledger?: {support, counter, undetermined, opportunity}, idempotency_key) → Receipt | rejected`**
+Submits to the **soundness policy**. Requires at least one readable source and a registered method. The opportunity
+ledger (`STATISTICS.md`) is **derived, not an input** (`I15`, `V2-D114`): the engine computes `(s, k, u, o)` from the
+named sources and records `refutation_attempts` as the number of refutation probes it executed. A caller-supplied
+`ledger` is optional and only checked against the derivation: a malformed or unbalanced one is `validation_error`, and
+one that differs from the derived counts is `rejected: ledger_mismatch`; it never replaces the derived counts. Creates
+`lifecycle='inferred'`; **no parameter yields `asserted`**. *Errors:* `rejected` (below the confidence floor, coverage
+gate, a ledger that cannot be derived — `insufficient_evidence`, `contradictory_derivation`, `no_supporting_evidence` —
+or `ledger_mismatch`), `validation_error`, `forbidden` (unreadable source or scope).
 
 **`verify(ctx, artifact_id, verification: VerificationRecord) → Receipt`**
 Posts a held-out verification result. Accepted only for an artifact whose method lineage the caller owns, with
-a split disjoint from the support set. *Errors:* `precondition_failed` (not inferred, or split not disjoint),
-`forbidden`.
+a split disjoint from the support set and pinned `support_artifact_ids` / `held_out_artifact_ids` (`verification_artifact`,
+migration 31) readable by the caller. Verified outcomes also require `soundness.admission.assess` admission (with
+`negative_control_clean`, `tau_confidence`, and `tau_coverage`). *Errors:* `precondition_failed` (not inferred,
+unpinned or overlapping artifacts, split not disjoint, or admission bound unmet), `forbidden` (unreadable lineage or
+unreadable pinned artifact).
 
 **`refute(ctx, artifact_id, counter_evidence: SourceRef[], reason) → Receipt`**
 Moves an inferred artifact to `contested` (grounded counter-evidence) or `retired` (refuted). Evidence is
@@ -351,7 +360,7 @@ required. It is the only Tier B way to change an inferred artifact's lifecycle. 
 
 ### 4.5 Structure
 
-**`link(ctx, from, to, type, weight?) → AssociationId`** · **`unlink(ctx, association_id) → Receipt`**
+**`link(ctx, from, to, type, weight?, source_version_ids?, visibility?) → AssociationId`** · **`unlink(ctx, association_id) → Receipt`**
 Association edges (`related_to`, `contradicts`, `refines`, `specialises`, `instance_of`, `caused_by`,
 `precedes`, `part_of`, `corroborated_by`, `supersedes`). Associations are **not provenance** and do not cascade.
 Both endpoints must be readable and the caller must be authorised on the endpoint scopes. **`contradicts`
@@ -360,12 +369,14 @@ caller opens a contradiction (both endpoints then render in `conflicts`). A Tier
 as an association with `origin='tier_b'` and has **no** channel effect; a Tier B caller with counter-evidence
 against its own inference uses `refute`. *Errors:* `forbidden`, `validation_error` (unknown type).
 
-**`create_entity(ctx, scope, entity_type, label, idempotency_key) → EntityId`** (`V2-D46`)
+**`create_entity(ctx, scope, entity_type, label, idempotency_key, aliases?, source_version_ids?, visibility?) → EntityId`** (`V2-D46`)
 Creates a principal-scoped, opaque entity (`ARCHITECTURE_V2.md` 5.2, `V2-D25`) in a scope the caller may write.
-The `EntityId` is engine-generated; `label` is content and follows the scope's read rules. A replay with the same
-key returns the same id. *Errors:* `forbidden` (scope not writable), `validation_error`.
+The `EntityId` is engine-generated; `label` is content and follows the scope's read rules. Optional `aliases`,
+`source_version_ids`, and `visibility` (default `'private'`) record structural provenance (`artifact_provenance`) and
+scope sharing at creation time. A replay with the same key returns the same id. *Errors:* `forbidden` (scope not
+writable or unreadable `source_version_ids`), `validation_error`.
 
-**`link_entity(ctx, entity_a, entity_b, relation) → Receipt`**
+**`link_entity(ctx, entity_a, entity_b, relation, source_version_ids?) → Receipt`**
 Records an explicit relation between two scope-local entities. It requires authorisation on **both** scopes;
 otherwise it fails with the same `forbidden` as a missing entity (`THREAT_MODEL.md` T-09). The link does not
 merge their ids or move either entity's attributes.
@@ -476,6 +487,17 @@ An unknown principal is `forbidden`, the same as an unauthorised scope. **`revok
 Receipt`** — sets `revoked_at` once; grants are append-only. *Errors:* `forbidden`, `precondition_failed`
 (already revoked).
 
+**`set_visibility(ctx, artifact_id, visibility) → Receipt`** — (`V2-D113`, `I7`) sets `visibility`
+(`private | project | shared`) of one artifact (`memory_version`, `entity` or `association`) the caller owns. It is an
+ordinary update under row-level security: the own-user policy decides whether the caller may write the row, so a
+grantee that can read a shared artifact can never change it. The artifact's children (evidence, derivation,
+embedding, ledger, verification, outcome counters, procedure shape) carry no visibility of their own: they are
+readable exactly when their parent is (migration 32). Visibility is per version: a later version of the same belief
+starts `private` unless written with `visibility`. Lowering to `private` closes every grantee read on the next call.
+One content-free `visibility_changed` audit row (artifact kind and new value, never the id) is written. *Errors:*
+`forbidden` (another tenant's id and an unknown id are one answer), `validation_error` (`visibility_invalid`).
+`visibility` may also be given at insertion to `ingest_episode`, `assert`, `create_entity` and `link`.
+
 ### 4.11 Observe
 
 **`stats(ctx, artifact_id) → Stats`** returns counts, coverage, refutation attempts, verification status and the
@@ -495,7 +517,7 @@ Nothing outside sections 3-4 exists.
 | # | Gap | Decision |
 |---|---|---|
 | 5.1 | A Tier C way to reject an inference (`USER_MODEL.md` §3, `UM-012`, `V2-D33`) | New operation **`dissent`** (Adjudicate, Tier C): `inferred → retired`, `reason='user_dissent'`, negative constraint. `refute` stays Tier B and evidenced |
-| 5.2 | `move` (`ARCHITECTURE_V2.md` 5 rule 5) | **Composition, not a primitive:** `assert`/`ingest_artifact` into the target scope with the original's sources as evidence, `link(new, old, supersedes)`, then `retract_own(old)`, each with an idempotency key. A partial move leaves both copies readable: no loss, no leak |
+| 5.2 | `move` (`ARCHITECTURE_V2.md` 5 rule 5) | **Not offered by the engine** (`V2-D113`). A faithful move re-cites the original's evidence in the target scope, and the contract deliberately returns evidence as ids only (`V2-D37`), so no client composition of public operations can carry it; a composition that re-asserts content without it would launder a grounded claim into a weaker one. The need `I7` names — a collaborator reading a memory — is met without a copy by `set_visibility` plus a grant, which also keeps one deletion surface instead of two. Scope identity stays immutable (migration 32 `guard_scope_identity`). A server-side `move` primitive is tracked as #258 |
 | 5.3 | `ingest_artifact` payload | **Confirmed** as in 4.1: an externally formed claim or procedure through the grounding policy |
 | 5.4 | Creating an entity | New operation **`create_entity`** (Structure, Tier B and C) |
 | 5.5 | Registering an inference method | New operation **`register_method`** (Maintain, admin-only, append-only) |
@@ -553,7 +575,7 @@ application computed. Each layer is tested alone; the application read set is pr
 
 | Name | Kind | Meaning |
 |---|---|---|
-| `move` | composition | section 5.2 |
+| `move` | not offered | section 5.2 |
 | `revise` | composition | section 5.7 |
 | `ground` | internal function | grounding policy (`E-015`), called by `assert`/`ingest_artifact` |
 | `assess_soundness` | internal function | soundness policy (`E-015`), called by `infer` |

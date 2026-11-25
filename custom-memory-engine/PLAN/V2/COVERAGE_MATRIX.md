@@ -4,7 +4,7 @@
 (`--check`) or if any element is unowned (`tests/test_plan_coverage.py`). Elements are extracted from
 `ARCHITECTURE_V2.md`; owners come from `INVARIANT_LEDGER.md` (invariants) and `COVERAGE.md` (the rest).
 
-**72 elements, 0 unowned.**
+**73 elements, 0 unowned.**
 
 ## Kinds (4)
 
@@ -32,12 +32,12 @@
 | Element | Declared | Owners |
 |---|---|---|
 | `I1′` | §11 | `enforced` |
-| `I2` | §11 | `E-014` |
+| `I2` | §11 | `enforced` |
 | `I3` | §11 | `enforced` |
 | `I4` | §11 | `enforced` |
 | `I5` | §11 | `enforced` |
 | `I6` | §11 | `enforced` |
-| `I7` | §11 | `E-023`, `E-033` |
+| `I7` | §11 | `enforced` |
 | `I8` | §11 | `enforced` |
 | `I9` | §11 | `enforced` |
 | `I10` | §11 | `enforced` |
@@ -45,7 +45,7 @@
 | `I12` | §11 | `enforced` |
 | `I13` | §11 | `enforced` |
 | `I14` | §11 | `enforced` |
-| `I15` | §11 | `C-010`, `C-021` |
+| `I15` | §11 | `enforced` |
 | `I16` | §11 | `enforced` |
 | `I17` | §11 | `enforced` |
 
@@ -58,7 +58,7 @@
 | `procedures` | §9.1 | `E-017`, `E-030`, `E-033` |
 | `conflicts` | §9.1 | `E-017`, `E-033`, `E-035` |
 
-## Operations (31)
+## Operations (32)
 
 | Element | Declared | Owners |
 |---|---|---|
@@ -93,6 +93,7 @@
 | `create_scope` | §8.1 Scope | `E-039`, `E-040` |
 | `grant_access` | §8.1 Scope | `E-039`, `E-011` |
 | `revoke_access` | §8.1 Scope | `E-039`, `E-011` |
+| `set_visibility` | §8.1 Scope | `E-039`, `E-011` |
 
 ## Migrations (9)
 

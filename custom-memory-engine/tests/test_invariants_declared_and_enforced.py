@@ -177,12 +177,13 @@ def test_gaps_closed_in_r7_are_enforced_with_tests(rows: list[Row]) -> None:
         assert by_name[name].tests
 
 
-def test_w3_invariants_are_enforced_while_i7_stays_honestly_partial(rows: list[Row]) -> None:
-    """W3 closed I1′, I8, I13, I14 and I17 end to end via Engine.call; I7 stays PARTIAL until shared writes land."""
+def test_w3_invariants_and_i7_are_enforced_with_the_sharing_tests_named(rows: list[Row]) -> None:
+    """W3 closed I1′, I8, I13, I14 and I17 end to end via Engine.call; `V2-D113` closed I7 once shared writes landed,
+    and its row must name the end-to-end sharing tests rather than only the policy tests that predate the writer."""
     by_name = {r.invariant: r for r in rows}
-    for name in ("I1′", "I8", "I13", "I14", "I17"):
+    for name in ("I1′", "I7", "I8", "I13", "I14", "I17"):
         assert by_name[name].status == "ENFORCED" and by_name[name].sites and by_name[name].tests, name
-    assert by_name["I7"].status == "PARTIAL"
+    assert any("test_visibility_sharing_db.py" in test for test in by_name["I7"].tests)
 
 
 def test_removing_a_ledger_row_is_detected(rows: list[Row]) -> None:

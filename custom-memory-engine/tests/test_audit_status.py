@@ -158,12 +158,75 @@ def test_a_missing_cited_evidence_path_exits_non_zero(
     assert "missing_evidence_path:RL-001:does/not/exist.py" in capsys.readouterr().out
 
 
+def _render_to(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Render the audit into ``tmp_path`` from a one-test junit run, with a fixed environment and revision."""
+    xml = tmp_path / "junit.xml"
+    xml.write_text(
+        "<testsuites><testsuite>"
+        '<testcase classname="tests.test_audit_status" name="test_claim_group"/>'
+        '<testcase classname="tests.test_audit_status" name="test_task_graph_rows_are_parsed"/>'
+        "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    out_file = tmp_path / "STATUS_AUDIT.md"
+    monkeypatch.setattr(audit, "_git_sha", lambda: "abc1234")
+    monkeypatch.setattr(audit, "environment", lambda: [("Database (`CME_TEST_DATABASE_URL`)", "set, reachable")])
+    assert audit.main(["--junit", str(xml), "--out", str(out_file), "--timestamp", "2026-11-25T19:30:00Z"]) == 0
+    return out_file
+
+
 def test_expected_deliverables_of_a_not_started_task_may_be_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     entry = {"kind": "none", "files": ["src/not_built_yet.py"]}
     monkeypatch.setattr(audit, "REGISTRY", _registry_with(tmp_path, entry))
-    assert audit.main(["--check"]) == 0
+    out_file = _render_to(tmp_path, monkeypatch)
+    assert audit.main(["--check", "--out", str(out_file)]) == 0
+
+
+def test_the_committed_status_audit_is_what_the_renderer_produces(capsys: pytest.CaptureFixture[str]) -> None:
+    """``PLAN/V2/STATUS_AUDIT.md`` re-renders byte for byte from its own record and today's registry and files."""
+    assert audit.main(["--check"]) == 0, capsys.readouterr().out
+
+
+def test_check_fails_when_the_committed_document_drifts_from_the_renderer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out_file = _render_to(tmp_path, monkeypatch)
+    rendered = out_file.read_text(encoding="utf-8")
+    assert audit.main(["--check", "--out", str(out_file)]) == 0
+    capsys.readouterr()
+
+    # the drift #257 found: a summary written by an older renderer, without the `no-test` row
+    assert "| `no-test` |" in rendered
+    out_file.write_text(
+        "\n".join(line for line in rendered.split("\n") if not line.startswith("| `no-test` |")), encoding="utf-8"
+    )
+    assert audit.main(["--check", "--out", str(out_file)]) == 1
+    assert "status_audit_stale" in capsys.readouterr().out
+
+    # a hand edit of a verdict
+    out_file.write_text(rendered.replace("`code-verified`", "`doc-only`", 1), encoding="utf-8")
+    assert audit.main(["--check", "--out", str(out_file)]) == 1
+    assert "status_audit_stale" in capsys.readouterr().out
+
+    # a document with no record cannot be re-rendered, so it is not accepted as current
+    record_line = next(line for line in rendered.split("\n") if line.startswith(audit.RECORD_PREFIX))
+    out_file.write_text(rendered.replace(record_line + "\n", ""), encoding="utf-8")
+    assert audit.main(["--check", "--out", str(out_file)]) == 1
+    assert "status_audit_record_missing" in capsys.readouterr().out
+
+
+def test_check_fails_when_the_registry_changes_after_the_document_was_rendered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out_file = _render_to(tmp_path, monkeypatch)
+    assert audit.main(["--check", "--out", str(out_file)]) == 0
+    entry = {"kind": "code", "files": ["README.md"], "tests": ["tests/test_audit_status.py::test_claim_group"]}
+    monkeypatch.setattr(audit, "REGISTRY", _registry_with(tmp_path, entry))
+    capsys.readouterr()
+    assert audit.main(["--check", "--out", str(out_file)]) == 1
+    assert "status_audit_stale" in capsys.readouterr().out
 
 
 def test_removed_task_and_unknown_id_exit_non_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

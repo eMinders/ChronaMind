@@ -24,10 +24,19 @@ corpora), UTC generation timestamp, and git revision when executed with ``--juni
 If pytest crashes (``returncode >= 2`` or missing/malformed JUnit XML), the script exits non-zero without
 overwriting ``PLAN/V2/STATUS_AUDIT.md``.
 
+Staleness. The document ends with a machine-readable record (an HTML comment) of what its run measured: the
+revision, timestamp, environment, and the junit counts of every node a cited test matched. ``--check`` re-renders
+the document from that record and the *current* ``TASK_GRAPH.md``, registry, repository files and renderer, and
+fails if the result differs from the committed text in any byte. So a stale document (an edited registry, a moved
+file, a renamed test, a renderer change) fails CI deterministically, without a database. What ``--check`` cannot
+see is a test whose *result* changed since the recorded run: that needs a test run, and the recorded revision and
+timestamp say how old the measured results are.
+
 Run:   uv run python scripts/audit_status.py            # run tests, write STATUS_AUDIT.md
-       uv run python scripts/audit_status.py --check    # registry completeness + symbol checks only, CI-safe
+       uv run python scripts/audit_status.py --check    # registry checks + re-render comparison, CI-safe
        uv run python scripts/audit_status.py --junit F  # reuse an existing pytest junit XML
-Exit:  0 when every task is classified, 1 when any task is unclassified, registry is stale, or pytest crashes.
+Exit:  0 when every task is classified and the document is current; 1 when any task is unclassified, the registry
+       is stale, the committed document differs from what the renderer produces, or pytest crashes.
 """
 
 from __future__ import annotations
@@ -54,6 +63,8 @@ REGISTRY = ROOT / "PLAN" / "V2" / "status_evidence.json"
 OUTPUT = ROOT / "PLAN" / "V2" / "STATUS_AUDIT.md"
 
 TASK_ROW = re.compile(r"^\| `(RL-\d{3})` \|.*$", re.M)
+RECORD_PREFIX = "<!-- audit-record: "
+RECORD_SUFFIX = " -->"
 KINDS = ("code", "doc", "config", "none")
 CLASSES = ("code-verified", "doc-only", "claimed-unverified", "no-test", "not-started")
 
@@ -241,31 +252,42 @@ def read_junit(path: Path) -> dict[str, Outcome]:
     return {m: Outcome(c[0], c[1], c[2], ran=True) for m, c in counts.items()}
 
 
-def _match_node(test: str, junit: dict[str, Outcome]) -> list[Outcome]:
+def _matching_keys(test: str, junit: dict[str, Outcome]) -> list[str]:
+    """The junit keys whose counts ``test`` (``file.py``, ``file.py::name`` or ``file.py::Class::name``) sums."""
     path_str, symbol = _split_citation(test)
     mod_key = _node_key(path_str)
-    module_entries = [(k, o) for k, o in junit.items() if "::" not in k]
-    node_entries = [(k, o) for k, o in junit.items() if "::" in k]
+    module_keys = [k for k in junit if "::" not in k]
+    node_keys = [k for k in junit if "::" in k]
     if not symbol:
-        return [o for module, o in module_entries if module == mod_key or module.startswith(mod_key + ".")]
+        return [module for module in module_keys if module == mod_key or module.startswith(mod_key + ".")]
     if "::" in symbol:
         cls_name, _, func_name = symbol.partition("::")
         exact_mod = f"{mod_key}.{cls_name}"
-        return [o for k, o in node_entries if k == f"{exact_mod}::{func_name}"]
+        return [k for k in node_keys if k == f"{exact_mod}::{func_name}"]
     matched = [
-        o
-        for k, o in node_entries
+        k
+        for k in node_keys
         if (m := k.partition("::")[0])
         and (m == mod_key or m.startswith(mod_key + "."))
         and k.partition("::")[2] == symbol
     ]
     if not matched and "[" not in symbol:
-        matched = [o for module, o in module_entries if module == f"{mod_key}.{symbol}"]
+        matched = [module for module in module_keys if module == f"{mod_key}.{symbol}"]
     return matched
 
 
-def outcome_for(tests: tuple[str, ...], junit: dict[str, Outcome]) -> Outcome:
-    """Sum the junit results of the modules or test nodes named by ``tests``."""
+def _match_node(test: str, junit: dict[str, Outcome]) -> list[Outcome]:
+    return [junit[k] for k in _matching_keys(test, junit)]
+
+
+def cited_junit(registry: dict[str, dict], junit: dict[str, Outcome]) -> dict[str, Outcome]:
+    """The part of ``junit`` any cited test matches: auditing with it gives the same verdicts as the whole run."""
+    keys = {k for entry in registry.values() for test in entry.get("tests", []) for k in _matching_keys(test, junit)}
+    return {k: junit[k] for k in sorted(keys)}
+
+
+def outcome_for(tests: tuple[str, ...], junit: dict[str, Outcome], *, ran: bool | None = None) -> Outcome:
+    """Sum the junit results of the modules or test nodes named by ``tests``; ``ran`` defaults to ``bool(junit)``."""
     passed = failed = skipped = 0
     missing: list[str] = []
     for test in tests:
@@ -276,7 +298,7 @@ def outcome_for(tests: tuple[str, ...], junit: dict[str, Outcome]) -> Outcome:
         passed += sum(o.passed for o in matched)
         failed += sum(o.failed for o in matched)
         skipped += sum(o.skipped for o in matched)
-    return Outcome(passed, failed, skipped, tuple(missing), ran=bool(junit))
+    return Outcome(passed, failed, skipped, tuple(missing), ran=bool(junit) if ran is None else ran)
 
 
 def run_pytest(tests: list[str], junit_path: Path) -> None:
@@ -312,8 +334,11 @@ def audit(
     registry: dict[str, dict],
     junit: dict[str, Outcome],
     root: Path = ROOT,
+    *,
+    ran: bool | None = None,
 ) -> list[Result]:
-    """Classify every task."""
+    """Classify every task; ``ran`` (whether tests were run) defaults to ``bool(junit)``."""
+    ran = bool(junit) if ran is None else ran
     results: list[Result] = []
     for task in sorted(claims):
         entry = registry[task]
@@ -322,7 +347,7 @@ def audit(
         missing = tuple(f for f in files if not (root / f).resolve().exists())
         tests_unresolved = tuple(t for t in tests if not resolve_test_citation(t, root))
         tests_valid = entry["kind"] != "code" or (bool(tests) and not tests_unresolved)
-        outcome = outcome_for(tests, junit) if (tests and not tests_unresolved) else Outcome(ran=bool(junit))
+        outcome = outcome_for(tests, junit, ran=ran) if (tests and not tests_unresolved) else Outcome(ran=ran)
         classification = classify(
             entry["kind"],
             claims[task],
@@ -504,10 +529,12 @@ def render(
     *,
     timestamp: str | None = None,
     revision: str | None = None,
+    junit_record: dict[str, Outcome] | None = None,
 ) -> str:
-    """Render the generated audit document."""
+    """Render the generated audit document; with ``junit_record``, end it with the record ``--check`` re-renders."""
     counts = Counter(r.classification for r in results)
     rev = revision if revision is not None else _git_sha()
+    env = env_rows if env_rows is not None else environment()
     header = [
         "# Status Audit (generated)",
         "",
@@ -531,7 +558,7 @@ def render(
         "",
         "| Item | State |",
         "|---|---|",
-        *[f"| {item} | {state} |" for item, state in (env_rows if env_rows is not None else environment())],
+        *[f"| {item} | {state} |" for item, state in env],
         "",
         "## Summary",
         "",
@@ -557,14 +584,54 @@ def render(
     for r in results:
         notes = "; ".join([*r.reasons, r.note] if r.note else r.reasons)
         lines.append(f"| `{r.task}` | {r.claim.strip('` ')} | `{r.classification}` | {_cell(r)} | {notes} |")
+    if junit_record is not None:
+        record = {
+            "revision": rev,
+            "timestamp": timestamp,
+            "ran_tests": ran_tests,
+            "environment": [list(row) for row in env],
+            "junit": {k: [o.passed, o.failed, o.skipped] for k, o in sorted(junit_record.items())},
+        }
+        lines += ["", RECORD_PREFIX + json.dumps(record, sort_keys=True, separators=(",", ":")) + RECORD_SUFFIX]
     lines.append("")
     return "\n".join(lines)
+
+
+def check_document(text: str, claims: dict[str, str], registry: dict[str, dict], root: Path = ROOT) -> list[str]:
+    """Re-render ``text`` from its own record and the current inputs; return why it is stale (empty when current)."""
+    records = [line for line in text.splitlines() if line.startswith(RECORD_PREFIX) and line.endswith(RECORD_SUFFIX)]
+    if len(records) != 1:
+        return ["status_audit_record_missing: regenerate with scripts/audit_status.py"]
+    try:
+        record = json.loads(records[0][len(RECORD_PREFIX) : -len(RECORD_SUFFIX)])
+        junit = {k: Outcome(int(v[0]), int(v[1]), int(v[2]), ran=True) for k, v in record["junit"].items()}
+        env_rows = [(str(item), str(state)) for item, state in record["environment"]]
+        expected = render(
+            audit(claims, registry, junit, root, ran=bool(record["ran_tests"])),
+            bool(record["ran_tests"]),
+            env_rows,
+            timestamp=record["timestamp"],
+            revision=str(record["revision"]),
+            junit_record=junit,
+        )
+    except (ValueError, KeyError, TypeError, IndexError):
+        return ["status_audit_record_malformed: regenerate with scripts/audit_status.py"]
+    if expected == text:
+        return []
+    committed, rendered = text.splitlines(), expected.splitlines()
+    line = next(
+        (n for n, (a, b) in enumerate(zip(committed, rendered, strict=False), start=1) if a != b),
+        min(len(committed), len(rendered)) + 1,
+    )
+    return [f"status_audit_stale: line {line} differs from what scripts/audit_status.py renders; regenerate it"]
 
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--check", action="store_true", help="verify registry completeness only; run no tests")
+    parser.add_argument(
+        "--check", action="store_true", help="verify the registry and that --out is what the renderer produces"
+    )
     parser.add_argument("--junit", type=Path, help="reuse an existing pytest junit XML instead of running tests")
     parser.add_argument("--out", type=Path, default=OUTPUT)
     parser.add_argument("--timestamp", default=None, help="override UTC generation timestamp (ISO-8601)")
@@ -579,7 +646,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"audit_status: {len(problems)} problem(s); tasks must be classified and cited evidence must exist")
         return 1
     if args.check:
-        print(f"audit_status: {len(claims)} tasks, all present in the evidence registry")
+        if args.out.is_file():
+            stale = check_document(args.out.read_text(encoding="utf-8"), claims, registry)
+        else:
+            stale = [f"status_audit_missing: {args.out.name}"]
+        for problem in stale:
+            print(problem)
+        if stale:
+            return 1
+        print(f"audit_status: {len(claims)} tasks, all present in the evidence registry; {args.out.name} is current")
         return 0
 
     junit: dict[str, Outcome] = {}
@@ -600,7 +675,14 @@ def main(argv: list[str] | None = None) -> int:
     revision = _git_sha()
     results = audit(claims, registry, junit)
     args.out.write_text(
-        render(results, bool(junit), environment(), timestamp=timestamp, revision=revision),
+        render(
+            results,
+            bool(junit),
+            environment(),
+            timestamp=timestamp,
+            revision=revision,
+            junit_record=cited_junit(registry, junit),
+        ),
         encoding="utf-8",
         newline="\n",
     )

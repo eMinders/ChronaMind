@@ -3146,6 +3146,12 @@ calls `delete_orphaned_mention_entities` to erase any `origin='mention'` entity 
 zero `subject_entity_id` references (preserving declared entities and cited subjects), and the leak scanner adds Channel
 12 (`channel_12_entity_registry`) covering `entity` and `artifact_provenance` aliases.
 
+**Limitation (pre-migration entities).** Nothing recorded which entities were mention by-products before migration 30,
+so `ADD COLUMN origin ... DEFAULT 'declared'` labels every entity that already existed `declared`: such an entity
+survives `delete(scope='memory')` even when the memory being deleted was its only mention, and only
+`delete(scope='all')` (or a `topic` deletion naming it) erases it. Pinned by
+`tests/integration/test_migration_m30_entity_mentions_db.py::test_a_pre_migration_entity_survives_memory_deletion_and_is_erased_by_delete_all`.
+
 ### V2-D112 — Verification records pin their support and held-out artifact IDs
 
 **Status:** adopted (2026-11-25). Migration 31 (#246).
@@ -3156,16 +3162,32 @@ Migration 31 adds `verification.artifact_pinning_status` (`pinned` vs `unpinned_
 and a deferred commit guard requiring both roles on every `'pinned'` record. `artifact_id` carries no foreign key so
 append-only verification records outlive deleted artifacts (IDs are opaque and content-free).
 
-### V2-D113 — Visibility writing, cross-user grant reads, and `move` composition
+### V2-D113 — Visibility writing, cross-user grant reads, and no `move` primitive
 
 **Status:** adopted (2026-11-25). Migration 32. Closes `I7` (#244).
 
-Adds Tier C Scope operation `set_visibility(ctx, artifact_id, visibility)` backed by `set_artifact_visibility` (syncing
-child `memory_evidence`, `memory_derivation`, `memory_embedding`, `abstraction_stats`, and `verification` rows within
-the caller's own `/u/<caller>/` namespace) plus optional `visibility` on `assert`, `ingest_episode`, `create_entity`,
-and `link`. Fixes cross-user read queries (`compile_predicate`, `read_handlers`, `provenance`, `expansion`,
-`statistics`, `staleness`, and `HostService` `read_scopes` forwarding) so granted reads actually succeed under RLS
-while recording content-free `scope_read` rows. Implements the documented 3-step `move` composition (`api/move.py`).
+1. **Writer.** Tier C Scope operation `set_visibility(artifact_id, visibility)` (`api/handlers.py::Handlers.set_visibility`,
+   `api/runtime.py::change_visibility`) and an optional `visibility` on `assert`, `ingest_episode`, `create_entity`
+   and `link`. It is an ordinary `UPDATE` under row-level security, not a `SECURITY DEFINER` function: the own-user
+   policy's `WITH CHECK` is what decides whether the caller may write the row, so a grantee can read but never change
+   a shared artifact and no GUC-gated privileged path exists (`CLAUDE.md` rule 4). Unknown and foreign ids are one
+   `forbidden`. One content-free `visibility_changed` audit row (artifact kind, new value) per change.
+2. **Children follow their parent.** Migration 32 replaces the independent migration-11 scope policy on
+   `memory_evidence`, `memory_derivation`, `memory_embedding`, `abstraction_stats` and `verification`, and adds one to
+   `outcome_stats` and `procedure_shape`, with `scope.access.rls_parent_read`: a child row is readable exactly when
+   its `memory_version` parent is. There is no second copy of "is this shared" to drift, so a private artifact
+   cannot leak its evidence and a shared one cannot render as `missing_provenance`.
+3. **Reads.** Read paths no longer add `user_id = <caller>` to statements RLS already governs (`compile_predicate`'s
+   `cross_tenant`, `read_handlers`, `provenance`, `expansion`, `statistics`, `staleness`, `outcomes`,
+   `procedure_shape`); the scope read filter and forced RLS decide, and the result's scope paths feed the rule-6
+   `scope_read` recorder. Without this a granted row was admitted by RLS and then filtered out by the application.
+4. **Scope identity is immutable** (`ARCHITECTURE_V2.md` §5 rule 5), now enforced: `guard_scope_identity` refuses any
+   change of `scope_path` on `memory_version`, `entity` and `association`. Nothing enforced it before.
+5. **No `move`.** A faithful move must re-cite the original's evidence; the contract returns evidence as ids only
+   (`V2-D37`), so no client composition can, and the sharing need is met without a copy. `API_V2.md` §5.2 says so;
+   a server-side primitive is #258.
+
+Tests: `tests/integration/test_visibility_sharing_db.py`, `tests/integration/test_migration_m2.py::test_the_read_policy_is_the_library_expression_on_every_scoped_table`.
 
 ### V2-D114 — Abstraction ledgers are derived from evidence and gated on verification
 
@@ -3182,11 +3204,30 @@ evidence sources and structured predicate (refusing zero/contradictory ledgers),
 
 **Status:** adopted (2026-11-25). Fixes `#248`.
 
-Flipping `assert` unconditionally to `cardinality='single'` with `semantic_slot=None` would collapse every unrelated user
-message onto `COALESCE(NULL, 'statement')` under `no_bitemporal_overlap` (`I5`). Instead: explicit per-message
-`cardinality`/`semantic_slot` hints pass through, a deterministic high-precision fast-lane classifier assigns single-valued
-slots for clear state updates (e.g. `residence`) without any LLM call (`event` claims stay non-single-valued), and
-general open-domain extraction stays in the async slow lane.
+**Who decides.** The *application* decides `cardinality` and `semantic_slot` for the writes it makes; the engine stays
+slot-vocabulary-free and the write path model-free. Flipping `assert` unconditionally to `cardinality='single'` with
+no slot would collapse every unrelated message onto `COALESCE(NULL, 'statement')` under `no_bitemporal_overlap` (`I5`),
+so a message is single-valued only when its slot can be named too. `app/services/memory_slots.py::classify_slot` is a
+deterministic, high-precision, deliberately low-recall classifier with a closed vocabulary (`residence`, `employer`,
+`name`): a whole-message present-state statement with a proper-name value; questions, negations, plans, past
+narrative and lists stay `multi`. A false `multi` only leaves an old belief standing until the slow lane resolves it;
+a false `single` would retire a true one, which is why precision wins. Open-domain extraction stays in the slow lane.
+
+**What the product renders.** `facts` also carries recorded turns (`kind='episode'`). The app renders only non-episode
+facts under "Known facts"; turns go last under "Earlier conversation (verbatim; may be outdated; not confirmed facts)",
+deduplicated against rendered claims. So a superseded value is never presented as a known fact, and an assistant turn
+never is either.
+
+**Turn identity.** The agent resends the whole session history on every turn, so a message's idempotency identity is
+`(session, position, role, text)`: a resend replays, and the same words said again later are a new claim that wins
+the slot back.
+
+**Engine fix found on the way.** `engine/gate.py::existing_relation` matched a duplicate on content alone, including a
+superseded value reissued as a historical fact, so Berlin → Paris → Berlin left Paris current and returned a receipt
+for a version that was never written. A duplicate must now be valid at the candidate's `valid_from`.
+
+Tests: `tests/test_memory_slots.py`, root `tests/integration/test_app_engine_boundary.py` (Berlin → Paris renders one
+known fact; the no-slot control keeps two; whole-history resends), `tests/integration/test_host_e2e_db.py::test_returning_to_an_earlier_single_valued_value_supersedes_the_current_one`.
 
 ### V2-D116 — No plaintext memory content cache in the FastAPI client
 
@@ -3223,3 +3264,36 @@ no automated deletion-log replay ships). Adds `worker/maintenance.py` + `scripts
 scheduled `expire`/`purge_working`/`rebuild_index`, dependency-free Prometheus `/metrics` (`host/metrics.py`) without
 tenant/content labels, and a real `pg_dump`/`pg_restore` rehearsal (`scripts/rehearse_restore.py`).
 
+
+### V2-D120 — A delegating service token acts for the end user it names
+
+**Status:** adopted (2026-11-25). Found while closing #250; prerequisite of #248/#249/#250's end-to-end proof.
+
+**The defect.** A host token maps to exactly one principal (`host/credentials.py`, "one entry per service principal"),
+and the engine's namespace rule makes that principal's `/u/<principal>/` the only writable scope. The FastAPI app holds
+one token and sends `scope=/u/<end user>/` for every user, so every write and read for every end user but one was
+`forbidden` — and the app logs and swallows memory failures, so a multi-user deployment silently had no memory. Nothing
+crossed the app↔engine boundary in a test, so nothing noticed. Separately, nothing provisioned an end user's `app_user`
+row, which every tenant table references.
+
+**Decision.** A token may be marked `"delegate": true` in `CME_HOST_TOKENS`. A delegating token **must** name the end
+user in the envelope's top-level `principal`; that end user is then the caller for every engine rule (own namespace,
+RLS `app.user_id`, read set, rate/concurrency limits). Rules, all static refusals and all tested
+(`tests/test_host_credentials.py`, `tests/integration/test_host_e2e_db.py`):
+
+1. A token without the flag that names a `principal` is `forbidden` (`delegation_not_permitted`): delegation is a
+   property of the token, never of the request.
+2. A delegating token without `principal` is `validation_error` (`principal_required`): an implicit fallback would write
+   an end user's memory into the service's namespace.
+3. `principal` must satisfy the user-segment grammar of `/u/<id>/` (`principal_invalid`), so it cannot forge a path.
+4. A principal that owns a token of its own is `forbidden`: delegation never reaches an operator's or another
+   service's namespace.
+5. The delegated credential keeps the token's tier and is never `admin`; a delegating token cannot itself be `admin`
+   (refused at start-up).
+6. The host creates the end user's `app_user` row idempotently (`INSERT … ON CONFLICT DO NOTHING`), as that user under
+   the restricted role, before the call — the `app_user` policy admits only the session's own id.
+
+**Trust consequence (stated, not hidden).** A delegating token is a credential for *every* end user's memory at its
+tier, exactly as the app's own database credential is for its own tables. It is a service secret, rotated like one;
+`THREAT_MODEL.md` records it. Per-user tokens were rejected: the app would have to mint and store a secret per user, and
+the engine would gain an issuance API, for no isolation the RLS boundary does not already provide.
