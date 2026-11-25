@@ -11,18 +11,25 @@ the finite-sample bound on verification and on rendering in ``facts``, never on 
 stored to be tested on held-out data. A failed structural check (no source, unregistered method, an empty ledger) is
 a recorded :class:`Rejected`, never an exception. The assessment is recorded either way, content-free.
 
+The ledger is derived, never taken from the request (``I15``, ``V2-D114``):
+:func:`engine.abstraction_ledger.derive_ledger` computes ``(s, k, u, o)`` from the named sources, and an underivable
+or contradictory ledger is a recorded :class:`Rejected`. A caller-supplied ``ledger`` is optional and only checked:
+it must be well formed and balance (``validation_error``), and one that differs from the derived counts is
+``Rejected("ledger_mismatch")``.
+
 What the database adds, at commit (migrations 5, 10, 14): the ``persona`` layer derives ``kind='abstraction'`` and
 ``lifecycle='inferred'``; an inferred row must carry a derivation row and its registered method; an abstraction must
-carry its ledger (``I15``), which the insert trigger creates at zero and this handler then fills from the request.
+carry its ledger (``I15``), which the insert trigger creates at zero and this handler then fills with the derived one.
 
 Under a profile with ``retention.promote_to_durable``, each ``session`` source of the new abstraction is promoted to
 ``durable`` and the promotion is recorded (``V2-D70``): durable knowledge must not rest on sources that expire.
 
 Not here (W5, full ``C-021``): the statistical verifier, dependence correction, ``verify``/``refute``. The optional
-``predicate`` stays deferred (``V2-D43``). ``refutation_attempts`` and ``negative_control_clean`` are not inputs of
-``infer``, so they are passed as ``0`` and ``False``: they affect only the verification verdict, which they keep
-conservative. ``tau_confidence``/``tau_coverage`` have no defaults (``V2-D30`` is open): whoever wires the handler
-states them.
+``predicate`` stays deferred (``V2-D43``). ``refutation_attempts`` and ``negative_control_clean`` are never caller
+inputs: on the success path they are what :func:`engine.refutation.run_refutation_probes` measured, and on the refusal
+path (the ledger could not be derived) no probe runs, so the recorded assessment carries ``0`` and ``False``, which
+keeps it conservative. ``tau_confidence``/``tau_coverage`` have no defaults (``V2-D30`` is open): whoever wires the
+handler states them.
 """
 
 from collections.abc import Mapping, Sequence
@@ -77,8 +84,10 @@ def _method(raw: object) -> MethodRef:
 def _ledger(raw: object) -> LedgerCounts | None:
     """The optional caller-supplied opportunity ledger ``{support, counter, undetermined, opportunity}``.
 
-    When omitted (``None``), the engine derives ``(s, k, u)`` from readable database evidence via
-    :func:`engine.abstraction_ledger.derive_ledger`. When present, the payload must be well formed and balance.
+    The engine derives ``(s, k, u)`` from readable database evidence via
+    :func:`engine.abstraction_ledger.derive_ledger` whether or not one is given. When present, the payload must be well
+    formed and balance, and :meth:`InferHandlers.infer` refuses it as ``ledger_mismatch`` unless it equals the derived
+    counts.
     """
     if raw is None:
         return None

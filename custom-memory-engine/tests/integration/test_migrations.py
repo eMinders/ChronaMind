@@ -698,6 +698,27 @@ async def test_concurrent_applies_settle_to_one_installation_and_one_history_row
 
 
 @pytest.mark.integration
+async def test_a_second_migrator_waits_for_the_first_longer_than_the_ddl_lock_timeout(
+    database: migrate.MigrationConfig,
+) -> None:
+    """Waiting for another migrator is expected, so it is bounded by the statement timeout, not the DDL lock timeout.
+
+    Before this, the migration advisory lock was taken under `lock_timeout_ms` (5 s): a second deployer failed with
+    `migration_database_failure` whenever the first one's apply took longer, which a 32-migration apply on a loaded
+    runner does. Here another session holds the lock for 0.5 s against a 50 ms DDL lock timeout.
+    """
+    impatient = migrate.MigrationConfig.model_validate({**database.model_dump(), "lock_timeout_ms": 50})
+    async with connect(database) as holder:
+        async with holder.transaction():
+            await holder.execute("SELECT pg_catalog.pg_advisory_xact_lock(%s,%s)", (0x434D4531, 41))
+            pending = asyncio.ensure_future(migrate.MigrationRunner(impatient).apply())
+            await asyncio.sleep(0.5)
+            assert not pending.done(), "the second migrator must still be waiting, not failed"
+    result = await asyncio.wait_for(pending, timeout=60)
+    assert result.status.state == "applied" and result.status.version == migrate.VERSION
+
+
+@pytest.mark.integration
 async def test_clean_reset_passes_all_forty_three_assertions_against_the_real_full_table(
     database: migrate.MigrationConfig,
 ) -> None:

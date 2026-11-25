@@ -9,8 +9,12 @@
 * **Channel 10** (``channel_10_verification_records_and_methods``): ``verification`` records and ``method``
   registry metadata/parameters.
 * **Channel 11** (``channel_11_export_snapshots``): export snapshots generated before the deletion (F11).
-* **Channel 12** (``channel_12_entity_registry``): ``entity`` registry names, aliases, embeddings, and
-  ``artifact_provenance`` alias attribution rows (``I8``, ``V2-D111``).
+* **Channel 12** (``channel_12_entity_registry``): ``entity`` registry names and aliases, and ``artifact_provenance``
+  alias attribution rows (``I8``, ``V2-D111``). An entity's vector (``embedding_1024``, migration 26) is a column of
+  the same row, embedded from its name: it is not content a canary can match, so it is covered through its row. An
+  erased entity takes its vector with it, and a surviving row whose name or alias still carries the canary is counted
+  whether or not it has a vector. Not measured: a vector whose row no longer carries the deleted name, which no engine
+  path produces today (no path renames an entity).
 
 ``ALL_CHANNELS = (*CHANNELS, *COGNITION_CHANNELS)`` is the complete 12-channel surface. Unmeasured or partially
 measured channels are always reported as ``inconclusive`` (``measured=False`` / ``complete=False``), never as zero.
@@ -143,7 +147,8 @@ def database_channel_probes(
     Channel 1 is marked partial unless a caller supplements it with an external-cache probe.
     When ``include_cognition=True``, adds database probes for channel 9 (marked partial until supplemented with a
     rendered-abstraction/bounds probe), channel 10 (``verification`` records and ``method`` metadata, complete),
-    and channel 12 (``entity`` canonical names, aliases, embeddings, and ``artifact_provenance`` aliases, complete).
+    and channel 12 (``entity`` canonical names and aliases, and ``artifact_provenance`` aliases, complete; an entity's
+    vector is covered through its row, see the module docstring).
     """
     if (
         not isinstance(schema_name, str)
@@ -313,14 +318,10 @@ def database_channel_probes(
                     sql.SQL(
                         "SELECT count(*) FROM {e} AS e WHERE e.user_id = %s AND ("
                         "e.canonical_name ILIKE %s "
-                        "OR EXISTS (SELECT 1 FROM pg_catalog.unnest(e.aliases) AS al WHERE al ILIKE %s) "
-                        "OR (e.embedding_1024 IS NOT NULL AND ("
-                        "  e.canonical_name ILIKE %s "
-                        "  OR EXISTS (SELECT 1 FROM pg_catalog.unnest(e.aliases) AS al WHERE al ILIKE %s)"
-                        "))"
+                        "OR EXISTS (SELECT 1 FROM pg_catalog.unnest(e.aliases) AS al WHERE al ILIKE %s)"
                         ")"
                     ).format(e=entities),
-                    (context.user_id, canary_pattern, canary_pattern, canary_pattern, canary_pattern),
+                    (context.user_id, canary_pattern, canary_pattern),
                 )
                 entity_hits = int((await cursor.fetchone() or (0,))[0])
                 await cursor.execute(

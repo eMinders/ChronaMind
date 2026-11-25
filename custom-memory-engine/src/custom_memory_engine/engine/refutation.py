@@ -56,10 +56,16 @@ async def run_refutation_probes(
     read_set: ReadSet | None = None,
     schema_name: str = "cme_engine",
 ) -> RefutationReport:
-    """Execute >= 3 deterministic refutation probes over caller-readable database evidence."""
+    """Execute >= 3 deterministic refutation probes over caller-readable database evidence.
+
+    With no artifact and no source there is nothing to probe, so nothing runs and the report says so: zero attempts and
+    an unclean negative control. A count is only ever the number of probes executed; reporting the three this function
+    would have run is exactly the declared-not-measured count ``I15`` rules out, and the conservative pair can only
+    make an admission fail (``too_few_refutation_attempts``), never pass.
+    """
     targets = tuple(dict.fromkeys([*source_ids, *([artifact_id] if artifact_id is not None else [])]))
     if not targets:
-        return RefutationReport(attempts=3, counter_ids=(), negative_control_clean=True)
+        return RefutationReport(attempts=0, counter_ids=(), negative_control_clean=False)
 
     mv_table = sql.Identifier(schema_name, "memory_version")
     assoc_table = sql.Identifier(schema_name, "association")

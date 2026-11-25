@@ -11,6 +11,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from math import isfinite
 
 from custom_memory_engine.api.entry import EntryError
@@ -73,12 +74,26 @@ class RateLimiter:
             raise ResourceLimitError("rate_limit_exceeded")
 
 
+@dataclass(slots=True)
+class _PrincipalSlots:
+    """One principal's semaphore and the number of calls currently holding it or waiting on it."""
+
+    semaphore: asyncio.Semaphore
+    users: int = 0
+
+
 class ConcurrencyLimiter:
     """Global plus optional per-principal in-flight concurrency guard.
 
     Acquiring the per-principal semaphore before the global semaphore guarantees that a single caller hitting its
     per-principal cap fails fast without exhausting the global slots reserved for other principals, and the global
     ``max_inflight`` bound keeps at least one connection free in the pool for ``/healthz`` and ``/metrics``.
+
+    A principal's entry lives exactly as long as some call holds or waits on its semaphore, so the map is bounded by
+    the calls in flight rather than by every principal ever seen. The count is taken and dropped with no ``await`` in
+    between (one event loop, no preemption), so an entry is removed only when nobody can be using its semaphore: a
+    new call then starts from a fresh one at full capacity, which is the state the removed one was in, and no
+    principal can ever hold two semaphores at once.
     """
 
     def __init__(
@@ -109,16 +124,24 @@ class ConcurrencyLimiter:
         self.per_principal_max_inflight = per_principal_max_inflight
         self.acquire_timeout = float(acquire_timeout)
         self._global = asyncio.Semaphore(max_inflight)
-        self._per_principal: dict[str, asyncio.Semaphore] = {}
+        self._per_principal: dict[str, _PrincipalSlots] = {}
 
-    def _principal_semaphore(self, principal: str) -> asyncio.Semaphore | None:
+    def _enter_principal(self, principal: str) -> _PrincipalSlots | None:
         if self.per_principal_max_inflight is None:
             return None
-        semaphore = self._per_principal.get(principal)
-        if semaphore is None:
-            semaphore = asyncio.Semaphore(self.per_principal_max_inflight)
-            self._per_principal[principal] = semaphore
-        return semaphore
+        slots = self._per_principal.get(principal)
+        if slots is None:
+            slots = _PrincipalSlots(asyncio.Semaphore(self.per_principal_max_inflight))
+            self._per_principal[principal] = slots
+        slots.users += 1
+        return slots
+
+    def _leave_principal(self, principal: str, slots: _PrincipalSlots | None) -> None:
+        if slots is None:
+            return
+        slots.users -= 1
+        if slots.users == 0:
+            del self._per_principal[principal]
 
     async def _try_acquire(self, semaphore: asyncio.Semaphore) -> bool:
         if not semaphore.locked():
@@ -138,20 +161,22 @@ class ConcurrencyLimiter:
         """Acquire per-principal and global concurrency slots or fail fast with :class:`ResourceLimitError`."""
         if not isinstance(principal, str) or not principal:
             raise EntryError("validation_error", "principal_required")
-        principal_sem = self._principal_semaphore(principal)
-        if principal_sem is not None:
-            if not await self._try_acquire(principal_sem):
-                raise ResourceLimitError("concurrency_limit_exceeded")
+        slots = self._enter_principal(principal)
         try:
-            if not await self._try_acquire(self._global):
+            if slots is not None and not await self._try_acquire(slots.semaphore):
                 raise ResourceLimitError("concurrency_limit_exceeded")
             try:
-                yield
+                if not await self._try_acquire(self._global):
+                    raise ResourceLimitError("concurrency_limit_exceeded")
+                try:
+                    yield
+                finally:
+                    self._global.release()
             finally:
-                self._global.release()
+                if slots is not None:
+                    slots.semaphore.release()
         finally:
-            if principal_sem is not None:
-                principal_sem.release()
+            self._leave_principal(principal, slots)
 
 
 __all__ = ["ConcurrencyLimiter", "RateLimiter", "ResourceLimitError"]

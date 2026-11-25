@@ -16,6 +16,8 @@ Covers:
 5. Idempotent replay of ``delete(scope='memory')`` preserves both ``deleted_entities`` and ``deleted_mentions``.
 6. Rollback ``030`` restores the exact version-29 catalog fingerprint and refuses while ``entity_mention`` rows or
    ``origin='mention'`` entities exist unless ``cme.rollback_discard = 'entity_mentions'`` is set.
+7. An entity that existed before migration 30 is labelled ``declared``: it survives ``delete(scope='memory')`` even
+   when its only mention is deleted, and ``delete(scope='all')`` still erases it (``V2-D111``'s stated limitation).
 """
 
 from collections.abc import AsyncIterator, Sequence
@@ -132,7 +134,10 @@ async def _world(database) -> AsyncIterator[tuple[AsyncConnection, Engine, Runti
     role = "cme_rt_" + uuid4().hex[:12]
     async with connect(database) as conn:
         await conn.execute("SELECT set_config('app.clock', %s, false)", (NOW.isoformat(),))
-        await conn.execute("INSERT INTO app_user VALUES ('alice', 'ext-alice', %s)", (NOW,))
+        # a test that seeds rows below migration 30 creates `alice` itself
+        await conn.execute(
+            "INSERT INTO app_user VALUES ('alice', 'ext-alice', %s) ON CONFLICT (id) DO NOTHING", (NOW,)
+        )
         await conn.execute("INSERT INTO session (id, user_id, started_at) VALUES ('s-alice', 'alice', %s)", (NOW,))
         await provision_runtime_role(conn, schema, role)
         runtime = Runtime(conn, role, schema, deletion_key=RECEIPT_KEY)
@@ -559,7 +564,8 @@ async def test_control_skipping_mention_erasure_trips_channel_12_and_injected_le
             )
         assert (await _scan_ch12(c2) or 0) > 0
 
-        # C. Injected vector-carrying (embedding_1024) entity leak.
+        # C. Injected vector-carrying (embedding_1024) entity leak. A vector is not canary-matchable: it is covered
+        # through its row, so the row is counted by its name, and erasing the row leaves no vector behind.
         c3 = f"CANARY-VEC-{CANARY}"
         async with conn.transaction():
             await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
@@ -575,7 +581,12 @@ async def test_control_skipping_mention_erasure_trips_channel_12_and_injected_le
                 "INSERT INTO artifact_provenance (id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
                 "VALUES ('ap-leak-vec', 'alice', 'entity', 'e-leak-vec', 'tier_c_call', 'alice')"
             )
-        assert (await _scan_ch12(c3) or 0) > 0
+        assert await _scan_ch12(c3) == 1
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+            await conn.execute("DELETE FROM entity WHERE id = 'e-leak-vec'")
+        assert await _scan_ch12(c3) == 0
+        assert await rows(conn, "SELECT count(*) FROM entity WHERE embedding_1024 IS NOT NULL") == [(0,)]
 
         # D. Injected artifact_provenance entity_alias leak (even with an opaque entity row).
         c4 = f"CANARY-AP-ALIAS-{CANARY}"
@@ -611,6 +622,80 @@ async def test_control_skipping_mention_erasure_trips_channel_12_and_injected_le
             channels=("channel_12_entity_registry",),
         )
         assert leaky_harness.findings[0].residual_count == 1 and leaky_harness.findings[0].leaked is True
+
+
+async def test_a_pre_migration_entity_survives_memory_deletion_and_is_erased_by_delete_all(
+    database,  # noqa: F811
+) -> None:
+    """``V2-D111``'s stated limitation: migration 30 labels every entity that already existed ``declared``.
+
+    The engine never recorded which entities were mention by-products before migration 30, so ``ADD COLUMN ... DEFAULT
+    'declared'`` makes each of them immune to a memory-scope deletion, even one whose only mention is being deleted.
+    The control is the same deletion erasing a mention entity created after the migration; ``delete all`` still
+    erases the pre-migration one.
+    """
+    config, schema = database
+    runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
+    async with connect(database) as conn:
+        await conn.execute(
+            cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=29)),
+            prepare=False,
+        )
+        async with conn.transaction():
+            await conn.execute("INSERT INTO app_user VALUES ('alice', 'ext-alice', %s)", (NOW,))
+            await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+            # the version-29 shape: no `origin` column exists to state how this entity came to be
+            await conn.execute(
+                "INSERT INTO entity (id, user_id, scope_path, canonical_name, entity_type, aliases) "
+                "VALUES ('e-pre-m30', 'alice', '/u/alice/', 'omar haddad', 'person', '{}')"
+            )
+            await conn.execute(
+                "INSERT INTO artifact_provenance (id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+                "VALUES ('ap-pre-m30', 'alice', 'entity', 'e-pre-m30', 'tier_c_call', 'alice')"
+            )
+    assert (await runner.apply()).action == "applied"
+
+    async with _world(database) as (conn, engine, runtime, schema):
+        assert await rows(conn, "SELECT origin FROM entity WHERE id = 'e-pre-m30'") == [("declared",)]
+        report = await _ingest(
+            runtime,
+            schema,
+            _turn("Omar Haddad met Rania Khalil", turn_id="t-pre-m30", seq=1),
+            ExtractedClaim(
+                content="alice notes Omar Haddad met Rania Khalil",
+                verbatim_quote="Omar Haddad met Rania Khalil",
+                cardinality="single",
+                semantic_slot="meeting_note",
+                um_facet="context",
+                entities=(EntityMention(label="Omar Haddad"), EntityMention(label="Rania Khalil")),
+            ),
+        )
+        version_id = report.claims[0].version_id
+        assert version_id is not None
+        mentions = await rows(
+            conn,
+            "SELECT e.canonical_name, e.origin FROM entity_mention AS m JOIN entity AS e ON e.id = m.entity_id "
+            "WHERE m.version_id = %s ORDER BY e.canonical_name",
+            (version_id,),
+        )
+        assert mentions == [("omar haddad", "declared"), ("rania khalil", "mention")]
+        memory_key = str(
+            (await rows(conn, "SELECT memory_key FROM memory_version WHERE id = %s", (version_id,)))[0][0]
+        )
+
+        memory_receipt = await engine.call(_caller("alice"), "delete", {"scope": "memory", "target_ref": memory_key})
+        assert isinstance(memory_receipt, DeletionReceipt)
+        assert memory_receipt.deleted_mentions == 2
+        assert memory_receipt.deleted_entities == 1  # the control: the post-migration mention entity is erased
+        assert await rows(conn, "SELECT count(*) FROM entity_mention WHERE user_id = 'alice'") == [(0,)]
+        assert await rows(conn, "SELECT id, canonical_name FROM entity WHERE user_id = 'alice'") == [
+            ("e-pre-m30", "omar haddad")
+        ]
+
+        all_receipt = await engine.call(_caller("alice"), "delete", {"scope": "all"})
+        assert isinstance(all_receipt, DeletionReceipt)
+        assert all_receipt.deleted_entities == 1
+        assert await rows(conn, "SELECT count(*) FROM entity WHERE user_id = 'alice'") == [(0,)]
 
 
 async def test_m30_rollback_restores_v29_catalog_and_refuses_when_mentions_exist(database) -> None:  # noqa: F811

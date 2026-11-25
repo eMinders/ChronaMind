@@ -111,6 +111,56 @@ async def test_concurrency_limiter_isolates_per_principal_saturation() -> None:
         pass
 
 
+async def test_concurrency_limiter_forgets_a_principal_once_no_call_holds_or_waits_on_its_slot() -> None:
+    limiter = ConcurrencyLimiter(max_inflight=4, per_principal_max_inflight=1, acquire_timeout=0.0)
+    for n in range(50):
+        async with limiter.acquire(f"p-{n}"):
+            assert set(limiter._per_principal) == {f"p-{n}"}
+    with pytest.raises(RuntimeError, match="boom"):
+        async with limiter.acquire("thrower"):
+            raise RuntimeError("boom")
+    assert limiter._per_principal == {}
+
+
+async def test_concurrency_limiter_keeps_the_per_principal_bound_while_its_entry_is_pruned() -> None:
+    """A waiter keeps the entry alive across the holder's exit, so pruning never hands out a second semaphore."""
+    limiter = ConcurrencyLimiter(max_inflight=4, per_principal_max_inflight=1, acquire_timeout=0.5)
+    first_in, second_in = asyncio.Event(), asyncio.Event()
+    release_first, release_second = asyncio.Event(), asyncio.Event()
+
+    async def first() -> None:
+        async with limiter.acquire("alice"):
+            first_in.set()
+            await release_first.wait()
+
+    async def second() -> None:
+        async with limiter.acquire("alice"):
+            second_in.set()
+            await release_second.wait()
+
+    t1 = asyncio.create_task(first())
+    await first_in.wait()
+    t2 = asyncio.create_task(second())
+    await asyncio.sleep(0)  # `second` is now waiting on alice's semaphore
+    assert limiter._per_principal["alice"].users == 2
+
+    release_first.set()
+    await t1
+    await second_in.wait()
+    # the holder left while a waiter was queued: the waiter got the same, single slot, so a third call is refused
+    with pytest.raises(ResourceLimitError):
+        async with asyncio.timeout(2):
+            async with limiter.acquire("alice"):
+                pass
+    assert limiter._per_principal["alice"].users == 1
+
+    release_second.set()
+    await t2
+    assert limiter._per_principal == {}
+    async with limiter.acquire("alice"):
+        assert limiter._per_principal["alice"].users == 1
+
+
 async def test_concurrency_limiter_releases_slot_on_exception() -> None:
     limiter = ConcurrencyLimiter(max_inflight=1, per_principal_max_inflight=1, acquire_timeout=0.0)
     with pytest.raises(RuntimeError, match="boom"):

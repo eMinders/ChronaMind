@@ -312,14 +312,22 @@ class MigrationRunner:
             ) as connection:
                 async with connection.transaction():
                     await connection.execute("SET LOCAL search_path TO pg_catalog, public")
-                    for setting, value in (
-                        ("statement_timeout", self.config.statement_timeout_ms),
-                        ("lock_timeout", self.config.lock_timeout_ms),
-                    ):
-                        await connection.execute("SELECT pg_catalog.set_config(%s,%s,true)", (setting, str(value)))
+                    statement_timeout = str(self.config.statement_timeout_ms)
+                    await connection.execute(
+                        "SELECT pg_catalog.set_config('statement_timeout',%s,true)", (statement_timeout,)
+                    )
                     # One DB-wide migration lock also serializes first extension
                     # bootstrap across different target schemas. No runtime user lock.
+                    # Waiting for another migrator is the expected case, not a stuck DDL lock: the wait is
+                    # bounded by the statement timeout, not by the short DDL lock timeout, or a second deployer
+                    # fails whenever the first one's apply takes longer than `lock_timeout_ms`.
+                    await connection.execute(
+                        "SELECT pg_catalog.set_config('lock_timeout',%s,true)", (statement_timeout,)
+                    )
                     await connection.execute("SELECT pg_catalog.pg_advisory_xact_lock(%s,%s)", (0x434D4531, 41))
+                    await connection.execute(
+                        "SELECT pg_catalog.set_config('lock_timeout',%s,true)", (str(self.config.lock_timeout_ms),)
+                    )
                     yield connection
         except Error as error:
             raise MigrationError("migration_database_failure", sqlstate=error.sqlstate) from None
