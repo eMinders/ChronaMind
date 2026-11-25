@@ -1,10 +1,11 @@
 name: CI
 
 # Root application (app/, evals/): lint, format, type check and its own tests; plus actionlint over every workflow
-# file. Both jobs are required checks, so they run on every PR (no path filter: a skipped workflow never reports).
-# custom-memory-engine/ is excluded from the root Ruff config and verified by its own workflow.
+# file. `checks` and `workflows` are required checks, so they run on every PR (no path filter: a skipped workflow
+# never reports). custom-memory-engine/ is excluded from the root Ruff config and verified by its own workflow.
 # `app-engine-boundary` drives the app's memory client against the engine's real host and PostgreSQL: the one place
-# the two projects are tested together (tests/integration/test_app_engine_boundary.py).
+# the two projects are tested together (tests/integration/test_app_engine_boundary.py). It runs on every PR but is
+# not (yet) a required check; making it one is a branch-protection setting.
 
 on:
   pull_request:
