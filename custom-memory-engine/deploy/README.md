@@ -169,8 +169,10 @@ depend on process-wide HMAC keys outside the database. Therefore:
    holds the deleted rows, and restoring it rolls back the `deletion_request` rows too. So the deletion log is copied
    *out of the database*: `cme-erasure-journal.timer` runs `scripts/erasure_journal.py export` every five minutes,
    merging every completed request (content-free: user id, scope, HMAC digest of the target, epoch) into
-   `/var/lib/chronamind/erasure-journal.jsonl`. The merge never drops an entry, so an export from a restored, older
-   database cannot shrink it. It runs from `/etc/chronamind/journal.env`, never the worker's file:
+   `/var/lib/chronamind-journal/erasure-journal.jsonl`. The merge never drops an entry, so an export from a restored, older
+   database cannot shrink it, and an exclusive lock keeps two exports from interleaving. It runs as its own transient
+user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/journal.env`, which is `root:root`
+`0600` (systemd reads it as root; the worker can neither read it nor the journal process's environment):
    - `CME_JOURNAL_DATABASE_URL`: a `BYPASSRLS` role that can only read `deletion_request`
      (`CREATE ROLE cme_journal LOGIN BYPASSRLS; GRANT USAGE ON SCHEMA cme_engine TO cme_journal;
      GRANT SELECT ON cme_engine.deletion_request TO cme_journal;`). Without `BYPASSRLS` it would read zero rows under
@@ -179,11 +181,11 @@ depend on process-wide HMAC keys outside the database. Therefore:
 
    **Ship the journal off-host** with every backup and continuously (it is small and holds no content); the database
    cannot protect a copy of its own history. **Restore procedure:** stop the host and worker; if the old database is
-   still reachable, run one last `export`; restore the backup (steps 3–4); then, before re-enabling traffic,
+   still reachable, stop `cme-erasure-journal.timer` and run one last `export`; restore the backup (steps 3–4); then, before re-enabling traffic,
 
    ```bash
    CME_DATABASE_URL=... CME_RUNTIME_ROLE=... CME_DELETION_RECEIPT_KEY=... \
-       python scripts/erasure_journal.py replay --journal /var/lib/chronamind/erasure-journal.jsonl
+       python scripts/erasure_journal.py replay --journal /var/lib/chronamind-journal/erasure-journal.jsonl
    ```
 
    It re-applies, per user in epoch order and through the engine's own deletion path under the restricted role, every

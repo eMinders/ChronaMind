@@ -80,6 +80,21 @@ def test_the_erasure_journal_unit_never_shares_the_workers_environment_file(tmp_
     assert "journal_unit_missing_directive:EnvironmentFile=/etc/chronamind/journal.env" in errors
 
 
+def test_the_erasure_journal_unit_never_runs_as_the_worker_user(tmp_path: Path) -> None:
+    """A worker running as the same Unix user could read the journal's BYPASSRLS credential from /proc."""
+    _copy_deploy_tree(tmp_path)
+    unit = tmp_path / "deploy" / "cme-erasure-journal.service"
+    unit.write_text(
+        unit.read_text(encoding="utf-8").replace("DynamicUser=yes", "User=chronamind"),
+        encoding="utf-8",
+    )
+    code, payload = _run_verifier(tmp_path)
+    assert code == 1
+    errors: list[str] = payload["errors"]  # type: ignore[assignment]
+    assert "journal_unit_must_not_run_as_the_worker_user" in errors
+    assert "journal_unit_missing_directive:DynamicUser=yes" in errors
+
+
 @pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="systemd-analyze not installed")
 def test_bogus_systemd_directive_or_binary_fails_systemd_analyze(tmp_path: Path) -> None:
     _copy_deploy_tree(tmp_path)

@@ -19,8 +19,9 @@ database*, so it does not share the backup's fate:
   (:meth:`~custom_memory_engine.api.delete_handlers.DeleteHandlers.replay`) under the restricted role and the user's
   own row-level security. The target is found by recomputing the digest over the user's restored keys (``memory_key``;
   for ``topic`` also ``subject_key`` and entity ids) with the deployment's deletion key: the journal never holds a
-  plaintext target. A target the restored database never held is recorded with nothing to erase. The replayed request
-  keeps its original id, digest and epoch, so a second replay does nothing.
+  plaintext target. A target the restored database never held is recorded with nothing to erase; a user the backup
+  predates is re-provisioned first, as the host would. The replayed request keeps its original id, digest and epoch,
+  so a second replay does nothing, and the next export merges it into the original entry.
 
 What it does not cover is stated in ``deploy/README.md``: deletions after the newest journal export (its RPO), and a
 journal lost together with the database.
@@ -28,11 +29,13 @@ journal lost together with the database.
 
 from __future__ import annotations
 
+import fcntl
 import hmac
 import json
 import os
 import tempfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,7 +55,7 @@ JOURNAL_FORMAT = "cme-erasure-journal"
 JOURNAL_VERSION = 1
 _KEY_CHECK_MESSAGE = b"cme-erasure-journal:key-check:v1"
 
-type ReplayOutcome = Literal["already_present", "replayed", "recorded_unresolved", "user_absent"]
+type ReplayOutcome = Literal["already_present", "replayed", "recorded_unresolved"]
 
 
 class JournalError(ValueError):
@@ -95,7 +98,9 @@ class ReplayReport:
     already_present: int
     replayed: int
     recorded_unresolved: int
-    user_absent: int
+    #: Journalled users the restored database did not hold (created after the backup), re-provisioned so their
+    #: requests and epochs are recorded and their next deletion continues after them.
+    users_reprovisioned: int
 
 
 # ------------------------------------------------------------------------------------------------------ export
@@ -128,12 +133,21 @@ async def export_journal(connection: AsyncConnection, *, schema_name: str = "cme
     ]
 
 
+def _identity(entry: JournalEntry) -> tuple[str, int, str, str, str]:
+    """What makes two entries one request. Not ``requested_at``: a replay re-records the request at replay time."""
+    return entry.user_id, entry.deletion_epoch, entry.request_id, entry.scope, entry.target_ref
+
+
 def merge_journal(existing: Iterable[JournalEntry], exported: Iterable[JournalEntry]) -> list[JournalEntry]:
-    """The union of both, by request id. Never drops an entry; two different entries under one id are refused."""
+    """The union of both, by request id, keeping the first-seen (original) entry.
+
+    Never drops an entry; two entries under one id that differ in identity (user, epoch, scope or target) are refused.
+    A replayed request differs only in ``requested_at`` (the replay's own time) and merges into the original.
+    """
     merged: dict[str, JournalEntry] = {}
     for entry in (*existing, *exported):
         previous = merged.setdefault(entry.request_id, entry)
-        if previous != entry:
+        if _identity(previous) != _identity(entry):
             raise JournalError("journal_entry_conflict")
     epochs: dict[tuple[str, int], str] = {}
     for entry in merged.values():
@@ -189,6 +203,19 @@ def write_journal(path: Path, entries: Sequence[JournalEntry], *, schema_name: s
         raise
 
 
+@contextmanager
+def _exclusive(path: Path) -> Iterator[None]:
+    """An exclusive lock on a sidecar file, so two exports never interleave their read-merge-write."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path.with_name(f".{path.name}.lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
 async def export_to_file(
     connection: AsyncConnection, path: Path, *, key: bytes, schema_name: str = "cme_engine"
 ) -> int:
@@ -197,11 +224,13 @@ async def export_to_file(
     ``key`` is the deployment's deletion key; only its key check is written. An existing journal made under another
     key is refused rather than mixed.
     """
-    existing = read_journal(path)
-    if existing.key_check is not None and not hmac.compare_digest(existing.key_check, key_check(key)):
-        raise JournalError("journal_key_mismatch")
-    merged = merge_journal(existing.entries, await export_journal(connection, schema_name=schema_name))
-    write_journal(path, merged, schema_name=schema_name, key=key)
+    exported = await export_journal(connection, schema_name=schema_name)
+    with _exclusive(path):
+        existing = read_journal(path)
+        if existing.key_check is not None and not hmac.compare_digest(existing.key_check, key_check(key)):
+            raise JournalError("journal_key_mismatch")
+        merged = merge_journal(existing.entries, exported)
+        write_journal(path, merged, schema_name=schema_name, key=key)
     logger.info("erasure_journal_exported", entries=len(merged))
     return len(merged)
 
@@ -209,22 +238,31 @@ async def export_to_file(
 # ------------------------------------------------------------------------------------------------------ replay
 
 
-async def _restored_requests(handlers: DeleteHandlers, user_id: str) -> dict[int, tuple[str, str, str]] | None:
-    """``epoch -> (request id, scope, digest)`` in the restored database; ``None`` if the user is absent."""
+async def _restored_requests(handlers: DeleteHandlers, user_id: str) -> tuple[dict[int, tuple[str, str, str]], bool]:
+    """``epoch -> (request id, scope, digest)`` in the restored database, and whether the user was re-provisioned.
+
+    A journalled user the backup predates is created exactly as the host creates one (``HostService._provision``):
+    otherwise their journalled epochs stay unrecorded, the host re-creates them on their next call, their next
+    deletion takes epoch 1 again, and every later export and replay is refused as a conflict.
+    """
     runtime = handlers.runtime
     async with runtime.session(user_id) as connection, connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
-            sql.SQL("SELECT 1 FROM {u} WHERE id = %s").format(u=runtime.table("app_user")), (user_id,)
+            sql.SQL(
+                "INSERT INTO {u} (id, external_ref, created_at) VALUES (%s, %s, {clock}()) "
+                "ON CONFLICT DO NOTHING RETURNING id"
+            ).format(u=runtime.table("app_user"), clock=sql.Identifier(runtime.schema_name, "clock_now")),
+            (user_id, user_id),
         )
-        if await cursor.fetchone() is None:
-            return None
+        provisioned = await cursor.fetchone() is not None
         await cursor.execute(
             sql.SQL("SELECT deletion_epoch, id, scope, target_ref FROM {r} WHERE user_id = %s").format(
                 r=runtime.table("deletion_request")
             ),
             (user_id,),
         )
-        return {int(epoch): (str(rid), str(scope), str(ref)) for epoch, rid, scope, ref in await cursor.fetchall()}
+        rows = await cursor.fetchall()
+    return {int(epoch): (str(rid), str(scope), str(ref)) for epoch, rid, scope, ref in rows}, provisioned
 
 
 async def _resolve_target(handlers: DeleteHandlers, entry: JournalEntry) -> str:
@@ -252,17 +290,15 @@ async def _resolve_target(handlers: DeleteHandlers, entry: JournalEntry) -> str:
     return ""
 
 
-async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> ReplayOutcome:
-    """Re-apply one journalled request unless the restored database already holds it."""
-    restored = await _restored_requests(handlers, entry.user_id)
-    if restored is None:
-        return "user_absent"
+async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[ReplayOutcome, bool]:
+    """Re-apply one journalled request unless the restored database already holds it; also: was the user created."""
+    restored, provisioned = await _restored_requests(handlers, entry.user_id)
     present = restored.get(entry.deletion_epoch)
     if present is not None:
         if present != (entry.request_id, entry.scope, entry.target_ref):
             # the restored database recorded a different deletion under this epoch: it is not this journal's history
             raise JournalError("journal_diverges_from_database")
-        return "already_present"
+        return "already_present", provisioned
     target = await _resolve_target(handlers, entry)
     await handlers.replay(
         entry.user_id,
@@ -272,7 +308,7 @@ async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> ReplayO
         stored_target_ref=entry.target_ref,
         deletion_epoch=entry.deletion_epoch,
     )
-    return "replayed" if target or entry.scope == "all" else "recorded_unresolved"
+    return ("replayed" if target or entry.scope == "all" else "recorded_unresolved"), provisioned
 
 
 async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayReport:
@@ -285,15 +321,13 @@ async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayRe
         or not hmac.compare_digest(journal.key_check, key_check(handlers.runtime.deletion_key))
     ):
         raise JournalError("journal_key_mismatch")
-    counts: dict[ReplayOutcome, int] = {
-        "already_present": 0,
-        "replayed": 0,
-        "recorded_unresolved": 0,
-        "user_absent": 0,
-    }
+    counts: dict[ReplayOutcome, int] = {"already_present": 0, "replayed": 0, "recorded_unresolved": 0}
+    reprovisioned = 0
     for entry in merge_journal([], journal.entries):
-        counts[await replay_entry(handlers, entry)] += 1
-    report = ReplayReport(**counts)
+        outcome, provisioned = await replay_entry(handlers, entry)
+        counts[outcome] += 1
+        reprovisioned += int(provisioned)
+    report = ReplayReport(**counts, users_reprovisioned=reprovisioned)
     logger.info("erasure_journal_replayed", **asdict(report))
     return report
 

@@ -6,6 +6,7 @@ The database half (export from the live database, replay into a restored older o
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import stat
 from pathlib import Path
@@ -36,6 +37,13 @@ def test_a_merge_keeps_every_entry_and_never_shrinks_the_journal() -> None:
     # an export from a restored, older database holds only the first: the second must survive the merge
     assert merge_journal(journal, [entry(request="del-1")]) == journal
     assert merge_journal([], journal[::-1]) == journal  # ordered by user, then epoch
+
+
+def test_a_replayed_request_merges_into_the_original_and_keeps_its_time() -> None:
+    """A replay re-records the request at replay time; the timer's next export must merge it, not refuse it."""
+    original = entry()
+    replayed = dataclasses.replace(original, requested_at="2026-11-27T00:00:00+00:00")
+    assert merge_journal([original], [replayed]) == [original]
 
 
 def test_two_different_entries_under_one_request_id_or_one_epoch_are_refused() -> None:

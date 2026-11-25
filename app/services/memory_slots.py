@@ -14,8 +14,10 @@ every check in :func:`decide` passes, and none of those checks depends on a lang
 * the slot is in the closed vocabulary (:data:`SLOT_VOCABULARY`);
 * the statement is about the speaker's *current* state: a past fact ("I lived in Berlin in 2010"), a plan, a
   hypothetical, a negation or a question is never single-valued;
-* the value is **grounded**: it occurs verbatim in the message after Unicode normalization (NFKC, case folding,
-  combining marks removed), so a translated, paraphrased or invented value is refused;
+* the value is **grounded**: it has at least two letters or digits and occurs verbatim in the message after Unicode
+  normalization (NFKC, case folding, combining marks removed), so a translated, paraphrased or invented value is
+  refused. There is no word-boundary rule: it would break Arabic, where a preposition attaches to the name (ببرلين),
+  and scripts written without spaces;
 * the model's own confidence clears :data:`MIN_CONFIDENCE`.
 
 **Failure is the safe side.** No model configured, a timeout, a refusal, an invalid answer or any exception gives
@@ -35,7 +37,7 @@ from typing import Literal, NamedTuple, Protocol
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables.config import RunnableConfig
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
@@ -60,6 +62,8 @@ SLOT_VOCABULARY: frozenset[str] = frozenset({RESIDENCE, EMPLOYER, NAME})
 MIN_CONFIDENCE = 0.8
 #: How many preceding messages are shown as context (so "No, Paris." after "Do you still live in Berlin?" is readable).
 CONTEXT_MESSAGES = 4
+#: The fewest letters or digits a grounded value may have: a one-character value matches almost any message.
+MIN_VALUE_CHARS = 2
 #: The longest message classified. A long message is narrative, not a slot update, and is never single-valued.
 MAX_MESSAGE_CHARS = 1000
 
@@ -75,7 +79,13 @@ MULTI = SlotClassification("multi", None)
 
 
 class SlotExtraction(BaseModel):
-    """What the model reports about one message. Every field is checked by :func:`decide` before it is trusted."""
+    """What the model reports about one message. Every field is checked by :func:`decide` before it is trusted.
+
+    ``hide_input_in_errors``: a validation error must not carry the model's answer (which quotes the user's message)
+    into a log line.
+    """
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     slot: Literal["residence", "employer", "name", "none"] = Field(
         description="Which personal attribute of the speaker the message states, or 'none'."
@@ -136,7 +146,9 @@ def _strip_edges(value: str) -> str:
 def is_grounded(value: str, message: str) -> bool:
     """Whether ``value`` occurs verbatim in ``message`` once both are normalized the same way."""
     needle = _comparable(_strip_edges(value))
-    return bool(needle) and needle in _comparable(message)
+    if sum(1 for char in needle if char.isalnum()) < MIN_VALUE_CHARS:
+        return False
+    return needle in _comparable(message)
 
 
 def decide(message: str, extraction: SlotExtraction) -> SlotClassification:
@@ -210,8 +222,10 @@ class LLMSlotClassifier:
             ):
                 with attempt:
                     extraction = await self._extract(messages, config)
-        except Exception:  # noqa: BLE001 - a failed classification must never lose the claim; multi is the safe side
-            logger.exception("memory_slot_classification_failed")
+        except Exception as error:  # noqa: BLE001 - a failed classification must never lose the claim; multi is safe
+            # `warning` with the type only, not `exception`: a parser's or validator's message quotes the model's answer,
+            # which quotes the user's message, and a traceback would carry it into the log (V2-D121 item 4)
+            logger.warning("memory_slot_classification_failed", error_type=type(error).__name__)
             return MULTI
         if extraction is None:  # unreachable: the retry either assigned it or re-raised
             return MULTI

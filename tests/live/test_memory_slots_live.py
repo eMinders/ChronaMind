@@ -92,7 +92,8 @@ def gateway_extract(model: str) -> Extract:
             if response.status_code == 400 and choice["type"] == "tool" and "tool_choice" in response.text:
                 choice = {"type": "auto"}
                 continue
-            response.raise_for_status()
+            if response.is_error:
+                raise RuntimeError(f"gateway_http_{response.status_code}: {response.text[:200]}")
             blocks = [item for item in response.json()["content"] if item["type"] == "tool_use"]
             if blocks:
                 return SlotExtraction.model_validate(blocks[0]["input"])

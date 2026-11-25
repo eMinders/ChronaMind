@@ -2,11 +2,11 @@
 
     # after every backup, on a timer, and before any restore (needs a BYPASSRLS role, read-only on deletion_request)
     CME_JOURNAL_DATABASE_URL=... CME_DELETION_RECEIPT_KEY=... \
-        python scripts/erasure_journal.py export --journal /var/lib/chronamind/erasure.jsonl
+        python scripts/erasure_journal.py export --journal /var/lib/chronamind-journal/erasure-journal.jsonl
 
     # after pg_restore and role re-provisioning, before the host serves traffic (the restricted runtime role)
     CME_DATABASE_URL=... CME_RUNTIME_ROLE=... CME_DELETION_RECEIPT_KEY=... \
-        python scripts/erasure_journal.py replay --journal /var/lib/chronamind/erasure.jsonl
+        python scripts/erasure_journal.py replay --journal /var/lib/chronamind-journal/erasure-journal.jsonl
 
 ``CME_SCHEMA`` selects the engine schema (default ``cme_engine``). Exit codes: ``0`` success, ``1`` runtime error or a
 refused journal, ``2`` missing configuration. Output is content-free counts; ``--json`` prints them as one JSON object.

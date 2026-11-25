@@ -249,13 +249,13 @@ def _check_unit_contents(root: Path) -> list[str]:
             "[Service]",
             "[Install]",
             "Type=oneshot",
-            "User=chronamind",
-            "Group=chronamind",
+            # its own transient user: the BYPASSRLS credential must not be readable as the worker's user
+            "DynamicUser=yes",
             "NoNewPrivileges=true",
             "PrivateTmp=true",
             "ProtectSystem=strict",
             "ProtectHome=true",
-            "StateDirectory=chronamind",
+            "StateDirectory=chronamind-journal",
             # the BYPASSRLS journal credential must never share the worker's environment file
             "EnvironmentFile=/etc/chronamind/journal.env",
         ):
@@ -263,6 +263,8 @@ def _check_unit_contents(root: Path) -> list[str]:
                 errors.append(f"journal_unit_missing_directive:{required}")
         if "/etc/chronamind/worker.env" in j_text:
             errors.append("journal_unit_must_not_read_worker_env")
+        if re.search(r"^\s*User=chronamind\s*$", j_text, re.M):
+            errors.append("journal_unit_must_not_run_as_the_worker_user")
         exec_match = re.search(r"^\s*ExecStart=\S+\s+(\S+)", j_text, re.M)
         if not exec_match or not (root / exec_match.group(1)).is_file():
             errors.append("journal_unit_exec_script_missing")

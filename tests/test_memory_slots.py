@@ -12,6 +12,7 @@ import pytest
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables.config import RunnableConfig
 
+import app.services.memory_slots as memory_slots
 from app.services.memory_slots import (
     EMPLOYER,
     MULTI,
@@ -108,6 +109,11 @@ def test_grounding_is_unicode_normalized_not_language_specific() -> None:
     assert not is_grounded("", "I live in Berlin")
     assert not is_grounded("...", "I live in Berlin")
     assert not is_grounded("Bern", "I live in Belgrade")
+    # a one-character value would match almost any message
+    assert not is_grounded("i", "I live in Berlin")
+    assert not is_grounded("ب", "انتقلت إلى باريس")
+    # no word-boundary rule: an attached Arabic preposition still grounds the name
+    assert is_grounded("برلين", "أنا ساكن ببرلين")
 
 
 def test_the_slot_vocabulary_is_closed() -> None:
@@ -179,3 +185,34 @@ def test_the_model_sees_recent_context_but_labels_only_the_newest_message() -> N
     assert "- a\n" not in prompt  # only the last four non-blank context messages
     # the instructions name no language and contain no per-language keyword list
     assert "any language" in str(messages[0].content)
+
+
+class _LoggerSpy:
+    """Records every log call. ``exception`` is recorded separately: its traceback is what carried the content."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def __getattr__(self, level: str):  # noqa: ANN204 - info/warning/exception/... all record
+        def record(event: str, *args: object, **fields: object) -> None:
+            self.calls.append((level, event, {"args": args, **fields}))
+
+        return record
+
+
+async def test_a_failed_classification_logs_no_message_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A validator's or parser's message quotes the model's answer, which quotes the user: none of it is logged."""
+    spy = _LoggerSpy()
+    monkeypatch.setattr(memory_slots, "logger", spy)
+
+    async def leaky(messages: list[BaseMessage], config: RunnableConfig) -> SlotExtraction:
+        return SlotExtraction.model_validate({"slot": "residence", "value": "SECRET-PLACE"})  # fields missing
+
+    assert await LLMSlotClassifier(leaky).classify("I moved to SECRET-PLACE", []) == MULTI
+    assert spy.calls == [
+        ("warning", "memory_slot_classification_failed", {"args": (), "error_type": "ValidationError"})
+    ]
+    # no traceback-carrying call, and the validation error itself does not echo the input
+    with pytest.raises(ValueError) as error:
+        SlotExtraction.model_validate({"slot": "residence", "value": "SECRET-PLACE"})
+    assert "SECRET-PLACE" not in str(error.value)

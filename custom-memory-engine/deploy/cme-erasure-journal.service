@@ -1,8 +1,8 @@
 # systemd oneshot service exporting the erasure journal (`V2-D122`).
 #
 # Triggered by `cme-erasure-journal.timer`. Copies every completed `deletion_request` (content-free: user id, scope,
-# HMAC digest of the target, epoch) out of the database into /var/lib/chronamind/erasure-journal.jsonl, merging so the
-# file never shrinks. After a restore, `scripts/erasure_journal.py replay` re-applies the deletions the restored backup
+# HMAC digest of the target, epoch) out of the database into /var/lib/chronamind-journal/erasure-journal.jsonl, merging
+# so the file never shrinks. After a restore, `scripts/erasure_journal.py replay` re-applies the deletions the restored backup
 # predates. Ship the file off-host with the backups (deploy/README.md, "Backup and restore policy").
 [Unit]
 Description=ChronaMind memory engine — erasure journal export
@@ -12,15 +12,15 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=chronamind
-Group=chronamind
+# Its own transient Unix user, never the worker's `chronamind`: CME_JOURNAL_DATABASE_URL names a BYPASSRLS role
+# (SELECT on deletion_request only), and a process running as the same user as the worker could read it from
+# /proc/<pid>/environ. systemd reads EnvironmentFile as root, so journal.env is root:root 0600.
+DynamicUser=yes
 WorkingDirectory=/opt/chronamind/custom-memory-engine
-# A separate file: CME_JOURNAL_DATABASE_URL names a BYPASSRLS role (SELECT on deletion_request only) that the worker
-# must never hold.
 EnvironmentFile=/etc/chronamind/journal.env
-StateDirectory=chronamind
+StateDirectory=chronamind-journal
 StateDirectoryMode=0700
-ExecStart=/opt/chronamind/custom-memory-engine/.venv/bin/python scripts/erasure_journal.py export --journal /var/lib/chronamind/erasure-journal.jsonl
+ExecStart=/opt/chronamind/custom-memory-engine/.venv/bin/python scripts/erasure_journal.py export --journal /var/lib/chronamind-journal/erasure-journal.jsonl
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

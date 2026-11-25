@@ -3323,8 +3323,9 @@ keyword rules per language would repeat the defect in every language not yet wri
    as written, confidence) on the app's LLM service, with Langfuse tracing. The prompt names no language's words.
 2. `decide` accepts it only when the slot is in the closed vocabulary, the status is `current` (a past value, plan,
    hypothetical, denial or question is not), the subject is the speaker, the confidence is at least 0.8, and the value
-   is **grounded**: it occurs verbatim in the message after NFKC, case folding and removal of combining marks. A
-   translated, transliterated or invented value is refused, in any script.
+   is **grounded**: it has at least two letters or digits and occurs verbatim in the message after NFKC, case folding
+   and removal of combining marks. A translated, transliterated or invented value is refused, in any script. No
+   word-boundary rule: it would break Arabic, where a preposition attaches to the name (ببرلين).
 3. Only the newest user message of an `add()` call is classified: each earlier one was the newest of an earlier call and
    replays by idempotency key, so one model call per turn. Up to four preceding messages are context, so a correction
    ("No, I meant Paris") is readable; the value must still come from the newest message.
@@ -3364,15 +3365,20 @@ per-user epoch). It is copied *out of the database* and replayed after a restore
    merged into a JSON-lines file. The merge never drops an entry, so an export from a restored, older database cannot
    shrink the journal; two different entries under one id or one `(user, epoch)` are refused. The export role needs
    `BYPASSRLS` (checked: under forced RLS a role without it reads zero rows and would write an empty journal that
-   looks valid) and is granted `SELECT` on `deletion_request` only, from an environment file the worker never reads.
-   The header carries a one-way key check of the deletion key, never the key.
+   looks valid) and is granted `SELECT` on `deletion_request` only. The export runs as its own transient Unix user
+   (`DynamicUser=yes`) from a `root:root 0600` environment file, so the worker's user can read neither the file nor the
+   process's environment; an exclusive lock keeps two exports from interleaving their read-merge-write. The header
+   carries a one-way key check of the deletion key, never the key. A replayed request differs from the original only
+   in `requested_at` and merges into it.
 2. **Replay** (a step of the restore procedure, before the host serves traffic): per user in epoch order, every
    journalled request the restored database lacks is re-applied through `DeleteHandlers.replay` — the engine's own
    deletion path, the deployment's handler configuration, the restricted role and the user's own RLS — keeping the
    original request id, digest and epoch, so a second replay finds it and does nothing. The target is found by
    recomputing the digest over the user's restored keys (`memory_key`; for `topic` also `subject_key` and entity ids):
    the journal never holds a plaintext target (`T-29`). A target the backup never held is recorded with nothing to
-   erase. A replay under another deletion key is refused before it writes (it would otherwise match nothing and
+   erase. A journalled user the backup predates is re-provisioned first, exactly as the host provisions one, so their
+   epochs are taken and their next deletion continues after them. A replay under another deletion key is refused
+   before it writes (it would otherwise match nothing and
    record every deletion as done); a restored database holding a *different* request at a journalled epoch is refused
    as divergent.
 
@@ -3391,7 +3397,10 @@ maintenance after the restore.
 the backup (a resolved memory deletion, one the backup never held, a user's `delete all`); before the replay the
 deleted memories are readable and the leak scanner finds residuals in 6 measured channels; after it, nothing deleted is
 readable, the scanner finds 0, the kept memory survives, the request ids are the originals, and a second replay does
-nothing. `tests/test_erasure_journal.py` pins the file, the merge and the key check.
+nothing. Life after the restore is exercised too: the next export merges the replayed requests (no conflict), a user the
+backup predated deletes again at the next epoch, and the grown journal replays as all present. The independent final
+review of #259 found the two lifecycle defects these steps now pin (a replayed `requested_at` that made every later
+export conflict, and an unprovisioned user that made the next epoch collide). `tests/test_erasure_journal.py` pins the file, the merge and the key check.
 
 
 ### V2-D123 — Hardening from the independent review of #259

@@ -109,6 +109,10 @@ class RehearsalReport:
     replayed_request_ids_match: bool
     second_replay_already_present: int
     second_replay_replayed: int
+    replay_users_reprovisioned: int
+    journal_entries_after_replay_export: int
+    journal_entries_after_new_deletion: int
+    third_replay_already_present: int
     scan_leaks_before_replay: int
     scan_leaks_after_replay: int
     scan_measured_channels_after_replay: int
@@ -448,6 +452,10 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                     {"scope": "memory", "target_ref": late_memory_key, "deletion_epoch": None},
                 )
                 await engine.call(_context("C", user="bob"), "delete", {"scope": "all", "deletion_epoch": None})
+                # a user the backup predates entirely: created, writes, deletes everything
+                await src_conn.execute("INSERT INTO app_user VALUES ('carol', 'ext-carol', %s)", (T0,))
+                await _write_claim(src_conn, src_role, schema_name, "Carol collects stamps", "reh-carol", user="carol")
+                await engine.call(_context("C", user="carol"), "delete", {"scope": "all", "deletion_epoch": None})
                 if BOB_TEXT in await _query_facts(src_conn, src_role, schema_name, "cello", user="bob"):
                     raise RuntimeError("source_delete_all_failed")
 
@@ -487,8 +495,8 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                     )
                     req_rows = await cursor.fetchall()
                 post_req_count = len(req_rows)
-                # the alice memory deletion, alice's late deletion and bob's `delete all`
-                digest_ok = post_req_count == 3 and expected_digest in {str(row[0]) for row in req_rows}
+                # the alice memory deletion, alice's late deletion, bob's and carol's `delete all`
+                digest_ok = post_req_count == 4 and expected_digest in {str(row[0]) for row in req_rows}
 
             async with await AsyncConnection.connect(pre_dsn, autocommit=True, connect_timeout=5) as pre_conn:
                 pre_resurrected = await _query_facts(pre_conn, pre_role, schema_name, "shellfish")
@@ -534,6 +542,18 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                         )
                     )
                     replayed_ids = sorted(str(row[0]) for row in await cursor.fetchall())
+                # life after the restore: the timer's next export merges the replayed requests into the originals (they
+                # differ only in requested_at), and carol, whom the backup predates, deletes again at the next epoch
+                export_after_replay = await export_to_file(
+                    pre_conn, journal_path, key=DELETION_KEY, schema_name=schema_name
+                )
+                await wire_engine(runtime).call(
+                    _context("C", user="carol"), "delete", {"scope": "all", "deletion_epoch": None}
+                )
+                export_after_new_deletion = await export_to_file(
+                    pre_conn, journal_path, key=DELETION_KEY, schema_name=schema_name
+                )
+                third = await replay_journal(DeleteHandlers(runtime), read_journal(journal_path))
 
             if KEEP_TEXT not in post_kept:
                 raise RuntimeError("post_restore_kept_memory_missing")
@@ -568,6 +588,10 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 replayed_request_ids_match=replayed_ids == source_request_ids,
                 second_replay_already_present=second.already_present,
                 second_replay_replayed=second.replayed + second.recorded_unresolved,
+                replay_users_reprovisioned=first.users_reprovisioned,
+                journal_entries_after_replay_export=export_after_replay,
+                journal_entries_after_new_deletion=export_after_new_deletion,
+                third_replay_already_present=third.already_present,
                 scan_leaks_before_replay=before_scan[0],
                 scan_leaks_after_replay=after_scan[0],
                 scan_measured_channels_after_replay=after_scan[1],
