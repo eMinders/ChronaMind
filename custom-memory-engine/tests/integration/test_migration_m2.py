@@ -16,7 +16,13 @@ from psycopg import AsyncConnection, sql
 from psycopg.errors import CheckViolation, InsufficientPrivilege, UniqueViolation
 
 from custom_memory_engine.schema import migrate
-from custom_memory_engine.scope.access import Selector, acl_readable, resolve_read_set, rls_read_using
+from custom_memory_engine.scope.access import (
+    Selector,
+    acl_readable,
+    resolve_read_set,
+    rls_parent_read,
+    rls_read_using,
+)
 from custom_memory_engine.scope.audit import record_scope_read
 from custom_memory_engine.security import provision_runtime_role, tenant_scope
 from tests.integration.rollbacks import rollback_sql
@@ -243,10 +249,33 @@ async def test_holding_a_grant_never_authorises_a_write(database) -> None:  # no
                 )
 
 
+#: Migration 32 (`V2-D113`): a child row is readable exactly when its parent artifact is, so these tables' read policy
+#: is `scope.access.rls_parent_read` and not a second, independent copy of the scope rule. The last two are children
+#: added after migration 11; they are not in `SCOPED` (they carry no `scope_path`) but get the same delegating policy.
+CHILD_PARENTS: dict[str, tuple[str, str]] = {
+    "memory_evidence": ("memory_version", "version_id"),
+    "memory_derivation": ("memory_version", "derived_version_id"),
+    "memory_embedding": ("memory_version", "version_id"),
+    "abstraction_stats": ("memory_version", "version_id"),
+    "verification": ("memory_version", "version_id"),
+    "outcome_stats": ("memory_version", "version_id"),
+    "procedure_shape": ("memory_version", "version_id"),
+}
+
+
+def expected_read_policy(table: str) -> sql.Composable:
+    """The library expression a table's installed `<table>_scope_read` must deparse to."""
+    if table in CHILD_PARENTS:
+        parent, column = CHILD_PARENTS[table]
+        return rls_parent_read(table, parent, column)
+    return rls_read_using(table)
+
+
 async def test_the_read_policy_is_the_library_expression_on_every_scoped_table(database) -> None:  # noqa: F811
-    """Every scoped table carries `<table>_scope_read`, and its text is `scope.access.rls_read_using`'s."""
+    """Every scoped table carries `<table>_scope_read`, and its text is the library's: `scope.access.rls_read_using`
+    for an artifact table, `scope.access.rls_parent_read` for a child whose readability is its parent's."""
     async with connect(database) as conn:
-        for table in SCOPED:
+        for table in (*SCOPED, *(name for name in CHILD_PARENTS if name not in SCOPED)):
             (found,) = await rows(
                 conn,
                 "SELECT polcmd, pg_get_expr(polqual, polrelid) FROM pg_policy "
@@ -258,7 +287,7 @@ async def test_the_read_policy_is_the_library_expression_on_every_scoped_table(d
             async with conn.transaction(force_rollback=True):
                 await conn.execute(
                     sql.SQL("CREATE POLICY reference_read ON {} FOR SELECT USING ({})").format(
-                        sql.Identifier(table), rls_read_using(table)
+                        sql.Identifier(table), expected_read_policy(table)
                     )
                 )
                 (reference,) = await rows(
@@ -268,6 +297,8 @@ async def test_the_read_policy_is_the_library_expression_on_every_scoped_table(d
                     (table,),
                 )
             assert found[1] == reference[0], table
+            if table not in SCOPED:
+                continue  # a post-migration-11 child keeps its own (migration 20/21) own-user policy for writes
             # Apart from the read policy, the only policy is the v1 own-user one, governing writes too.
             assert await rows(
                 conn,

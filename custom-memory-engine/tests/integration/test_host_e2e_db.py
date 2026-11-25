@@ -43,6 +43,7 @@ TOKENS = {
     "alice-b": "test-token-alice-tier-b",  # pragma: allowlist secret
     "alice-c": "test-token-alice-tier-c",  # pragma: allowlist secret
     "bob-b": "test-token-bob-tier-b",  # pragma: allowlist secret
+    "bob-c": "test-token-bob-tier-c",  # pragma: allowlist secret
     "service": "test-token-app-service-delegating",  # pragma: allowlist secret
 }
 PROVENANCE = b"p" * 32
@@ -58,6 +59,7 @@ class Live(NamedTuple):
     alice_c: dict[str, str]
     bob_b: dict[str, str]
     service: dict[str, str]
+    bob_c: dict[str, str]
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -168,6 +170,7 @@ async def live(
                 TOKENS["alice-b"]: Credential("alice", "B"),
                 TOKENS["alice-c"]: Credential("alice", "C", admin=True),
                 TOKENS["bob-b"]: Credential("bob", "B"),
+                TOKENS["bob-c"]: Credential("bob", "C"),
                 TOKENS["service"]: Credential("chronamind-app", "B"),
             },
             delegating={TOKENS["service"]},
@@ -193,6 +196,7 @@ async def live(
                     bearer(TOKENS["alice-c"]),
                     bearer(TOKENS["bob-b"]),
                     bearer(TOKENS["service"]),
+                    bearer(TOKENS["bob-c"]),
                 )
         finally:
             server.should_exit = True

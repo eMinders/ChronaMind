@@ -115,12 +115,17 @@ class CompiledPredicate:
 
 
 def compile_predicate(
-    query: TemporalQuery, *, alias: str | None = None, database_clock: datetime | None = None
+    query: TemporalQuery,
+    *,
+    alias: str | None = None,
+    database_clock: datetime | None = None,
+    cross_tenant: bool = False,
 ) -> CompiledPredicate:
     """Compile a reusable WHERE clause; audit cannot compile without a clock check.
 
     The caller of this pure builder must supply the database's clock for audit.
-    fetch_versions always obtains it itself in the read transaction.
+    fetch_versions always obtains it itself in the read transaction. When ``cross_tenant``
+    is true, row ownership is delegated to forced RLS and the scope read filter.
     """
     query = TemporalQuery.model_validate(query.model_dump())
     if alias is not None and (not isinstance(alias, str) or not alias.strip()):
@@ -130,7 +135,7 @@ def compile_predicate(
         return sql.Identifier(name) if alias is None else sql.Identifier(alias, name)
 
     values: dict[str, str | datetime] = {"user_id": query.user_id}
-    clauses = [sql.SQL("{} = %(user_id)s").format(column("user_id"))]
+    clauses = [] if cross_tenant else [sql.SQL("{} = %(user_id)s").format(column("user_id"))]
     if query.mode == "audit_as_of":
         if database_clock is None:
             raise TemporalQueryError("audit_database_clock_required")
@@ -393,7 +398,7 @@ async def fetch_scoped_rows(
         context = await cursor.fetchone()
         if context is None or context[0] != query.user_id:
             raise InsufficientPrivilege("temporal_user_context_mismatch")
-        compiled = compile_predicate(query, alias="m", database_clock=clock_instant)
+        compiled = compile_predicate(query, alias="m", database_clock=clock_instant, cross_tenant=True)
         identity = (
             ", m.memory_key, m.subject_key, m.predicate_key, m.single_valued, "
             "lower(m.event_range), upper(m.event_range)"

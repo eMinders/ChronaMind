@@ -81,6 +81,7 @@ AUDIT_DETAIL_KEYS = frozenset(
         "refutation_attempts",  # V2-D112 / verification telemetry count (never prose)
         "pinning_status",  # V2-D112: static pinning status token ('pinned' | 'unpinned_pre_migration')
         "visibility",  # V2-D113: static visibility axis token ('private' | 'project' | 'shared')
+        "artifact_kind",  # V2-D113: which table a visibility change hit ('memory_version' | 'entity' | 'association')
         # lifecycle retirements through the API (E-039): a static reason code, never free text
         "reason_code",
         # a lifted dissent (V2-D105): the constraint's id, which is an identifier, and the method *family*, which is a

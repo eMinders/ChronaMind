@@ -86,6 +86,7 @@ async def _row(connection: AsyncConnection, user_id: str, artifact_id: str, sche
     (``THREAT_MODEL.md`` T-11). The left join is what makes a grounded artifact — which has no ledger, no expiry and no
     verification — reportable rather than an error.
     """
+    del user_id
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
@@ -96,11 +97,11 @@ async def _row(connection: AsyncConnection, user_id: str, artifact_id: str, sche
                 " COALESCE(s.coverage, 0)::double precision, COALESCE(s.refutation_attempts, 0),"
                 " s.confidence, s.confidence_method_id, s.expires_at, s.closed_over_hash"
                 " FROM {v} AS v LEFT JOIN {s} AS s ON s.version_id = v.id AND s.user_id = v.user_id"
-                " WHERE v.user_id = %s AND v.id = %s"
+                " WHERE v.id = %s"
             ).format(
                 v=sql.Identifier(schema_name, "memory_version"), s=sql.Identifier(schema_name, "abstraction_stats")
             ),
-            (user_id, artifact_id),
+            (artifact_id,),
         )
         row = await cursor.fetchone()
     if row is None:
@@ -116,16 +117,17 @@ async def _support_ids(
     ``memory_derivation`` is the graph ``I1'`` requires an inferred artifact to carry, so this is the honest answer to
     "what supports it" — not the ledger's ``support_count``, which counts opportunities rather than specific rows.
     """
+    del user_id
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
                 "SELECT d.source_version_id FROM {d} AS d JOIN {v} AS v"
                 " ON v.id = d.source_version_id AND v.user_id = d.user_id"
-                " WHERE d.user_id = %s AND d.derived_version_id = %s ORDER BY d.source_version_id"
+                " WHERE d.derived_version_id = %s ORDER BY d.source_version_id"
             ).format(
                 d=sql.Identifier(schema_name, "memory_derivation"), v=sql.Identifier(schema_name, "memory_version")
             ),
-            (user_id, artifact_id),
+            (artifact_id,),
         )
         return tuple(str(row[0]) for row in await cursor.fetchall())
 
@@ -137,6 +139,7 @@ async def _counter_ids(
 
     Combines readable ``memory_conflict`` counterparts and readable ``association(type='contradicts')`` counterparts.
     """
+    del user_id
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
@@ -146,12 +149,12 @@ async def _counter_ids(
                 " FROM {c} AS c JOIN {v} AS v ON v.user_id = c.user_id"
                 "  AND v.id = CASE WHEN c.candidate_version_id = %s THEN c.existing_version_id"
                 "                  ELSE c.candidate_version_id END"
-                " WHERE c.user_id = %s AND %s IN (c.candidate_version_id, c.existing_version_id)"
+                " WHERE %s IN (c.candidate_version_id, c.existing_version_id)"
                 " UNION ALL"
                 " SELECT CASE WHEN a.from_id = %s THEN a.to_id ELSE a.from_id END AS other"
                 " FROM {a} AS a JOIN {v} AS v ON v.user_id = a.user_id"
                 "  AND v.id = CASE WHEN a.from_id = %s THEN a.to_id ELSE a.from_id END"
-                " WHERE a.user_id = %s AND a.type = 'contradicts' AND %s IN (a.from_id, a.to_id)"
+                " WHERE a.type = 'contradicts' AND %s IN (a.from_id, a.to_id)"
                 ") AS found WHERE other IS NOT NULL AND other <> %s ORDER BY other"
             ).format(
                 c=sql.Identifier(schema_name, "memory_conflict"),
@@ -161,11 +164,9 @@ async def _counter_ids(
             (
                 artifact_id,
                 artifact_id,
-                user_id,
                 artifact_id,
                 artifact_id,
                 artifact_id,
-                user_id,
                 artifact_id,
                 artifact_id,
             ),
@@ -181,6 +182,7 @@ async def _derivation_sources(
     schema_name: str,
 ) -> tuple[str, ...]:
     """Sorted readable derivation, evidence, and counter source ids used in ledger computation."""
+    del user_id
     sources: set[str] = set(support_ids) | set(counter_ids)
     if support_ids:
         src_list = list(support_ids)
@@ -191,7 +193,7 @@ async def _derivation_sources(
                     " SELECT CASE WHEN a.from_id = ANY(%s) THEN a.to_id ELSE a.from_id END AS other"
                     " FROM {a} AS a JOIN {v} AS v ON v.user_id = a.user_id"
                     "  AND v.id = CASE WHEN a.from_id = ANY(%s) THEN a.to_id ELSE a.from_id END"
-                    " WHERE a.user_id = %s AND a.type = 'contradicts'"
+                    " WHERE a.type = 'contradicts'"
                     "  AND a.origin::text IN ('grounding_policy', 'tier_c')"
                     "  AND (a.from_id = ANY(%s) OR a.to_id = ANY(%s))"
                     "  AND v.status = 'active' AND v.lifecycle IN ('observed', 'asserted')"
@@ -202,7 +204,7 @@ async def _derivation_sources(
                     " FROM {c} AS c JOIN {v} AS v ON v.user_id = c.user_id"
                     "  AND v.id = CASE WHEN c.candidate_version_id = ANY(%s) THEN c.existing_version_id"
                     "                  ELSE c.candidate_version_id END"
-                    " WHERE c.user_id = %s AND c.decision <> 'reject'"
+                    " WHERE c.decision <> 'reject'"
                     "  AND (c.decision = 'hold'"
                     "       OR c.relation IN ('contradicts', 'contradiction', 'conflict', 'conflicts'))"
                     "  AND (c.candidate_version_id = ANY(%s) OR c.existing_version_id = ANY(%s))"
@@ -217,12 +219,10 @@ async def _derivation_sources(
                 (
                     src_list,
                     src_list,
-                    user_id,
                     src_list,
                     src_list,
                     src_list,
                     src_list,
-                    user_id,
                     src_list,
                     src_list,
                 ),
@@ -252,14 +252,15 @@ async def _verification(
     tuple[str, ...],
 ]:
     """The newest verification record and its pinned support/held-out artifact ids."""
+    del user_id
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
                 "SELECT id, verified_on, held_out_split_id, negative_control_slice_id,"
                 " windows_disjoint, artifact_pinning_status FROM {t}"
-                " WHERE user_id = %s AND version_id = %s ORDER BY verified_on DESC, id DESC LIMIT 1"
+                " WHERE version_id = %s ORDER BY verified_on DESC, id DESC LIMIT 1"
             ).format(t=sql.Identifier(schema_name, "verification")),
-            (user_id, artifact_id),
+            (artifact_id,),
         )
         row = await cursor.fetchone()
         if row is None:
@@ -267,10 +268,10 @@ async def _verification(
         verification_id = str(row[0])
         pinning_status = None if row[5] is None else str(row[5])
         await cursor.execute(
-            sql.SQL(
-                "SELECT role, artifact_id FROM {va} WHERE user_id = %s AND verification_id = %s ORDER BY artifact_id"
-            ).format(va=sql.Identifier(schema_name, "verification_artifact")),
-            (user_id, verification_id),
+            sql.SQL("SELECT role, artifact_id FROM {va} WHERE verification_id = %s ORDER BY artifact_id").format(
+                va=sql.Identifier(schema_name, "verification_artifact")
+            ),
+            (verification_id,),
         )
         va_rows = await cursor.fetchall()
     support_pinned = tuple(sorted(str(r[1]) for r in va_rows if r[0] == "support"))

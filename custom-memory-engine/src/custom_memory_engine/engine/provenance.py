@@ -48,6 +48,7 @@ async def sources_for_artifacts(
     schema_name: str,
 ) -> Mapping[str, tuple[ProvenanceSource, ...]]:
     """Load source metadata only; no source content is selected by this operation."""
+    del user_id
     grouped: dict[str, list[ProvenanceSource]] = defaultdict(list)
     if not artifact_ids:
         return {}
@@ -58,12 +59,12 @@ async def sources_for_artifacts(
                 "SELECT e.version_id, e.source_ref, e.source_type, e.evidence_role, "
                 "v.scope_path, v.visibility "
                 "FROM {e} AS e JOIN {v} AS v ON v.id = e.version_id AND v.user_id = e.user_id "
-                "WHERE e.user_id = %s AND e.version_id = ANY(%s) "
+                "WHERE e.version_id = ANY(%s) "
                 "ORDER BY e.version_id, e.source_type, e.source_ref, e.evidence_role"
             ).format(
                 e=sql.Identifier(schema_name, "memory_evidence"), v=sql.Identifier(schema_name, "memory_version")
             ),
-            (user_id, ids),
+            (ids,),
         )
         for artifact_id, source_id, source_type, role, scope_path, visibility in await cursor.fetchall():
             if source_id is None or source_type is None:
@@ -82,12 +83,12 @@ async def sources_for_artifacts(
                 "SELECT d.derived_version_id, s.id, d.derivation_type, s.scope_path, s.visibility "
                 "FROM {d} AS d "
                 "JOIN {s} AS s ON s.id = d.source_version_id AND s.user_id = d.user_id "
-                "WHERE d.user_id = %s AND d.derived_version_id = ANY(%s) "
+                "WHERE d.derived_version_id = ANY(%s) "
                 "ORDER BY d.derived_version_id, s.id, d.derivation_type"
             ).format(
                 d=sql.Identifier(schema_name, "memory_derivation"), s=sql.Identifier(schema_name, "memory_version")
             ),
-            (user_id, ids),
+            (ids,),
         )
         for artifact_id, source_id, derivation_type, scope_path, visibility in await cursor.fetchall():
             grouped[str(artifact_id)].append(

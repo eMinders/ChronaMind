@@ -58,6 +58,7 @@ unwired. Ownership is the `Owners` column, and `plan_coverage.py --check` fails 
 | `create_scope` | operation | `E-039`, `E-040` | `V2-D46`; wired by `E-040` (#151) through `Engine.call` under `namespace_owner_only` |
 | `grant_access` | operation | `E-039`, `E-011` | `V2-D46`, `V2-D36` |
 | `revoke_access` | operation | `E-039`, `E-011` | |
+| `set_visibility` | operation | `E-039`, `E-011` | `V2-D113`, `I7` |
 | `stats` | operation | `E-039`, `C-010` | unwired: `C-010` lands it through `Engine.call` (§4.1) |
 | `cost` | operation | `E-039`, `E-036` | wired: `E-036` lands it through `Engine.call` (§4.1), with per-stage `QueryCost` and caller-scoped windowed `CostReport` |
 | `M1` | migration | `E-010` | |

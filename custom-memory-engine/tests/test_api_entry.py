@@ -168,6 +168,9 @@ VALUES: dict[str, object] = {
     "constraint_id": "nc1",
     "evidence_artifact_id": "a1",
     "include_lifted": False,
+    "visibility": "private",
+    "aliases": None,
+    "source_version_ids": None,
 }
 
 
@@ -629,3 +632,26 @@ def test_no_creation_operation_accepts_a_caller_chosen_identifier() -> None:
 
 async def _echo(call: Call) -> object:
     return {"ok": call.operation.name}
+
+
+async def test_set_visibility_requires_tier_c_and_own_namespace() -> None:
+    """``V2-D113``: Tier B and non-owners are refused with ``forbidden`` before reaching the handler."""
+    seen: list[Call] = []
+    sut = engine(handler_calls=seen)
+    # Tier B is refused at authorization before target lookup
+    with pytest.raises(EntryError) as tier_b_err:
+        await sut.call(ctx("B"), "set_visibility", {"artifact_id": "a1", "visibility": "shared"})
+    assert tier_b_err.value.code == "forbidden"
+    assert seen == []
+
+    # Tier C on another user's artifact (absent or foreign) is refused identically
+    for target in ("bobs", "does_not_exist"):
+        with pytest.raises(EntryError) as foreign_err:
+            await sut.call(ctx("C"), "set_visibility", {"artifact_id": target, "visibility": "shared"})
+        assert foreign_err.value.code == "forbidden"
+    assert seen == []
+
+    # Owner Tier C reaches the handler
+    res = await sut.call(ctx("C"), "set_visibility", {"artifact_id": "a1", "visibility": "shared"})
+    assert res == {"ok": "set_visibility"}
+    assert [c.operation.name for c in seen] == ["set_visibility"]

@@ -17,6 +17,7 @@ from custom_memory_engine.engine.hybrid import JUDGE_RELEVANCE_FLOOR, RelevanceJ
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.audit import ConnectionScopeReads
 from custom_memory_engine.semantic.contracts import Embedder
+from custom_memory_engine.soundness.admission import DEFAULT_TAU_CONFIDENCE, DEFAULT_TAU_COVERAGE
 
 
 def build_engine(runtime: Runtime, *, handlers: dict[str, Handler] | None = None) -> Engine:
@@ -47,8 +48,8 @@ def wire_engine(
     runtime: Runtime,
     *,
     profile: Profile | None = None,
-    tau_confidence: float = 0.6,
-    tau_coverage: float = 0.5,
+    tau_confidence: float = DEFAULT_TAU_CONFIDENCE,
+    tau_coverage: float = DEFAULT_TAU_COVERAGE,
     embedder: Embedder | None = None,
     judge: RelevanceJudge | None = None,
     judge_floor: float = JUDGE_RELEVANCE_FLOOR,

@@ -184,14 +184,15 @@ async def shapes_for(
     connection: AsyncConnection, *, user_id: str, procedure_ids: Sequence[str], schema_name: str = "cme_engine"
 ) -> dict[str, ProcedureShape]:
     """The stored shapes of ``procedure_ids`` in one statement. A procedure without a row has no entry (no shape)."""
+    del user_id
     if not procedure_ids:
         return {}
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
-            sql.SQL(
-                "SELECT version_id, preconditions, steps FROM {t} WHERE user_id = %s AND version_id = ANY(%s)"
-            ).format(t=sql.Identifier(schema_name, "procedure_shape")),
-            (user_id, list(procedure_ids)),
+            sql.SQL("SELECT version_id, preconditions, steps FROM {t} WHERE version_id = ANY(%s)").format(
+                t=sql.Identifier(schema_name, "procedure_shape")
+            ),
+            (list(procedure_ids),),
         )
         return {str(row[0]): _from_row(row[1], row[2]) for row in await cursor.fetchall()}
 

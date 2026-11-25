@@ -451,7 +451,7 @@ async def hybrid_recall(
     if read_parameters.keys() & {"user_id", "reference_time", "target_time", "window_start", "window_end"}:
         raise RecallError("read_parameters_collide_with_temporal_parameters")
     depth = arm_depth(limit)
-    compiled: CompiledPredicate = compile_predicate(temporal, alias="m")
+    compiled: CompiledPredicate = compile_predicate(temporal, alias="m", cross_tenant=True)
     where = scoped_artifact_filter(compiled.statement, read_filter)
     table = sql.Identifier(schema_name, "memory_version")
     arms: list[ArmRanking] = []

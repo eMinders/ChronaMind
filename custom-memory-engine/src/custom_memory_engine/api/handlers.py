@@ -21,7 +21,7 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
-from custom_memory_engine.api.runtime import Receipt, Runtime, new_id, now, remember, replayed
+from custom_memory_engine.api.runtime import Receipt, Runtime, change_visibility, new_id, now, remember, replayed
 from custom_memory_engine.clock import allocate_clock
 from custom_memory_engine.engine.artifact_provenance import (
     ArtifactProvenanceError,
@@ -42,6 +42,16 @@ _ASSERTABLE_KINDS = frozenset({"claim", "procedure"})  # V2-D48: an abstraction 
 #: The scope kinds `create_scope` may mint (`API_V2.md` 4.10). `personal` is the `/u/<user>/` root, which is
 #: created with the user and cannot be minted by this operation.
 _CREATABLE_SCOPE_KINDS = frozenset({"project", "session", "task", "shared"})
+_VISIBILITIES = frozenset({"private", "project", "shared"})
+
+
+def _optional_visibility(call: Call) -> str:
+    raw = call.arguments.get("visibility")
+    if raw is None:
+        return "private"
+    if not isinstance(raw, str) or raw not in _VISIBILITIES:
+        raise EntryError("validation_error", "visibility_invalid")
+    return raw
 
 
 def _text(call: Call, name: str, *, limit: int = 256) -> str:
@@ -164,6 +174,7 @@ class Handlers:
         scope, kind, label, key = _scope(call), _text(call, "entity_type"), _text(call, "label"), _key(call)
         source_version_ids = _optional_source_version_ids(call)
         aliases = _optional_aliases(call)
+        visibility = _optional_visibility(call)
         origin_kind = _call_origin_kind(call, source_version_ids)
         user = call.ctx.principal
         try:
@@ -174,10 +185,10 @@ class Handlers:
                     await cursor.execute(
                         sql.SQL(
                             "INSERT INTO {t} "
-                            "(user_id, scope_path, canonical_name, entity_type, aliases, origin) "
-                            "VALUES (%s, %s, %s, %s, %s, 'declared') RETURNING id"
+                            "(user_id, scope_path, canonical_name, entity_type, aliases, origin, visibility) "
+                            "VALUES (%s, %s, %s, %s, %s, 'declared', %s) RETURNING id"
                         ).format(t=self.runtime.table("entity")),
-                        (user, scope, label, kind, list(aliases)),
+                        (user, scope, label, kind, list(aliases), visibility),
                     )
                     row = await cursor.fetchone()
                 assert row is not None
@@ -265,6 +276,7 @@ class Handlers:
         if isinstance(weight, bool) or not isinstance(weight, int | float) or not 0 <= weight <= 1:
             raise EntryError("validation_error", "weight_out_of_range")
         source_version_ids = _optional_source_version_ids(call)
+        visibility = _optional_visibility(call)
         origin_kind = _call_origin_kind(call, source_version_ids)
         origin = call.contradiction_origin or ("tier_b" if call.ctx.tier == "B" else "tier_c")
         user = call.ctx.principal
@@ -272,11 +284,11 @@ class Handlers:
             async with self.runtime.session(user) as connection, connection.cursor(row_factory=tuple_row) as cursor:
                 await cursor.execute(
                     sql.SQL(
-                        "INSERT INTO {t} (id, user_id, from_id, to_id, type, weight, created_by, origin) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                        "INSERT INTO {t} (id, user_id, from_id, to_id, type, weight, created_by, origin, visibility) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
                         "ON CONFLICT (user_id, from_id, to_id, type) DO NOTHING RETURNING id"
                     ).format(t=self.runtime.table("association")),
-                    (new_id("assoc"), user, source, target, kind, float(weight), user, origin),
+                    (new_id("assoc"), user, source, target, kind, float(weight), user, origin, visibility),
                 )
                 created = await cursor.fetchone()
                 if created is not None:
@@ -486,6 +498,30 @@ class Handlers:
             raise EntryError("precondition_failed", "already_revoked")
         raise EntryError("forbidden")
 
+    async def set_visibility(self, call: Call) -> Receipt:
+        """``set_visibility(artifact_id, visibility)`` -> ``Receipt`` (``I7``, ``V2-D113``).
+
+        The whole of the writer: one ``UPDATE`` of one artifact row, then one content-free audit row. Raising or
+        lowering visibility is therefore an ordinary write that row-level security already governs -- the caller must
+        own the artifact and the table's ``WITH CHECK`` must admit the row -- so a grantee that can read a shared row
+        cannot change it, and an id in another namespace is answered exactly like an unknown one (``T-11``).
+        """
+        artifact_id = _text(call, "artifact_id")
+        visibility = call.arguments.get("visibility")
+        if not isinstance(visibility, str) or visibility not in _VISIBILITIES:
+            raise EntryError("validation_error", "visibility_invalid")
+        user = call.ctx.principal
+        async with self.runtime.session(user) as connection:
+            changed = await change_visibility(
+                connection, artifact_id, visibility, schema_name=self.runtime.schema_name
+            )
+            if changed is None:
+                raise EntryError("forbidden")  # absent, unreadable and not-yours are one answer
+            # content-free like every other audit row: which kind of artifact and the new value, never the id
+            details = {"artifact_kind": changed, "visibility": visibility}
+            await _audit(self.runtime, connection, user, "visibility_changed", details)
+            return Receipt(artifact_id, "visibility_changed", await now(connection))
+
 
 def register_structure_handlers(engine: Engine, runtime: Runtime) -> Handlers:
     """Wire the operations above onto ``engine``; returns the bound handlers."""
@@ -501,6 +537,7 @@ def register_structure_handlers(engine: Engine, runtime: Runtime) -> Handlers:
         "retract_own": handlers.retract_own,
         "grant_access": handlers.grant_access,
         "revoke_access": handlers.revoke_access,
+        "set_visibility": handlers.set_visibility,
     }
     for name, handler in table.items():
         engine.register(name, handler)

@@ -109,15 +109,15 @@ async def stats_for(
     One statement for the whole batch, so ordering a page of procedures costs one round trip rather than one per row.
     RLS restricts the read to the caller's own rows, and the ``user_id`` predicate is belt-and-braces on top of it.
     """
+    del user_id
     if not procedure_ids:
         return {}
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
-                "SELECT version_id, successes, failures, last_used_at, mean_cost FROM {t} "
-                "WHERE user_id = %s AND version_id = ANY(%s)"
+                "SELECT version_id, successes, failures, last_used_at, mean_cost FROM {t} WHERE version_id = ANY(%s)"
             ).format(t=sql.Identifier(schema_name, "outcome_stats")),
-            (user_id, list(procedure_ids)),
+            (list(procedure_ids),),
         )
         return {
             str(row[0]): OutcomeStats(

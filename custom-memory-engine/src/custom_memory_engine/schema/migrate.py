@@ -131,7 +131,7 @@ FUNCTIONS = (
     "delete_orphaned_mention_entities",  # migration 30 (I8, V2-D111): memory-scope erasure of mention entities
     "guard_verification_artifact_append_only",  # migration 31 (I11, V2-D112): append-only verification artifacts
     "enforce_verification_artifacts",  # migration 31 (I11, V2-D112): pinned verification requires both sides
-    "set_artifact_visibility",  # migration 32 (I7, V2-D113): owner-scoped visibility sync across child tables
+    "guard_scope_identity",  # migration 32 (I7, V2-D113): scope_path is immutable on the three artifact tables
 )
 # Parameterized SQL argument lists for non-zero-arg functions in FUNCTIONS so reset() drops them cleanly.
 FUNCTION_ARG_TYPES: Mapping[str, str] = {
@@ -140,7 +140,6 @@ FUNCTION_ARG_TYPES: Mapping[str, str] = {
     "deletion_in_this_transaction": "text",
     "delete_orphaned_entities": "text, text[]",
     "delete_orphaned_mention_entities": "text, text[]",
-    "set_artifact_visibility": "text, text, text",
 }
 logger = structlog.get_logger(__name__)
 

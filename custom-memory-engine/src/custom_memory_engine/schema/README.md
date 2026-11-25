@@ -35,7 +35,7 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` Â
 | `029_artifact_provenance.sql` | Migration 29 (`I2`, `V2-D110`): `artifact_provenance` attribution table and deferred commit guards for `association`, `entity`, `entity_alias`, and `entity_link` |
 | `030_entity_mentions_and_erasure.sql` | Migration 30 (`I8`, `V2-D111`): `entity.origin`, `entity_mention`, and memory-scope erasure of unreferenced mention entities |
 | `031_verification_artifacts.sql` | Migration 31 (`I11`, `V2-D112`): `verification_artifact` pinning table, `artifact_pinning_status`, and deferred commit check |
-| `032_visibility_sync.sql` | Migration 32 (`I7`, `V2-D113`): `set_artifact_visibility` syncing visibility across child tables and synced-visibility allowance in `guard_verification_append_only` |
+| `032_visibility_sync.sql` | Migration 32 (`I7`, `V2-D113`): a child artifact row's readability delegates to its parent's -- seven `*_scope_read` policies on `memory_evidence`, `memory_derivation`, `memory_embedding`, `abstraction_stats`, `verification`, `outcome_stats` and `procedure_shape`; the text of `scope.access.rls_parent_read` |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` + `pg_trgm` bootstrap for disposable databases |
 

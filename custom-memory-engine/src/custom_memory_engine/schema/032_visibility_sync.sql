@@ -1,118 +1,127 @@
--- Migration 32: owner-controlled visibility sync across child artifact tables (`I7`, `V2-D113`).
+-- Migration 32: a child row's readability is its parent artifact's (`I7`, `V2-D113`).
 --
--- Scope read policies (`011_scope.sql`) check `scope_path` and `visibility` independently on `memory_version`,
--- `memory_evidence`, `memory_derivation`, `memory_embedding`, `abstraction_stats`, `verification`, `entity`, and
--- `association`. Updating `memory_version.visibility` alone would leave child provenance/embedding/ledger/verification
--- rows `private`, making a shared artifact unrenderable (`missing_provenance`) to a grantee.
+-- Migration 11 gave every scoped table the same `*_scope_read` policy: a row is readable inside the caller's own
+-- namespace, or when its own `visibility` is `project`/`shared` and an ACTIVE `scope_grant` covers its own
+-- `scope_path`. For `memory_version` that is exactly the rule `I7` states. For a *child* table it is not: an
+-- artifact's evidence, derivation, embedding, ledger and verification rows are not independently shareable, and a
+-- second copy of "is this artifact shared" on every child row can disagree with the parent's -- which is how a
+-- private artifact leaks its evidence, or a shared one renders as `missing_provenance`.
 --
--- Adds:
---   1. Updated `guard_verification_append_only()` permitting ONLY a visibility sync that matches the parent
---      `memory_version.visibility` (all verification fields stay strictly append-only; `TRUNCATE` still raises).
---   2. `set_artifact_visibility(p_user_id, p_artifact_id, p_visibility)` (`SECURITY DEFINER`, pinned `search_path`),
---      callable only for the session's active `app.user_id` inside `/u/<user>/`, updating `memory_version` + child rows
---      (or `entity` / `association`) atomically.
+-- This migration removes that second copy. A child row inherits its parent's readability by a policy that delegates:
+--   `EXISTS (SELECT 1 FROM <parent> AS p WHERE p.id = <child>.<fk> AND p.user_id = <child>.user_id)`
+-- The parent table inside the sub-query is itself subject to its own `*_scope_read` policy (PostgreSQL evaluates the
+-- policies of every relation a policy expression references), so a `private` parent hides its children from a grantee
+-- and a `shared` parent exposes exactly those. The join is on `(id, user_id)`, so it cannot cross a tenant: migration 4
+-- makes every child's `(version_id, user_id)` a composite foreign key into `memory_version (id, user_id)`.
+-- `verification_artifact_scope_read` (migration 31) is the same shape one level up, and now chains through
+-- `verification` to `memory_version`.
+--
+-- The writer is `api.handlers.Handlers.set_visibility`, which is an ordinary `UPDATE` of one artifact row as the
+-- caller: row-level security's own-user `WITH CHECK` decides whether the caller may write it, so sharing needs no
+-- privileged function and no GUC gate. `assert`/`ingest_episode`/`create_entity`/`link` take the same column at
+-- insertion. Nothing syncs child columns, so there is no window in which they disagree with the parent, and no
+-- `SECURITY DEFINER` path that could raise a visibility a caller may not raise.
+--
+-- Ten tables keep the migration-11 policy unchanged: `memory_version`, `entity` and `association` (an artifact's own
+-- visibility), `negative_constraint`, `memory_conflict`, `turn`, `session`, `job`, `audit_event`, `deletion_request`
+-- (no parent artifact; they stay own-namespace only).
+--
+-- The SQL is the text of `scope.access.rls_parent_read`; `tests/integration/test_migration_m2.py` pins the two
+-- together, exactly as it pins `rls_read_using` to the migration-11 policy.
 
-CREATE OR REPLACE FUNCTION guard_verification_append_only() RETURNS trigger
+-- 1. The five children migration 11 scoped independently: replace the policy, not the name.
+DROP POLICY memory_evidence_scope_read ON memory_evidence;
+CREATE POLICY memory_evidence_scope_read ON memory_evidence FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM memory_version AS p
+       WHERE p.id = memory_evidence.version_id AND p.user_id = memory_evidence.user_id
+    )
+  );
+
+DROP POLICY memory_derivation_scope_read ON memory_derivation;
+CREATE POLICY memory_derivation_scope_read ON memory_derivation FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM memory_version AS p
+       WHERE p.id = memory_derivation.derived_version_id AND p.user_id = memory_derivation.user_id
+    )
+  );
+
+DROP POLICY memory_embedding_scope_read ON memory_embedding;
+CREATE POLICY memory_embedding_scope_read ON memory_embedding FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM memory_version AS p
+       WHERE p.id = memory_embedding.version_id AND p.user_id = memory_embedding.user_id
+    )
+  );
+
+DROP POLICY abstraction_stats_scope_read ON abstraction_stats;
+CREATE POLICY abstraction_stats_scope_read ON abstraction_stats FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM memory_version AS p
+       WHERE p.id = abstraction_stats.version_id AND p.user_id = abstraction_stats.user_id
+    )
+  );
+
+DROP POLICY verification_scope_read ON verification;
+CREATE POLICY verification_scope_read ON verification FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM memory_version AS p
+       WHERE p.id = verification.version_id AND p.user_id = verification.user_id
+    )
+  );
+
+-- 2. The two per-artifact children added after migration 11 (`V2-D97`, `V2-D96`): a new read policy beside their
+--    own-user one, so a procedure's stored shape and its outcome counters are readable wherever the procedure is.
+CREATE POLICY outcome_stats_scope_read ON outcome_stats FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM memory_version AS p
+       WHERE p.id = outcome_stats.version_id AND p.user_id = outcome_stats.user_id
+    )
+  );
+
+CREATE POLICY procedure_shape_scope_read ON procedure_shape FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM memory_version AS p
+       WHERE p.id = procedure_shape.version_id AND p.user_id = procedure_shape.user_id
+    )
+  );
+
+-- 3. `ARCHITECTURE_V2.md` section 5 rule 5: scope identity is immutable. Before this migration nothing enforced it:
+--    the runtime role holds UPDATE on all three artifact tables, and no guard named `scope_path`, so an artifact could
+--    be re-homed in place and its provenance history silently rewritten. With `visibility` now writable by its owner,
+--    the one column that decides *where* an artifact lives must be the one that cannot change. A change of scope is a
+--    new artifact (`API_V2.md` section 5.2).
+CREATE FUNCTION guard_scope_identity() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF TG_OP = 'UPDATE' THEN
-    IF (
-         NEW.id, NEW.version_id, NEW.user_id, NEW.held_out_split_id, NEW.verified_on,
-         NEW.negative_control_slice_id, NEW.support_window, NEW.held_out_window,
-         NEW.support_context_key, NEW.held_out_context_key, NEW.outcome,
-         NEW.scope_path, NEW.artifact_pinning_status
-       ) IS NOT DISTINCT FROM (
-         OLD.id, OLD.version_id, OLD.user_id, OLD.held_out_split_id, OLD.verified_on,
-         OLD.negative_control_slice_id, OLD.support_window, OLD.held_out_window,
-         OLD.support_context_key, OLD.held_out_context_key, OLD.outcome,
-         OLD.scope_path, OLD.artifact_pinning_status
-       )
-       AND NEW.visibility IN ('private', 'project', 'shared')
-       AND NEW.visibility = (
-         SELECT mv.visibility FROM memory_version AS mv WHERE mv.id = NEW.version_id AND mv.user_id = NEW.user_id
-       ) THEN
-      RETURN NEW;
-    END IF;
+  IF NEW.scope_path IS DISTINCT FROM OLD.scope_path THEN
+    RAISE EXCEPTION 'scope_identity_is_immutable' USING ERRCODE = 'P0001';
   END IF;
-  RAISE EXCEPTION 'verification_is_append_only' USING ERRCODE = 'P0001';
+  RETURN NEW;
 END
 $$;
 
-CREATE FUNCTION set_artifact_visibility(p_user_id text, p_artifact_id text, p_visibility text) RETURNS text
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-  v_scope text;
-BEGIN
-  IF p_visibility NOT IN ('private', 'project', 'shared') THEN
-    RAISE EXCEPTION 'visibility_invalid' USING ERRCODE = '22023';
-  END IF;
-  IF NULLIF(pg_catalog.current_setting('app.user_id', true), '') IS DISTINCT FROM p_user_id THEN
-    RAISE EXCEPTION 'visibility_change_forbidden' USING ERRCODE = '42501';
-  END IF;
-
-  UPDATE memory_version AS mv
-     SET visibility = p_visibility
-   WHERE mv.id = p_artifact_id
-     AND mv.user_id = p_user_id
-     AND pg_catalog.starts_with(mv.scope_path, '/u/' || p_user_id || '/')
-  RETURNING mv.scope_path INTO v_scope;
-
-  IF FOUND THEN
-    UPDATE memory_evidence
-       SET scope_path = v_scope, visibility = p_visibility
-     WHERE version_id = p_artifact_id AND user_id = p_user_id;
-    UPDATE memory_derivation
-       SET scope_path = v_scope, visibility = p_visibility
-     WHERE derived_version_id = p_artifact_id AND user_id = p_user_id;
-    UPDATE memory_embedding
-       SET scope_path = v_scope, visibility = p_visibility
-     WHERE version_id = p_artifact_id AND user_id = p_user_id;
-    UPDATE abstraction_stats
-       SET scope_path = v_scope, visibility = p_visibility
-     WHERE version_id = p_artifact_id AND user_id = p_user_id;
-    UPDATE verification
-       SET visibility = p_visibility
-     WHERE version_id = p_artifact_id AND user_id = p_user_id;
-    RETURN 'memory_version';
-  END IF;
-
-  UPDATE entity AS e
-     SET visibility = p_visibility
-   WHERE e.id = p_artifact_id
-     AND e.user_id = p_user_id
-     AND pg_catalog.starts_with(e.scope_path, '/u/' || p_user_id || '/');
-  IF FOUND THEN
-    RETURN 'entity';
-  END IF;
-
-  UPDATE association AS a
-     SET visibility = p_visibility
-   WHERE a.id = p_artifact_id
-     AND a.user_id = p_user_id
-     AND pg_catalog.starts_with(a.scope_path, '/u/' || p_user_id || '/');
-  IF FOUND THEN
-    RETURN 'association';
-  END IF;
-
-  RETURN NULL;
-END
-$$;
+CREATE TRIGGER trg_memory_version_scope_identity BEFORE UPDATE ON memory_version
+  FOR EACH ROW EXECUTE FUNCTION guard_scope_identity();
+CREATE TRIGGER trg_entity_scope_identity BEFORE UPDATE ON entity
+  FOR EACH ROW EXECUTE FUNCTION guard_scope_identity();
+CREATE TRIGGER trg_association_scope_identity BEFORE UPDATE ON association
+  FOR EACH ROW EXECUTE FUNCTION guard_scope_identity();
 
 DO $pin$
 DECLARE
   engine_schema text := pg_catalog.current_schema();
-  fn text;
 BEGIN
-  FOREACH fn IN ARRAY ARRAY[
-    'guard_verification_append_only()',
-    'set_artifact_visibility(text, text, text)'
-  ] LOOP
-    EXECUTE pg_catalog.format(
-      'ALTER FUNCTION %I.%s SET search_path = %I, pg_catalog, pg_temp', engine_schema, fn, engine_schema
-    );
-  END LOOP;
+  EXECUTE pg_catalog.format(
+    'ALTER FUNCTION %I.guard_scope_identity() SET search_path = %I, pg_catalog, pg_temp', engine_schema, engine_schema
+  );
 END
 $pin$;

@@ -105,8 +105,17 @@ def test_tb8_every_operation_is_assigned_and_documented() -> None:
 
 
 def test_tb9_tier_b_has_no_maintain_export_or_scope_operation() -> None:
-    for name in ("purge_working", "expire", "rebuild_index", "register_method", "export", "create_scope",
-                 "grant_access", "revoke_access"):  # fmt: skip
+    for name in (
+        "purge_working",
+        "expire",
+        "rebuild_index",
+        "register_method",
+        "export",
+        "create_scope",
+        "grant_access",
+        "revoke_access",
+        "set_visibility",
+    ):
         with pytest.raises(ContractError):
             authorize(name, "B", admin=True)
     assert "tier_b_excluded_capability:export" in broken("export", tiers=frozenset({"B", "C"}))
