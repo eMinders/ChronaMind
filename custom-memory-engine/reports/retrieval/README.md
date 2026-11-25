@@ -20,29 +20,41 @@ three cheaper rules were measured on the full 64 × 49 cosine matrix, and each f
 | require a lexical/trigram arm to agree | drops 30 of 56 answers | — | unusable |
 | embed only the question's informative terms | 0.361 | 0.569 | worse than the full question |
 
-A cross-encoder reads question and memory **together**. Two multilingual ones were measured over the same candidates:
+A cross-encoder reads question and memory **together**. Two multilingual ones were measured on both the fused page (`DENSE_SIMILARITY_FLOOR = 0.55`, where only `N = 1` of the 8 unanswerable questions survived to reach the judge) and the **full uncensored** labelled set (`evaluation/retrieval/judge_floor.py`: all 56 answerable gold pairs plus all 8 `no_match` questions scored against all 49 corpus memories = 448 pairs):
 
-| judge | answerable (worst logit) | unanswerable (best logit) | separates? |
-|---|---|---|---|
-| `bge-reranker-v2-m3` (int8 ONNX) | -6.68 | -11.01 | **yes, by 4.3 logits** |
-| `jina-reranker-v2-base-multilingual` (int8 ONNX) | -2.91 | -2.38 | no |
+| judge | scope | answerable (worst logit) | unanswerable (best logit) | separation | midpoint |
+|---|---|---|---|---|---|
+| `bge-reranker-v2-m3` (int8 ONNX) | fused page (`N = 1` surviving 0.55) | -6.6790 | -11.0099 | **4.33 logits** | -8.84 |
+| `bge-reranker-v2-m3` (int8 ONNX) | **full uncensored** (`8 × 49` + 56 pairs) | -6.6790 | -9.4076 | **2.73 logits** | -8.04 |
+| `jina-reranker-v2-base-multilingual` (int8 ONNX) | fused page | -2.91 | -2.38 | overlaps | — |
+| `jina-reranker-v2-base-multilingual` (int8 ONNX) | **full uncensored** (`8 × 49` + 56 pairs) | -3.1210 | -1.9922 | overlaps (-1.13) | — |
 
-`bge-reranker-v2-m3` ships as an optional judge, applied to at most 10 fused candidates (~28 ms each on the reference
-CPU), with the floor at the midpoint, **-8.8**. `hybrid_judged` in `evaluation.md`: recall@5 0.982 (unchanged), top-1
-0.768 (from 0.732), nDCG@5 0.896 (from 0.882), **no-match false positives 0.000** (from 0.125). The extremes are
-written to `evaluation.json` (`judge`) by the test, and `tests/test_hybrid.py` asserts the constant sits between them.
-Unlike BM25 and the recency rerank of round 2, this second stage *improved* ranking as well as gating, because it is
-the only one that reads the pair rather than scoring the memory alone.
+`bge-reranker-v2-m3` (ONNX fingerprint `1269c11fa1af439a9e3e01573e8bc5e3`) ships as an optional judge, applied to at most 10 fused candidates (~28 ms each on the reference CPU), with `JUDGE_RELEVANCE_FLOOR = -8.8`. That floor sits strictly inside both intervals: `2.1210` logits below the weakest answer (`"cryptocurrency"` → `crypto`, `-6.6790`), `2.2099` logits above the fused-page surviving non-answer (`"جيراننا يشكون من الضجيج كل ليلة"`, `-11.0099`), and `0.6076` logits above the uncensored worst non-answer (`"which visa do I need for Japan"` → `passport`, `-9.4076`). `jina-reranker-v2-base-multilingual` (fingerprint `9ee9afe75ec7b53185d8ad31f65f710b`) overlaps on both scopes and cannot gate.
 
-**Cost and fallback.** A deployment without the asset (`CME_RERANKER_ASSET` unset) keeps round 2's behaviour and the
-result says `judgement: null`. A judge failure degrades to the same, logged. The model files are pinned by revision and
-SHA-256 in `scripts/fetch_models.py --check`.
+**Swapping or re-verifying the judge asset.** Before deploying a replacement cross-encoder or changing `CME_RERANKER_FLOOR`, run the uncensored full-set check (`evaluation/retrieval/judge_floor.py`):
+
+```bash
+uv run --no-sync python scripts/check_judge_floor.py --asset bge-reranker-v2-m3
+# exit 0 when strongest_unanswerable < floor < weakest_answerable ("inside"), exit 1 when "outside"
+```
+
+Set `CME_RERANKER_FLOOR` to the asset's implied midpoint (or a chosen point strictly inside its gap) rather than editing code; `tests/test_hybrid.py` asserts `JUDGE_RELEVANCE_FLOOR` sits inside both `reports/retrieval/evaluation.json` and the live uncensored `.model-cache/bge-reranker-v2-m3` extremes.
+
+**Sample-size and power limitation (`N = 8` `no_match` questions).** The `0.125 → 0.000` false-positive drop (`1/8 → 0/8`) is backed by the **2.73-logit separation** across all 448 uncensored pairs, not by hypothesis-test power on `N = 8` alone. Computed exactly via `evaluation/stats/power.py` (`alpha = 0.05`, target `80%` power):
+
+| regime (`0/8` vs `1/8`, i.e. `0.00` vs `0.125`) | power at `N = 8` (two-sided / one-sided) | required `N` for 80% power (two-sided / one-sided) |
+|---|---|---|
+| One-sample exact binomial (`p1 = 0.00` vs `p0 = 0.125`) | `0.0000` / `0.0000` | `28` / `23` queries |
+| Two-proportion Fisher exact (`0/8` vs `1/8` per arm) | `0.0012` / `0.0112` | `62` / `53` per arm |
+| Paired McNemar exact (`p10 = 1/8, p01 = 0`) | `0.0001` / `0.0012` | `62` / `53` pairs |
+
+`N = 8` therefore proves separation of these concrete adversarial decoys rather than bounding rare false-positive rates in general.
+
+**Cost and fallback.** A deployment without the asset (`CME_RERANKER_ASSET` unset) keeps round 2's behaviour and the result says `judgement: null`. A judge failure degrades to the same, logged. The model files are pinned by revision and SHA-256 in `scripts/fetch_models.py --check`.
 
 ## Round 2 — 49 memories, 64 questions (`V2-D100`)
 
-20 lexical, 12 paraphrase, 8 cross-script (question and answer in different scripts), 8 whose correct answer is
-*nothing*. `bm25` and the two rerank rows are computed offline in Python over the same candidates the engine ranked, so
-they cannot win by retrieving something the engine could not.
+15 lexical, 33 paraphrase, 8 cross-script (question and answer in different scripts), 8 whose correct answer is *nothing*. `bm25` and the two rerank rows are computed offline in Python over the same candidates the engine ranked, so they cannot win by retrieving something the engine could not.
 
 | configuration | recall@5 | top-1 | MRR@5 | nDCG@5 | no-match FP |
 |---|---|---|---|---|---|
