@@ -286,8 +286,21 @@ class HostService:
 
     # -- the call ---------------------------------------------------------------------------------------------
 
-    async def call(self, credential: Credential, operation: str, arguments: Mapping[str, object]) -> object:
-        """One operation, as ``credential``, under rate/concurrency bounds and row-level security."""
+    async def call(
+        self,
+        credential: Credential,
+        operation: str,
+        arguments: Mapping[str, object],
+        *,
+        delegated: bool = False,
+    ) -> object:
+        """One operation, as ``credential``, under rate/concurrency bounds and row-level security.
+
+        ``delegated`` marks a credential a delegating service token built for an end user (``V2-D120``). That end user
+        has no operator to provision it, so its ``app_user`` row is created here, idempotently and as the user itself
+        (the ``app_user`` policy admits only the session's own id). The limits key on the end user, so one busy user
+        of a shared service cannot starve the others.
+        """
         started = time.perf_counter()
         if self._pool is None:
             raise EntryError("internal_error")
@@ -317,6 +330,8 @@ class HostService:
                         results=self._results,
                         costs=self._costs,
                     )
+                    if delegated:
+                        await self._provision(runtime, credential.principal)
                     context = await self._context(engine, runtime, credential, arguments)
                     forward_args = {key: value for key, value in arguments.items() if key != "read_scopes"}
                     return await engine.call(context, operation, forward_args)
@@ -384,6 +399,21 @@ class HostService:
             except ScopeError:
                 raise EntryError("validation_error", "read_scopes_invalid") from None
         return selectors
+
+    async def _provision(self, runtime: Runtime, principal: str) -> None:
+        """Create ``principal``'s ``app_user`` row if it is absent. A no-op on every call after the first.
+
+        Not cached in-process: a cache would have to be invalidated by an operator's out-of-band change, and the
+        statement is one indexed ``INSERT ... ON CONFLICT DO NOTHING`` on a primary key.
+        """
+        async with runtime.session(principal) as connection:
+            await connection.execute(
+                sql.SQL(
+                    "INSERT INTO {u} (id, external_ref, created_at) VALUES (%s, %s, clock_now()) "
+                    "ON CONFLICT DO NOTHING"
+                ).format(u=runtime.table("app_user")),
+                (principal, principal),
+            )
 
     async def _active_grants(self, runtime: Runtime, principal: str) -> tuple[str, ...]:
         """Scopes other principals have granted this one, straight from ``scope_grant`` under RLS."""

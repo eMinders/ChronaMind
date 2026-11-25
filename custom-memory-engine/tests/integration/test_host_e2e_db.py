@@ -43,6 +43,7 @@ TOKENS = {
     "alice-b": "test-token-alice-tier-b",  # pragma: allowlist secret
     "alice-c": "test-token-alice-tier-c",  # pragma: allowlist secret
     "bob-b": "test-token-bob-tier-b",  # pragma: allowlist secret
+    "service": "test-token-app-service-delegating",  # pragma: allowlist secret
 }
 PROVENANCE = b"p" * 32
 DELETION = b"d" * 32
@@ -56,6 +57,7 @@ class Live(NamedTuple):
     alice_b: dict[str, str]
     alice_c: dict[str, str]
     bob_b: dict[str, str]
+    service: dict[str, str]
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -166,7 +168,9 @@ async def live(
                 TOKENS["alice-b"]: Credential("alice", "B"),
                 TOKENS["alice-c"]: Credential("alice", "C", admin=True),
                 TOKENS["bob-b"]: Credential("bob", "B"),
-            }
+                TOKENS["service"]: Credential("chronamind-app", "B"),
+            },
+            delegating={TOKENS["service"]},
         )
         server = uvicorn.Server(
             uvicorn.Config(
@@ -183,7 +187,12 @@ async def live(
             port = server.servers[0].sockets[0].getsockname()[1]
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=20.0) as client:
                 yield Live(
-                    client, schema, bearer(TOKENS["alice-b"]), bearer(TOKENS["alice-c"]), bearer(TOKENS["bob-b"])
+                    client,
+                    schema,
+                    bearer(TOKENS["alice-b"]),
+                    bearer(TOKENS["alice-c"]),
+                    bearer(TOKENS["bob-b"]),
+                    bearer(TOKENS["service"]),
                 )
         finally:
             server.should_exit = True
@@ -757,3 +766,117 @@ async def test_read_scopes_argument_is_stripped_and_honored_over_http(database) 
         )
         assert resp.status_code == 200, resp.text
         assert {item["content"] for item in resp.json()["result"]["facts"]} == {"Alice lives in Vienna"}
+
+
+# ------------------------------------------------------------------------------------------ delegation (V2-D120)
+
+
+async def delegated(
+    client: httpx.AsyncClient, headers: dict[str, str], principal: object, operation: str, **arguments: object
+) -> Any:
+    """One call as a delegating service token acting for ``principal`` (the app's wire shape)."""
+    return await client.post(
+        "/v1/call", headers=headers, json={"operation": operation, "principal": principal, "arguments": arguments}
+    )
+
+
+async def delegated_claim(client: httpx.AsyncClient, headers: dict[str, str], user: str, text: str) -> None:
+    evidence = {
+        "type": "external",
+        "ref": f"app://session/{user}",
+        "span": text,
+        "content_hash": canonical_hash(text),
+        "role": "user",
+    }
+    episode = await delegated(
+        client,
+        headers,
+        user,
+        "ingest_episode",
+        scope=f"/u/{user}/",
+        content=text,
+        source={key: value for key, value in evidence.items() if key != "role"},
+        event_time="2026-03-10T12:00:00+00:00",
+        idempotency_key=f"ep-{user}",
+    )
+    assert episode.status_code == 200, episode.text
+    claim = await delegated(
+        client,
+        headers,
+        user,
+        "assert",
+        scope=f"/u/{user}/",
+        kind="claim",
+        content=text,
+        evidence=[evidence],
+        event_range=None,
+        idempotency_key=f"c-{user}",
+    )
+    assert claim.status_code == 200, claim.text
+
+
+async def test_a_delegating_token_writes_and_reads_as_each_end_user_and_provisions_them(database) -> None:  # noqa: F811
+    """The app's deployment shape: one service token, many end users, none of them provisioned by an operator.
+
+    Before ``V2-D120`` the token's own principal was the caller, so ``scope='/u/carol/'`` was refused for every end
+    user and the app (which logs and swallows memory failures) silently had no memory at all.
+    """
+    async with live(database) as host:
+        await delegated_claim(host.client, host.service, "carol", "I keep bees in Lisbon")
+        await delegated_claim(host.client, host.service, "dave", "I collect stamps in Oslo")
+        carol = await delegated(host.client, host.service, "carol", "query", request={"text": "bees", "limit": 5})
+        assert carol.status_code == 200, carol.text
+        assert {item["content"] for item in carol.json()["result"]["facts"]} == {"I keep bees in Lisbon"}
+        # each end user is a tenant of its own: dave's query cannot see carol's row, through RLS and the read set
+        dave = await delegated(host.client, host.service, "dave", "query", request={"text": "bees", "limit": 5})
+        assert dave.status_code == 200, dave.text
+        assert dave.json()["result"]["facts"] == []
+        # and naming carol's scope while acting for dave is a refusal, not a read
+        stolen = await delegated(
+            host.client, host.service, "dave", "query", request={"text": "bees", "scope": "/u/carol/"}
+        )
+        assert stolen.status_code in (200, 403)
+        if stolen.status_code == 200:
+            assert stolen.json()["result"]["facts"] == []
+        async with connect(database) as conn:
+            async with conn.cursor(row_factory=tuple_row) as cursor:
+                await cursor.execute("SELECT id FROM app_user WHERE id IN ('carol', 'dave') ORDER BY id")
+                assert [row[0] for row in await cursor.fetchall()] == ["carol", "dave"]
+
+
+async def test_a_delegating_token_must_name_a_valid_end_user(database) -> None:  # noqa: F811
+    async with live(database) as host:
+        missing = await call(host.client, host.service, "query", request={"text": "x"})
+        assert missing.status_code == 400
+        assert missing.json()["error"] == {"code": "validation_error", "detail": "principal_required"}
+        for bad in ("a/b", "", " carol", "..", 7, ["carol"]):
+            refused = await delegated(host.client, host.service, bad, "query", request={"text": "x"})
+            assert refused.status_code == 400, bad
+            assert refused.json()["error"] == {"code": "validation_error", "detail": "principal_invalid"}
+
+
+async def test_a_non_delegating_token_cannot_name_a_principal(database) -> None:  # noqa: F811
+    """Delegation is a property of the token: alice's own token cannot act for bob by asking."""
+    async with live(database) as host:
+        refused = await delegated(host.client, host.alice_b, "bob", "query", request={"text": "x"})
+        assert refused.status_code == 403
+        assert refused.json()["error"] == {"code": "forbidden", "detail": "delegation_not_permitted"}
+
+
+async def test_delegation_cannot_reach_a_principal_that_owns_a_token(database) -> None:  # noqa: F811
+    """An operator's or another service's namespace is not an end user: alice owns tokens, so she is not delegable."""
+    async with live(database) as host:
+        await assert_claim(host.client, host.alice_b, "I am alice and I own a token", "c-own")
+        for principal in ("alice", "bob", "chronamind-app"):
+            refused = await delegated(host.client, host.service, principal, "query", request={"text": "alice"})
+            assert refused.status_code == 403, principal
+            assert refused.json()["error"] == {"code": "forbidden", "detail": "delegation_not_permitted"}
+
+
+async def test_a_delegated_caller_keeps_the_tokens_tier_and_is_never_admin(database) -> None:  # noqa: F811
+    async with live(database) as host:
+        tier_c = await delegated(host.client, host.service, "carol", "purge_working", scope="/u/carol/")
+        assert tier_c.status_code == 403
+        promoted = await delegated(host.client, host.service, "carol", "query", tier="C", request={"text": "x"})
+        assert promoted.status_code == 400
+        assert promoted.json()["error"] == {"code": "validation_error", "detail": "reserved_argument"}

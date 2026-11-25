@@ -14,6 +14,10 @@
 
 ``ALL_CHANNELS = (*CHANNELS, *COGNITION_CHANNELS)`` is the complete 12-channel surface. Unmeasured or partially
 measured channels are always reported as ``inconclusive`` (``measured=False`` / ``complete=False``), never as zero.
+
+**Outside every channel:** a copy a *client* keeps (an application's response cache, a transcript store). The engine
+cannot observe a caller's process, so no channel here measures it and ``I8`` does not cover it; the shipped app keeps
+no memory-content cache for that reason (``THREAT_MODEL.md`` T-43, ``V2-D116``).
 """
 
 from __future__ import annotations

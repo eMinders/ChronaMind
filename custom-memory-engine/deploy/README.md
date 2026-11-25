@@ -29,7 +29,7 @@ imports the others — they coordinate exclusively through PostgreSQL.
 | `CME_RUNTIME_ROLE` | host, worker, maintenance, probe | the restricted, `NOBYPASSRLS` role every tenant statement runs as — including every slow-lane write, maintenance call, and the health probe's queue read (`V2-D106`) |
 | `CME_SCHEMA` | host, worker, maintenance | the engine schema (default `cme_engine`) |
 | `CME_PROVENANCE_KEY`, `CME_DELETION_RECEIPT_KEY` | host | ≥32-char process-wide keys; a random one per restart breaks receipt replay. Backed up separately from database dumps (`V2-D119`) |
-| `CME_HOST_TOKENS` | host | JSON `{token: {principal, tier, admin}}`. Tokens are the *only* source of tier. Never logged (the registry's repr shows a count) |
+| `CME_HOST_TOKENS` | host | JSON `{token: {principal, tier, admin, delegate}}`. Tokens are the *only* source of tier. `delegate: true` marks a service token (the FastAPI app's) that names the end user per request in the envelope's `principal`; it cannot be `admin` and can never act as a principal that owns a token (`V2-D120`). Never logged (the registry's repr shows a count) |
 | `CME_HOST_HOST`, `CME_HOST_PORT` | host | bind host and port (default `127.0.0.1:8100`) |
 | `CME_HOST_MAX_BODY_BYTES` | host | maximum request body bytes enforced before JSON parsing (default `1048576`) |
 | `CME_HOST_POOL_MIN`, `CME_HOST_POOL_MAX` | host | psycopg async pool bounds (default `1`..`8`) |

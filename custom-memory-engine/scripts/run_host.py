@@ -6,7 +6,9 @@ Configuration is environment-only, and every variable names a capability rather 
                             ``CME_RUNTIME_ROLE``, so the login role needs ``SET ROLE`` and nothing else
 ``CME_RUNTIME_ROLE``        the restricted, ``NOSUPERUSER NOBYPASSRLS`` role provisioned by ``security.provisioning``
 ``CME_SCHEMA``              the managed schema (default ``cme_engine``)
-``CME_HOST_TOKENS``         JSON: ``{"<token>": {"principal": "...", "tier": "B"|"C", "admin": false}}``
+``CME_HOST_TOKENS``         JSON: ``{"<token>": {"principal": "...", "tier": "B"|"C", "admin": false,
+                            "delegate": false}}``. ``delegate: true`` is a service token that names the end user per
+                            request in the envelope's ``principal`` (``V2-D120``); it cannot also be ``admin``
 ``CME_PROVENANCE_KEY``      >=32 chars; signs evidence. Must be the same value across restarts
 ``CME_DELETION_RECEIPT_KEY``>=32 chars; keys the deletion receipt digests. Same rule
 ``CME_HOST_HOST``/``PORT``  bind address (default ``127.0.0.1:8100``)

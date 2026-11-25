@@ -12,9 +12,9 @@ an artifact that belongs in none (``retired``) is rendered in no channel and is 
 else: not of rank, score, budget, caller or query. :func:`channel_of` is the function in ``CHANNELS.md`` section 1
 and is checked against the executable reference model (``tests/test_channel_membership_model.py``).
 
-**Staleness is derived, never stored** (``V2-D24``). The closure hash that will compute it does not exist until
-``E-038``, so assembly takes the staleness function as an injected dependency; :func:`stale_of` is the
-five-cause OR of ``CHANNELS.md`` section 2.3 for the day the inputs exist.
+**Staleness is derived, never stored** (``V2-D24``). Its inputs (the closure hash among them) are read by
+``engine/staleness.py``; assembly takes the staleness function as an injected dependency so membership stays a pure
+function, and :func:`stale_of` is the five-cause OR of ``CHANNELS.md`` section 2.3 over those inputs.
 
 Ranking stays outside membership. ``E-033`` applies per-channel token budgets after routing and returns exact
 coverage and assembly cost. ``engine/render.py`` remains available for temporal-version rendering; its token counter

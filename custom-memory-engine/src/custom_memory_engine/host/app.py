@@ -8,7 +8,8 @@ transport concerns:
 1. **Who is calling** — a bearer token maps to a :class:`~custom_memory_engine.api.entry.Credential`, and the tier
    comes from the token. A top-level ``tier`` field in the envelope is ignored by :func:`_envelope`, while
    ``arguments["tier"]`` is refused by :meth:`Engine.call` as a reserved argument, so the transport cannot be talked
-   into a promotion.
+   into a promotion. A token marked ``delegate`` names the end user in the envelope's ``principal`` field, and that
+   end user is the caller for every engine rule (``V2-D120``, :meth:`HostCredentials.acting_credential`).
 2. **A size bound** — a declared maximum body, enforced before parsing. Without it the JSON parser is the DoS surface.
 3. **Rate & concurrency limits** — per-principal token bucket and bounded in-flight concurrency
    (``429 resource_limit``) so one saturated caller cannot monopolize all pool connections.
@@ -41,6 +42,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from custom_memory_engine.api.entry import EntryError
+from custom_memory_engine.host.credentials import DelegationRefused
 from custom_memory_engine.host.metrics import PROMETHEUS_CONTENT_TYPE
 from custom_memory_engine.host.service import HostService
 
@@ -79,8 +81,8 @@ def create_app(service: HostService) -> Starlette:
     async def call(request: Request) -> Response:
         started = time.perf_counter()
         request_id = f"req_{time.perf_counter_ns():x}"  # process-scoped, never derived from content
-        credential = service.credentials.authenticate(request.headers.get("authorization"))
-        if credential is None:
+        caller = service.credentials.authenticate(request.headers.get("authorization"))
+        if caller is None:
             # 401 with no body detail: whether a token exists and whether it is close are not questions this answers.
             return _error(
                 "forbidden",
@@ -93,7 +95,7 @@ def create_app(service: HostService) -> Starlette:
             )
         try:
             body = await _body(request, service.settings.max_body_bytes)
-            operation, arguments = _envelope(body)
+            operation, arguments, principal = _envelope(body)
         except _BadRequest as refusal:
             return _error(
                 refusal.code,
@@ -101,11 +103,24 @@ def create_app(service: HostService) -> Starlette:
                 status=400,
                 started=started,
                 operation=None,
-                tier=credential.tier,
+                tier=caller.credential.tier,
                 service=service,
             )
         try:
-            result = await service.call(credential, operation, arguments)
+            credential = service.credentials.acting_credential(caller, principal)
+        except DelegationRefused as refusal:
+            return _error(
+                refusal.code,
+                request_id,
+                status=_status_for(refusal.code),
+                started=started,
+                operation=operation,
+                tier=caller.credential.tier,
+                detail=refusal.detail,
+                service=service,
+            )
+        try:
+            result = await service.call(credential, operation, arguments, delegated=caller.may_delegate)
         except EntryError as error:
             return _error(
                 error.code,
@@ -193,8 +208,12 @@ async def _body(request: Request, limit: int) -> Any:
         raise _BadRequest("body_not_json") from None
 
 
-def _envelope(body: Any) -> tuple[str, dict[str, object]]:
-    """``{operation, arguments}``. Nothing else is read: an unknown body field cannot influence a call."""
+def _envelope(body: Any) -> tuple[str, dict[str, object], object]:
+    """``{operation, arguments, principal?}``. Nothing else is read: an unknown body field cannot influence a call.
+
+    ``principal`` is returned unvalidated (``None`` when absent): whether it may be named at all depends on the token,
+    which :meth:`HostCredentials.acting_credential` decides.
+    """
     if not isinstance(body, dict):
         raise _BadRequest("body_must_be_an_object")
     operation = body.get("operation")
@@ -203,7 +222,7 @@ def _envelope(body: Any) -> tuple[str, dict[str, object]]:
     arguments = body.get("arguments", {})
     if not isinstance(arguments, dict):
         raise _BadRequest("arguments_must_be_an_object")
-    return operation, arguments
+    return operation, arguments, body.get("principal")
 
 
 def _status_for(code: str) -> int:
