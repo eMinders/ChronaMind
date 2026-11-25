@@ -64,6 +64,9 @@ default-groups = ["dev", "test"]
 [tool.pytest.ini_options]
 # The root application's own tests. custom-memory-engine/ is a separate project with its own suite and CI job.
 testpaths = ["tests"]
+# `integration`: needs the engine's interpreter (custom-memory-engine/.venv) and CME_TEST_DATABASE_URL, and skips with
+# the reason when either is absent, so `make test` runs it exactly when both exist. `-m "not integration"` excludes it.
+markers = ["integration: drives the real memory-engine host and PostgreSQL (skips when either is unavailable)"]
 # Warnings raised by this code base fail the run; third-party deprecations (e.g. langsmith on 3.14) are reported only.
 filterwarnings = ["error:::app", "error:::tests"]
 

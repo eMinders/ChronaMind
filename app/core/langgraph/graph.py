@@ -337,7 +337,9 @@ class LangGraphAgent:
                     return [Message(role="assistant", content=str(interrupt_value))]
 
                 openai_msgs = cast(list[dict], convert_to_openai_messages(response["messages"]))
-                asyncio.create_task(memory_engine.add(user_id, openai_msgs, config.get("metadata")))
+                asyncio.create_task(
+                    memory_engine.add(user_id, openai_msgs, config.get("metadata"), session_id=session_id)
+                )
                 return self.__process_messages(response["messages"])
         except GraphInterrupt:
             state = await graph.aget_state(config)
@@ -426,7 +428,9 @@ class LangGraphAgent:
                     yield str(interrupt_value)
                 elif state.values and "messages" in state.values:
                     openai_msgs = cast(list[dict], convert_to_openai_messages(state.values["messages"]))
-                    asyncio.create_task(memory_engine.add(user_id, openai_msgs, config.get("metadata")))
+                    asyncio.create_task(
+                        memory_engine.add(user_id, openai_msgs, config.get("metadata"), session_id=session_id)
+                    )
         except GraphInterrupt:
             state = await graph.aget_state(config)
             interrupt_value = state.tasks[0].interrupts[0].value if state.tasks else "Waiting for input."
