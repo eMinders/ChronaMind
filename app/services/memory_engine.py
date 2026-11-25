@@ -55,7 +55,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.logging import logger
-from app.services.memory_slots import classify_slot
+from app.services.memory_slots import MULTI, SlotClassification, SlotClassifier, configured_classifier
 
 #: The four channels the engine returns, and how each is rendered into prompt context. A hypothesis is never rendered
 #: as a fact, and a conflict is never rendered as a fact either: that separation is the engine's product guarantee.
@@ -87,10 +87,20 @@ def canonical_hash(text: str) -> str:
 class MemoryEngineClient:
     """The app's memory client: the engine's public operations over HTTP, acting for one end user per call."""
 
-    def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        """Build the client. ``transport`` exists so a test can drive the wire contract without a server."""
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        slot_classifier: SlotClassifier | None = None,
+    ) -> None:
+        """Build the client.
+
+        ``transport`` exists so a test can drive the wire contract without a server; ``slot_classifier`` so a test can
+        supply recorded classifications. The default classifier is the one the settings select (``V2-D121``).
+        """
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
+        self._slot_classifier = slot_classifier if slot_classifier is not None else configured_classifier()
 
     # -- configuration -----------------------------------------------------------------------------------------
 
@@ -175,11 +185,20 @@ class MemoryEngineClient:
         The episode is written first, so the turn is durable and inside the deletion boundary even if the claim step
         fails. Only ``role == "user"`` messages become claims: an assistant's text is not evidence about the user, and
         the engine would (correctly) rank it below the user's own words anyway.
+
+        Only the **newest** user message is classified for a single-valued slot (``V2-D121``): it is the one this call
+        records for the first time. Every earlier user message was the newest one of an earlier call, so its ``assert``
+        replays by idempotency key and its arguments are not read again; classifying it would cost a model call per
+        message per turn for nothing. If an earlier call failed outright, such a message is recorded ``multi`` here,
+        which is the safe direction (it supersedes nothing).
         """
         if user_id is None or self.backend == "none" or not messages:
             return
         scope = f"/u/{user_id}/"
         del metadata  # carried by the turn in a later protocol revision; nothing is silently dropped today
+        newest_user = max(
+            (index for index, message in enumerate(messages) if message.get("role") == "user"), default=None
+        )
         try:
             for position, message in enumerate(messages):
                 text = str(message.get("content") or "")
@@ -206,7 +225,11 @@ class MemoryEngineClient:
                     },
                 )
                 if message.get("role") == "user":
-                    await self._post(user_id, "assert", _claim_arguments(scope, text, turn_id))
+                    classification = MULTI
+                    if position == newest_user:
+                        context = [str(earlier.get("content") or "") for earlier in messages[:position]]
+                        classification = await self._slot_classifier.classify(text, context)
+                    await self._post(user_id, "assert", _claim_arguments(scope, text, turn_id, classification))
             logger.info("long_term_memory_updated_successfully", user_id=user_id, messages=len(messages))
         except Exception as error:  # noqa: BLE001 - see `search`
             logger.exception("failed_to_update_long_term_memory", user_id=user_id, error=str(error))
@@ -230,15 +253,14 @@ def _turn_id(session_id: str | None, position: int, role: str, text: str) -> str
     return f"turn-{canonical_hash(identity)[:32]}"
 
 
-def _claim_arguments(scope: str, text: str, turn_id: str) -> dict[str, Any]:
-    """The ``assert`` arguments for one user message, with the cardinality the fast lane can justify (``V2-D115``).
+def _claim_arguments(scope: str, text: str, turn_id: str, classification: SlotClassification) -> dict[str, Any]:
+    """The ``assert`` arguments for one user message, with the cardinality the classifier justified (``V2-D115``).
 
-    A message the slot classifier recognises as a clear single-valued state ("I moved to Paris") is sent as
-    ``cardinality="single"`` with its ``semantic_slot``, so the engine supersedes the previous value of that slot.
-    Everything else is ``"multi"`` with no slot: a single-valued claim *without* a slot would make every such message
-    exclusive with every other one, and general slot extraction belongs to the slow lane, not to the write path.
+    A message the slot classifier recognises as the speaker's current value of a slot ("I moved to Paris",
+    "انتقلت إلى باريس") is sent as ``cardinality="single"`` with its ``semantic_slot``, so the engine supersedes the
+    previous value of that slot. Everything else is ``"multi"`` with no slot: a single-valued claim *without* a slot
+    would make every such message exclusive with every other one.
     """
-    classification = classify_slot(text)
     arguments: dict[str, Any] = {
         "scope": scope,
         "kind": "claim",

@@ -173,6 +173,11 @@ class Settings:
         # must not silently fall back to a store that cannot supersede, cannot erase and cannot separate channels.
         self.MEMORY_ENGINE_URL = os.getenv("MEMORY_ENGINE_URL", "")
         self.MEMORY_ENGINE_TOKEN = os.getenv("MEMORY_ENGINE_TOKEN", "")
+        # The semantic slot classifier (`app/services/memory_slots.py`, `V2-D121`): `llm` (default) asks a language model
+        # whether the newest user message states the speaker's current residence, employer or name, in any language;
+        # `off` records every claim as multi-valued. An empty model name uses the default model.
+        self.MEMORY_SLOT_CLASSIFIER = os.getenv("MEMORY_SLOT_CLASSIFIER", "llm").strip().lower()
+        self.MEMORY_SLOT_CLASSIFIER_MODEL = os.getenv("MEMORY_SLOT_CLASSIFIER_MODEL", "").strip()
         # The mem0 settings remain only for the legacy client, which `tests/test_memory_engine_boundary.py` proves is
         # no longer on the agent's path.
         self.LONG_TERM_MEMORY_MODEL = os.getenv("LONG_TERM_MEMORY_MODEL", "gpt-5-nano")

@@ -3207,11 +3207,10 @@ evidence sources and structured predicate (refusing zero/contradictory ledgers),
 **Who decides.** The *application* decides `cardinality` and `semantic_slot` for the writes it makes; the engine stays
 slot-vocabulary-free and the write path model-free. Flipping `assert` unconditionally to `cardinality='single'` with
 no slot would collapse every unrelated message onto `COALESCE(NULL, 'statement')` under `no_bitemporal_overlap` (`I5`),
-so a message is single-valued only when its slot can be named too. `app/services/memory_slots.py::classify_slot` is a
-deterministic, high-precision, deliberately low-recall classifier with a closed vocabulary (`residence`, `employer`,
-`name`): a whole-message present-state statement with a proper-name value; questions, negations, plans, past
-narrative and lists stay `multi`. A false `multi` only leaves an old belief standing until the slow lane resolves it;
-a false `single` would retire a true one, which is why precision wins. Open-domain extraction stays in the slow lane.
+so a message is single-valued only when its slot can be named too, from a closed vocabulary (`residence`, `employer`,
+`name`). A false `multi` only leaves an old belief standing; a false `single` would retire a true one, which is why
+precision wins. Open-domain extraction stays in the slow lane. *How* the app recognises a slot was first an English
+regular grammar; `V2-D121` replaced it with a semantic, language-independent classifier.
 
 **What the product renders.** `facts` also carries recorded turns (`kind='episode'`). The app renders only non-episode
 facts under "Known facts"; turns go last under "Earlier conversation (verbatim; may be outdated; not confirmed facts)",
@@ -3297,3 +3296,44 @@ RLS `app.user_id`, read set, rate/concurrency limits). Rules, all static refusal
 tier, exactly as the app's own database credential is for its own tables. It is a service secret, rotated like one;
 `THREAT_MODEL.md` records it. Per-user tokens were rejected: the app would have to mint and store a secret per user, and
 the engine would gain an issuance API, for no isolation the RLS boundary does not already provide.
+
+
+### V2-D121 — The app's slot classifier is semantic and language-independent
+
+**Status:** adopted (2026-11-26). Amends `V2-D115` (which keeps *who* decides: the application).
+
+**The defect.** `V2-D115` shipped an English regular grammar (`I live in X`, `I moved to X`, a capitalised value). An
+Arabic or mixed-language user ("أنا ساكن في برلين", "انتقلت إلى باريس", "I live in Berlin, بس دلوقتي انتقلت لـ Paris")
+never got a single-valued claim, so their moves left two "known facts" — #248 fixed for one language only. More
+keyword rules per language would repeat the defect in every language not yet written.
+
+**Decision.** Understanding is delegated to a language model; acceptance stays deterministic and language-independent
+(`app/services/memory_slots.py`):
+
+1. One structured-output call (`SlotExtraction`: slot, temporal status, whether the subject is the speaker, the value
+   as written, confidence) on the app's LLM service, with Langfuse tracing. The prompt names no language's words.
+2. `decide` accepts it only when the slot is in the closed vocabulary, the status is `current` (a past value, plan,
+   hypothetical, denial or question is not), the subject is the speaker, the confidence is at least 0.8, and the value
+   is **grounded**: it occurs verbatim in the message after NFKC, case folding and removal of combining marks. A
+   translated, transliterated or invented value is refused, in any script.
+3. Only the newest user message of an `add()` call is classified: each earlier one was the newest of an earlier call and
+   replays by idempotency key, so one model call per turn. Up to four preceding messages are context, so a correction
+   ("No, I meant Paris") is readable; the value must still come from the newest message.
+4. Every failure — no model, timeout, invalid answer, any exception — is `multi` with no slot. `MEMORY_SLOT_CLASSIFIER=off`
+   selects that behaviour outright. The app logs the proposed slot and outcome, never the message or the value.
+
+**Alternatives rejected.** Per-language keyword grammars (the defect, multiplied). Classifying in the engine's slow lane:
+the engine has an LLM extractor, but the product path enqueues nothing and the worker serves a fixed user list, so it
+would be a larger change with no gain in what is decided; `V2-D115` keeps the decision in the app. Embedding similarity
+to prototype sentences: it cannot tell "I live in Berlin" from "I lived in Berlin in 2010", which is the distinction that
+matters.
+
+**Evidence.** `tests/test_memory_slots.py` (each refusal in Arabic, English and mixed text);
+`tests/integration/test_app_engine_boundary.py` (Arabic and English Berlin → Paris → Berlin and a mixed-language
+correction through the real host, one model call per turn); `tests/live/test_memory_slots_live.py` against a real model
+(opt-in; 34/34 on `gpt-5.6-luna` on 2026-11-26, no false `single`).
+
+**Cost and limits.** One small structured call per user turn, off the response path (`add()` runs as a background
+task). The model's tense judgement is the remaining precision risk; the grounding check bounds what it can invent, not
+whether it misreads a past statement as current. The live evaluation is opt-in because CI has no model credential.
+

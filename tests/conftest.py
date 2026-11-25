@@ -10,3 +10,6 @@ import secrets
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("JWT_SECRET_KEY", secrets.token_hex(32))
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")
+# No model is reachable here, so the semantic slot classifier is off by default; a test that needs classifications
+# injects recorded model answers (`tests/slot_fakes.py`), and the live evaluation sets its own environment.
+os.environ.setdefault("MEMORY_SLOT_CLASSIFIER", "off")

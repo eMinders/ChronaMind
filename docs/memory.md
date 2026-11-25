@@ -48,10 +48,23 @@ memory.
 
 ## Single-valued facts
 
-A user message that is a clear statement of a single-valued state is written with `cardinality: "single"` and a
-`semantic_slot`, so the engine supersedes the previous value: "I live in Berlin" then "I moved to Paris" leaves one known
-fact. The classifier (`app/services/memory_slots.py`) is deterministic, model-free and deliberately narrow; its slots are
-`residence`, `employer` and `name`. Every other message is `cardinality: "multi"` with no slot.
+A user message that states the speaker's *current* value of a single-valued attribute is written with
+`cardinality: "single"` and a `semantic_slot`, so the engine supersedes the previous value: "I live in Berlin" then
+"I moved to Paris" (or "أنا ساكن في برلين" then "انتقلت إلى باريس") leaves one known fact. The slots are `residence`,
+`employer` and `name` (`V2-D121`).
+
+The classifier (`app/services/memory_slots.py`) is semantic and language-independent: a language model reads the
+message in whatever language or mix of languages it is written and reports the slot, whether the statement is the
+speaker's current value (not a past fact, a plan, a hypothetical, a denial or a question), and the value as written.
+The app then accepts it only if the value occurs verbatim in the message (after Unicode normalization) and the other
+checks pass. There is no keyword or grammar rule for any language. Only the newest user message of each `add()` is
+classified (one model call per turn). Any model failure, and `MEMORY_SLOT_CLASSIFIER=off`, gives
+`cardinality: "multi"` with no slot: the claim is recorded and supersedes nothing.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `MEMORY_SLOT_CLASSIFIER` | `llm` | `llm`: the semantic classifier; `off`: every claim is multi-valued |
+| `MEMORY_SLOT_CLASSIFIER_MODEL` | *(default model)* | the model the classifier asks |
 
 ## No cache
 
@@ -90,7 +103,9 @@ an anonymous session gets no long-term memory at all.
 ## Tests
 
 - `tests/test_memory_engine_boundary.py`: the request shapes and the rendering, without a server.
-- `tests/test_memory_slots.py`: the slot classifier.
+- `tests/test_memory_slots.py`: the classifier's language-independent checks, in Arabic, English and mixed text.
+- `tests/live/test_memory_slots_live.py`: the classifier against a real model (opt-in, `MEMORY_SLOT_LIVE_EVAL=1`):
+  Arabic, English, mixed-language, corrections, historical facts and Berlin → Paris → Berlin.
 - `tests/integration/test_app_engine_boundary.py`: the client against a real engine host and PostgreSQL. It needs
   `custom-memory-engine/.venv` (`uv sync --locked --extra host` in `custom-memory-engine/`) and `CME_TEST_DATABASE_URL`,
   and skips with the reason otherwise.

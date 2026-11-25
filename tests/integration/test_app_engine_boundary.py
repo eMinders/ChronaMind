@@ -34,10 +34,10 @@ import psycopg
 import pytest
 from psycopg import sql
 
-import app.services.memory_engine as memory_engine_module
 from app.core.config import settings
 from app.services.memory_engine import MemoryEngineClient
-from app.services.memory_slots import MULTI
+from app.services.memory_slots import NullSlotClassifier, SlotExtraction
+from tests.slot_fakes import current, recorded_classifier
 
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE_DIRECTORY = ROOT / "custom-memory-engine"
@@ -274,10 +274,24 @@ async def test_initialize_add_and_search_round_trip_through_the_real_host(config
 # ---------------------------------------------------------------------------------- cardinality (V2-D115, #248)
 
 
+#: Recorded model answers for every statement below. Each still passes the app's own checks (``decide``): the value is
+#: grounded in the message, in its own script. What a real model answers for these messages is measured by
+#: ``tests/live/test_memory_slots_live.py``; this file proves what the engine does with the answer.
+ANSWERS: dict[str, SlotExtraction] = {
+    "I live in Berlin": current("residence", "Berlin"),
+    "I moved to Paris": current("residence", "Paris"),
+    "أنا ساكن في برلين": current("residence", "برلين"),
+    "انتقلت إلى باريس": current("residence", "باريس"),
+    "رجعت أعيش في برلين": current("residence", "برلين"),
+    "I live in Berlin, بس دلوقتي انتقلت لـ Paris": current("residence", "Paris"),
+}
+
+
 async def test_a_move_from_berlin_to_paris_renders_one_known_fact(configured: EngineHost) -> None:
     """The product-level regression for #248: a changed residence is never rendered as two known facts."""
     transport = ObservedTransport()
-    client = MemoryEngineClient(transport=transport)
+    classifier, _ = recorded_classifier(ANSWERS)
+    client = MemoryEngineClient(transport=transport, slot_classifier=classifier)
     user = end_user()
     try:
         await client.add(user, [{"role": "user", "content": "I live in Berlin"}])
@@ -298,44 +312,72 @@ async def test_a_move_from_berlin_to_paris_renders_one_known_fact(configured: En
     assert "Berlin" not in "\n".join(section(berlin, KNOWN_FACTS) + section(paris, KNOWN_FACTS))
 
 
+@pytest.mark.parametrize(
+    ("statements", "berlin_query", "paris_query"),
+    [
+        (("I live in Berlin", "I moved to Paris", "I live in Berlin"), "Berlin", "Paris"),
+        (("أنا ساكن في برلين", "انتقلت إلى باريس", "رجعت أعيش في برلين"), "برلين", "باريس"),
+    ],
+    ids=["english", "arabic"],
+)
 async def test_a_return_to_an_earlier_value_wins_the_slot_back_across_whole_history_resends(
-    configured: EngineHost,
+    configured: EngineHost, statements: tuple[str, str, str], berlin_query: str, paris_query: str
 ) -> None:
-    """The agent's real shape: every turn resends the session's whole history to ``add``.
+    """The agent's real shape: every turn resends the session's whole history to ``add``, in any language.
 
-    A resend must replay (no duplicate claim), and a user who says "I live in Berlin" again after moving to Paris must
+    A resend must replay (no duplicate claim), and a user who says they live in Berlin again after moving to Paris must
     win the slot back. With text-only idempotency keys the second Berlin statement replayed the first, superseded
     claim, and Paris stayed the current fact.
     """
     transport = ObservedTransport()
-    client = MemoryEngineClient(transport=transport)
+    classifier, model = recorded_classifier(ANSWERS)
+    client = MemoryEngineClient(transport=transport, slot_classifier=classifier)
     user = end_user()
     history: list[dict[str, str]] = []
     try:
-        for said in ("I live in Berlin", "I moved to Paris", "I live in Berlin"):
+        for said in statements:
             history += [{"role": "user", "content": said}, {"role": "assistant", "content": "Noted."}]
             await client.add(user, list(history), session_id="session-1")
-        berlin = await client.search(user, "Berlin")
+        berlin = await client.search(user, berlin_query)
+        paris = await client.search(user, paris_query)
+    finally:
+        await client.aclose()
+
+    assert_all_accepted(transport)
+    # one model call per turn: the resent history is never re-classified
+    assert model.asked == list(statements)
+    assert section(berlin, KNOWN_FACTS) == [statements[2]]
+    assert statements[1] not in section(paris, KNOWN_FACTS)
+
+
+async def test_a_mixed_language_correction_supersedes_the_slot(configured: EngineHost) -> None:
+    """Arabic and English in one message: the grounded value is the Latin-script one the user actually wrote."""
+    transport = ObservedTransport()
+    classifier, _ = recorded_classifier(ANSWERS)
+    client = MemoryEngineClient(transport=transport, slot_classifier=classifier)
+    user = end_user()
+    corrected = "I live in Berlin, بس دلوقتي انتقلت لـ Paris"
+    try:
+        await client.add(user, [{"role": "user", "content": "أنا ساكن في برلين"}])
+        await client.add(user, [{"role": "user", "content": corrected}])
+        arabic = await client.search(user, "برلين")
         paris = await client.search(user, "Paris")
     finally:
         await client.aclose()
 
     assert_all_accepted(transport)
-    assert section(berlin, KNOWN_FACTS) == ["I live in Berlin"]
-    assert section(paris, KNOWN_FACTS) == []
+    assert section(arabic, KNOWN_FACTS) == []
+    assert section(paris, KNOWN_FACTS) == [corrected]
 
 
-async def test_without_a_slot_the_same_move_leaves_both_known_facts(
-    configured: EngineHost, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The control for the test above: the slot the app sends is what makes the difference, not the query.
+async def test_without_a_slot_the_same_move_leaves_both_known_facts(configured: EngineHost) -> None:
+    """The control for the tests above: the slot the app sends is what makes the difference, not the query.
 
-    With the classifier forced to ``("multi", None)`` (the app's behaviour before ``V2-D115``) the identical sequence
-    keeps Berlin as a known fact after the move.
+    With no semantic classifier (every claim ``("multi", None)``, the app's behaviour before ``V2-D115``) the identical
+    sequence keeps Berlin as a known fact after the move.
     """
-    monkeypatch.setattr(memory_engine_module, "classify_slot", lambda _text: MULTI)
     transport = ObservedTransport()
-    client = MemoryEngineClient(transport=transport)
+    client = MemoryEngineClient(transport=transport, slot_classifier=NullSlotClassifier())
     user = end_user()
     try:
         await client.add(user, [{"role": "user", "content": "I live in Berlin"}])

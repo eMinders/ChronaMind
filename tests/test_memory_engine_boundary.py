@@ -7,7 +7,8 @@ import. These tests hold both halves of that contract:
   with the arguments the engine accepts;
 * the rendering keeps the four channels' *epistemic labels*, and renders a recorded turn (an ``episode``) as earlier
   conversation rather than as a known fact, because a flat list of "memories" is the defect the engine exists to remove;
-* a user message is single-valued only when the slot classifier names its slot (``V2-D115``);
+* a user message is single-valued only when the slot classifier names its slot (``V2-D115``), and only the newest
+  user message is classified (``V2-D121``);
 * nothing is cached: a second search reflects the engine's current answer (``V2-D116``);
 * nothing on the agent's path imports ``mem0ai`` any more, and a deployment that configures no engine gets no
   long-term memory rather than a silent fallback;
@@ -28,6 +29,7 @@ import httpx
 import pytest
 
 from app.services.memory_engine import MemoryEngineClient, _render, canonical_hash
+from tests.slot_fakes import current, recorded_classifier
 
 pytestmark = pytest.mark.anyio
 
@@ -129,7 +131,8 @@ async def test_an_anonymous_session_gets_no_long_term_memory_and_no_request(conf
 async def test_add_records_the_turn_before_it_asserts_a_claim(configured) -> None:  # type: ignore[no-untyped-def]
     """Ordering is the fast lane: the turn is durable even if the claim write fails."""
     recorder = Recorder()
-    client = MemoryEngineClient(transport=transport(recorder))
+    classifier, _ = recorded_classifier({"I moved to Berlin last spring": current("residence", "Berlin")})
+    client = MemoryEngineClient(transport=transport(recorder), slot_classifier=classifier)
     await client.add(
         "alice",
         [
@@ -165,6 +168,36 @@ async def test_a_message_that_is_not_a_clear_state_update_is_multi_and_names_no_
     claim = recorder.requests[1][1]["arguments"]
     assert claim["cardinality"] == "multi"
     assert "semantic_slot" not in claim
+
+
+async def test_only_the_newest_user_message_is_classified_and_earlier_ones_replay_as_multi(configured) -> None:  # type: ignore[no-untyped-def]
+    """A resend of the whole history costs one model call, for the one message this call records first (V2-D121).
+
+    The earlier user message was the newest one of an earlier call; its ``assert`` replays by idempotency key, so its
+    arguments are not read again and it is not sent to the model again.
+    """
+    recorder = Recorder()
+    classifier, model = recorded_classifier(
+        {"أنا ساكن في برلين": current("residence", "برلين"), "انتقلت إلى باريس": current("residence", "باريس")}
+    )
+    client = MemoryEngineClient(transport=transport(recorder), slot_classifier=classifier)
+    await client.add(
+        "alice",
+        [
+            {"role": "user", "content": "أنا ساكن في برلين"},
+            {"role": "assistant", "content": "تمام"},
+            {"role": "user", "content": "انتقلت إلى باريس"},
+            {"role": "assistant", "content": "مبروك"},
+        ],
+        session_id="s-1",
+    )
+
+    assert model.asked == ["انتقلت إلى باريس"]
+    claims = [body["arguments"] for _, body in recorder.requests if body.get("operation") == "assert"]
+    assert [(claim["content"], claim["cardinality"], claim.get("semantic_slot")) for claim in claims] == [
+        ("أنا ساكن في برلين", "multi", None),
+        ("انتقلت إلى باريس", "single", "residence"),
+    ]
 
 
 async def test_an_assistant_message_is_recorded_but_never_becomes_a_claim(configured) -> None:  # type: ignore[no-untyped-def]
