@@ -107,7 +107,7 @@ The configuration is:
 
 | Setting | Value | Why |
 |---|---|---|
-| Required status checks | `changes`, `static`, `verify`, `default-install` (from `custom-memory-engine.yaml`) and `checks`, `workflows` (from `ci.yaml`) | These are the gates the Definition of Done already names. A PR is not "CI green" on `verify` alone. The `dual-profile` job (`E-023`, #138) is **deliberately advisory and not on this list**: it proves `G2` on every run, but promoting a check to required is a protection change that issue scoped out. A job skipped by a job-level `if:` reports success, so `dual-profile` cannot leave a PR pending the way a `paths:`-filtered workflow would |
+| Required status checks | `changes`, `static`, `verify`, `default-install`, `deploy-smoke` (from `custom-memory-engine.yaml`) and `checks`, `workflows`, `app-engine-boundary` (from `ci.yaml`) | These are the gates the Definition of Done already names. A PR is not "CI green" on `verify` alone. `deploy-smoke` (#253) and `app-engine-boundary` (#250) were added on 2026-11-26 (#259): each is the only place its claim is executed — the shipped units and worker image, and the app against the real engine host — so an advisory failure could merge a broken deployment or a broken wire contract. Both always report on a PR (no `paths:` filter; `deploy-smoke` skips by its job-level `if:` when no engine path changed, which reports success). The `dual-profile` job (`E-023`, #138) is **deliberately advisory and not on this list**: it proves `G2` on every run, but promoting a check to required is a protection change that issue scoped out. A job skipped by a job-level `if:` reports success, so `dual-profile` cannot leave a PR pending the way a `paths:`-filtered workflow would |
 | Require branches to be up to date | **on** (`strict: true`) | The r11 review found merge-order regressions (a ledger silently reverted across four branches, #123) that per-PR green CI cannot catch. Strict mode makes a PR's checks run against current `main` before it merges |
 | Required approving reviews | **none** | `V2-D57`: AI review is the gate. A required GitHub approval would block every merge or invite an approval that did not happen |
 | Require conversation resolution | **on** | A review finding is a comment; this makes "resolve or record it" binding |
@@ -121,7 +121,8 @@ The configuration is:
 - Otherwise they are skipped by their job-level `if:`, and GitHub reports a skipped job as successful.
 - `changes` is itself required. If it fails, the PR is blocked, never waved through by the skips that follow it.
 - It fails open toward running the gates: a non-PR event or an uncomputable diff runs everything.
-- `ci.yaml` has no path filter.
+- `deploy-smoke` follows the same `changes` rule as the three engine gates.
+- `ci.yaml` has no path filter: `checks`, `workflows` and `app-engine-boundary` run on every PR.
 
 ```bash
 gh api --method PUT repos/eMinders/ChronaMind/branches/main/protection --input - <<'JSON'
@@ -129,7 +130,8 @@ gh api --method PUT repos/eMinders/ChronaMind/branches/main/protection --input -
   "required_status_checks": {"strict": true,
     "checks": [{"context": "changes", "app_id": 15368}, {"context": "static", "app_id": 15368},
                {"context": "verify", "app_id": 15368}, {"context": "default-install", "app_id": 15368},
-               {"context": "checks", "app_id": 15368}, {"context": "workflows", "app_id": 15368}]},
+               {"context": "checks", "app_id": 15368}, {"context": "workflows", "app_id": 15368},
+               {"context": "deploy-smoke", "app_id": 15368}, {"context": "app-engine-boundary", "app_id": 15368}]},
   "enforce_admins": false,
   "required_pull_request_reviews": null,
   "restrictions": null,

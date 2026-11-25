@@ -3188,6 +3188,13 @@ append-only verification records outlive deleted artifacts (IDs are opaque and c
    (`V2-D37`), so no client composition can, and the sharing need is met without a copy. `API_V2.md` §5.2 says so;
    a server-side primitive is #258.
 
+   *Re-evaluated 2026-11-26 (kept deferred).* No consumer needs it: the only client, the FastAPI app, writes and reads
+   `/u/<user>/` alone, and the collaboration case is served by `set_visibility` plus a grant with one copy and one
+   deletion surface. A `move` would add a second copy of the content (two deletion surfaces until the old one is
+   retired), a new Tier C write path with its own provenance rows, and an idempotency key spanning two scopes — risk
+   with no caller. It becomes needed when a client writes sub-scopes and must re-file memories between them, or a
+   product needs to hand a memory to another namespace rather than share it; #258 holds the design and stays open.
+
 Tests: `tests/integration/test_visibility_sharing_db.py`, `tests/integration/test_migration_m2.py::test_the_read_policy_is_the_library_expression_on_every_scoped_table`.
 
 ### V2-D114 — Abstraction ledgers are derived from evidence and gated on verification

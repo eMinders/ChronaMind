@@ -7,9 +7,8 @@ name: Custom Memory Engine verification
 #   dual-profile    both profiles on ONE migrated database: parity, cross-profile isolation, order independence
 #   deploy-smoke    executes deploy/: systemd-analyze verify, the worker image against PostgreSQL, compose healthcheck
 #   changes         decides whether a PR touches engine paths (see below)
-# The four required jobs (`changes`, `static`, `verify`, `default-install`) and the advisory `dual-profile` and
-# `deploy-smoke` jobs are independent and run in parallel; neither advisory job is a required check
-# (`PLAN/CONTRIBUTING.md` 1.2).
+# The five required jobs (`changes`, `static`, `verify`, `default-install`, `deploy-smoke`) and the advisory
+# `dual-profile` job run in parallel after `changes` (`PLAN/CONTRIBUTING.md` 1.2).
 #
 # Required checks (PLAN/CONTRIBUTING.md 1.2): a workflow skipped by a trigger-level `paths:` filter never reports, so a
 # required check would stay pending forever on a root-only PR. Pull requests therefore always run this workflow; the
