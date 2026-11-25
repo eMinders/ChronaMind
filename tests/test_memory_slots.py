@@ -127,6 +127,27 @@ async def test_any_model_failure_is_multi_and_never_raises() -> None:
     assert await LLMSlotClassifier(failing).classify("I moved to Paris", []) == MULTI
 
 
+async def test_a_malformed_answer_is_asked_once_more_and_a_second_failure_is_multi() -> None:
+    calls: list[int] = []
+
+    async def flaky(messages: list[BaseMessage], config: RunnableConfig) -> SlotExtraction:
+        calls.append(1)
+        if len(calls) == 1:
+            raise ValueError("structured output could not be parsed")
+        return extraction(value="Paris")
+
+    assert await LLMSlotClassifier(flaky).classify("I moved to Paris", []) == ("single", RESIDENCE)
+    assert len(calls) == 2
+
+    async def always_malformed(messages: list[BaseMessage], config: RunnableConfig) -> SlotExtraction:
+        calls.append(1)
+        raise ValueError("structured output could not be parsed")
+
+    calls.clear()
+    assert await LLMSlotClassifier(always_malformed).classify("I moved to Paris", []) == MULTI
+    assert len(calls) == 2
+
+
 async def test_an_empty_or_overlong_message_is_multi_without_a_model_call() -> None:
     classifier, model = recorded_classifier({})
     assert await classifier.classify("   ", []) == MULTI

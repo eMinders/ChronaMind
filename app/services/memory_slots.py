@@ -36,6 +36,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, Field
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
 from app.core.logging import logger
@@ -196,10 +197,23 @@ class LLMSlotClassifier:
             return MULTI
         callbacks: list[BaseCallbackHandler] = [langfuse_callback_handler] if settings.LANGFUSE_TRACING_ENABLED else []
         config: RunnableConfig = {"callbacks": callbacks, "run_name": "memory_slot_classification"}
+        messages = build_messages(message, context)
+        extraction: SlotExtraction | None = None
         try:
-            extraction = await self._extract(build_messages(message, context), config)
+            # a malformed structured answer (a ValueError, pydantic's ValidationError included) is asked once more;
+            # transport errors are already retried by the LLM service
+            async for attempt in AsyncRetrying(
+                retry=retry_if_exception_type(ValueError),
+                stop=stop_after_attempt(2),
+                wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
+                reraise=True,
+            ):
+                with attempt:
+                    extraction = await self._extract(messages, config)
         except Exception:  # noqa: BLE001 - a failed classification must never lose the claim; multi is the safe side
             logger.exception("memory_slot_classification_failed")
+            return MULTI
+        if extraction is None:  # unreachable: the retry either assigned it or re-raised
             return MULTI
         classification = decide(message, extraction)
         # content-free: the slot and the outcome, never the message or the value

@@ -69,25 +69,29 @@ def gateway_extract(model: str) -> Extract:
         return openai_extract
 
     tool = {"name": "label", "description": "Record the label.", "input_schema": SlotExtraction.model_json_schema()}
+    # a forced tool call where the model supports it; a model that refuses one (HTTP 400) is asked with "auto" plus an
+    # instruction, and an answer without the tool call is asked once more, then counted as a failure (never "multi")
+    choice: dict[str, str] = {"type": "tool", "name": "label"}
 
     async def anthropic_extract(messages: list[BaseMessage], config: RunnableConfig) -> SlotExtraction:
+        nonlocal choice
         del config
-        body = {
-            "model": model,
-            "max_tokens": 400,
-            "temperature": 0,
-            # some models refuse a forced tool_choice, so it is "auto" plus an instruction; an answer without the tool
-            # call raises below and is counted as a failure, never read as "multi"
-            "system": f"{messages[0].content}\n\nAlways answer by calling the `label` tool, and only that.",
-            "messages": [{"role": "user", "content": str(message.content)} for message in messages[1:]],
-            "tools": [tool],
-            "tool_choice": {"type": "auto"},
-        }
         headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
-        # with tool_choice "auto" a model may answer in prose instead; that is a formatting miss, asked once more
-        for _ in range(2):
+        for _ in range(3):
+            body = {
+                "model": model,
+                "max_tokens": 400,
+                "temperature": 0,
+                "system": f"{messages[0].content}\n\nAlways answer by calling the `label` tool, and only that.",
+                "messages": [{"role": "user", "content": str(message.content)} for message in messages[1:]],
+                "tools": [tool],
+                "tool_choice": choice,
+            }
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(f"{base_url}/messages", json=body, headers=headers)
+            if response.status_code == 400 and choice["type"] == "tool" and "tool_choice" in response.text:
+                choice = {"type": "auto"}
+                continue
             response.raise_for_status()
             blocks = [item for item in response.json()["content"] if item["type"] == "tool_use"]
             if blocks:
@@ -152,15 +156,19 @@ async def test_the_real_model_classifies_every_case_as_expected() -> None:
     """One event loop for every case: the LLM service caches its HTTP client, which is bound to the loop it ran on."""
     model = os.environ.get("MEMORY_SLOT_LIVE_MODEL", "").strip()
     extract = gateway_extract(model) if model else llm_service_extract
-    errors: list[str] = []
+    # the classifier fails closed to "multi", which would hide a broken model as a run of misses: a message whose
+    # every attempt failed is recorded (a failure the classifier's own retry recovered from is not)
+    failed: dict[str, str] = {}
 
     async def counted(messages: list[BaseMessage], config: RunnableConfig) -> SlotExtraction:
-        # the classifier fails closed to "multi", which would hide a broken model as a run of misses: count failures
+        key = str(messages[-1].content)
         try:
-            return await extract(messages, config)
+            answer = await extract(messages, config)
         except Exception as error:
-            errors.append(type(error).__name__)
+            failed[key] = f"{type(error).__name__}: {str(error).splitlines()[0][:160] if str(error) else ''}"
             raise
+        failed.pop(key, None)
+        return answer
 
     classifier = LLMSlotClassifier(counted)
     wrong: list[tuple[int, str, SlotClassification, SlotClassification]] = []
@@ -171,8 +179,8 @@ async def test_the_real_model_classifies_every_case_as_expected() -> None:
     false_single = [case for case in wrong if case[2] == MULTI]
     print(
         f"live slot evaluation ({model or 'llm_service'}): {len(CASES) - len(wrong)}/{len(CASES)} correct, "
-        f"{len(false_single)} false single, {len(errors)} failed model calls"
+        f"{len(false_single)} false single, {len(failed)} failed model calls"
     )
-    assert not errors, f"{len(errors)} model calls failed ({sorted(set(errors))}): those cases measured nothing"
+    assert not failed, f"{len(failed)} cases had every model call fail ({list(failed.values())}): unmeasured"
     assert not false_single, f"precision failure (a true belief would be retired): {false_single}"
     assert not wrong, f"missed single-valued statements: {wrong}"
