@@ -42,8 +42,8 @@ cp .env.example .env.development
 | Variable | Default | Description |
 | --- | --- | --- |
 | `LONG_TERM_MEMORY_COLLECTION_NAME` | `longterm_memory` | pgvector collection name |
-| `LONG_TERM_MEMORY_MODEL` | `gpt-5-nano` | LLM used by mem0 to extract memories |
-| `LONG_TERM_MEMORY_EMBEDDER_MODEL` | `text-embedding-3-small` | Embedding model for semantic search |
+| `MEMORY_SLOT_CLASSIFIER` | `llm` | `llm` recognises single-valued facts with a language model; anything else disables it |
+| `MEMORY_SLOT_CLASSIFIER_MODEL` | *(empty)* | The one model the classifier may use; empty means `DEFAULT_LLM_MODEL` |
 
 ---
 

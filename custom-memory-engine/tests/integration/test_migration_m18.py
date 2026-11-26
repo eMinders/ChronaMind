@@ -27,6 +27,11 @@ async def entity(conn: AsyncConnection, entity_id: str, user: str, scope: str) -
         "VALUES (%s, %s, %s, 'Ada', 'person')",
         (entity_id, user, scope),
     )
+    await conn.execute(
+        "INSERT INTO artifact_provenance (id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+        "VALUES (%s, %s, 'entity', %s, 'tier_c_call', 'test')",
+        (f"ap-{entity_id}", user, entity_id),
+    )
 
 
 async def link(conn: AsyncConnection, link_id: str, a: str, b: str, relation: str = "same_person") -> None:
@@ -35,6 +40,11 @@ async def link(conn: AsyncConnection, link_id: str, a: str, b: str, relation: st
     await conn.execute(
         "INSERT INTO entity_link (id, user_id, entity_a, entity_b, relation) VALUES (%s, 'u1', %s, %s, %s)",
         (link_id, first, second, relation),
+    )
+    await conn.execute(
+        "INSERT INTO artifact_provenance (id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+        "VALUES (%s, 'u1', 'entity_link', %s, 'tier_c_call', 'test')",
+        (f"ap-{link_id}", link_id),
     )
 
 

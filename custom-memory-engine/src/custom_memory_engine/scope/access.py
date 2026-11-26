@@ -370,6 +370,35 @@ def rls_read_using(
     )
 
 
+def rls_parent_read(table: str, parent_table: str, join_column: str, *, parent_key: str = "id") -> sql.Composed:
+    """The RLS ``USING`` expression of a child row that inherits its parent artifact's readability (``V2-D113``).
+
+    A child table's own ``scope_path``/``visibility`` must never be a second copy of "is this artifact shared": two
+    copies drift, and the failing direction of that drift is a private artifact leaking its evidence. The policy
+    therefore asks the parent, and the parent's own ``*_scope_read`` policy (``E-011``) answers -- PostgreSQL applies
+    the policies of every relation a policy expression references. A ``private`` parent is then invisible to a
+    grantee, so its children are too; a ``shared`` one exposes exactly its own children. The join is on
+    ``(id, user_id)``, which cannot cross a tenant (``test_tenant_integrity_db``).
+
+    This is the SQL text of migration 32's policies; ``tests/integration/test_migration_m2.py`` pins the two together
+    exactly as it pins :func:`rls_read_using` to the migration-11 policy.
+    """
+    for reference in (parent_table, join_column, parent_key):
+        if not reference.isidentifier():
+            raise ScopeError("untrusted_column_reference")
+    if not table.isidentifier():
+        raise ScopeError("untrusted_column_reference")
+    child = sql.Identifier(table)
+    return sql.SQL(
+        "EXISTS (SELECT 1 FROM {parent} AS p WHERE p.{key} = {child}.{column} AND p.user_id = {child}.user_id)"
+    ).format(
+        parent=sql.Identifier(parent_table),
+        key=sql.Identifier(parent_key),
+        child=child,
+        column=sql.Identifier(join_column),
+    )
+
+
 async def active_grant_paths(
     connection: AsyncConnection, caller_user_id: str, *, schema_name: str = "cme_engine"
 ) -> tuple[str, ...]:
@@ -414,6 +443,7 @@ __all__ = [
     "read_predicate_named",
     "resolve",
     "resolve_read_set",
+    "rls_parent_read",
     "rls_read_using",
     "row_visible",
 ]

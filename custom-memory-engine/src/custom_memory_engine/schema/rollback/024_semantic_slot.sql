@@ -16,6 +16,16 @@
 -- the collision without naming an id (a rollback is not a place to print memory content), rather than corrupting the
 -- ledger or silently destroying a belief. The operator resolves the pair through the engine (supersede or retract)
 -- and reruns; that path exists precisely so a human decides which of two contradictory beliefs is the survivor.
+-- This rollback's data guard must see every tenant's rows. Under FORCE ROW LEVEL SECURITY a role that cannot bypass it (an
+-- ordinary owner included) sees none, so the guard would pass on an empty view and the rollback would drop data it
+-- was written to protect. Such a role is refused first (`V2-D123`).
+DO $bypass$
+BEGIN
+  IF NOT (SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user) THEN
+    RAISE EXCEPTION 'rollback_requires_bypassrls' USING ERRCODE = '42501';
+  END IF;
+END
+$bypass$;
 DROP INDEX IF EXISTS memory_version_semantic_slot_idx;
 
 DO $preflight$

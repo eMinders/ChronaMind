@@ -273,6 +273,7 @@ class LangGraphAgent:
         session_id: str,
         user_id: Optional[str] = None,
         username: Optional[str] = None,
+        history_epoch: int = 0,
     ) -> list[Message]:
         """Get a response from the LLM.
 
@@ -281,6 +282,8 @@ class LangGraphAgent:
             session_id (str): The session ID for the conversation.
             user_id (Optional[str]): The user ID for the conversation.
             username (Optional[str]): The display name of the user.
+            history_epoch (int): How many times this session's chat history has been cleared, so a
+                repeated message is a new claim rather than a replay of the pre-clear one.
 
         Returns:
             list[Message]: The response from the LLM.
@@ -296,6 +299,9 @@ class LangGraphAgent:
                 "user_id": user_id,
                 "username": username,
                 "session_id": session_id,
+                # the identity of a message is (session, position, role, text); clearing the history restarts the
+                # positions, and this keeps a repeated message from colliding with the one before the clear
+                "history_epoch": history_epoch,
                 "environment": settings.ENVIRONMENT.value,
                 "debug": settings.DEBUG,
                 "langfuse_user_id": user_id,
@@ -337,7 +343,15 @@ class LangGraphAgent:
                     return [Message(role="assistant", content=str(interrupt_value))]
 
                 openai_msgs = cast(list[dict], convert_to_openai_messages(response["messages"]))
-                asyncio.create_task(memory_engine.add(user_id, openai_msgs, config.get("metadata")))
+                asyncio.create_task(
+                    memory_engine.add(
+                        user_id,
+                        openai_msgs,
+                        config.get("metadata"),
+                        session_id=session_id,
+                        history_epoch=history_epoch,
+                    )
+                )
                 return self.__process_messages(response["messages"])
         except GraphInterrupt:
             state = await graph.aget_state(config)
@@ -354,6 +368,7 @@ class LangGraphAgent:
         session_id: str,
         user_id: Optional[str] = None,
         username: Optional[str] = None,
+        history_epoch: int = 0,
     ) -> AsyncGenerator[str, None]:
         """Get a stream response from the LLM.
 
@@ -362,6 +377,8 @@ class LangGraphAgent:
             session_id (str): The session ID for the conversation.
             user_id (Optional[str]): The user ID for the conversation.
             username (Optional[str]): The display name of the user.
+            history_epoch (int): How many times this session's chat history has been cleared, so a
+                repeated message is a new claim rather than a replay of the pre-clear one.
 
         Yields:
             str: Tokens of the LLM response.
@@ -376,6 +393,9 @@ class LangGraphAgent:
                 "user_id": user_id,
                 "username": username,
                 "session_id": session_id,
+                # the identity of a message is (session, position, role, text); clearing the history restarts the
+                # positions, and this keeps a repeated message from colliding with the one before the clear
+                "history_epoch": history_epoch,
                 "environment": settings.ENVIRONMENT.value,
                 "debug": settings.DEBUG,
                 "langfuse_user_id": user_id,
@@ -426,7 +446,15 @@ class LangGraphAgent:
                     yield str(interrupt_value)
                 elif state.values and "messages" in state.values:
                     openai_msgs = cast(list[dict], convert_to_openai_messages(state.values["messages"]))
-                    asyncio.create_task(memory_engine.add(user_id, openai_msgs, config.get("metadata")))
+                    asyncio.create_task(
+                        memory_engine.add(
+                            user_id,
+                            openai_msgs,
+                            config.get("metadata"),
+                            session_id=session_id,
+                            history_epoch=history_epoch,
+                        )
+                    )
         except GraphInterrupt:
             state = await graph.aget_state(config)
             interrupt_value = state.tasks[0].interrupts[0].value if state.tasks else "Waiting for input."

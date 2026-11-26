@@ -52,6 +52,9 @@ DOMAIN_TABLES = frozenset(
         "outcome_stats",
         "procedure_shape",  # migration 21 (E-030)
         "export_snapshot",  # migration 25 (E-038/F11)
+        "artifact_provenance",  # migration 29 (I2, V2-D110)
+        "entity_mention",  # migration 30 (I8, V2-D111)
+        "verification_artifact",  # migration 31 (I11, V2-D112)
     }
 )
 HISTORY_TABLE = "_cme_schema_migrations"
@@ -196,6 +199,31 @@ async def fresh_database() -> AsyncIterator[migrate.MigrationConfig]:
             # runner/test contexts before teardown. Do not drop other databases.
             if created:
                 await admin.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(database_name)))
+
+
+@pytest.mark.integration
+async def test_every_function_the_migrations_create_is_registered_for_a_clean_reset(database) -> None:
+    """`reset` drops a fixed list of tables and functions; a migration that adds one and forgets the list breaks it.
+
+    The symptom is not local: `reset` ends with `DROP SCHEMA ... RESTRICT`, so an unregistered function fails the
+    clean-slate path every database test uses, with `sqlstate 2BP01` and no name. Migrations 29-32 each added
+    functions; the list is the integration point, and this is the alarm for it.
+    """
+    await migrate.MigrationRunner(database).apply()
+    async with await AsyncConnection.connect(database.database_url.get_secret_value(), connect_timeout=5) as conn:
+        cursor = await conn.execute(
+            "SELECT p.proname FROM pg_catalog.pg_proc AS p "
+            "JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = %s ORDER BY p.proname",
+            (database.schema_name,),
+        )
+        present = {str(row[0]) for row in await cursor.fetchall()}
+    assert present, "the schema has functions"
+    missing = present - set(migrate.FUNCTIONS)
+    assert missing == set(), f"register in migrate.FUNCTIONS (+ FUNCTION_ARG_TYPES): {missing}"
+
+    # and the registered list is not stale in the other direction: every registered name exists
+    absent = set(migrate.FUNCTIONS) - present
+    assert absent == set(), f"registered but not created by any migration: {absent}"
 
 
 @pytest.mark.integration
@@ -692,6 +720,27 @@ async def test_concurrent_applies_settle_to_one_installation_and_one_history_row
         assert set(await table_oids(conn, database.schema_name)) == DOMAIN_TABLES | {HISTORY_TABLE}
         cursor = await conn.execute("SELECT version FROM _cme_schema_migrations ORDER BY version")
         assert await cursor.fetchall() == [(version,) for version, _ in migrate.MIGRATIONS]
+
+
+@pytest.mark.integration
+async def test_a_second_migrator_waits_for_the_first_longer_than_the_ddl_lock_timeout(
+    database: migrate.MigrationConfig,
+) -> None:
+    """Waiting for another migrator is expected, so it is bounded by the statement timeout, not the DDL lock timeout.
+
+    Before this, the migration advisory lock was taken under `lock_timeout_ms` (5 s): a second deployer failed with
+    `migration_database_failure` whenever the first one's apply took longer, which a 32-migration apply on a loaded
+    runner does. Here another session holds the lock for 0.5 s against a 50 ms DDL lock timeout.
+    """
+    impatient = migrate.MigrationConfig.model_validate({**database.model_dump(), "lock_timeout_ms": 50})
+    async with connect(database) as holder:
+        async with holder.transaction():
+            await holder.execute("SELECT pg_catalog.pg_advisory_xact_lock(%s,%s)", (0x434D4531, 41))
+            pending = asyncio.ensure_future(migrate.MigrationRunner(impatient).apply())
+            await asyncio.sleep(0.5)
+            assert not pending.done(), "the second migrator must still be waiting, not failed"
+    result = await asyncio.wait_for(pending, timeout=60)
+    assert result.status.state == "applied" and result.status.version == migrate.VERSION
 
 
 @pytest.mark.integration

@@ -31,7 +31,7 @@ from custom_memory_engine.engine.export import (
     export_snapshot,
     selectors,
 )
-from custom_memory_engine.scope.access import ReadSet
+from custom_memory_engine.scope.access import ReadEntry, ReadSet
 
 
 class ExportHandlers:
@@ -71,7 +71,10 @@ class ExportHandlers:
         disagree with the read set the rest of the call is using.
         """
         entries = tuple(
-            entry
+            # anchored at the *requested* path, never at the grant's: keeping the grant's path would read the whole
+            # grant while the manifest recorded the narrower selector, so the snapshot would hold rows its own stated
+            # scope excludes (`S-Low`, review of #259)
+            ReadEntry(request, entry.visibilities, entry.mode)
             for request in requested
             for entry in read_set.entries
             if request == entry.path or (entry.mode == "subtree" and request.startswith(entry.path))

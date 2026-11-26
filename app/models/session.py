@@ -24,6 +24,10 @@ class Session(BaseModel, table=True):
         user_id: Foreign key to the user
         name: Name of the session (defaults to empty string)
         username: Display name copied from the user at session creation
+        history_epoch: How many times the session's chat history has been cleared. A message's
+            identity is (session, position, role, text), and clearing the history restarts the
+            positions, so without this a repeated message after a clear would collide with the
+            old claim and silently replay instead of superseding it (V2-D121 addendum).
         created_at: When the session was created
         messages: Relationship to session messages
         user: Relationship to the session owner
@@ -33,4 +37,5 @@ class Session(BaseModel, table=True):
     user_id: int = Field(foreign_key="user.id")
     name: str = Field(default="")
     username: Optional[str] = Field(default=None)
+    history_epoch: int = Field(default=0, ge=0)
     user: "User" = Relationship(back_populates="sessions")

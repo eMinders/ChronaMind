@@ -5,9 +5,13 @@ them with one dot product. That is what makes retrieval cheap enough to run on e
 "our neighbours complain about the noise every night" scored 0.605 against "I am on call every second weekend",
 because both are short sentences with a recurring-time frame — the *topics* are far apart and the vector does not
 notice. Measured on the labelled set (`evaluation/retrieval`, `V2-D104`), **no** threshold, corpus-relative statistic
-or arm-agreement rule separates that case from a genuine paraphrase: the weakest true match sat at 0.46 and that false
-one at 0.605. A cross-encoder reads the pair together, so it can. On the same set it separates cleanly: every
-answerable question scored at least ``-6.68`` and every unanswerable one at most ``-9.41``.
+* **Why the score is comparable across queries** — see below. On the full uncensored labelled set
+  (`evaluation/retrieval/judge_floor.py`, 56 answerable gold pairs and 8 ``no_match`` questions scored against all 49
+  memories), ``bge-reranker-v2-m3`` separates every answerable gold pair (weakest ``-6.68``) from every unanswerable
+  pair (strongest ``-9.41``, separation ``2.73`` logits, uncensored midpoint ``-8.04``). Over the fused page alone
+  (`reports/retrieval/evaluation.json`, where ``DENSE_SIMILARITY_FLOOR = 0.55`` admitted only ``N = 1`` unanswerable
+  question to the judge), the surviving unanswerable extreme was ``-11.01`` (midpoint ``-8.8``, ``4.33`` logits).
+  ``JUDGE_RELEVANCE_FLOOR = -8.8`` sits strictly inside both intervals (``0.61`` logits above the uncensored ceiling).
 
 **Why a local file and not a provider.** The same three reasons the embedder is local (`V2-D94`): the deployment's
 provider serves no reranking endpoint, a frozen ``model.onnx`` plus a tokenizer JSON is a fixed artifact whose score is
@@ -71,15 +75,17 @@ class CrossEncoderAssets:
 #: The assets this project measures with, so a deployment names one instead of assembling fields by hand.
 KNOWN_RERANKERS: dict[str, dict[str, Any]] = {
     # 568M multilingual parameters, int8: the one `V2-D104` measured. Its scores separate answerable from unanswerable
-    # by 2.7 logits on the labelled set, which is the whole reason the judge is worth its latency.
+    # by 2.73 logits on the uncensored labelled set (-6.68 vs -9.41; 4.33 logits on fused-page candidates, -6.68 vs
+    # -11.01), which is the whole reason the judge is worth its latency.
     "bge-reranker-v2-m3": {
         "model": "BAAI/bge-reranker-v2-m3",
         "weights": "model_int8.onnx",
         "max_tokens": 512,
     },
-    # 278M multilingual parameters. Measured too, and **not** chosen: its logits overlap (worst answerable -2.91,
-    # best unanswerable -2.38), so it reorders but cannot gate. Kept in the table so a re-measurement starts from the
-    # comparison rather than from one model.
+    # 278M multilingual parameters. Measured too, and **not** chosen: its logits overlap on both the uncensored
+    # full set (weakest answerable -3.12, strongest unanswerable -1.99) and fused-page candidates (-2.91 vs -2.38),
+    # so it reorders but cannot gate. Kept in the table so a re-measurement starts from the comparison rather than
+    # from one model.
     "jina-reranker-v2-base-multilingual": {
         "model": "jinaai/jina-reranker-v2-base-multilingual",
         "weights": "model_int8.onnx",

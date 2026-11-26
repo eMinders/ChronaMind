@@ -253,7 +253,10 @@ async def _scope_writable(
     target = _scope_argument(ctx, op, args)
     if target is None:
         raise _fail(op, "validation_error", "scope_required")
-    visibility = args.get("visibility", "private")
+    raw_visibility = args.get("visibility")
+    visibility = "private" if raw_visibility is None else raw_visibility
+    if visibility not in ("private", "project", "shared"):
+        raise _fail(op, "validation_error", "visibility_invalid")
     try:
         authorize_write(ctx.principal, target, visibility)
     except ScopeError:
@@ -269,6 +272,14 @@ async def _namespace_owner_only(
         target = info.scope_path if info is not None else None
         if info is None:
             raise _fail(op, "forbidden")
+    if target is None and "artifact_id" in args:
+        raw_id = args["artifact_id"]
+        if not isinstance(raw_id, str) or not raw_id.strip():
+            raise _fail(op, "validation_error", "artifact_id_invalid")
+        info = (await engine.resolve_targets(ctx, [raw_id], state)).get(raw_id)
+        if info is None:
+            raise _fail(op, "forbidden")
+        target = info.scope_path
     if target is None:
         raise _fail(op, "validation_error", "scope_required")
     # A malformed target is a grammar fault, not an authorisation decision: `API_V2.md` 4.10 separates
@@ -480,21 +491,36 @@ class Engine:
         """
         return self.results.resolve(ctx.principal, result_id)
 
-    async def _record_scope_read(self, ctx: CallerContext, spec: Operation, targets: Mapping[str, TargetInfo]) -> None:
+    async def _record_scope_read(
+        self,
+        ctx: CallerContext,
+        spec: Operation,
+        targets: Mapping[str, TargetInfo],
+        result: object = None,
+    ) -> None:
         """``ARCHITECTURE_V2.md`` section 5 rule 6: log a read that reached outside the caller's own namespace.
 
-        The read set is what the call actually resolved, not what it may have asked for: only a target the engine
-        returned can have been read. A read confined to the caller's namespace records nothing. With no recorder wired
-        (a unit test, or a deployment with no audit sink) this is a no-op, never a silent pass: the *recorder* is what
-        decides, and `scope.audit.record_scope_read` is the one that writes.
+        The read set is what the call actually resolved, not what it may have asked for: only a target or result item
+        the engine returned can have been read. A read confined to the caller's namespace records nothing. With no
+        recorder wired (a unit test, or a deployment with no audit sink) this is a no-op, never a silent pass: the
+        *recorder* is what decides, and `scope.audit.record_scope_read` is the one that writes.
         """
-        if self.scope_reads is None or not targets:
+        if self.scope_reads is None:
             return
-        cross = {
-            info.scope_path: info.visibility
+        cross: set[str] = {
+            info.scope_path
             for info in targets.values()
             if not _within_callers_namespace(ctx.principal, info.scope_path)
         }
+        if result is not None:
+            for channel_name in ("facts", "hypotheses", "procedures", "conflicts", "audit"):
+                items = getattr(result, channel_name, ())
+                if not isinstance(items, Sequence) or isinstance(items, str | bytes):
+                    continue
+                for item in items:
+                    scope_path = getattr(item, "scope_path", None)
+                    if isinstance(scope_path, str) and not _within_callers_namespace(ctx.principal, scope_path):
+                        cross.add(scope_path)
         if not cross:
             return
         await self.scope_reads.record(ctx.principal, tuple(sorted(cross)))
@@ -539,7 +565,7 @@ class Engine:
             result = await handler(call)
             # 5. Rule 6: a read that left the caller's namespace leaves one content-free `scope_read` row. It runs
             #    after the handler so a refused read records nothing, and a failure to record fails the call closed.
-            await self._record_scope_read(ctx, spec, call.targets)
+            await self._record_scope_read(ctx, spec, call.targets, result)
             return result
         except EntryError as error:
             raise self._contract_error(spec, error) from None

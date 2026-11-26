@@ -90,6 +90,7 @@ class LLMService:
         model_name: Optional[str] = ...,
         response_format: None = ...,
         config: Optional[RunnableConfig] = ...,
+        fallback: bool = ...,
         **model_kwargs: Any,
     ) -> BaseMessage: ...
 
@@ -101,6 +102,7 @@ class LLMService:
         *,
         response_format: Type[T],
         config: Optional[RunnableConfig] = ...,
+        fallback: bool = ...,
         **model_kwargs: Any,
     ) -> T: ...
 
@@ -110,6 +112,7 @@ class LLMService:
         model_name: Optional[str] = None,
         response_format: Optional[Type[BaseModel]] = None,
         config: Optional[RunnableConfig] = None,
+        fallback: bool = True,
         **model_kwargs: Any,
     ) -> Union[BaseMessage, BaseModel]:
         """Call the LLM with retries and circular fallback.
@@ -122,6 +125,9 @@ class LLMService:
                 and returns a validated instance of that schema instead of a
                 raw ``BaseMessage``.
             config: Optional LangChain ``RunnableConfig`` forwarding callbacks and metadata.
+            fallback: When ``False`` only the resolved model is tried (with its own retries).
+                A caller whose answer must be trustworthy refuses to be quietly served by
+                a model it was never evaluated on; see ``services.memory_slots``.
             **model_kwargs: Extra kwargs forwarded to ``LLMRegistry.get`` when
                 constructing a one-off model instance (e.g. ``temperature``,
                 ``max_tokens``, ``reasoning``).
@@ -136,7 +142,7 @@ class LLMService:
         """
         try:
             return await asyncio.wait_for(
-                self._call_with_fallback(messages, model_name, response_format, config, model_kwargs),
+                self._call_with_fallback(messages, model_name, response_format, config, model_kwargs, fallback),
                 timeout=settings.LLM_TOTAL_TIMEOUT,
             )
         except asyncio.TimeoutError:
@@ -254,6 +260,7 @@ class LLMService:
         response_format: Optional[Type[BaseModel]],
         config: Optional[RunnableConfig],
         model_kwargs: dict,
+        fallback: bool = True,
     ) -> Union[BaseMessage, BaseModel]:
         """Build path-specific strategies and delegate to the shared fallback loop.
 
@@ -291,7 +298,10 @@ class LLMService:
             def _override_advance(idx: int) -> Optional[int]:
                 return (idx + 1) % total
 
-            advance: Callable[[int], Optional[int]] = _override_advance
+            def _no_advance(_: int) -> Optional[int]:
+                return None
+
+            advance: Callable[[int], Optional[int]] = _override_advance if fallback else _no_advance
         else:
             start = self._current_model_index
             get_target = _default_target

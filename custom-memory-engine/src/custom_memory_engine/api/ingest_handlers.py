@@ -32,7 +32,16 @@ from psycopg.errors import ForeignKeyViolation
 from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
-from custom_memory_engine.api.runtime import Receipt, Rejected, Runtime, new_id, now, remember, replayed
+from custom_memory_engine.api.runtime import (
+    Receipt,
+    Rejected,
+    Runtime,
+    change_visibility,
+    new_id,
+    now,
+    remember,
+    replayed,
+)
 from custom_memory_engine.engine.gate import AssertionMode as AssertMode
 from custom_memory_engine.engine.hybrid import RecallError, slot_for_dimension
 from custom_memory_engine.engine.ingest import apply_candidate, attach_embedding
@@ -59,6 +68,8 @@ _CONTENT_LIMIT = 20_000
 #: value is a static ``validation_error`` before any statement runs.
 _ASSERTION_MODES = ("asserted", "hedged", "hypothetical", "planned", "quoted", "third_party", "joking")
 _CARDINALITIES = ("single", "multi", "event")
+#: Who may read an artifact beyond its owner (`I7`, `V2-D113`): set at insertion here, or later by `set_visibility`.
+_VISIBILITIES = ("private", "project", "shared")
 
 
 def _text(value: object, field: str, *, limit: int = 512) -> str:
@@ -318,6 +329,7 @@ class IngestHandlers:
         self._require_source_type(source["type"])
         event_time = _when(call.arguments.get("event_time"), "event_time")
         scope = _scope_path(call.arguments.get("scope"), user)
+        visibility = _choice(call.arguments.get("visibility"), "visibility", _VISIBILITIES, "private")
         self._require_kind("episode")
         span = _text(source.get("span") or source["ref"], "source_span")
         document = await self._document_vector(content)
@@ -363,6 +375,8 @@ class IngestHandlers:
                     )
                 await _stamp_creator(self.runtime, connection, call, version_id)
                 await self._apply_retention(connection, user, version_id, "episode")
+                if visibility is not None and visibility != "private":
+                    await change_visibility(connection, version_id, visibility, schema_name=self.runtime.schema_name)
                 await remember(self.runtime, connection, user, "ingest_episode", key, version_id)
                 answer = await _original_answer(self.runtime, connection, user, version_id, "observed")
                 assert isinstance(answer, Receipt)
@@ -386,6 +400,7 @@ class IngestHandlers:
         assertion_mode = _choice(options.get("assertion_mode"), "assertion_mode", _ASSERTION_MODES, "asserted")
         cardinality = _choice(options.get("cardinality"), "cardinality", _CARDINALITIES, "multi")
         um_facet = _choice(options.get("um_facet"), "um_facet", FACETS, None)
+        visibility = _choice(options.get("visibility"), "visibility", _VISIBILITIES, "private")
         try:
             semantic_slot = normalize_slot(options.get("semantic_slot"))
         except SlotError as error:
@@ -497,6 +512,9 @@ class IngestHandlers:
                 )
             await _stamp_creator(self.runtime, connection, call, version_id)
             await self._apply_retention(connection, user, version_id, kind)  # type: ignore[arg-type]
+            stored = await _stored(self.runtime, connection, user, version_id)
+            if visibility is not None and visibility != "private" and stored:
+                await change_visibility(connection, version_id, visibility, schema_name=self.runtime.schema_name)
             await remember(self.runtime, connection, user, "assert", key, version_id)
             # the answer is read back from what was recorded, exactly as a replay reads it
             return await _original_answer(self.runtime, connection, user, version_id, "asserted")

@@ -2,69 +2,110 @@
 
 ## Overview
 
-The template includes a long-term memory system powered by [mem0](https://github.com/mem0ai/mem0) and pgvector. Memories are extracted from conversations, stored as vector embeddings, and retrieved semantically on each request — giving the agent context from past sessions.
+Long-term memory is the ChronaMind memory engine (`custom-memory-engine/`), reached over HTTP by
+`app/services/memory_engine.py` (`MemoryEngineClient`). The engine and the app run on different interpreters on purpose,
+so the boundary is a wire contract, not an import. The legacy `mem0ai` client (`app/services/memory.py`) is not on the
+agent's path.
+
+If `MEMORY_ENGINE_URL` is empty the agent has **no** long-term memory. There is no fallback to mem0.
 
 ## How it works
 
 ```mermaid
 sequenceDiagram
     participant G as LangGraph
-    participant MS as MemoryService
-    participant Cache as Cache (Valkey/TTL)
-    participant M as mem0
-    participant PG as pgvector
+    participant C as MemoryEngineClient
+    participant H as Engine host (POST /v1/call)
 
     Note over G: On every chat request
-    G->>MS: search(user_id, query)
-    MS->>Cache: get(memory:{user_id}:{hash})
-    alt cache hit
-        Cache-->>MS: cached result
-    else cache miss
-        MS->>M: memory.search(user_id, query)
-        M->>PG: vector similarity search
-        PG-->>M: top-k memories
-        M-->>MS: formatted results
-        MS->>Cache: set(key, result, TTL)
-    end
-    MS-->>G: relevant memories string
+    G->>C: search(user_id, query)
+    C->>H: query {text, scope: /u/<user_id>/}
+    H-->>C: {"result": {facts, hypotheses, procedures, conflicts}}
+    C-->>G: labelled context block
 
-    Note over G: After LLM response (background)
-    G-)MS: add(user_id, messages)
-    MS->>M: memory.add(messages, user_id)
-    M->>PG: store new embeddings
+    Note over G: After the LLM response (background)
+    G-)C: add(user_id, messages)
+    C->>H: ingest_episode (every turn)
+    C->>H: assert (each user turn, as a claim)
 ```
 
-## Cache layer
+Every call is `POST {MEMORY_ENGINE_URL}/v1/call` with `Authorization: Bearer {MEMORY_ENGINE_TOKEN}` and the body
+`{"operation": ..., "principal": "<user_id>", "arguments": {...}}`. The answer is `{"result": {...}}`, or
+`{"error": {"code": ..., "detail": ...}}` with a 4xx/5xx status. Failures are logged and the agent continues without
+memory.
 
-Memory search results are cached to avoid repeated pgvector queries for similar questions within the same TTL window.
+## What the agent sees
 
-- **With Valkey/Redis**: cache is shared across app instances. Set `VALKEY_HOST` in your `.env`.
-- **Without Valkey**: falls back to an in-memory `TTLCache` — works fine for single instances.
+`search()` renders the engine's channels with their labels, so the model can tell what it may rely on:
 
-Cache key: `memory:{user_id}:{sha256(query)[:16]}`
-TTL: `CACHE_TTL_SECONDS` (default: 60s)
+| Section | Contents |
+| --- | --- |
+| `Known facts` | claims the user stated (current beliefs; a superseded claim is not returned) |
+| `Hypotheses (inferred, not confirmed)` | inferred artifacts |
+| `Procedures that applied` | procedures |
+| `Open contradictions (unresolved)` | contested beliefs, shown as unresolved |
+| `Earlier conversation (verbatim; may be outdated; not confirmed facts)` | recorded turns (user or assistant), minus any text already rendered above |
 
-Only successful, non-empty results are cached. Errors are never cached.
+## Single-valued facts
 
-## Memory updates
+A user message that states the speaker's *current* value of a single-valued attribute is written with
+`cardinality: "single"` and a `semantic_slot`, so the engine supersedes the previous value: "I live in Berlin" then
+"I moved to Paris" (or "أنا ساكن في برلين" then "انتقلت إلى باريس") leaves one known fact. The slots are `residence`,
+`employer` and `name` (`V2-D121`).
 
-After the LLM produces a response, memories are updated **in the background** via `asyncio.create_task`. This means:
-- The response is returned immediately, without waiting for mem0 to finish
-- Memory updates don't block or slow down the chat response
+The classifier (`app/services/memory_slots.py`) is semantic and language-independent: a language model reads the
+message in whatever language or mix of languages it is written and reports the slot, whether the statement is the
+speaker's current value (not a past fact, a plan, a hypothetical, a denial or a question), and the value as written.
+The app then accepts it only if the value occurs verbatim in the message (after Unicode normalization) and the other
+checks pass. There is no keyword or grammar rule for any language. Only the newest user message of each `add()` is
+classified (one model call per turn). Any model failure, and `MEMORY_SLOT_CLASSIFIER=off`, gives
+`cardinality: "multi"` with no slot: the claim is recorded and supersedes nothing.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `MEMORY_SLOT_CLASSIFIER` | `llm` | `llm`: the semantic classifier; `off`: every claim is multi-valued |
+| `MEMORY_SLOT_CLASSIFIER_MODEL` | *(default model)* | the model the classifier asks; one the app's LLM registry does not serve turns the classifier off with a start-up warning |
+
+## No cache
+
+Memory search results are **not** cached. A rendered context is plaintext memory content, and a client-side copy would
+outlive a deletion or a supersession in the engine; every `search()` asks the engine.
 
 ## Configuration
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `LONG_TERM_MEMORY_COLLECTION_NAME` | `longterm_memory` | pgvector collection name |
-| `LONG_TERM_MEMORY_MODEL` | `gpt-5-nano` | LLM used by mem0 to extract and process memories |
-| `LONG_TERM_MEMORY_EMBEDDER_MODEL` | `text-embedding-3-small` | Embedding model for semantic search |
-| `CACHE_TTL_SECONDS` | `60` | Memory search cache TTL |
+The app needs two variables:
+
+| Variable | Description |
+| --- | --- |
+| `MEMORY_ENGINE_URL` | Base URL of the engine host, e.g. `http://127.0.0.1:8100`. Empty disables long-term memory |
+| `MEMORY_ENGINE_TOKEN` | The app's service token on the engine host |
+
+The token must be configured on the engine host as a **delegating** service token, so that one token can act for every
+end user (each end user is the engine principal, with their own `/u/<user_id>/` namespace, provisioned on first call):
+
+```bash
+CME_HOST_TOKENS='{"<MEMORY_ENGINE_TOKEN>": {"principal": "chronamind-app", "tier": "B", "delegate": true}}'
+```
+
+The tier comes from the token; the app never sends one. See `custom-memory-engine/scripts/run_host.py` for the host's
+own variables (`CME_DATABASE_URL`, `CME_RUNTIME_ROLE`, `CME_SCHEMA`, `CME_PROVENANCE_KEY`, `CME_DELETION_RECEIPT_KEY`).
 
 ## Startup pre-warming
 
-At startup, `memory_service.initialize()` is called in the app lifespan. This establishes the pgvector connection pool and runs mem0's schema check, so the first user request doesn't pay the ~130ms cold-init cost.
+At startup, `memory_engine.initialize()` probes the host's `GET /healthz` so the first request does not pay connection
+setup. A failure is logged, not fatal.
 
 ## Per-user isolation
 
-Each user's memories are stored and searched independently using `user_id` as the namespace. Users cannot access each other's memories.
+Each end user is a separate engine principal. A search acts for exactly one user and cannot read another user's memory;
+an anonymous session gets no long-term memory at all.
+
+## Tests
+
+- `tests/test_memory_engine_boundary.py`: the request shapes and the rendering, without a server.
+- `tests/test_memory_slots.py`: the classifier's language-independent checks, in Arabic, English and mixed text.
+- `tests/live/test_memory_slots_live.py`: the classifier against a real model (opt-in, `MEMORY_SLOT_LIVE_EVAL=1`):
+  Arabic, English, mixed-language, corrections, historical facts and Berlin → Paris → Berlin.
+- `tests/integration/test_app_engine_boundary.py`: the client against a real engine host and PostgreSQL. It needs
+  `custom-memory-engine/.venv` (`uv sync --locked --extra host` in `custom-memory-engine/`) and `CME_TEST_DATABASE_URL`,
+  and skips with the reason otherwise.

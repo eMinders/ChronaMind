@@ -162,7 +162,7 @@ Yes. Set `LANGFUSE_TRACING_ENABLED=false` (or omit the Langfuse keys). The agent
 **Memory / semantic search returns nothing**
 - Verify the `pgvector` extension is enabled in your PostgreSQL instance
 - Confirm `OPENAI_API_KEY` is valid (mem0 calls OpenAI for fact extraction + embeddings)
-- Check `LONG_TERM_MEMORY_MODEL` and `LONG_TERM_MEMORY_EMBEDDER_MODEL` are set in `.env.development`
+- Check `MEMORY_ENGINE_URL` and `MEMORY_SLOT_CLASSIFIER_MODEL` are set in `.env.development`
 
 **Rate limiting is too aggressive**
 Limits are defined in `app/core/limiter.py` (slowapi). Adjust per-route decorators or the default rate in that file. See [docs/configuration.md](docs/configuration.md) for the related env vars.

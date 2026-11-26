@@ -26,11 +26,18 @@ VECTOR = vector_literal([1.0] + [0.0] * 1023)
 
 async def seed(conn, *, with_vector: bool) -> None:
     # `u1` and `app.user_id` are set by the fixture's `connect`
-    await conn.execute(
-        "INSERT INTO entity (id, user_id, scope_path, canonical_name, entity_type, aliases, embedding_1024,"
-        " embedding_model) VALUES ('e1', 'u1', '/u/u1/', 'layla hassan', 'person', '{}', %s::halfvec(1024), %s)",
-        (VECTOR if with_vector else None, "test/axes" if with_vector else None),
-    )
+    async with conn.transaction():
+        await conn.execute(
+            "INSERT INTO entity (id, user_id, scope_path, canonical_name, entity_type, aliases, embedding_1024,"
+            " embedding_model) VALUES ('e1', 'u1', '/u/u1/', 'layla hassan', 'person', '{}', %s::halfvec(1024), %s)",
+            (VECTOR if with_vector else None, "test/axes" if with_vector else None),
+        )
+        has_prov = await rows(conn, "SELECT pg_catalog.to_regclass('artifact_provenance') IS NOT NULL")
+        if has_prov and has_prov[0][0]:
+            await conn.execute(
+                "INSERT INTO artifact_provenance (id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+                "VALUES ('ap-e1', 'u1', 'entity', 'e1', 'tier_c_call', 'u1')"
+            )
 
 
 async def test_a_vector_and_its_model_are_written_together_or_not_at_all(database) -> None:  # noqa: F811
@@ -67,8 +74,10 @@ async def test_rollback_restores_version_25_exactly_and_reapply_works(database) 
 async def test_rollback_refuses_while_vectors_exist_and_proceeds_only_when_the_loss_is_named(database) -> None:  # noqa: F811
     config, schema = database
     runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
-    down = cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=M26 - 1))
+    prep_down = cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=M26))
+    down = cast(LiteralString, rollback_sql(from_version=M26, to_version=M26 - 1))
     async with connect(database) as conn:
+        await conn.execute(prep_down, prepare=False)
         await seed(conn, with_vector=True)
         for setting in (None, "export_snapshot"):
             with pytest.raises(RaiseException, match="m26_rollback_refused_entity_vectors_exist"):
@@ -78,7 +87,7 @@ async def test_rollback_refuses_while_vectors_exist_and_proceeds_only_when_the_l
                     await conn.execute(down, prepare=False)
         # nothing was half-done: the column, the vector and the history row are all still there
         assert await rows(conn, "SELECT embedding_model FROM entity WHERE id = 'e1'") == [("test/axes",)]
-        assert await rows(conn, "SELECT max(version) FROM _cme_schema_migrations") == [(migrate.VERSION,)]
+        assert await rows(conn, "SELECT max(version) FROM _cme_schema_migrations") == [(M26,)]
         async with conn.transaction():
             await conn.execute("SET LOCAL cme.rollback_discard = 'entity_embedding'")
             await conn.execute(down, prepare=False)

@@ -45,11 +45,17 @@ async def add_method(conn: AsyncConnection, method_id: str = "m-test") -> None:
 
 
 async def edge(conn: AsyncConnection, edge_id: str, a: str, b: str, kind: str = "related_to", **extra: str) -> None:
-    await conn.execute(
-        "INSERT INTO association (id, user_id, from_id, to_id, type, created_by, origin) "
-        "VALUES (%s, 'u1', %s, %s, %s, 'test', %s)",
-        (edge_id, a, b, kind, extra.get("origin", "tier_c")),
-    )
+    async with conn.transaction():
+        await conn.execute(
+            "INSERT INTO association (id, user_id, from_id, to_id, type, created_by, origin) "
+            "VALUES (%s, 'u1', %s, %s, %s, 'test', %s)",
+            (edge_id, a, b, kind, extra.get("origin", "tier_c")),
+        )
+        await conn.execute(
+            "INSERT INTO artifact_provenance (id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+            "VALUES (%s, 'u1', 'association', %s, 'tier_c_call', 'test')",
+            (f"ap-{edge_id}", edge_id),
+        )
 
 
 async def abstraction(conn: AsyncConnection, version_id: str) -> None:
@@ -207,12 +213,22 @@ async def test_an_entity_is_opaque_and_invisible_outside_its_owner_under_a_restr
             assert await privilege_violations(admin, schema, role) == []  # the exact matrix, new tables included
         async with connect(database, user="u4") as app4:
             await app4.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(role)))
-            for name in ("Ada", "Ada"):  # same name twice: ids are random, never derived from content
-                await app4.execute(
-                    "INSERT INTO entity (user_id, scope_path, canonical_name, entity_type) "
-                    "VALUES ('u4', '/u/u4/', %s, 'person')",
-                    (name,),
-                )
+            async with app4.transaction():
+                # same name twice: ids are random, never derived from content
+                for idx, name in enumerate(("Ada", "Ada")):
+                    cur = await app4.execute(
+                        "INSERT INTO entity (user_id, scope_path, canonical_name, entity_type) "
+                        "VALUES ('u4', '/u/u4/', %s, 'person') RETURNING id",
+                        (name,),
+                    )
+                    ent_row = await cur.fetchone()
+                    assert ent_row is not None
+                    await app4.execute(
+                        "INSERT INTO artifact_provenance "
+                        "(id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+                        "VALUES (%s, 'u4', 'entity', %s, 'tier_c_call', 'test')",
+                        (f"ap-u4-{idx}", str(ent_row[0])),
+                    )
             ids = [str(r[0]) for r in await rows(app4, "SELECT id FROM entity ORDER BY id")]
             assert len(ids) == 2 and ids[0] != ids[1] and all(i.startswith("ent_") and len(i) == 36 for i in ids)
             with pytest.raises(CheckViolation):  # principal-scoped: the entity lives in the creator's own namespace
@@ -287,13 +303,19 @@ async def test_verification_is_a_record_and_the_status_cannot_claim_it_without_o
             await conn.execute(
                 "UPDATE abstraction_stats SET verification_status = 'verified' WHERE version_id = 'abs1'"
             )
-        await conn.execute(
-            "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
-            "negative_control_slice_id, support_window, held_out_window, support_context_key, held_out_context_key, "
-            "outcome) VALUES ('v-1', 'abs1', 'u1', 'split-1', now(), 'neg-1', %s::tstzrange, %s::tstzrange, "
-            "'ctx-a', 'ctx-b', 'verified')",
-            (WINDOW_A, WINDOW_B),
-        )
+        async with conn.transaction():
+            await conn.execute(
+                "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
+                "negative_control_slice_id, support_window, held_out_window, support_context_key, "
+                "held_out_context_key, outcome) "
+                "VALUES ('v-1', 'abs1', 'u1', 'split-1', now(), 'neg-1', %s::tstzrange, %s::tstzrange, "
+                "'ctx-a', 'ctx-b', 'verified')",
+                (WINDOW_A, WINDOW_B),
+            )
+            await conn.execute(
+                "INSERT INTO verification_artifact (verification_id, user_id, role, artifact_id) VALUES "
+                "('v-1', 'u1', 'support', 'src'), ('v-1', 'u1', 'held_out', 'held-1')"
+            )
         assert await rows(conn, "SELECT windows_disjoint FROM verification") == [(True,)]  # I11 data is checkable
         await conn.execute("UPDATE abstraction_stats SET verification_status = 'verified' WHERE version_id = 'abs1'")
         with pytest.raises(RaiseException, match="verification_cannot_be_withdrawn"):
@@ -306,20 +328,26 @@ async def test_verification_is_a_record_and_the_status_cannot_claim_it_without_o
         with pytest.raises(RaiseException, match="verification_is_append_only"):
             await conn.execute("DELETE FROM verification WHERE id = 'v-1'")
         with pytest.raises(RaiseException, match="verification_is_append_only"):
-            await conn.execute("TRUNCATE verification")
+            await conn.execute("TRUNCATE verification, verification_artifact")
         with pytest.raises(
             RaiseException, match="requires_a_verification_record"
         ):  # a 'refuted' needs a refuting record
             await conn.execute(
                 "UPDATE abstraction_stats SET verification_status = 'refuted' WHERE version_id = 'abs1'"
             )
-        await conn.execute(
-            "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
-            "negative_control_slice_id, support_window, held_out_window, support_context_key, held_out_context_key, "
-            "outcome) VALUES ('v-2', 'abs1', 'u1', 'split-2', now(), 'neg-2', %s::tstzrange, %s::tstzrange, "
-            "'ctx-a', 'ctx-a', 'refuted')",
-            (WINDOW_A, WINDOW_A),
-        )
+        async with conn.transaction():
+            await conn.execute(
+                "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
+                "negative_control_slice_id, support_window, held_out_window, support_context_key, "
+                "held_out_context_key, outcome) "
+                "VALUES ('v-2', 'abs1', 'u1', 'split-2', now(), 'neg-2', %s::tstzrange, %s::tstzrange, "
+                "'ctx-a', 'ctx-a', 'refuted')",
+                (WINDOW_A, WINDOW_A),
+            )
+            await conn.execute(
+                "INSERT INTO verification_artifact (verification_id, user_id, role, artifact_id) VALUES "
+                "('v-2', 'u1', 'support', 'src'), ('v-2', 'u1', 'held_out', 'held-2')"
+            )
         assert await rows(conn, "SELECT windows_disjoint FROM verification WHERE id = 'v-2'") == [(False,)]
 
 
@@ -510,6 +538,10 @@ async def test_inferred_to_retired_needs_one_of_the_reason_records(database) -> 
                 "held_out_context_key, outcome) VALUES ('vr', 'refuted', 'u1', 's', now(), 'n', "
                 "%s::tstzrange, %s::tstzrange, 'a', 'b', 'refuted')",
                 (WINDOW_A, WINDOW_B),
+            )
+            await conn.execute(
+                "INSERT INTO verification_artifact (verification_id, user_id, role, artifact_id) VALUES "
+                "('vr', 'u1', 'support', 'src'), ('vr', 'u1', 'held_out', 'held-r')"
             )
         async with conn.transaction():  # the user's dissent (V2-D46)
             await conn.execute("UPDATE memory_version SET lifecycle = 'retired' WHERE id = 'dissent'")

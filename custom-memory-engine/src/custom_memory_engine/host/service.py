@@ -1,4 +1,4 @@
-"""The host's engine service: one pooled connection per call, one fully wired engine per call (``E-046``).
+"""The host's engine service: one pooled connection per call, one fully wired engine per call (``E-046``, ``#251``).
 
 ``Runtime`` is deliberately one connection — a call's whole read set, its clock watermark and its row-level security
 live in a transaction — so the host cannot hold "an engine" as a process-wide singleton. It holds a **pool**, and each
@@ -15,12 +15,14 @@ They are read once at start-up from ``CME_PROVENANCE_KEY`` / ``CME_DELETION_RECE
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
-from dataclasses import dataclass
+import time
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from math import isfinite
 
 import structlog
 from psycopg import AsyncConnection, sql
+from psycopg.rows import tuple_row
 from psycopg_pool import AsyncConnectionPool
 
 from custom_memory_engine.api.entry import CallerContext, Credential, Engine, EntryError
@@ -28,8 +30,11 @@ from custom_memory_engine.api.refine import ResultStore
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.api.wiring import wire_engine
 from custom_memory_engine.engine.cost import CostStore
+from custom_memory_engine.engine.deletion import RECEIPT_KEY_ENV
 from custom_memory_engine.engine.hybrid import JUDGE_RELEVANCE_FLOOR, RecallError, RelevanceJudge, slot_for_dimension
 from custom_memory_engine.host.credentials import HostCredentials
+from custom_memory_engine.host.limits import ConcurrencyLimiter, RateLimiter, ResourceLimitError
+from custom_memory_engine.host.metrics import HostMetrics
 from custom_memory_engine.profile import Profile
 from custom_memory_engine.scope.access import Selector, resolve_read_set
 from custom_memory_engine.scope.paths import ScopeError, parse_scope, user_scope
@@ -42,6 +47,59 @@ PROVENANCE_KEY_ENV = "CME_PROVENANCE_KEY"
 MAX_READ_SELECTORS = 8
 
 
+class _InstrumentedEmbedder:
+    """Thin proxy recording embedder degradations into :class:`HostMetrics` without altering engine fallback."""
+
+    def __init__(self, inner: Embedder, metrics: HostMetrics) -> None:
+        self._inner = inner
+        self._metrics = metrics
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    @property
+    def dimensions(self) -> int:
+        return self._inner.dimensions
+
+    async def embed(self, texts: Sequence[str], *, query: bool = False) -> Sequence[Sequence[float]]:
+        try:
+            vectors = await self._inner.embed(texts, query=query)
+        except Exception:
+            self._metrics.record_degradation("embedder")
+            raise
+        if len(vectors) != len(texts) or any(len(vector) != self._inner.dimensions for vector in vectors):
+            self._metrics.record_degradation("embedder")
+        elif vectors:
+            try:
+                slot_for_dimension(len(vectors[0]))
+            except RecallError:
+                self._metrics.record_degradation("embedder")
+        return vectors
+
+
+class _InstrumentedJudge:
+    """Thin proxy recording relevance-judge degradations into :class:`HostMetrics` without altering fallback."""
+
+    def __init__(self, inner: RelevanceJudge, metrics: HostMetrics) -> None:
+        self._inner = inner
+        self._metrics = metrics
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    async def relevance(self, query: str, documents: Sequence[str]) -> Sequence[float]:
+        try:
+            scores = await self._inner.relevance(query, documents)
+        except Exception:
+            self._metrics.record_degradation("judge")
+            raise
+        if len(scores) != len(documents) or not all(isfinite(float(value)) for value in scores):
+            self._metrics.record_degradation("judge")
+        return scores
+
+
 @dataclass(frozen=True, slots=True)
 class HostSettings:
     """Everything the host needs that is not a request. Read once, at start-up, and validated there."""
@@ -50,13 +108,19 @@ class HostSettings:
     role: str
     schema_name: str = "cme_engine"
     profile: Profile | None = None
-    tau_confidence: float = 0.6
-    tau_coverage: float = 0.5
+    tau_confidence: float = 0.90
+    tau_coverage: float = 0.60
     max_body_bytes: int = 1_048_576
     pool_min: int = 1
     pool_max: int = 8
-    provenance_key: bytes | None = None
-    deletion_key: bytes | None = None
+    rate_limit_rps: float = 0.0
+    rate_limit_burst: int = 20
+    max_inflight: int = 6
+    per_principal_max_inflight: int | None = None
+    inflight_acquire_timeout: float = 0.05
+    # `repr=False`: a settings object reaches tracebacks and log lines, and these are the deployment's signing keys.
+    provenance_key: bytes | None = field(default=None, repr=False)
+    deletion_key: bytes | None = field(default=None, repr=False)
     #: The dense arm's query embedder (``V2-D98``). ``None`` leaves the engine lexical-only, which is honest: it
     #: ranks by the two language-agnostic arms rather than pretending a vector it does not have.
     embedder: Embedder | None = None
@@ -65,6 +129,50 @@ class HostSettings:
     #: the same model, so a deployment that swaps the model must re-derive the floor (``reports/retrieval``).
     judge: RelevanceJudge | None = None
     judge_floor: float = JUDGE_RELEVANCE_FLOOR
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pool_min, bool) or self.pool_min < 1:
+            raise EntryError("validation_error", "pool_min_invalid")
+        if isinstance(self.pool_max, bool) or self.pool_max < self.pool_min:
+            raise EntryError("validation_error", "pool_max_invalid")
+        if isinstance(self.max_inflight, bool) or self.max_inflight < 1:
+            raise EntryError("validation_error", "max_inflight_invalid")
+        if self.pool_max < self.max_inflight + 1:
+            # Reserve at least one pool connection so `/healthz` and `/metrics` are never starved by request traffic.
+            raise EntryError("validation_error", "pool_max_must_exceed_max_inflight")
+        if self.per_principal_max_inflight is None:
+            # Default below `max_inflight` when >= 2 slots exist so one saturated caller cannot starve a second caller.
+            object.__setattr__(self, "per_principal_max_inflight", max(1, self.max_inflight - 1))
+        elif (
+            isinstance(self.per_principal_max_inflight, bool)
+            or self.per_principal_max_inflight < 1
+            or self.per_principal_max_inflight > self.max_inflight
+        ):
+            raise EntryError("validation_error", "per_principal_max_inflight_invalid")
+        if isinstance(self.rate_limit_rps, bool) or not isfinite(self.rate_limit_rps) or self.rate_limit_rps < 0.0:
+            raise EntryError("validation_error", "rate_limit_rps_invalid")
+        if isinstance(self.rate_limit_burst, bool) or self.rate_limit_burst < 1:
+            raise EntryError("validation_error", "rate_limit_burst_invalid")
+        if (
+            isinstance(self.inflight_acquire_timeout, bool)
+            or not isfinite(self.inflight_acquire_timeout)
+            or self.inflight_acquire_timeout < 0.0
+        ):
+            raise EntryError("validation_error", "inflight_timeout_invalid")
+        if isinstance(self.max_body_bytes, bool) or self.max_body_bytes < 1:
+            raise EntryError("validation_error", "max_body_bytes_invalid")
+        if (
+            isinstance(self.tau_confidence, bool)
+            or not isfinite(self.tau_confidence)
+            or not (0.0 < self.tau_confidence <= 1.0)
+        ):
+            raise EntryError("validation_error", "tau_confidence_invalid")
+        if (
+            isinstance(self.tau_coverage, bool)
+            or not isfinite(self.tau_coverage)
+            or not (0.0 <= self.tau_coverage <= 1.0)
+        ):
+            raise EntryError("validation_error", "tau_coverage_invalid")
 
 
 class HostService:
@@ -79,6 +187,24 @@ class HostService:
         # stores are caller-scoped internally, so sharing them across requests shares nothing across principals.
         self._results = ResultStore()
         self._costs = CostStore()
+        self.metrics = HostMetrics()
+        self.rate_limiter = RateLimiter(settings.rate_limit_rps, settings.rate_limit_burst)
+        self.concurrency_limiter = ConcurrencyLimiter(
+            settings.max_inflight,
+            per_principal_max_inflight=settings.per_principal_max_inflight,
+            acquire_timeout=settings.inflight_acquire_timeout,
+        )
+        self._embedder: Embedder | None = (
+            _InstrumentedEmbedder(settings.embedder, self.metrics) if settings.embedder is not None else None
+        )
+        self._judge: RelevanceJudge | None = (
+            _InstrumentedJudge(settings.judge, self.metrics) if settings.judge is not None else None
+        )
+
+    @property
+    def is_started(self) -> bool:
+        """Whether the database connection pool has been opened."""
+        return self._pool is not None
 
     @classmethod
     async def open(cls, settings: HostSettings, credentials: HostCredentials) -> HostService:
@@ -126,27 +252,112 @@ class HostService:
             self._pool = None
             logger.info("host_pool_closed")
 
+    # -- probes & metrics (bypass request concurrency semaphore using reserved pool capacity) -----------------
+
+    async def probe_health(self) -> bool:
+        """Verify database connectivity using reserved pool capacity, bypassing request concurrency bounds."""
+        if self._pool is None:
+            return True
+        try:
+            async with self._pool.connection(timeout=2.0) as connection:
+                await connection.execute("SELECT 1")
+        except Exception as error:  # noqa: BLE001 - readiness probe reports status only
+            logger.warning("host_health_probe_failed", error_type=type(error).__name__)
+            return False
+        return True
+
+    async def collect_queue_metrics(self) -> dict[tuple[str, str], int] | None:
+        """Aggregate ``(kind, status)`` job counts without tenant or content identifiers, or ``None`` if unmeasured.
+
+        ``job`` is under forced row-level security, so a session that cannot bypass it sees no tenant's rows and an
+        honest count is impossible: that is ``None`` (rendered as ``cme_queue_metrics_available 0``), never a zero. A
+        deployment that wants queue gauges on the host gives its login role ``BYPASSRLS``; otherwise the queue is
+        observed from the database directly (``deploy/README.md``). No privileged function is added for this.
+        """
+        if self._pool is None:
+            return None
+        counts: dict[tuple[str, str], int] = {}
+        try:
+            async with self._pool.connection(timeout=2.0) as connection:
+                async with connection.cursor(row_factory=tuple_row) as cursor:
+                    await cursor.execute(
+                        "SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user"
+                    )
+                    row = await cursor.fetchone()
+                    if row is None or not row[0]:
+                        return None
+                    await cursor.execute(
+                        sql.SQL("SELECT kind, status, count(*) FROM {} GROUP BY kind, status").format(
+                            sql.Identifier(self.settings.schema_name, "job")
+                        )
+                    )
+                    for kind, status, total in await cursor.fetchall():
+                        counts[(str(kind), str(status))] = int(total)
+        except Exception as error:  # noqa: BLE001 - metrics scrape degrades gracefully
+            logger.warning("host_metrics_queue_query_failed", error_type=type(error).__name__)
+            return None
+        return counts
+
     # -- the call ---------------------------------------------------------------------------------------------
 
-    async def call(self, credential: Credential, operation: str, arguments: Mapping[str, object]) -> object:
-        """One operation, as ``credential``, under row-level security."""
+    async def call(
+        self,
+        credential: Credential,
+        operation: str,
+        arguments: Mapping[str, object],
+        *,
+        delegated: bool = False,
+    ) -> object:
+        """One operation, as ``credential``, under rate/concurrency bounds and row-level security.
+
+        ``delegated`` marks a credential a delegating service token built for an end user (``V2-D120``). That end user
+        has no operator to provision it, so its ``app_user`` row is created here, idempotently and as the user itself
+        (the ``app_user`` policy admits only the session's own id). The limits key on the end user, so one busy user
+        of a shared service cannot starve the others.
+        """
+        started = time.perf_counter()
         if self._pool is None:
             raise EntryError("internal_error")
-        async with self._pool.connection() as connection:
-            runtime = self._runtime(connection)
-            engine: Engine = wire_engine(
-                runtime,
-                profile=self.settings.profile,
-                tau_confidence=self.settings.tau_confidence,
-                tau_coverage=self.settings.tau_coverage,
-                embedder=self.settings.embedder,
-                judge=self.settings.judge,
-                judge_floor=self.settings.judge_floor,
-                results=self._results,
-                costs=self._costs,
+        try:
+            self.rate_limiter.check(credential.principal)
+        except ResourceLimitError:
+            logger.warning(
+                "host_call_refused",
+                operation=operation,
+                tier=credential.tier,
+                status=429,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
             )
-            context = await self._context(engine, runtime, credential, arguments)
-            return await engine.call(context, operation, arguments)
+            raise
+        try:
+            async with self.concurrency_limiter.acquire(credential.principal):
+                async with self._pool.connection() as connection:
+                    runtime = self._runtime(connection)
+                    engine: Engine = wire_engine(
+                        runtime,
+                        profile=self.settings.profile,
+                        tau_confidence=self.settings.tau_confidence,
+                        tau_coverage=self.settings.tau_coverage,
+                        embedder=self._embedder,
+                        judge=self._judge,
+                        judge_floor=self.settings.judge_floor,
+                        results=self._results,
+                        costs=self._costs,
+                    )
+                    if delegated:
+                        await self._provision(runtime, credential.principal)
+                    context = await self._context(engine, runtime, credential, arguments)
+                    forward_args = {key: value for key, value in arguments.items() if key != "read_scopes"}
+                    return await engine.call(context, operation, forward_args)
+        except ResourceLimitError:
+            logger.warning(
+                "host_call_refused",
+                operation=operation,
+                tier=credential.tier,
+                status=429,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
+            raise
 
     def _runtime(self, connection: object) -> Runtime:
         """A ``Runtime`` on this connection with the deployment's keys, so a signature verifies across requests."""
@@ -202,6 +413,21 @@ class HostService:
             except ScopeError:
                 raise EntryError("validation_error", "read_scopes_invalid") from None
         return selectors
+
+    async def _provision(self, runtime: Runtime, principal: str) -> None:
+        """Create ``principal``'s ``app_user`` row if it is absent. A no-op on every call after the first.
+
+        Not cached in-process: a cache would have to be invalidated by an operator's out-of-band change, and the
+        statement is one indexed ``INSERT ... ON CONFLICT DO NOTHING`` on a primary key.
+        """
+        async with runtime.session(principal) as connection:
+            await connection.execute(
+                sql.SQL(
+                    "INSERT INTO {u} (id, external_ref, created_at) VALUES (%s, %s, clock_now()) "
+                    "ON CONFLICT DO NOTHING"
+                ).format(u=runtime.table("app_user")),
+                (principal, principal),
+            )
 
     async def _active_grants(self, runtime: Runtime, principal: str) -> tuple[str, ...]:
         """Scopes other principals have granted this one, straight from ``scope_grant`` under RLS."""
@@ -279,6 +505,12 @@ def settings_from_environment(environment: Mapping[str, str] | None = None) -> H
             raise EntryError("validation_error", f"{name.lower()}_required")
         return value
 
+    def required_key(name: str) -> bytes:
+        value = key(name)
+        if value is None:
+            raise EntryError("validation_error", f"{name.lower()}_required")
+        return value
+
     def key(name: str) -> bytes | None:
         value = env.get(name, "").strip()
         if not value:
@@ -288,17 +520,49 @@ def settings_from_environment(environment: Mapping[str, str] | None = None) -> H
             raise EntryError("validation_error", f"{name.lower()}_too_short")
         return value.encode("utf-8")
 
+    def parse_int(name: str, default: str) -> int:
+        raw = env.get(name, default).strip() or default
+        try:
+            return int(raw)
+        except ValueError:
+            raise EntryError("validation_error", f"{name.lower()}_invalid") from None
+
+    def parse_float(name: str, default: str) -> float:
+        raw = env.get(name, default).strip() or default
+        try:
+            return float(raw)
+        except ValueError:
+            raise EntryError("validation_error", f"{name.lower()}_invalid") from None
+
+    raw_per_principal = env.get("CME_HOST_PER_PRINCIPAL_MAX_INFLIGHT", "").strip()
+    if not raw_per_principal:
+        per_principal_max_inflight: int | None = None
+    else:
+        try:
+            per_principal_max_inflight = int(raw_per_principal)
+        except ValueError:
+            raise EntryError("validation_error", "cme_host_per_principal_max_inflight_invalid") from None
+
     return HostSettings(
         dsn=required("CME_DATABASE_URL"),
         role=required("CME_RUNTIME_ROLE"),
-        schema_name=env.get("CME_SCHEMA", "cme_engine"),
-        tau_confidence=float(env.get("CME_TAU_CONFIDENCE", "0.6")),
-        tau_coverage=float(env.get("CME_TAU_COVERAGE", "0.5")),
-        max_body_bytes=int(env.get("CME_HOST_MAX_BODY_BYTES", "1048576")),
-        pool_min=int(env.get("CME_HOST_POOL_MIN", "1")),
-        pool_max=int(env.get("CME_HOST_POOL_MAX", "8")),
+        schema_name=env.get("CME_SCHEMA", "cme_engine").strip() or "cme_engine",
+        tau_confidence=parse_float("CME_TAU_CONFIDENCE", "0.90"),
+        tau_coverage=parse_float("CME_TAU_COVERAGE", "0.60"),
+        max_body_bytes=parse_int("CME_HOST_MAX_BODY_BYTES", "1048576"),
+        pool_min=parse_int("CME_HOST_POOL_MIN", "1"),
+        pool_max=parse_int("CME_HOST_POOL_MAX", "8"),
+        rate_limit_rps=parse_float("CME_HOST_RATE_LIMIT_RPS", "0.0"),
+        rate_limit_burst=parse_int("CME_HOST_RATE_LIMIT_BURST", "20"),
+        max_inflight=parse_int("CME_HOST_MAX_INFLIGHT", "6"),
+        per_principal_max_inflight=per_principal_max_inflight,
+        inflight_acquire_timeout=parse_float("CME_HOST_INFLIGHT_TIMEOUT_SECONDS", "0.05"),
         provenance_key=key(PROVENANCE_KEY_ENV),
-        deletion_key=key("CME_DELETION_RECEIPT_KEY"),
+        # required, never defaulted: `engine.deletion.default_receipt_key()` invents a random key per process when this
+        # is absent, and a digest made under a random key can never be matched by the erasure journal's replay (it
+        # reads as "a target the backup never held") or by an idempotent retry after a restart. Refusing here is the
+        # one place that failure is caught before it becomes silent (V2-D122).
+        deletion_key=required_key(RECEIPT_KEY_ENV),
         embedder=embedder_from_environment(env),
         judge=judge_from_environment(env),
         judge_floor=judge_floor_from_environment(env),

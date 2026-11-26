@@ -19,7 +19,7 @@ from pydantic import SecretStr
 
 from custom_memory_engine.config import TestDatabaseConfig as DatabaseConfig
 from custom_memory_engine.schema import migrate
-from tests.integration.rollbacks import adapt
+from tests.integration.rollbacks import adapt, rollback_sql
 
 pytestmark = pytest.mark.integration
 
@@ -195,3 +195,25 @@ async def test_a_refused_upgrade_leaves_force_restored_and_the_history_behind(
                       AND NOT c.relforcerowsecurity AND c.relname <> 'clock_watermark'""",
             ) == [(0,)]
             assert await rows(conn, "SELECT max(version) FROM _cme_schema_migrations") == [(4,)]
+
+
+async def test_a_guarded_rollback_refuses_an_owner_that_cannot_see_every_row() -> None:
+    """Under FORCE RLS an ordinary owner sees no tenant's rows, so a rollback's data guard would pass on an empty view.
+
+    Rollback 31 refuses while pinned verification artifacts exist; run by this owner it would have counted zero of them
+    and dropped the table. It must refuse the role instead, inside the same transaction, and leave the schema whole.
+    """
+    schema = "cme_owner_" + uuid4().hex[:12]
+    async with ordinary_owner(schema) as owner_dsn:
+        runner = migrate.MigrationRunner(
+            migrate.MigrationConfig(database_url=SecretStr(owner_dsn), schema_name=schema)
+        )
+        await runner.apply()
+        async with await AsyncConnection.connect(owner_dsn) as conn:
+            await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+            with pytest.raises(Exception) as refused:
+                await conn.execute(cast(LiteralString, rollback_sql(from_version=migrate.VERSION, to_version=30)))
+            await conn.rollback()
+        assert "rollback_requires_bypassrls" in str(refused.value)
+        status = await runner.status()
+        assert (status.state, status.version) == ("applied", migrate.VERSION)

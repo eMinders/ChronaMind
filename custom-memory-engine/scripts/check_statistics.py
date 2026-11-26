@@ -17,6 +17,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from evaluation.stats.abstraction_metrics import (  # noqa: E402
+    confidence_lower as eval_confidence_lower,
+)
+from evaluation.stats.abstraction_metrics import (  # noqa: E402
+    partial_identification_cp_bounds,
+)
+from evaluation.stats.admission import assess_admission  # noqa: E402
+from evaluation.stats.admission import ledger as eval_ledger  # noqa: E402
 from validation.cp_bounds import cp_upper  # noqa: E402  (v1 asset, unchanged)
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -160,6 +168,38 @@ def main() -> int:
     print(f"  r3 1-CP_upper(k+u,o) = {correct:.4f}  (rejected -> correct)")
     if buggy < TAU_CONF or correct >= TAU_CONF:
         failures.append("r3 regression case did not reproduce")
+
+    print("\n== agreement with evaluation.stats.{abstraction_metrics,admission} ==")
+    eval_cases = (
+        *CASES.values(),
+        (36, 0, 0),
+        (29, 0, 0),
+        (0, 0, 1),
+        (60, 1, 0),
+    )
+    for s, k, u in eval_cases:
+        o = s + k + u
+        expected_upper = cp_upper(k + u, o)
+        expected_conf = 1.0 - expected_upper
+        got_conf = eval_confidence_lower(s, k, u)
+        _lo_cp, got_hi_cp = partial_identification_cp_bounds(s, k, u)
+        summary = eval_ledger(s, k, u)
+        adm = assess_admission(s, k, u, refutation_attempts=3, negative_control_clean=True)
+        for label, actual, target in (
+            ("abstraction_metrics.confidence_lower", got_conf, expected_conf),
+            ("abstraction_metrics.cp_upper", got_hi_cp, expected_upper),
+            ("admission.ledger.failure_upper", summary.failure_upper, expected_upper),
+            ("admission.ledger.confidence_lower", summary.confidence_lower, expected_conf),
+            ("admission.assess_admission.confidence_lower", adm.ledger.confidence_lower, expected_conf),
+        ):
+            if abs(actual - target) > 1e-9:
+                failures.append(f"({s},{k},{u}) {label}={actual:.12f} != {target:.12f}")
+    for name, (s, k, u) in CASES.items():
+        adm = assess_admission(s, k, u, refutation_attempts=3, negative_control_clean=True)
+        row = ledger(s, k, u)
+        if adm.admissible != admitted(row, k):
+            failures.append(f"{name}: evaluation.stats.admission={adm.admissible} != {admitted(row, k)}")
+    print(f"  checked {len(eval_cases)} cases against cp_upper within 1e-9")
 
     if failures:
         print("\nFAILED:")

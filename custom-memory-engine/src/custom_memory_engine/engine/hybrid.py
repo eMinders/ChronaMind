@@ -230,11 +230,16 @@ class RelevanceJudge(Protocol):
 
 
 #: Below this relevance logit a candidate is not an answer to the question. **Measured**, not chosen (`V2-D104`): on
-#: the 64-question labelled set, judged over the fused page, the weakest *answerable* question scored ``-6.68`` and the
-#: strongest *unanswerable* one ``-11.01``. ``-8.8`` is their midpoint, so it is the point with the most slack on both
-#: sides — 2.1 logits above the best non-answer and 2.2 below the worst real one. The comparison is stated before the
-#: number because the comparison is what makes the number defensible: a deployment that swaps the judge must re-derive
-#: it, and ``CME_RERANKER_FLOOR`` exists so it can without editing code.
+#: the 64-question labelled set (56 answerable, 8 ``no_match``, 49 memories), judged over the fused page where
+#: ``DENSE_SIMILARITY_FLOOR = 0.55`` admitted only ``N = 1`` unanswerable question, the weakest *answerable* question
+#: scored ``-6.68`` (``-6.6790``) and the surviving *unanswerable* one ``-11.01`` (``-11.0099``), whose midpoint is
+#: ``-8.8`` (2.12 logits below the worst real answer and 2.21 above that surviving non-answer). Across the **full
+#: uncensored** labelled set without the dense pre-filter (`evaluation/retrieval/judge_floor.py`), the weakest
+#: answerable gold pair scores ``-6.68`` and the strongest unanswerable pair across all 49 memories scores ``-9.41``
+#: (``-9.4076``, uncensored midpoint ``-8.04``; separation ``2.73`` logits). ``-8.8`` sits strictly inside both
+#: intervals (``0.61`` logits above the uncensored ceiling); a deployment that swaps the judge asset must verify or
+#: re-derive the floor with ``scripts/check_judge_floor.py``, and ``CME_RERANKER_FLOOR`` overrides it without editing
+#: code.
 #:
 #: This is what the bi-encoder could not do: its own weakest true match (0.46) sat *below* its strongest false one
 #: (0.605), so no cosine floor separated them. The judge exists because ranking and judging are different questions.
@@ -446,7 +451,7 @@ async def hybrid_recall(
     if read_parameters.keys() & {"user_id", "reference_time", "target_time", "window_start", "window_end"}:
         raise RecallError("read_parameters_collide_with_temporal_parameters")
     depth = arm_depth(limit)
-    compiled: CompiledPredicate = compile_predicate(temporal, alias="m")
+    compiled: CompiledPredicate = compile_predicate(temporal, alias="m", cross_tenant=True)
     where = scoped_artifact_filter(compiled.statement, read_filter)
     table = sql.Identifier(schema_name, "memory_version")
     arms: list[ArmRanking] = []

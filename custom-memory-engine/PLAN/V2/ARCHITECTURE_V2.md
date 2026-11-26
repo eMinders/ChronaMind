@@ -280,8 +280,9 @@ Rules:
    as wildcards and `/u/a_b/` matched tenant `/u/aXb/` (reproduced on PostgreSQL 16). A bug in either
    layer is caught by the isolation suite; neither layer is trusted alone (v1's
    Invariant 7 principle, preserved).
-5. **Scope identity is immutable.** ``move`` is implemented as *copy + retract* with a
-   recorded `supersedes` association, so provenance history is never rewritten.
+5. **Scope identity is immutable** (enforced by migration 32, `guard_scope_identity`). A change of scope is a new
+   artifact: *copy + retract* with a recorded `supersedes` association, so provenance history is never rewritten.
+   The engine does not offer that `move` yet (`API_V2.md` §5.2, #258); sharing is `set_visibility` plus a grant.
 6. **Cross-scope reads are logged** with `event_type='scope_read'` and the selector set,
    content-free. This is what makes the isolation claim auditable rather than asserted.
 
@@ -419,7 +420,7 @@ operation a tier needs appears here, and nothing outside it exists.**
 | **Delete** | `delete` | **—** | ✓ | Tier B can never delete. It can only `retract_own` artifacts whose method it produced. |
 | **Export** | `export` | — | ✓ | User-facing data export; excludes content whose deletion is pending. |
 | **Observe** | `stats`, `cost` | ✓ | ✓ | Support/coverage/usage/cost; never content of other scopes. |
-| **Scope** | `create_scope`, `grant_access`, `revoke_access` | — | ✓ | Scope administration (`V2-D46`); owner of the namespace only; Tier B can never change access. |
+| **Scope** | `create_scope`, `grant_access`, `revoke_access`, `set_visibility` | — | ✓ | Scope administration (`V2-D46`, `V2-D113`); owner of the namespace only; Tier B can never change access or visibility. |
 
 **The corrected rule:** Tier B *cannot delete*, *cannot adjudicate*, and *cannot write
 grounded claims without evidence*. It **can** propose inferences and link structure,

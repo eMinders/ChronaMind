@@ -145,6 +145,8 @@ class DeletionReceipt:
     deleted_turns: int = 0
     #: Entities this deletion orphaned and erased (V2-D108): a count, never a name.
     deleted_entities: int = 0
+    #: Mention links removed by this deletion (`V2-D111`): a count, never a name.
+    deleted_mentions: int = 0
 
 
 class _ClosureGrewError(Exception):
@@ -204,7 +206,13 @@ async def _discover_closure_and_scopes(
     *,
     has_scope_path: bool,
 ) -> tuple[list[str], list[str], frozenset[str]]:
-    """Read seeds, unbounded dependents, and the canonical scope set of every node in the closure."""
+    """Read seeds, unbounded dependents, and the canonical scope set of every node in the closure.
+
+    A blank ``target_ref`` outside ``all`` seeds nothing: it is the erasure-journal replay of a target the restored
+    database never held (:mod:`custom_memory_engine.deletion.journal`), which still records its request.
+    """
+    if scope != "all" and not target_ref.strip():
+        return [], [], frozenset()
     scope_expr = sql.SQL("scope_path") if has_scope_path else sql.SQL("NULL::text")
     v_scope_expr = sql.SQL("v.scope_path") if has_scope_path else sql.SQL("NULL::text")
     if scope == "all":
@@ -278,8 +286,15 @@ async def delete_memory(
     schema_name: str = "cme_engine",
     clock_tick: ClockTick | None = None,
     replay_time: datetime | None = None,
+    request_id: str | None = None,
+    stored_target_ref: str | None = None,
 ) -> DeletionReceipt:
     """Delete a memory target through its entire unbounded cognitive closure in one transaction.
+
+    ``request_id`` and ``stored_target_ref`` exist for one caller, the erasure-journal replay after a restore
+    (``V2-D122``): the replayed request keeps its original id and digest, so a second replay finds it and does nothing.
+    With ``stored_target_ref`` a blank ``target_ref`` is allowed (the restored database never held the target, so the
+    request is recorded and nothing is erased); a non-blank one must digest to ``stored_target_ref``.
 
     * **Unbounded closure (``V2-D09``):** traverses ``memory_derivation`` with ``WITH RECURSIVE ... UNION`` and no
       depth limit; terminates even on an injected cycle (F9).
@@ -296,7 +311,9 @@ async def delete_memory(
     """
     if scope not in ("memory", "topic", "all"):
         raise DeletionError("invalid_deletion_scope")
-    if scope != "all" and (not isinstance(target_ref, str) or not target_ref.strip()):
+    if not isinstance(target_ref, str):
+        raise DeletionError("nonblank_target_ref_required")
+    if scope != "all" and not target_ref.strip() and stored_target_ref is None:
         raise DeletionError("nonblank_target_ref_required")
     follows_lineage = should_follow_lineage(ablation)
     if deletion_epoch is not None and (
@@ -310,7 +327,13 @@ async def delete_memory(
         raise DeletionError("positive_lock_retries_required")
 
     key = receipt_key if receipt_key is not None else default_receipt_key()
-    stored_target_ref = target_ref_digest(key, user_id, scope, target_ref)
+    computed_target_ref = target_ref_digest(key, user_id, scope, target_ref)
+    # only a resolved (non-blank) target is checked against the journalled digest: an `all` request's digest also
+    # covers whatever `target_ref` the caller sent, which selects nothing and cannot be recovered from the digest
+    if stored_target_ref is not None and target_ref.strip():
+        if not hmac.compare_digest(stored_target_ref, computed_target_ref):
+            raise DeletionError("replay_target_mismatch")
+    stored_target_ref = stored_target_ref if stored_target_ref is not None else computed_target_ref
 
     await _verify_user_context(connection, user_id)
 
@@ -354,6 +377,7 @@ async def delete_memory(
                     schema_name=schema_name,
                     clock_tick=clock_tick,
                     replay_time=replay_time,
+                    request_id=request_id,
                     versions=versions,
                     derivations=derivations,
                     evidence=evidence,
@@ -390,6 +414,7 @@ async def _delete_memory_once(
     schema_name: str,
     clock_tick: ClockTick | None,
     replay_time: datetime | None,
+    request_id: str | None,
     versions: sql.Identifier,
     derivations: sql.Identifier,
     evidence: sql.Identifier,
@@ -480,6 +505,8 @@ async def _delete_memory_once(
                         external_exclusion_count=int(details.get("external_exclusions", 0)),
                         retired_dependents=int(details.get("retired_dependents", 0)),
                         deleted_turns=int(details.get("deleted_turns", 0)),
+                        deleted_entities=int(details.get("deleted_entities", 0)),
+                        deleted_mentions=int(details.get("deleted_mentions", 0)),
                     )
 
             tick = clock_tick or await allocate_clock(
@@ -496,7 +523,7 @@ async def _delete_memory_once(
             epoch: int = row[0]
             if deletion_epoch is not None and deletion_epoch != epoch:
                 raise DeletionError("deletion_epoch_not_next")
-            request_id = f"del-{uuid4().hex}"
+            request_id = request_id or f"del-{uuid4().hex}"
             await cursor.execute(
                 sql.SQL(
                     "INSERT INTO {r} (id, user_id, scope, target_ref, status, deletion_epoch, requested_at, "
@@ -540,13 +567,23 @@ async def _delete_memory_once(
                                     "dependents": 0,
                                     "re_derived_versions": 0,
                                     "purged_jobs": 0,
-                                    **({"deleted_entities": orphaned} if orphaned else {}),
+                                    **({"deleted_entities": orphaned, "deleted_mentions": 0} if orphaned else {}),
                                 }
                             )
                         ),
                     ),
                 )
-                return DeletionReceipt(request_id, scope, epoch, 0, 0, 0, 0, deleted_entities=orphaned)
+                return DeletionReceipt(
+                    request_id,
+                    scope,
+                    epoch,
+                    0,
+                    0,
+                    0,
+                    0,
+                    deleted_entities=orphaned,
+                    deleted_mentions=0,
+                )
 
             # Phase A (F3): read ALL derivation edges and node statuses BEFORE removing any edge.
             edges_by_dependent: dict[str, list[str]] = {dep: [] for dep in dependents}
@@ -680,7 +717,40 @@ async def _delete_memory_once(
                     (user_id, edges_to_unlink, edges_to_unlink),
                 )
 
+            deleted_mentions = 0
+            candidate_mention_entity_ids: list[str] = []
+            has_entity_mentions = False
             if plan.to_delete:
+                await cursor.execute(
+                    "SELECT count(*) = 3 FROM pg_catalog.pg_attribute AS a "
+                    "JOIN pg_catalog.pg_class AS c ON c.oid = a.attrelid "
+                    "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = %s AND c.relname = 'entity_mention' "
+                    "AND a.attname IN ('id', 'version_id', 'entity_id') "
+                    "AND NOT a.attisdropped",
+                    (schema_name,),
+                )
+                has_entity_mentions = bool((await cursor.fetchone() or (False,))[0])
+                mention_entities: set[str] = set()
+                if has_entity_mentions:
+                    await cursor.execute(
+                        sql.SQL("SELECT id, entity_id FROM {m} WHERE user_id = %s AND version_id = ANY(%s)").format(
+                            m=sql.Identifier(schema_name, "entity_mention")
+                        ),
+                        (user_id, list(plan.to_delete)),
+                    )
+                    mention_rows = await cursor.fetchall()
+                    deleted_mentions = len(mention_rows)
+                    mention_entities.update(str(row[1]) for row in mention_rows)
+                    await cursor.execute(
+                        sql.SQL(
+                            "SELECT DISTINCT subject_entity_id FROM {v} "
+                            "WHERE user_id = %s AND id = ANY(%s) AND subject_entity_id IS NOT NULL"
+                        ).format(v=versions),
+                        (user_id, list(plan.to_delete)),
+                    )
+                    mention_entities.update(str(row[0]) for row in await cursor.fetchall())
+                    candidate_mention_entity_ids = sorted(mention_entities)
                 await cursor.execute(
                     sql.SQL(
                         "UPDATE {c} SET existing_version_id = NULL "
@@ -762,10 +832,9 @@ async def _delete_memory_once(
                 turn_row = await cursor.fetchone()
                 deleted_turns = int(turn_row[0]) if turn_row else 0
 
-            # V2-D108: the entities this deletion orphans. `all` erases every entity of the user that no surviving
-            # memory cites; a `topic` deletion whose target is an entity id (the subject key of the claims about it)
-            # erases that entity. Narrower deletions leave the user's declared structure alone. Runs while the
-            # deletion marker is still set, because the SECURITY DEFINER function is gated on it.
+            # V2-D108 & V2-D111: entities this deletion orphans. `all` and `topic` erase matching declared/mention
+            # entities when unreferenced; narrower deletions (`memory`, or non-entity `topic`) additionally erase
+            # mention-derived (`origin = 'mention'`) entities whose last mention or subject reference was removed.
             deleted_entities = 0
             if scope in ("all", "topic"):
                 await cursor.execute(
@@ -773,7 +842,16 @@ async def _delete_memory_once(
                     (user_id, None if scope == "all" else [target_ref]),
                 )
                 entity_row = await cursor.fetchone()
-                deleted_entities = int(entity_row[0]) if entity_row else 0
+                deleted_entities += int(entity_row[0]) if entity_row else 0
+            if scope != "all" and has_entity_mentions and candidate_mention_entity_ids:
+                await cursor.execute(
+                    sql.SQL("SELECT {fn}(%s, %s)").format(
+                        fn=sql.Identifier(schema_name, "delete_orphaned_mention_entities")
+                    ),
+                    (user_id, candidate_mention_entity_ids),
+                )
+                mention_entity_row = await cursor.fetchone()
+                deleted_entities += int(mention_entity_row[0]) if mention_entity_row else 0
 
             # Close the narrowed privilege path (S-08, V2-D50 rule 3) before returning: the marker is transaction-
             # local, so without this reset it would stay set for the rest of a caller's enclosing transaction.
@@ -796,8 +874,9 @@ async def _delete_memory_once(
                 audit_payload["retired_dependents"] = len(plan.to_retire)
             if deleted_turns:
                 audit_payload["deleted_turns"] = deleted_turns
-            if deleted_entities:
+            if deleted_entities or deleted_mentions:
                 audit_payload["deleted_entities"] = deleted_entities
+                audit_payload["deleted_mentions"] = deleted_mentions
 
             await cursor.execute(
                 sql.SQL(
@@ -824,6 +903,7 @@ async def _delete_memory_once(
         purged_jobs=purged_jobs,
         deleted_turns=deleted_turns,
         deleted_entities=deleted_entities,
+        deleted_mentions=deleted_mentions,
         external_exclusions=len(external_exclusions),
     )
     return DeletionReceipt(
@@ -839,6 +919,7 @@ async def _delete_memory_once(
         retired_dependents=len(plan.to_retire),
         deleted_turns=deleted_turns,
         deleted_entities=deleted_entities,
+        deleted_mentions=deleted_mentions,
     )
 
 

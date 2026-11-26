@@ -1,0 +1,28 @@
+# Exclude local secrets, model weights, VCS metadata, tests, and research corpora from Docker build contexts.
+.git
+.gitignore
+.env
+.env.*
+**/.env
+**/.env.*
+.venv
+.model-cache
+# A bare pattern matches only at the context root; `**/` is what keeps a developer's bytecode out of src/ and scripts/.
+__pycache__/
+*.py[cod]
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.coverage
+tests/
+evaluation/
+research/
+reports/
+PLAN/
+validation/
+reference/
+evidence/
+decisions/
+audits/
+*.md

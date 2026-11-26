@@ -1,27 +1,35 @@
-"""The HTTP host: ``POST /v1/call`` over the engine's own operations (``E-046``, ``V2-D93``).
+"""The HTTP host: ``POST /v1/call`` over the engine's own operations (``E-046``, ``V2-D93``, ``#251``, ``#255``).
 
 **The contract is the engine's, not the host's.** There is no host-side endpoint per operation, no host-side argument
 validation and no host-side authorisation rule: the body names an operation, the engine's own contract decides whether
 that operation exists, which tier may call it, which arguments it accepts and which conditions must hold. The host adds
-exactly three things the engine cannot know, all of them transport concerns:
+transport concerns:
 
 1. **Who is calling** — a bearer token maps to a :class:`~custom_memory_engine.api.entry.Credential`, and the tier
-   comes from the token. A body that names ``tier`` is refused by the entry point as a reserved argument, so the
-   transport cannot be talked into a promotion.
+   comes from the token. A top-level ``tier`` field in the envelope is ignored by :func:`_envelope`, while
+   ``arguments["tier"]`` is refused by :meth:`Engine.call` as a reserved argument, so the transport cannot be talked
+   into a promotion. A token marked ``delegate`` names the end user in the envelope's ``principal`` field, and that
+   end user is the caller for every engine rule (``V2-D120``, :meth:`HostCredentials.acting_credential`).
 2. **A size bound** — a declared maximum body, enforced before parsing. Without it the JSON parser is the DoS surface.
-3. **A status code** — the seven codes of ``API_V2.md`` §1.1 mapped to HTTP, with nothing added to the body beyond the
+3. **Rate & concurrency limits** — per-principal token bucket and bounded in-flight concurrency
+   (``429 resource_limit``) so one saturated caller cannot monopolize all pool connections.
+4. **A status code** — the seven codes of ``API_V2.md`` §1.1 mapped to HTTP, with nothing added to the body beyond the
    code and its static sub-code. ``forbidden`` answers 403 for "absent" and "unreadable" alike, so the transport does
    not re-introduce the oracle the engine's error contract removes (``THREAT_MODEL.md`` T-11).
+5. **Operational probes** — ``GET /healthz`` and ``GET /metrics`` are unauthenticated, content/tenant-free, and bypass
+   the request concurrency semaphore via reserved pool capacity (``pool_max >= max_inflight + 1``).
 
-**What is never logged.** Operation, tier, status, error code and duration — never an argument, a request id derived
-from content, or a response body. The structlog event names are lowercase_with_underscores and the values are all
-enums or numbers, which is what makes the log safe to ship.
+**What is never logged.** Operation, tier, status, error code and duration — never an argument, principal, token,
+request id derived from content, or a response body. The structlog event names are lowercase_with_underscores and the
+values are all enums or numbers, which is what makes the log safe to ship.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import json
+import secrets
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -36,12 +44,16 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from custom_memory_engine.api.entry import EntryError
+from custom_memory_engine.host.credentials import DelegationRefused
+from custom_memory_engine.host.metrics import PROMETHEUS_CONTENT_TYPE
 from custom_memory_engine.host.service import HostService
 
 logger = structlog.get_logger(__name__)
 
 #: The seven codes of ``API_V2.md`` section 1.1 and the status each becomes. Deliberately a total mapping: a new code
 #: added to the contract without a line here is a ``KeyError`` at start-up (see :func:`_status_for`), not a silent 500.
+#: The process-wide request sequence, so two calls in the same clock tick still differ.
+REQUEST_COUNTER = itertools.count(1)
 STATUS_BY_CODE: dict[str, int] = {
     "validation_error": 400,
     "forbidden": 403,
@@ -59,23 +71,65 @@ def create_app(service: HostService) -> Starlette:
     """Build the ASGI application around an opened :class:`HostService`."""
 
     async def healthz(_request: Request) -> Response:
-        """Unauthenticated and content-free: it says the process is up, and nothing about the data."""
+        """Unauthenticated and content-free: verifies liveness and DB connectivity using reserved pool capacity."""
+        if not await service.probe_health():
+            return JSONResponse({"status": "unavailable"}, status_code=503)
         return JSONResponse({"status": "ok"})
+
+    async def metrics(_request: Request) -> Response:
+        """Unauthenticated Prometheus v0.0.4 scrape endpoint; never carries tenant ids or caller content."""
+        queue_counts = await service.collect_queue_metrics()
+        payload = service.metrics.render(queue_counts=queue_counts)
+        return Response(payload, media_type=PROMETHEUS_CONTENT_TYPE)
 
     async def call(request: Request) -> Response:
         started = time.perf_counter()
-        request_id = f"req_{time.perf_counter_ns():x}"  # process-scoped, never derived from content
-        credential = service.credentials.authenticate(request.headers.get("authorization"))
-        if credential is None:
+        # unique per request and never derived from content; the counter defeats a same-clock collision and the random
+        # suffix makes the value useless for inferring host uptime (a raw monotonic clock would be)
+        request_id = f"req_{next(REQUEST_COUNTER):x}_{secrets.token_hex(4)}"
+        caller = service.credentials.authenticate(request.headers.get("authorization"))
+        if caller is None:
             # 401 with no body detail: whether a token exists and whether it is close are not questions this answers.
-            return _error("forbidden", request_id, status=401, started=started, operation=None, tier=None)
+            return _error(
+                "forbidden",
+                request_id,
+                status=401,
+                started=started,
+                operation=None,
+                tier=None,
+                service=service,
+            )
         try:
             body = await _body(request, service.settings.max_body_bytes)
-            operation, arguments = _envelope(body)
+            operation, arguments, principal = _envelope(body)
         except _BadRequest as refusal:
-            return _error(refusal.code, request_id, status=400, started=started, operation=None, tier=credential.tier)
+            # the contract defines seven codes and none of them is a transport fault: answer `validation_error` and put
+            # the static sub-code in `detail`, so a client switching on `error.code` never meets an undefined value
+            return _error(
+                "validation_error",
+                request_id,
+                status=400,
+                detail=refusal.code,
+                started=started,
+                operation=None,
+                tier=caller.credential.tier,
+                service=service,
+            )
         try:
-            result = await service.call(credential, operation, arguments)
+            credential = service.credentials.acting_credential(caller, principal)
+        except DelegationRefused as refusal:
+            return _error(
+                refusal.code,
+                request_id,
+                status=_status_for(refusal.code),
+                started=started,
+                operation=operation,
+                tier=caller.credential.tier,
+                detail=refusal.detail,
+                service=service,
+            )
+        try:
+            result = await service.call(credential, operation, arguments, delegated=caller.may_delegate)
         except EntryError as error:
             return _error(
                 error.code,
@@ -85,18 +139,35 @@ def create_app(service: HostService) -> Starlette:
                 operation=operation,
                 tier=credential.tier,
                 detail=error.detail,
+                service=service,
             )
         except Exception as error:  # noqa: BLE001 - the last resort, and it must not disclose the exception
-            logger.error("host_call_crashed", operation=operation, error_type=type(error).__name__)
-            return _error(
-                "internal_error", request_id, status=500, started=started, operation=operation, tier=credential.tier
+            logger.error(
+                "host_call_crashed", operation=operation, request_id=request_id, error_type=type(error).__name__
             )
+            return _error(
+                "internal_error",
+                request_id,
+                status=500,
+                started=started,
+                operation=operation,
+                tier=credential.tier,
+                service=service,
+            )
+        duration_seconds = time.perf_counter() - started
+        service.metrics.record_call(
+            operation=operation,
+            tier=credential.tier,
+            status=200,
+            duration_seconds=duration_seconds,
+        )
         logger.info(
             "host_call",
             operation=operation,
             tier=credential.tier,
             status=200,
-            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+            request_id=request_id,
+            duration_ms=round(duration_seconds * 1000, 2),
         )
         return JSONResponse({"result": _jsonable(result)}, headers={"x-request-id": request_id})
 
@@ -111,7 +182,11 @@ def create_app(service: HostService) -> Starlette:
             await service.close()
 
     return Starlette(
-        routes=[Route("/healthz", healthz, methods=["GET"]), Route("/v1/call", call, methods=["POST"])],
+        routes=[
+            Route("/healthz", healthz, methods=["GET"]),
+            Route("/metrics", metrics, methods=["GET"]),
+            Route("/v1/call", call, methods=["POST"]),
+        ],
         lifespan=lifespan,
         # No `/docs`, no OpenAPI: the contract is `API_V2.md`, and a generated schema is a second source of truth.
     )
@@ -145,8 +220,12 @@ async def _body(request: Request, limit: int) -> Any:
         raise _BadRequest("body_not_json") from None
 
 
-def _envelope(body: Any) -> tuple[str, dict[str, object]]:
-    """``{operation, arguments}``. Nothing else is read: an unknown body field cannot influence a call."""
+def _envelope(body: Any) -> tuple[str, dict[str, object], object]:
+    """``{operation, arguments, principal?}``. Nothing else is read: an unknown body field cannot influence a call.
+
+    ``principal`` is returned unvalidated (``None`` when absent): whether it may be named at all depends on the token,
+    which :meth:`HostCredentials.acting_credential` decides.
+    """
     if not isinstance(body, dict):
         raise _BadRequest("body_must_be_an_object")
     operation = body.get("operation")
@@ -155,7 +234,7 @@ def _envelope(body: Any) -> tuple[str, dict[str, object]]:
     arguments = body.get("arguments", {})
     if not isinstance(arguments, dict):
         raise _BadRequest("arguments_must_be_an_object")
-    return operation, arguments
+    return operation, arguments, body.get("principal")
 
 
 def _status_for(code: str) -> int:
@@ -177,18 +256,29 @@ def _error(
     operation: str | None,
     tier: str | None,
     detail: str | None = None,
+    service: HostService | None = None,
 ) -> JSONResponse:
     """A static error body: the code, its sub-code when it is one, and a request id. Never a message."""
     payload: dict[str, object] = {"error": {"code": code}}
     if detail is not None and _is_static_code(detail):
         payload["error"] = {"code": code, "detail": detail}  # type: ignore[dict-item]
+    duration_seconds = time.perf_counter() - started
+    if service is not None:
+        service.metrics.record_call(
+            operation=operation,
+            tier=tier,
+            status=status,
+            duration_seconds=duration_seconds,
+            rate_limited=(status == 429),
+        )
     logger.info(
         "host_call",
         operation=operation,
         tier=tier,
         status=status,
         error_code=code,
-        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        request_id=request_id,
+        duration_ms=round(duration_seconds * 1000, 2),
     )
     return JSONResponse(payload, status_code=status, headers={"x-request-id": request_id})
 

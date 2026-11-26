@@ -10,16 +10,22 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from custom_memory_engine.host.credentials import CredentialsError, HostCredentials
+from custom_memory_engine.host.limits import ConcurrencyLimiter, RateLimiter, ResourceLimitError
+from custom_memory_engine.host.metrics import HostMetrics
 from custom_memory_engine.host.service import HostService, HostSettings, settings_from_environment
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from starlette.applications import Starlette
 
 __all__ = [
+    "ConcurrencyLimiter",
     "CredentialsError",
     "HostCredentials",
+    "HostMetrics",
     "HostService",
     "HostSettings",
+    "RateLimiter",
+    "ResourceLimitError",
     "create_app",
     "settings_from_environment",
 ]

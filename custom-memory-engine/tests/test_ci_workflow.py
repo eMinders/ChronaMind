@@ -272,3 +272,22 @@ def test_dependabot_respects_the_documented_upgrade_blockers() -> None:
     assert f"- dependency-name: langfuse\n        update-types: [{major}]" in dependabot
     assert f"- dependency-name: python\n        update-types: [{major}, {minor}]" in dependabot
     assert '"langfuse>=4.18.0,<5"' in (REPO / "pyproject.toml").read_text(encoding="utf-8")
+
+
+def test_every_required_check_in_contributing_is_a_job_that_always_reports_on_a_pull_request() -> None:
+    """A required check that is missing, or whose workflow a ``paths:`` filter can skip, leaves every PR pending."""
+    contributing = (REPO / "custom-memory-engine" / "PLAN" / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    row = next(line for line in contributing.splitlines() if line.startswith("| Required status checks |"))
+    required = set(re.findall(r"`([a-z-]+)`", row.split("|")[2]))
+    assert {"changes", "static", "verify", "default-install", "deploy-smoke", "checks", "workflows"} <= required
+    assert "app-engine-boundary" in required
+    sources = {path.name: path.read_text(encoding="utf-8") for path in (ENGINE, WORKFLOWS / "ci.yaml")}
+    for check in required:
+        homes = [name for name, text in sources.items() if re.search(rf"^  {re.escape(check)}:\n", text, re.M)]
+        assert len(homes) == 1, f"required check {check} must be exactly one job, found in {homes}"
+    for name, text in sources.items():
+        trigger = re.search(r"^on:\n(.*?)(?=^\S)", text, re.M | re.S)
+        assert trigger, name
+        pull_request = re.search(r"^  pull_request:(.*?)(?=^  \S|\Z)", trigger.group(1), re.M | re.S)
+        assert pull_request, f"{name} must run on pull requests"
+        assert "paths" not in pull_request.group(1), f"{name}: a paths filter on pull_request would hang a check"

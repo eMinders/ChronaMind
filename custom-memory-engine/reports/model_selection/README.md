@@ -19,8 +19,10 @@ shows what that costs (recall@5 0.393 lexical against 0.982 hybrid).
 
 ## The set, and the defect the expansion found
 
-46 cases: 28 extraction (14 English, 10 Arabic, 6 mixed-script including Arabizi and code-switching), 3 schema checks,
-14 adjudication pairs (including an Arabic pair and a cross-language pair), 1 query rewrite.
+46 distinct cases in Round 2: 30 extraction (14 English, 10 Arabic, 6 mixed-script including Arabizi and code-switching),
+14 adjudication pairs (including an Arabic pair and a cross-language pair), and 2 query rewrites — plus 3 schema checks
+scored on extraction outputs. (Round 3 expanded `ALL_CASES` to 57 cases by adding 5 mixed-script extraction cases and
+6 adjudication pairs, alongside 12 entity-adjudication cases.)
 
 **A real harness defect surfaced when the set grew.** The first adjudication block used the engine's *strategy* names
 (`supersede`, `reinforce`) as expected labels. Models are asked for `duplicate|update|correction|contradiction|additive|
@@ -76,9 +78,25 @@ errors were all abstentions.
 | embeddings | **local `bge-m3`** | the provider serves none; `reports/retrieval/` |
 | relevance judge (read path) | **local `bge-reranker-v2-m3`** | separates answerable from unanswerable where no cosine floor can (`reports/retrieval/` round 3, `V2-D104`) |
 
-**Sample size, stated.** 12 entity cases and 20 adjudication pairs are enough to find the failure *kinds* above and not
-enough to rank models within a point. The entity choice rests on the asymmetric cost of the one false merge, not on a
-claimed accuracy difference; a re-run that showed haiku merging falsely would reverse it.
+**Sample size, stated.** 12 entity cases, 11 mixed-script extraction cases, and 20 adjudication pairs are enough to
+expose the failure *kinds* above (JSON syntax errors, silent contradiction supersession, false entity merges) and **not**
+enough to establish statistical superiority between close models. Exact finite-sample power (`evaluation/stats/power.py`,
+`alpha = 0.05`, target `80%` power, equal arms for Fisher / discordant pairs for McNemar):
+
+| comparison regime | observed `N` | power at observed `N` (two-sided / one-sided) | required `N` for 80% power (two-sided / one-sided) |
+|---|---|---|---|
+| Entity adjudication (`12/12` vs `10/12`, Fisher) | 12 | `0.0364` / `0.1252` | `46` / `39` per arm |
+| Entity adjudication (`2/12` vs `0/12` discordant, McNemar) | 12 | `0.0079` / `0.0364` | `46` / `39` pairs |
+| Entity false merges (`0/12` vs `1/12`, Fisher) | 12 | `0.0019` / `0.0138` | `94` / `80` per arm |
+| Relation adjudication (`20/20` vs `17/20`, Fisher) | 20 | `0.1702` / `0.1702` | `52` / `44` per arm |
+| Relation adjudication (`3/20` vs `0/20` discordant, McNemar) | 20 | `0.0673` / `0.1702` | `52` / `44` pairs |
+| Mixed-script extraction (`10/11` vs `7/11`, Fisher) | 11 | `0.1558` / `0.2937` | `40` / `34` per arm |
+| Mixed-script extraction (`3/11` vs `0/11` discordant, McNemar) | 11 | `0.0512` / `0.1544` | `28` / `24` pairs |
+| No-match FP (`0/8` vs `1/8`, Fisher; see `reports/retrieval/`) | 8 | `0.0012` / `0.0112` | `62` / `53` per arm |
+
+All four small-sample suites operate at `< 30%` power (two-sided power `0.1%–17.0%`). In particular, the entity
+selection rests on the asymmetric operational cost of the observed false merge (`Berlin` → `berlin office`), not on a
+claimed significance difference; a re-run showing `claude-haiku-5-5` merging falsely would reverse it.
 
 ## Round 2 selection (superseded by the table above for entity adjudication)
 

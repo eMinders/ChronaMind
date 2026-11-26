@@ -54,7 +54,7 @@ async def expand_associations(
     if not hop_budget or not seed_ids or read_set.empty or not row_budget:
         return ()
 
-    temporal = compile_predicate(query, alias="m", database_clock=database_clock)
+    temporal = compile_predicate(query, alias="m", database_clock=database_clock, cross_tenant=True)
     # Both eligibility CTEs read one table, so the same unqualified selector predicate binds to each table's
     # own scope and visibility. Inlining lets PostgreSQL combine it with the endpoint lookups.
     readable, read_parameters = read_predicate_named(read_set, "scope_path", "visibility")
@@ -67,7 +67,7 @@ async def expand_associations(
         ), readable_associations AS NOT MATERIALIZED (
             SELECT from_id, to_id, type
             FROM {associations}
-            WHERE user_id = %(user_id)s AND {readable}
+            WHERE {readable}
         ), reached (id, hop) AS (
             SELECT id, 0::bigint FROM eligible
             WHERE id = ANY(%(seeds)s)
@@ -91,7 +91,7 @@ async def expand_associations(
             SELECT id, min(hop) AS hop FROM reached GROUP BY id HAVING min(hop) > 0
         )
         SELECT m.id, m.kind, m.lifecycle, m.content, m.scope_path, m.visibility, s.hop
-        FROM shortest AS s JOIN {versions} AS m ON m.id = s.id AND m.user_id = %(user_id)s
+        FROM shortest AS s JOIN {versions} AS m ON m.id = s.id
         ORDER BY s.hop, m.id
         LIMIT %(row_budget)s
         """

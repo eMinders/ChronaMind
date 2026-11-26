@@ -19,7 +19,7 @@ graph TB
 
     subgraph Services["Services"]
         LLM["LLM Service\n(fallback + retry)"]
-        Memory["Memory Service\n(mem0 + cache)"]
+        Memory["Memory Service\n(engine, RLS)"]
         Tools["Tools\n(concurrent execution)"]
     end
 
@@ -119,7 +119,7 @@ graph LR
 |---|---|---|
 | LangGraph Agent | `app/core/langgraph/graph.py` | Orchestrates the conversation loop |
 | LLM Service | `app/services/llm/` | Model registry, retries, circular fallback, structured output |
-| Memory Service | `app/services/memory.py` | mem0 semantic memory + cache |
+| Memory Service | `app/services/memory_engine.py` | The engine over HTTP: no local cache, no second database door |
 | Session Naming | `app/services/session_naming.py` | Background LLM title generation for new sessions |
 | Database Service | `app/services/database.py` | User/session CRUD |
 | Cache Service | `app/core/cache.py` | Valkey/Redis with in-memory fallback |

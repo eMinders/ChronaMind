@@ -225,3 +225,76 @@ def test_the_pruning_statistic_selects_the_longest_terms_and_is_language_agnosti
     many = statistic_terms("alpha beta gamma delta epsilon zeta eta theta")
     assert len(many) == MAX_STATISTIC_TERMS
     assert statistic_terms("coffee coffee coffee") == ("coffee",)
+
+
+# ------------------------------------------------------------ asset-derived uncensored judge floor (V2-D118)
+
+
+async def test_evaluate_judge_floor_computes_uncensored_extremes_and_margin() -> None:
+    """`evaluate_judge_floor` measures all answerable gold pairs and max unanswerable across the corpus."""
+    from evaluation.retrieval.judge_floor import evaluate_judge_floor
+    from evaluation.retrieval.quality import Memory, Question
+
+    memories = (
+        Memory("m1", "berlin residence", "en"),
+        Memory("m2", "dark coffee", "en"),
+    )
+    questions = (
+        Question("where live", "m1", "paraphrase", "en"),
+        Question("how coffee", "m2", "lexical", "en"),
+        Question("unrelated question", None, "no_match", "en"),
+    )
+
+    class _StubJudge:
+        model = "stub-judge"
+
+        async def relevance(self, query: str, documents):
+            table = {
+                ("where live", "berlin residence"): -2.0,
+                ("how coffee", "dark coffee"): -5.0,
+                ("unrelated question", "berlin residence"): -9.0,
+                ("unrelated question", "dark coffee"): -7.0,
+            }
+            return [table[(query, doc)] for doc in documents]
+
+    inside = await evaluate_judge_floor(_StubJudge(), floor=-6.0, memories=memories, questions=questions)
+    assert inside.weakest_answerable == -5.0
+    assert inside.weakest_answerable_memory == "m2"
+    assert inside.strongest_unanswerable == -7.0
+    assert inside.strongest_unanswerable_memory == "m2"
+    assert inside.implied_floor == -6.0
+    assert inside.separation == 2.0
+    assert inside.margin == 1.0
+    assert inside.inside is True
+
+    outside = await evaluate_judge_floor(_StubJudge(), floor=-7.5, memories=memories, questions=questions)
+    assert outside.inside is False
+    assert outside.margin == -0.5
+
+
+def _cached_bge_reranker_dir():
+    from pathlib import Path
+
+    reranker_dir = Path(__file__).resolve().parents[1] / ".model-cache" / "bge-reranker-v2-m3"
+    if not (reranker_dir / "model_int8.onnx").is_file() or not (reranker_dir / "tokenizer.json").is_file():
+        return None
+    return reranker_dir
+
+
+async def test_shipped_judge_floor_is_inside_uncensored_asset_extremes() -> None:
+    """Verify `JUDGE_RELEVANCE_FLOOR` sits strictly inside the live `bge-reranker-v2-m3` uncensored gap."""
+    from evaluation.retrieval.judge_floor import measure_asset_floor
+
+    reranker_dir = _cached_bge_reranker_dir()
+    if reranker_dir is None:
+        pytest.skip("bge-reranker-v2-m3 ONNX asset not cached in .model-cache/ (run scripts/fetch_models.py)")
+
+    report = await measure_asset_floor("bge-reranker-v2-m3", reranker_dir, floor=JUDGE_RELEVANCE_FLOOR)
+    assert report.inside is True, report.format_line()
+    assert report.strongest_unanswerable < JUDGE_RELEVANCE_FLOOR < report.weakest_answerable
+    assert report.margin > 0.5
+    assert report.separation > 2.0
+    assert report.answerable_count == 56
+    assert report.unanswerable_count == 8
+    assert report.corpus_size == 49
+    assert report.fingerprint is not None and len(report.fingerprint) == 32

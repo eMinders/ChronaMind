@@ -1,39 +1,55 @@
-# The slow-lane worker as a container image (V2-D103).
+# The slow-lane worker as a container image (V2-D103, #253).
 #
 # Build from the repository root of custom-memory-engine:
 #   docker build -f deploy/Dockerfile.worker -t chronamind/worker:dev .
 #
-# The image installs the `host` and `embeddings` extras — the worker embeds documents for the dense arm and speaks to the
-# provider — and nothing else. It contains no credentials: every secret arrives through `--env-file`.
-FROM python:3.12-slim-bookworm AS base
+# Base image and uv are pinned by immutable manifest digest. Runtime application code under /app/src and
+# /app/scripts is owned by root:root and read-only; the unprivileged `chronamind` user owns only its runtime dir.
+# Secrets and model weights are mounted at runtime, never baked into the image.
 
-# onnxruntime needs libgomp; the rest of the base image is enough for psycopg's binary wheel.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends libgomp1 \
- && rm -rf /var/lib/apt/lists/*
+FROM python:3.12.16-slim-bookworm@sha256:44cf1793efa7c7a476bb0f2cff81443f4a072c90c1cb127e2924933daa3e8c64 AS builder
 
-# uv, pinned by digest-tagged version, is the project's own installer.
-COPY --from=ghcr.io/astral-sh/uv:0.9.9 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /usr/local/bin/uv
 
 WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    PYTHONUNBUFFERED=1
 
 # Dependencies first, so a source change does not re-install the world.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --extra host --extra embeddings
+RUN uv sync --frozen --no-default-groups --no-install-project --extra host --extra embeddings
 
 COPY src ./src
 COPY scripts ./scripts
-RUN uv sync --frozen --extra host --extra embeddings
+RUN uv sync --frozen --no-default-groups --extra host --extra embeddings
 
-# The model cache is mounted, not baked: 2.2 GB of weights belong to a volume the operator controls, and a rebuilt image
-# must not silently carry a different model. `CME_EMBEDDING_DIR` points at it.
-ENV CME_EMBEDDING_DIR=/models/bge-m3
+
+FROM python:3.12.16-slim-bookworm@sha256:44cf1793efa7c7a476bb0f2cff81443f4a072c90c1cb127e2924933daa3e8c64 AS runtime
+
+# onnxruntime needs libgomp1; the rest of the base image is enough for psycopg's binary wheel.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgomp1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home --uid 10001 chronamind \
+ && mkdir -p /var/run/chronamind /models \
+ && chown chronamind:chronamind /var/run/chronamind \
+ && chown root:root /models && chmod 0555 /models
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    CME_EMBEDDING_DIR=/models/bge-m3 \
+    PATH="/app/.venv/bin:$PATH"
+
+# Copy code and virtualenv as root:root read-only; chronamind owns only writable runtime dirs.
+COPY --from=builder --chown=root:root /app/.venv /app/.venv
+COPY --from=builder --chown=root:root /app/src /app/src
+COPY --from=builder --chown=root:root /app/scripts /app/scripts
+RUN chmod -R a-w /app/.venv /app/src /app/scripts
+
 VOLUME ["/models"]
-
-# Run as a non-root user: the worker needs no privileges beyond its own files.
-RUN useradd --create-home --uid 10001 chronamind \
- && chown -R chronamind:chronamind /app
 USER chronamind
 
 # The probe reads the queue rather than the process (scripts/worker_healthcheck.py): a worker alive but not draining is

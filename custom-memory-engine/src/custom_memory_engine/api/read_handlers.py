@@ -548,14 +548,15 @@ class ReadHandlers:
         ``inferred`` (``axes.LEGAL_LIFECYCLE``), while only an abstraction has a ledger. So the caller must not read
         this map with a blanket ``"none"`` default (see :func:`_verification_for`).
         """
+        del user
         if not ids:
             return {}
         async with connection.cursor(row_factory=tuple_row) as cursor:
             await cursor.execute(
-                sql.SQL(
-                    "SELECT version_id, verification_status FROM {t} WHERE user_id = %s AND version_id = ANY(%s)"
-                ).format(t=self.runtime.table("abstraction_stats")),
-                (user, list(ids)),
+                sql.SQL("SELECT version_id, verification_status FROM {t} WHERE version_id = ANY(%s)").format(
+                    t=self.runtime.table("abstraction_stats")
+                ),
+                (list(ids),),
             )
             return {str(row[0]): str(row[1]) for row in await cursor.fetchall()}
 
@@ -563,6 +564,7 @@ class ReadHandlers:
         self, connection: AsyncConnection, user: str, ids: Sequence[str]
     ) -> tuple[dict[str, Bound], dict[str, str]]:
         """Return complete verified-abstraction bounds and their content-free support summaries."""
+        del user
         if not ids:
             return {}, {}
         bounds: dict[str, Bound] = {}
@@ -579,13 +581,13 @@ class ReadHandlers:
                     "  WHERE version_id = s.version_id AND user_id = s.user_id AND outcome = 'verified' "
                     "  ORDER BY verified_on DESC LIMIT 1"
                     ") AS v ON true "
-                    "WHERE s.user_id = %s AND s.version_id = ANY(%s)"
+                    "WHERE s.version_id = ANY(%s)"
                 ).format(
                     s=self.runtime.table("abstraction_stats"),
                     m=self.runtime.table("method"),
                     v=self.runtime.table("verification"),
                 ),
-                (user, list(ids)),
+                (list(ids),),
             )
             for (
                 artifact_id,
@@ -629,14 +631,15 @@ class ReadHandlers:
         here in one statement, under the same session and RLS as every other per-row fact. Without them an
         ``exists``/``absent`` condition naming either field could never hold through ``query`` (``E-030-F2``).
         """
+        del user
         if not rows:
             return ()
         async with connection.cursor(row_factory=tuple_row) as cursor:
             await cursor.execute(
-                sql.SQL("SELECT id, um_facet, predicate_key FROM {t} WHERE user_id = %s AND id = ANY(%s)").format(
+                sql.SQL("SELECT id, um_facet, predicate_key FROM {t} WHERE id = ANY(%s)").format(
                     t=self.runtime.table("memory_version")
                 ),
-                (user, [row.id for row in rows]),
+                ([row.id for row in rows],),
             )
             extra: dict[str, tuple[str | None, str | None]] = {
                 str(identifier): (None if facet is None else str(facet), None if predicate is None else str(predicate))
@@ -679,6 +682,7 @@ class ReadHandlers:
         re-deriving the rule. The map is per artifact (``V2-D80``): an artifact's sides are the endpoints of *its*
         edges, never every other contradicted row the query happened to retrieve (``CHANNELS.md`` R5: never merge).
         """
+        del user
         if not ids:
             return {}
         wanted = set(ids)
@@ -688,12 +692,12 @@ class ReadHandlers:
                     "SELECT DISTINCT a.from_id, a.to_id FROM {a} AS a "
                     "JOIN {v} AS f ON f.id = a.from_id AND f.user_id = a.user_id "
                     "JOIN {v} AS t ON t.id = a.to_id AND t.user_id = a.user_id "
-                    "WHERE a.user_id = %s AND a.type = 'contradicts' "
+                    "WHERE a.type = 'contradicts' "
                     "AND a.origin IN ('grounding_policy','tier_c') "
                     "AND f.lifecycle IN ('observed','asserted') AND t.lifecycle IN ('observed','asserted') "
                     "AND (a.from_id = ANY(%s) OR a.to_id = ANY(%s))"
                 ).format(a=self.runtime.table("association"), v=self.runtime.table("memory_version")),
-                (user, list(ids), list(ids)),
+                (list(ids), list(ids)),
             )
             found: dict[str, set[str]] = {}
             for from_id, to_id in await cursor.fetchall():
@@ -725,11 +729,10 @@ class ReadHandlers:
             return {}
         async with connection.cursor(row_factory=tuple_row) as cursor:
             await cursor.execute(
-                sql.SQL(
-                    "SELECT id, lifecycle, content, scope_path, visibility FROM {v} "
-                    "WHERE user_id = %s AND id = ANY(%s)"
-                ).format(v=self.runtime.table("memory_version")),
-                (user, others),
+                sql.SQL("SELECT id, lifecycle, content, scope_path, visibility FROM {v} WHERE id = ANY(%s)").format(
+                    v=self.runtime.table("memory_version")
+                ),
+                (others,),
             )
             loaded = {str(row[0]): row[1:] for row in await cursor.fetchall()}
         visible: dict[str, ConflictSide] = {}
@@ -758,9 +761,9 @@ class ReadHandlers:
             await cursor.execute(
                 sql.SQL(
                     "SELECT id, kind, lifecycle, content, scope_path, visibility FROM {t} "
-                    "WHERE id = %s AND user_id = %s AND kind IS NOT NULL AND lifecycle IS NOT NULL"
+                    "WHERE id = %s AND kind IS NOT NULL AND lifecycle IS NOT NULL"
                 ).format(t=self.runtime.table("memory_version")),
-                (artifact_id, user),
+                (artifact_id,),
             )
             row = await cursor.fetchone()
             if row is None:
@@ -916,10 +919,10 @@ class ReadHandlers:
         try:
             async with self.runtime.session(user) as connection, connection.cursor(row_factory=tuple_row) as cursor:
                 await cursor.execute(
-                    sql.SQL("SELECT scope_path, visibility FROM {v} WHERE id = %s AND user_id = %s").format(
+                    sql.SQL("SELECT scope_path, visibility FROM {v} WHERE id = %s").format(
                         v=self.runtime.table("memory_version")
                     ),
-                    (artifact_id, user),
+                    (artifact_id,),
                 )
                 row = await cursor.fetchone()
                 if row is None or not row_visible(call.ctx.read_set, row[0], row[1]):

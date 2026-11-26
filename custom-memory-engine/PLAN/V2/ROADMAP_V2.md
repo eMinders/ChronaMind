@@ -220,8 +220,8 @@ criteria in its own task:
 | 9 | ~~`record_outcome`~~ | ~~`E-027`~~ | **wired** (#194) | `record_outcome` is wired with the three error cases (`API_V2.md` 4.5) and asserted through `Engine.call` (`tests/integration/test_record_outcome_db.py`); `E-030` owns `preconditions`/`steps` and extends the `outcome_stats` side table it left; it leaves this register |
 | 10 | `dissent` | `UM-012` | W5 tracker #75 (child not yet created) | wires `dissent`; sticky dissent (`I16`) asserted through `Engine.call` |
 | 11 | ~~`purge_working`~~ | ~~`E-026`~~ | **wired** (#189) | `purge_working` is wired admin-only and asserted through `Engine.call` (`tests/integration/test_purge_working_db.py`); the retention-floor survivor test runs through the entry point; it leaves this register |
-| 12 | `expire` | `A-014` | W7 tracker #79 (child not yet created) | wires `expire`; `I9` idempotency asserted through `Engine.call` |
-| 13 | `rebuild_index` | `A-014` | W7 tracker #79 (child not yet created) | wires `rebuild_index`; admin-only refusal asserted through `Engine.call` |
+| 12 | ~~`expire`~~ | ~~`A-014`~~ | **wired** (`E-048`, `V2-D97`; scheduled by #255, `V2-D119`) | `expire` is wired admin-only through `Engine.call` (`api/maintain_handlers.py`) with `I9` idempotency asserted there (`tests/integration/test_api_wiring_lifecycle_db.py::test_a_retried_expire_changes_nothing_the_first_one_did`); `worker/maintenance.py` calls it on the documented cadence (`deploy/cme-maintenance.timer`, `tests/integration/test_maintenance_scheduler_db.py`); it leaves this register |
+| 13 | ~~`rebuild_index`~~ | ~~`A-014`~~ | **wired** (`E-048`, `V2-D97`; scheduled by #255, `V2-D119`) | `rebuild_index` is wired admin-only through `Engine.call` with the non-admin refusal asserted there (`tests/integration/test_api_wiring_lifecycle_db.py::test_rebuild_index_refuses_an_unknown_index_and_a_non_admin`); `worker/maintenance.py` queues it and the worker drains the job (`tests/integration/test_maintenance_scheduler_db.py`); it leaves this register |
 | 14 | ~~`delete`~~ | ~~`E-037`~~ | **wired** (#207, #228, `932456d`) | `delete` is wired for Tier C with unbounded closure, two-phase ordering, 11-channel scanning, T-29 keyed-digest receipts, S-08 exclusive-turn deletion, and `E-018`'s **deletable** property runs through `Engine.call` (`tests/integration/test_type_completeness.py`, `tests/integration/test_deletion_through_cognition_db.py`); it leaves this register |
 | 15 | `export` | `A-015` | W7 tracker #79 (child not yet created) | wires `export`; export selector set asserted through `Engine.call` |
 | 16 | ~~`create_scope`~~ | ~~`E-040`~~ | **wired** (#151) | `create_scope` is wired under `namespace_owner_only` and asserted through `Engine.call` (`tests/integration/test_create_scope.py`); it leaves this register |
@@ -462,7 +462,7 @@ and their rollbacks restore the previous catalog fingerprint exactly (`schema/RE
 |---|---|---|---|
 | `E-040` | **Multilingual storage substrate** (migration 23): `content_fts_simple` (a `to_tsvector` generated column in the `simple` configuration) + `pg_trgm` GIN, and the `halfvec` embedding slots 768/1024/1536/3072 with one partial HNSW index each | `'english'` stemming does not merely fail on Arabic or CJK, it discards the morphology; a 384-wide `vector` column cannot hold a multilingual embedder. Slots, not a "configurable" column: HNSW is one fixed width, and a typmod-free `vector` cannot carry an HNSW index at all. **Done:** `schema/023_multilingual_index.sql`; `tests/integration/test_migration_m23.py` | M |
 | `E-044` | **Slot-aware exclusion key and open semantic vocabulary** (migration 24): `semantic_slot`, `cardinality_hint`, `authority_rank` (generated), `no_bitemporal_overlap` on `COALESCE(semantic_slot, predicate_key)` | **Done:** `schema/024_semantic_slot.sql`; `tests/integration/test_migration_m24.py` (23 checks) | M |
-| `E-041` | **Hybrid read path** (`V2-D86`): `Intent.text`, `Plan.recall`/`query_digest`, `engine.hybrid` (dense + `'simple'` lexical + trigram + RRF + reranker seam), `execute_plan` id-restricted fetch, embedding persistence in the right slot | **Done:** `engine/hybrid.py`; `api/read_handlers.py`; `tests/test_hybrid.py`; `tests/integration/test_hybrid_recall_db.py`. **Remaining:** `resolve_mention` wired into the write path (`V2-D90`'s last criterion) | M |
+| `E-041` | **Hybrid read path** (`V2-D86`): `Intent.text`, `Plan.recall`/`query_digest`, `engine.hybrid` (dense + `'simple'` lexical + trigram + RRF + reranker seam), `execute_plan` id-restricted fetch, embedding persistence in the right slot | **Done:** `engine/hybrid.py`; `api/read_handlers.py`; `tests/test_hybrid.py`; `tests/integration/test_hybrid_recall_db.py`. `resolve_mention` is on the write path (`V2-D90`'s last criterion): `semantic/ingestor.py::_resolve_entities` resolves every extracted mention through it, pinned by `tests/integration/test_semantic_ingestor_db.py::test_a_mention_that_is_not_the_subject_never_becomes_the_subject` and `tests/integration/test_migration_m30_entity_mentions_db.py` | M |
 | `E-042` | **Semantic understanding layer** (`V2-D88`–`V2-D91`): contracts, grounding, authority, slots, temporal validation, cascaded entity resolution, three-stage conflict, two-lane ingestor | **Done:** `semantic/` (9 modules) and its test suite. No provider SDK enters the engine; every model-shaped capability is an injected protocol | L |
 | `E-045` | **Write-path repair** (`V2-D87`): `assert` accepts `cardinality`, `semantic_slot`, `um_facet`, `assertion_mode`; non-turn evidence accepted and quarantined; third-party mode holds instead of rejecting | **Done:** `api/ingest_handlers.py`, `api/contract.py`, `engine/gate.py`, `engine/ingest.py`, `engine/transactions.py`; `PLAN/V2/API_V2.md` §4.3 | M |
 | `E-046` | **Engine-side HTTP host** (`V2-D93`): `POST /v1/call {operation, arguments}` → `Engine.call`, tier from the bearer token and never from the body, the seven static codes mapped to statuses without identifiers or content, a bounded body, unauthenticated content-free `/healthz`, and a `refute` handler so the lifecycle has no unreachable state | **Landed.** `host/` (credentials, service, app), `api/wiring.wire_engine` (one wiring call, with `UNWIRED_OPERATIONS` naming what is missing and why), `api/lifecycle_handlers.py`, `scripts/run_host.py`; `tests/integration/test_host_e2e_db.py` (18 tests: real uvicorn on a real socket, real database, tier-from-token, no cross-caller leakage on a pooled connection) | M |
@@ -494,6 +494,39 @@ Plus two structural criteria: relevance never widens what a caller may read
 `::test_a_scope_outside_the_read_set_still_refuses_even_with_a_perfect_match`), and both migrations roll back to the
 byte-identical previous catalog fingerprint (`test_migration_m23.py`, `test_migration_m24.py`).
 
+**G3.5 — MET (2026-11-26), after a pre-W4 closure audit.** Status: **the pre-W4 scope is closed**; work moves to W4.
+Two things happened: the gate's own criteria were verified on `main`, and a review of the whole implementation
+(177 files, one PR) found and fixed the defects that would have sent W4 back into W3.5.
+
+*The gate itself.* `E-040`–`E-053` are all landed; the four `G3.5` criteria each have a test that fails without the
+change (listed above), and so do the two structural ones (`test_hybrid_recall_db.py` relevance scoping,
+`test_migration_m23/m24` rollback fingerprints).
+
+*The audit (`#243`–`#258`, one branch).* A full review of the implementation closed the invariant gaps that the wave
+left open — `I2` (structural provenance, migration 29), `I7` (owners share, grantees read exactly the shared rows,
+migration 32), `I8` (mention and entity erasure, migration 30), `I11` (a verification record pins held-out artifacts,
+migration 31), `I15` (the ledger is derived, never supplied) — and the operational and integrity gaps around them: the
+host's rate and concurrency bounds, a `SKIP LOCKED` worker proven under contention, `/metrics`, the maintenance
+scheduler, deploy artefacts that CI actually executes, a real app-to-engine boundary test, the derived judge floor, the
+abstraction ledger, the delegation model (`V2-D120`), the app's semantic slot classifier (`V2-D121`), the erasure
+journal (`V2-D122`), and the hardening that three independent reviews then produced (`V2-D123`, `V2-D124`).
+
+*What is deliberately not closed, and why.*
+
+1. **#258 `move`** stays open: no consumer, sharing covers `I7` with a single deletion surface, and a copy doubles it
+   (`V2-D113`).
+2. **T-46**: a turn ingested before a backup whose extraction completed after it can be re-extracted after a restore.
+   The journal records targets, not evidence-turn digests; the replay's non-zero exit makes it a stopped worker rather
+   than a silent resurrection, and recording those digests is named as the follow-up.
+3. **The statistical instruments that W4 owns were started early, and only as far as `I11`/`I15` needed them.**
+   `SD-001`, `SD-002` and `SD-008` have drafts with their level separation, required evidence, dependence gating and a
+   grid pin to the engine's own admission predicate (`V2-D114`, `V2-D124`). `C-012` and gate `G4` are **not** started:
+   an earlier record described a Monte-Carlo self-check of the admission rule as a "G4 null-suite proof", which was
+   wrong and is corrected — the module is `evaluation/suites/admission_calibration.py`, and the real null suite still
+   has to drive `infer` and `verify` over no-pattern streams.
+4. Structural provenance is *recorded and enforced* (`I2`) but its read model (`read_artifact_provenance`,
+   `read_entity_provenance`) has no operation yet: a W4+ product decision, not a defect.
+
 ---
 
 ## 7. W4 — Measurement instruments (build the ruler first)
@@ -505,15 +538,15 @@ difference between a research contribution and a demo.
 |---|---|---|---|
 | `C-010` | **Abstraction artifact** per `ARCHITECTURE_V2.md` §7 + `STATISTICS.md` §2.3: three-state ledger, coverage, refutation attempts, CP-bound confidence, verification split id, expiry | No counter-set requirement | L |
 | `C-011` | **Generative-process suite** (`own_P`): latent rule → event stream → probes; the rule is ground truth and never shown | Script-first, seeded, deterministic | L |
-| `C-012` | **Null suite** (no planted pattern) | Measures confabulation directly | M |
-| `SD-001` | **`abstraction_metrics` module** (was `C-013`): `precision`, `recall`, `coverage`, `refutation_attempts`, `FAR_τ`, Brier, reliability, each with a reference implementation checked against hand-computed values | Mirrors `evaluation/stats/` rigour | L |
-| `SD-002` | **CP-bound admission helper**: `ledger(s,k,u)` → partially identified interval; `confidence_lower = 1 − CP_upper(k + u, o)`; admission predicate (`confidence_lower ≥ τ`, `coverage ≥ τ_coverage`, refutations, negative control); composed with the existing Holm machinery. **Not** named "exact" — it is exact only under exchangeability (`STATISTICS.md` §5.4.2). | Reuses `clopper_pearson.py`; asserted against `cp_bounds.output.txt` by `SD-007` | M |
+| `C-012` | **Null suite** (no planted pattern) | Measures confabulation directly. **Not started**: `evaluation/suites/admission_calibration.py` is a Monte-Carlo self-check of the admission rule, not this, and gate `G4` is not claimed (`V2-D114`) | M |
+| `SD-001` | **`abstraction_metrics` module** (was `C-013`): `precision`, `recall`, `coverage`, `refutation_attempts`, `FAR_τ`, Brier, reliability, each with a reference implementation checked against hand-computed values | Mirrors `evaluation/stats/` rigour. **Draft landed early** (`evaluation/stats/abstraction_metrics.py`, `V2-D114`): the three-state metrics and their references exist; W4 owes `precision@verified` against a base rate, per-facet reliability, and the §10 hand-computed constants | L |
+| `SD-002` | **CP-bound admission helper**: `ledger(s,k,u)` → partially identified interval; `confidence_lower = 1 − CP_upper(k + u, o)`; admission predicate (`confidence_lower ≥ τ`, `coverage ≥ τ_coverage`, refutations, negative control); composed with the existing Holm machinery. **Not** named "exact" — it is exact only under exchangeability (`STATISTICS.md` §5.4.2). | Reuses `clopper_pearson.py`; asserted against `cp_bounds.output.txt` by `SD-007`. **Draft landed early** (`evaluation/stats/admission.py`, `V2-D114`, `V2-D124`): the §4.2 predicate, Holm at the independent FWER level, required evidence, dependence gating and a 1 352-tuple pin to `soundness.admission`. W4 still owes §5.4.3's third condition (`SD-005`) | M |
 | `SD-003` | **Hierarchical beta-binomial** per facet: partial pooling, `μ`/`κ` estimation, cold-start behaviour, posterior-draw stability tests | `STATISTICS.md` §5.2; the answer to sparse users | L |
 | `SD-004` | **Temporal/block conformal + ACI** for continuous outcomes; **block permutation null**; base-rate baseline | `STATISTICS.md` §5.1, §6 | L |
 | `SD-005` | **Always-valid inference**: alpha-spending or confidence sequences for the scheduler's repeated looks | `STATISTICS.md` §5.3 | M |
 | `SD-006` | **`X-ignore-undetermined` ablation**: the r2 admission rule (`1 − CP_upper(k, o)`), retained solely as the positive control for `S12` | Proves the corrected bound earns its conservatism | S |
 | `SD-007` | **`scripts/check_statistics.py`**: reproduces every number in `STATISTICS.md` §10; asserts agreement with `validation/cp_bounds.output.txt` to `1e-9`; runs in CI | Ties inference statistics to the verified v1 asset; the r3 regression test | S |
-| `SD-008` | **Dependence correction**: block estimator for `ρ`, design-effect `n_eff`, block bootstrap; takes the **most conservative** of the three bounds | `STATISTICS.md` §5.4.2; no unqualified "exact" claims | L |
+| `SD-008` | **Dependence correction**: block estimator for `ρ`, design-effect `n_eff`, block bootstrap; takes the **most conservative** of the three bounds | `STATISTICS.md` §5.4.2; no unqualified "exact" claims. **Draft landed early** (`evaluation/stats/dependence.py`): the three bounds exist and admission gates on the conservative one; W4 owes real cluster evidence | L |
 | `C-015` | **Free-form reflection baseline** (`X-freeform`): competent prompt, strong model, no support structure | The strawman must be built well or the comparison is worthless | M |
 | `UM-001` | **`own_U` generator**: latent user (stable/evolving preferences, goals, constraints, decision policy), 3 noise levels, change points | Script-first; latent structure never shown | L |
 | `UM-002` | **User-model metrics** `UM1`–`UM10` defined once in code, with hand-computed reference cases | `USER_MODEL.md` §5.2 | L |

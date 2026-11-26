@@ -87,9 +87,9 @@ def test_user_tables_are_every_table_except_the_shared_catalog() -> None:
     # trigger writes it, so it is neither a tenant table nor the shared catalog.
     assert set(USER_TABLES) == set(SCHEMA_SQL_TABLES) - {"predicate_schema", "clock_watermark", "method"}
     # 19 through migration 18 (entity_link, E-024); migration 20 adds outcome_stats (E-027), migration 21
-    # procedure_shape (E-030), migration 25 export_snapshot (E-038/F11). A scope is still its path, never a row
-    # (V2-D65).
-    assert len(USER_TABLES) == 22
+    # procedure_shape (E-030), migration 25 export_snapshot (E-038/F11), migrations 29-31 artifact_provenance,
+    # entity_mention and verification_artifact. A scope is still its path, never a row (V2-D65).
+    assert len(USER_TABLES) == 25
 
 
 def test_rls_sql_grants_cover_every_user_table_and_only_reads_the_catalog() -> None:

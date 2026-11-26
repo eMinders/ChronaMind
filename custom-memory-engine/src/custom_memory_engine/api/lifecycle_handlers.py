@@ -38,6 +38,7 @@ from custom_memory_engine.api.handlers import Handlers
 from custom_memory_engine.api.runtime import Receipt, new_id, now
 from custom_memory_engine.clock import allocate_clock
 from custom_memory_engine.deletion.closure import current_deletion_epoch
+from custom_memory_engine.engine.artifact_provenance import record_artifact_provenance
 from custom_memory_engine.engine.transactions import archive_version
 from custom_memory_engine.engine.verification import (
     VerificationError,
@@ -45,6 +46,7 @@ from custom_memory_engine.engine.verification import (
     record_verification,
     windows_from,
 )
+from custom_memory_engine.scope.access import ReadSet, row_visible
 from custom_memory_engine.security.audit_guard import content_free_details
 
 _CODE = re.compile(r"[a-z0-9_]{1,64}")
@@ -138,7 +140,7 @@ class LifecycleHandlers:
             await archive_version(
                 connection, user_id=user, version_id=artifact_id, schema_name=self.runtime.schema_name, clock_tick=tick
             )
-            linked = await self._link_counter_evidence(connection, user, artifact_id, refs)
+            linked = await self._link_counter_evidence(connection, user, artifact_id, refs, read_set=call.ctx.read_set)
             await self._audit(connection, user, reason, len(refs), linked)
             return Receipt(artifact_id, "retired", await now(connection))
 
@@ -291,10 +293,13 @@ class LifecycleHandlers:
                     user_id=user,
                     artifact_id=artifact_id,
                     record=record,
+                    read_set=call.ctx.read_set,
                     schema_name=self.runtime.schema_name,
                     epoch_start=epoch,
                 )
             except VerificationError as exc:
+                if exc.code == "verification_artifact_unreadable":
+                    raise EntryError("forbidden") from None
                 raise EntryError("precondition_failed", exc.code) from exc
             return Receipt(artifact_id, record.outcome, await now(connection))
 
@@ -465,6 +470,8 @@ class LifecycleHandlers:
         user: str,
         artifact_id: str,
         refs: Sequence[Mapping[str, object]],
+        *,
+        read_set: ReadSet | None = None,
     ) -> int:
         """Link every counter-evidence ref that names one of this principal's readable versions.
 
@@ -478,12 +485,13 @@ class LifecycleHandlers:
             version_id = str(item["ref"])
             async with connection.cursor(row_factory=tuple_row) as cursor:
                 await cursor.execute(
-                    sql.SQL("SELECT 1 FROM {t} WHERE id = %s AND user_id = %s").format(
+                    sql.SQL("SELECT scope_path, visibility FROM {t} WHERE id = %s AND user_id = %s").format(
                         t=self.runtime.table("memory_version")
                     ),
                     (version_id, user),
                 )
-                if await cursor.fetchone() is None:
+                row = await cursor.fetchone()
+                if row is None or (read_set is not None and not row_visible(read_set, row[0], row[1])):
                     continue
                 # The `contradicts` association is written in the orientation the read path expects: the *counter*
                 # evidence is the from-side, so `open_contradiction` (V2-D48 C-P4) reads it as "this contradicts the
@@ -492,10 +500,23 @@ class LifecycleHandlers:
                     sql.SQL(
                         "INSERT INTO {a} (id, user_id, from_id, to_id, type, weight, created_by, origin) "
                         "VALUES (%s, %s, %s, %s, 'contradicts', 1.0, %s, 'tier_c') "
-                        "ON CONFLICT (user_id, from_id, to_id, type) DO NOTHING"
+                        "ON CONFLICT (user_id, from_id, to_id, type) DO NOTHING RETURNING id"
                     ).format(a=self.runtime.table("association")),
                     (new_id("assoc"), user, version_id, artifact_id, user),
                 )
+                inserted = await cursor.fetchone()
+                if inserted is not None:
+                    await record_artifact_provenance(
+                        connection,
+                        user_id=user,
+                        artifact_kind="association",
+                        artifact_id=str(inserted[0]),
+                        origin_kind="evidence_version",
+                        source_version_ids=(version_id,),
+                        created_by=user,
+                        read_set=read_set,
+                        schema_name=self.runtime.schema_name,
+                    )
                 linked += 1
         return linked
 
@@ -533,15 +554,25 @@ def _optional_code(value: object) -> str | None:
     return value
 
 
+def _artifact_pin_ids(raw: object, field: str) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, str | bytes) or not isinstance(raw, Sequence):
+        raise EntryError("validation_error", f"{field}_invalid")
+    return tuple(raw)  # validated element-by-element inside VerificationRecord
+
+
 def _verification_record(raw: object) -> VerificationRecord:
     """Validate the ``verification`` argument into a :class:`VerificationRecord`.
 
-    ``API_V2.md`` gives ``verification`` one opaque argument, so its shape is this operation's own — the same way
-    ``assert``'s ``evidence`` and ``ingest_artifact``'s ``candidate`` are. It carries exactly the six facts `I11`
-    names: the split id, the negative-control slice, both windows and both context keys, plus the outcome.
+    Carries the split id, the negative-control slice, both windows and both context keys, the pinned
+    ``support_artifact_ids`` and ``held_out_artifact_ids`` lists, optional ``negative_control_clean``, and outcome.
     """
     if not isinstance(raw, Mapping):
         raise EntryError("validation_error", "verification_invalid")
+    support_ids = _artifact_pin_ids(raw.get("support_artifact_ids"), "support_artifact_ids")
+    held_out_ids = _artifact_pin_ids(raw.get("held_out_artifact_ids"), "held_out_artifact_ids")
+    negative_control_clean = raw.get("negative_control_clean", True)
     try:
         support, held_out = windows_from(raw.get("support_window"), raw.get("held_out_window"))
         record = VerificationRecord(
@@ -552,6 +583,9 @@ def _verification_record(raw: object) -> VerificationRecord:
             support_context_key=str(raw.get("support_context_key") or ""),
             held_out_context_key=str(raw.get("held_out_context_key") or ""),
             outcome=raw.get("outcome"),  # type: ignore[arg-type]
+            support_artifact_ids=support_ids,
+            held_out_artifact_ids=held_out_ids,
+            negative_control_clean=negative_control_clean,  # type: ignore[arg-type]
         )
     except VerificationError as exc:
         raise EntryError("validation_error", exc.code) from exc

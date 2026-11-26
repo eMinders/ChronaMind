@@ -78,6 +78,36 @@ async def now(connection: AsyncConnection) -> datetime:
     return cast(datetime, row[0])
 
 
+#: The three tables that carry an artifact's own ``visibility`` (``V2-D113``). A child table has none of its own: its
+#: readability delegates to its parent -- migration 32's ``*_scope_read`` policy.
+VISIBILITY_TABLES: tuple[str, ...] = ("memory_version", "entity", "association")
+
+
+async def change_visibility(
+    connection: AsyncConnection, artifact_id: str, visibility: str, *, schema_name: str = "cme_engine"
+) -> str | None:
+    """Set one artifact's ``visibility`` as the caller; the table it was found in, or ``None`` if none was.
+
+    An ordinary ``UPDATE``, deliberately: the caller must hold the write privilege **and** pass the table's own
+    ``*_isolation`` policy's ``WITH CHECK``, so a grantee that can now *read* an artifact still cannot change it
+    (``V2-D53``), and a row outside ``/u/<caller>/`` is simply not updated -- which is why an artifact the caller does
+    not own is one answer with an artifact that does not exist. No privileged function and no ``app.user_id``-only gate
+    is involved (``CLAUDE.md`` rule 4): sharing an artifact cannot reach past what row-level security already lets the
+    caller write.
+    """
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        for table in VISIBILITY_TABLES:
+            await cursor.execute(
+                sql.SQL("UPDATE {t} SET visibility = %s WHERE id = %s RETURNING id").format(
+                    t=sql.Identifier(schema_name, table)
+                ),
+                (visibility, artifact_id),
+            )
+            if await cursor.fetchone() is not None:
+                return table
+    return None
+
+
 async def replayed(runtime: Runtime, connection: AsyncConnection, user: str, operation: str, key: str) -> str | None:
     """The result id recorded for ``(user, operation, key)``, or ``None`` if this is the first time.
 
@@ -185,7 +215,9 @@ class ForeignKeyPrincipals:
         return True
 
 
-type Effect = Literal["created", "linked", "unlinked", "granted", "revoked", "asserted", "retired", "registered"]
+type Effect = Literal[
+    "created", "linked", "unlinked", "granted", "revoked", "asserted", "retired", "registered", "visibility_changed"
+]
 
 __all__ = [
     "DbMethods",
@@ -195,6 +227,8 @@ __all__ = [
     "Receipt",
     "Rejected",
     "Runtime",
+    "VISIBILITY_TABLES",
+    "change_visibility",
     "new_id",
     "now",
     "remember",

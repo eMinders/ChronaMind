@@ -41,6 +41,7 @@ WIRED = {
     "retract_own",
     "grant_access",
     "revoke_access",
+    "set_visibility",
 }
 
 

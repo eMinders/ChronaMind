@@ -476,16 +476,30 @@ the mechanism is what produces the result.
 | ID | Question | Owner | Needed before |
 |---|---|---|---|
 | ~~V2-D13~~ | ~~Association-types cap per artifact (default suggestion: 32)~~ — **resolved (r7)**, see §5 | engine lead | W1 |
-| V2-D14 | Retention default per profile and abstraction expiry (suggest: 180 d for preferences, 365 d for constraints and decision patterns, 14 d for context; re-verified rather than renewed) | product + methods | W5 |
+| ~~V2-D14~~ | ~~Retention default per profile and abstraction expiry~~ — **resolved (2026-11-25)**, see §4.1 | product + methods | W5 |
 | V2-D16 | Whether `S8` (fact/hypothesis labelling detectability) runs at all; ethics determination required first | supervisor | W7 |
 | V2-D17 | Public API stability policy: semver with deprecation windows vs "experimental" prefix for Tier B | engine lead | W7 |
-| V2-D30 | `tau_confidence` and `tau_coverage` defaults (suggest 0.90 / 0.60, frozen in the pilot like v1's `D-09`-`D-14`) | methods | W4 |
-| V2-D31 | `mu`/`kappa` estimation window for hierarchical pooling: all users, or a rolling window to handle population drift | methods | W4 |
+| ~~V2-D30~~ | ~~`tau_confidence` and `tau_coverage` defaults~~ — **resolved (2026-11-25)**, see §4.1 | methods | W4 |
+| ~~V2-D31~~ | ~~`mu`/`kappa` estimation window for hierarchical pooling~~ — **resolved (2026-11-25)**, see §4.1 | methods | W4 |
 | V2-D32 | Whether abstraction expiry triggers automatic re-derivation or a user prompt in the PDT profile (privacy-relevant in the personal profile) | product | W7 |
-| V2-D34 | `K` (dissent persistence window) confirmation: default 7 reflection cycles, frozen pre-test | methods | W4 |
+| ~~V2-D34~~ | ~~`K` (dissent persistence window) confirmation~~ — **resolved (2026-11-25)**, see §4.1 | methods | W4 |
 
 `V2-D15` is **resolved** by `V2-D23` (conformal is for intervals only; admission uses CP bounds).
-`V2-D13` is **resolved** in §5 (r7). The other rows remain open; r7 did not decide them.
+`V2-D13` is **resolved** in §5 (r7). `V2-D14`, `V2-D30`, `V2-D31`, and `V2-D34` are **resolved** in §4.1 (2026-11-25).
+
+### 4.1 Open decisions resolved for W4/W5/post-W3.7 (2026-11-25)
+
+#### V2-D30 — Default confidence and coverage thresholds (`tau_confidence = 0.90`, `tau_coverage = 0.60`)
+Matches `STATISTICS.md` §4.2, `soundness.admission`, and `scripts/check_statistics.py`; one-sided 97.5% Clopper–Pearson threshold (`o >= 36` at zero counters/unknowns).
+
+#### V2-D31 — Hierarchical pooling estimation window (90-day rolling window)
+Hierarchical beta-binomial pooling (`mu`, `kappa`) uses a rolling 90-day aggregate window across users with a minimum cohort of 10 users; below 10 users, each facet falls back to an unpooled Beta(1, 1) prior.
+
+#### V2-D34 — Dissent persistence window (`K = 7` reflection cycles)
+Dissent persistence window is fixed at `K = 7` scheduler reflection cycles (`UM8 = 0` throughout).
+
+#### V2-D14 — Retention and per-facet abstraction expiry defaults
+Profile abstraction expiry defaults: `preference` = 180 days, `goal` = 90 days, `constraint` = 365 days, `context` = 14 days, `decision_pattern` = 365 days, `meta_preference` = 180 days; expired abstractions demote to `hypotheses` and must be re-verified rather than silently renewed.
 
 
 ---
@@ -3084,9 +3098,9 @@ scanner never looked at `entity`, which is why nothing reported it.
 appended a `deletion_request`; the marker GUC alone is refused). It deletes only entities no surviving memory cites as
 subject; the `ON DELETE RESTRICT` foreign key stays the guarantee. `delete(scope='all')` erases every such entity of the
 user, including when no memory matched; a `topic` deletion whose target is an entity id — the subject key of the claims
-about it — erases that entity: per-person erasure. A `memory` deletion leaves entities alone, because without a record
+about it — erases that entity: per-person erasure. ~~A `memory` deletion leaves entities alone, because without a record
 of which claim *mentioned* which entity the engine cannot tell a by-product from the user's declared structure; that
-boundary is stated here rather than guessed at. The receipt and the audit row carry `deleted_entities`, a count.
+boundary is stated here rather than guessed at.~~ (**Superseded by `V2-D111` (migration 30):** `entity_mention` and `entity.origin` now record mentions vs declared structure explicitly, so `delete(scope='memory')` erases unreferenced `origin='mention'` entities.) The receipt and the audit row carry `deleted_entities`, a count.
 
 **Tests.** `test_api_wiring_lifecycle_db.py`: `delete all` erases declared and mentioned names and audits only a count;
 a topic deletion by entity id erases that entity and nothing else, and a memory deletion erases none; the function is
@@ -3105,3 +3119,430 @@ body: a `DELETE` is admitted when the parent `app_user` row is no longer visible
 `UPDATE` and `TRUNCATE` are refused as before. Tests: an export after an epoch change with an identical read set is
 servable and gets a new id; two users' empty exports get distinct ids; a direct delete is refused and the user cascade
 succeeds; migration 28 rolls back to the recorded version-27 fingerprint.
+
+---
+
+## 7. Decisions closing post-W3.7 audit gaps and Phase completion (2026-11-25)
+
+### V2-D110 — Structural artifacts record commit-time provenance in `artifact_provenance`
+
+**Status:** adopted (2026-11-25). Migration 29. Closes `I2` remainder (#243).
+
+`memory_version` enforced provenance since migrations 1/7/10, while `association`, `entity` (and its aliases), and
+`entity_link` recorded no attribution to the evidence or API call that produced them. Migration 29 adds one generic
+table `artifact_provenance` (`artifact_kind IN ('association', 'entity', 'entity_alias', 'entity_link')`), enforced at
+commit by deferred constraint triggers (`enforce_artifact_provenance()`). When a cited `memory_version` is deleted,
+`BEFORE DELETE` transitions matching rows to `source_version_id = NULL, origin_kind = 'source_deleted'` ("provenance
+removed by deletion") with no dangling ID; deleting an `association`, `entity`, or `entity_link` cascades its
+provenance rows (including `entity_alias` rows). Pre-migration rows are labelled `"unattributed (pre-migration)"`.
+
+### V2-D111 — Entity mentions and `origin` enable per-memory entity erasure
+
+**Status:** adopted (2026-11-25). Migration 30. Supersedes `V2-D108`'s memory-scope boundary (#247).
+
+Migration 30 adds `entity.origin IN ('declared', 'mention')` and `entity_mention(user_id, version_id, entity_id,
+resolution_stage)` inside the deletion closure. `delete(scope='memory')` counts removed mentions (`deleted_mentions`),
+calls `delete_orphaned_mention_entities` to erase any `origin='mention'` entity left with zero surviving mentions and
+zero `subject_entity_id` references (preserving declared entities and cited subjects), and the leak scanner adds Channel
+12 (`channel_12_entity_registry`) covering `entity` and `artifact_provenance` aliases.
+
+**Limitation (pre-migration entities).** Nothing recorded which entities were mention by-products before migration 30,
+so `ADD COLUMN origin ... DEFAULT 'declared'` labels every entity that already existed `declared`: such an entity
+survives `delete(scope='memory')` even when the memory being deleted was its only mention, and only
+`delete(scope='all')` (or a `topic` deletion naming it) erases it. Pinned by
+`tests/integration/test_migration_m30_entity_mentions_db.py::test_a_pre_migration_entity_survives_memory_deletion_and_is_erased_by_delete_all`.
+
+### V2-D112 — Verification records pin their support and held-out artifact IDs
+
+**Status:** adopted (2026-11-25). Migration 31 (#246).
+
+`VerificationRecord` requires non-empty, caller-readable, ID-disjoint `support_artifact_ids` and `held_out_artifact_ids`.
+Migration 31 adds `verification.artifact_pinning_status` (`pinned` vs `unpinned_pre_migration`) and child table
+`verification_artifact(verification_id, user_id, role, artifact_id)` with `PRIMARY KEY (verification_id, artifact_id)`
+and a deferred commit guard requiring both roles on every `'pinned'` record. `artifact_id` carries no foreign key so
+append-only verification records outlive deleted artifacts (IDs are opaque and content-free).
+
+### V2-D113 — Visibility writing, cross-user grant reads, and no `move` primitive
+
+**Status:** adopted (2026-11-25). Migration 32. Closes `I7` (#244).
+
+1. **Writer.** Tier C Scope operation `set_visibility(artifact_id, visibility)` (`api/handlers.py::Handlers.set_visibility`,
+   `api/runtime.py::change_visibility`) and an optional `visibility` on `assert`, `ingest_episode`, `create_entity`
+   and `link`. It is an ordinary `UPDATE` under row-level security, not a `SECURITY DEFINER` function: the own-user
+   policy's `WITH CHECK` is what decides whether the caller may write the row, so a grantee can read but never change
+   a shared artifact and no GUC-gated privileged path exists (`CLAUDE.md` rule 4). Unknown and foreign ids are one
+   `forbidden`. One content-free `visibility_changed` audit row (artifact kind, new value) per change.
+2. **Children follow their parent.** Migration 32 replaces the independent migration-11 scope policy on
+   `memory_evidence`, `memory_derivation`, `memory_embedding`, `abstraction_stats` and `verification`, and adds one to
+   `outcome_stats` and `procedure_shape`, with `scope.access.rls_parent_read`: a child row is readable exactly when
+   its `memory_version` parent is. No policy reads a second copy of "is this shared" (the children's own migration-11
+   `visibility` columns are left stale and inert; `V2-D123`), so a private artifact
+   cannot leak its evidence and a shared one cannot render as `missing_provenance`.
+3. **Reads.** Read paths no longer add `user_id = <caller>` to statements RLS already governs (`compile_predicate`'s
+   `cross_tenant`, `read_handlers`, `provenance`, `expansion`, `statistics`, `staleness`, `outcomes`,
+   `procedure_shape`); the scope read filter and forced RLS decide, and the result's scope paths feed the rule-6
+   `scope_read` recorder. Without this a granted row was admitted by RLS and then filtered out by the application.
+4. **Scope identity is immutable** (`ARCHITECTURE_V2.md` §5 rule 5), now enforced: `guard_scope_identity` refuses any
+   change of `scope_path` on `memory_version`, `entity` and `association`. Nothing enforced it before.
+5. **No `move`.** A faithful move must re-cite the original's evidence; the contract returns evidence as ids only
+   (`V2-D37`), so no client composition can, and the sharing need is met without a copy. `API_V2.md` §5.2 says so;
+   a server-side primitive is #258.
+
+   *Re-evaluated 2026-11-26 (kept deferred).* No consumer needs it: the only client, the FastAPI app, writes and reads
+   `/u/<user>/` alone, and the collaboration case is served by `set_visibility` plus a grant with one copy and one
+   deletion surface. A `move` would add a second copy of the content (two deletion surfaces until the old one is
+   retired), a new Tier C write path with its own provenance rows, and an idempotency key spanning two scopes — risk
+   with no caller. It becomes needed when a client writes sub-scopes and must re-file memories between them, or a
+   product needs to hand a memory to another namespace rather than share it; #258 holds the design and stays open.
+
+Tests: `tests/integration/test_visibility_sharing_db.py`, `tests/integration/test_migration_m2.py::test_the_read_policy_is_the_library_expression_on_every_scoped_table`.
+
+### V2-D114 — Abstraction ledgers are derived from evidence and gated on verification
+
+**Status:** adopted (2026-11-25). Closes `I15` (#245) under Amendment 3 authorization.
+
+Adds engine evidence derivation (`engine/abstraction_ledger.py`, `engine/refutation.py`) plus **two early drafts of
+W4 instruments**, landed only because `I15` and `I11` need a bound and a run to be meaningful, not as a claim that
+W4 has started (`ROADMAP_V2.md` §7 marks what each still owes):
+
+* `evaluation/stats/abstraction_metrics.py` — a draft of `SD-001`'s three-state metrics (`o = s + k + u`,
+  `confidence_lower = 1 - CP_upper(k + u, o)`, coverage, `FAR_τ`, Brier, ECE with a hand-computable reference).
+  W4 still owes `SD-001`'s acceptance: `precision@verified` against a base rate, per-facet reliability, and the
+  hand-computed constants in `STATISTICS.md` §10.
+* `evaluation/stats/admission.py` and `dependence.py` — drafts of `SD-002` and `SD-008`: the §4.2 predicate composed
+  with Holm at the specified **independent** levels (per-abstraction one-sided 97.5%, FWER 0.05), refusing to admit
+  without refutation and negative-control evidence, and gating on the dependence report's conservative bound. W4
+  still owes `SD-002`'s equivalence pinning with the engine's `soundness.admission` (landed: 
+  `tests/test_admission_and_dependence.py::test_the_evaluation_admission_predicate_equals_the_engine_admission_predicate`)
+  and §5.4.3's third condition (`SD-005`), which no module here implements.
+* `evaluation/suites/admission_calibration.py` — **not** `C-012` and **not** gate `G4`. It checks the admission
+  rule's size and the separation of its controls against a known generative model, per stratum, and never calls the
+  engine. `C-012`'s null suite — no-pattern streams through `infer` and `verify` — remains W4 work, and `G4` is not
+  claimed here.
+
+An earlier version of this record described `evaluation/suites/null_suite.py` as a "G4 null-suite proof
+`FAR_τ <= 0.05`". That was wrong: the module is a Monte-Carlo self-check of the predicate, and the boundary stratum's
+near-zero rate follows from Clopper–Pearson's coverage rather than from anything the engine did. The module is renamed
+`admission_calibration.py`, its `g4_passed` field is `calibration_passed`, and its per-stratum gate is on the observed
+rate with the CP bound reported beside it (at 20 scenarios a perfect zero bounds at 0.168, so a gated bound needs 72
+scenarios per stratum and is a W4 decision). `infer` derives `(s, k, u, o)` directly from the named
+evidence sources and structured predicate (refusing zero/contradictory ledgers), runs active refutation probes, and
+`verify` enforces `soundness.admission.assess` for `'verified'` outcomes while sealing `confidence`,
+`confidence_method_id`, `counter_absence_basis`, and `closed_over_hash`.
+
+### V2-D115 — Fast-lane vs slow-lane cardinality and slot ownership
+
+**Status:** adopted (2026-11-25). Fixes `#248`.
+
+**Who decides.** The *application* decides `cardinality` and `semantic_slot` for the writes it makes; the engine stays
+slot-vocabulary-free and the write path model-free. Flipping `assert` unconditionally to `cardinality='single'` with
+no slot would collapse every unrelated message onto `COALESCE(NULL, 'statement')` under `no_bitemporal_overlap` (`I5`),
+so a message is single-valued only when its slot can be named too, from a closed vocabulary (`residence`, `employer`,
+`name`). A false `multi` only leaves an old belief standing; a false `single` would retire a true one, which is why
+precision wins. Open-domain extraction stays in the slow lane. *How* the app recognises a slot was first an English
+regular grammar; `V2-D121` replaced it with a semantic, language-independent classifier.
+
+**What the product renders.** `facts` also carries recorded turns (`kind='episode'`). The app renders only non-episode
+facts under "Known facts"; turns go last under "Earlier conversation (verbatim; may be outdated; not confirmed facts)",
+deduplicated against rendered claims. So a superseded value is never presented as a known fact, and an assistant turn
+never is either.
+
+**Turn identity.** The agent resends the whole session history on every turn, so a message's idempotency identity is
+`(session, position, role, text)`: a resend replays, and the same words said again later are a new claim that wins
+the slot back.
+
+**Engine fix found on the way.** `engine/gate.py::existing_relation` matched a duplicate on content alone, including a
+superseded value reissued as a historical fact, so Berlin → Paris → Berlin left Paris current and returned a receipt
+for a version that was never written. A duplicate must now be valid at the candidate's `valid_from`.
+
+Tests: `tests/test_memory_slots.py`, root `tests/integration/test_app_engine_boundary.py` (Berlin → Paris renders one
+known fact; the no-slot control keeps two; whole-history resends), `tests/integration/test_host_e2e_db.py::test_returning_to_an_earlier_single_valued_value_supersedes_the_current_one`.
+
+### V2-D116 — No plaintext memory content cache in the FastAPI client
+
+**Status:** adopted (2026-11-25). Fixes `#249`.
+
+Removes the 60s TTL content cache in `app/services/memory_engine.py::search` so deleted, retracted, or unshared memories
+can never be served from client memory after an engine change. Documents client-side caching in `THREAT_MODEL.md` and
+`CHANNELS.md`.
+
+### V2-D117 — Transport-layer rate limits and concurrency bounds on `host/`
+
+**Status:** adopted (2026-11-25). Fixes `#251`.
+
+Adds a per-principal token-bucket rate limiter (off by default, `rate_limit_rps = 0.0`) and an `asyncio.Semaphore`
+concurrency guard (`pool_max >= max_inflight + 1` validated at startup) in `host/limits.py` and `host/service.py`,
+returning `429 resource_limit` with static codes only so one caller cannot exhaust all pool connections.
+
+### V2-D118 — Asset-derived judge floor verification and exact power analysis
+
+**Status:** adopted (2026-11-25). Fixes `#254`.
+
+Replaces censored `N=1` unanswerable max-logit reporting with full-set evaluation (`evaluation/retrieval/judge_floor.py`
+and `scripts/check_judge_floor.py`), adds live-asset floor tests in `tests/test_hybrid.py`, and provides exact
+binomial/two-proportion power calculations (`evaluation/stats/power.py`).
+
+### V2-D119 — Operational backup/restore policy, maintenance scheduler, and metrics
+
+**Status:** adopted (2026-11-25). Completes `#255` (`A-014`).
+
+Records the backup/restore policy in `deploy/README.md` (dumps require `BYPASSRLS`, separate secret backup of
+`CME_PROVENANCE_KEY`/`CME_DELETION_RECEIPT_KEY`, `public` extensions bootstrapped before schema restore, runtime role
+re-provisioned post-restore; pre-deletion backups resurrect rows deleted after the backup until retention expiry because
+no automated deletion-log replay ships). Adds `worker/maintenance.py` + `scripts/run_maintenance.py` + systemd timer for
+scheduled `expire`/`purge_working`/`rebuild_index`, dependency-free Prometheus `/metrics` (`host/metrics.py`) without
+tenant/content labels, and a real `pg_dump`/`pg_restore` rehearsal (`scripts/rehearse_restore.py`). The resurrection
+caveat is narrowed by `V2-D122` (the erasure journal).
+
+
+### V2-D120 — A delegating service token acts for the end user it names
+
+**Status:** adopted (2026-11-25). Found while closing #250; prerequisite of #248/#249/#250's end-to-end proof.
+
+**The defect.** A host token maps to exactly one principal (`host/credentials.py`, "one entry per service principal"),
+and the engine's namespace rule makes that principal's `/u/<principal>/` the only writable scope. The FastAPI app holds
+one token and sends `scope=/u/<end user>/` for every user, so every write and read for every end user but one was
+`forbidden` — and the app logs and swallows memory failures, so a multi-user deployment silently had no memory. Nothing
+crossed the app↔engine boundary in a test, so nothing noticed. Separately, nothing provisioned an end user's `app_user`
+row, which every tenant table references.
+
+**Decision.** A token may be marked `"delegate": true` in `CME_HOST_TOKENS`. A delegating token **must** name the end
+user in the envelope's top-level `principal`; that end user is then the caller for every engine rule (own namespace,
+RLS `app.user_id`, read set, rate/concurrency limits). Rules, all static refusals and all tested
+(`tests/test_host_credentials.py`, `tests/integration/test_host_e2e_db.py`):
+
+1. A token without the flag that names a `principal` is `forbidden` (`delegation_not_permitted`): delegation is a
+   property of the token, never of the request.
+2. A delegating token without `principal` is `validation_error` (`principal_required`): an implicit fallback would write
+   an end user's memory into the service's namespace.
+3. `principal` must satisfy the user-segment grammar of `/u/<id>/` (`principal_invalid`), so it cannot forge a path.
+4. A principal that owns a token of its own is `forbidden`: delegation never reaches an operator's or another
+   service's namespace.
+5. The delegated credential keeps the token's tier and is never `admin`; a delegating token cannot itself be `admin`
+   (refused at start-up).
+6. The host creates the end user's `app_user` row idempotently (`INSERT … ON CONFLICT DO NOTHING`), as that user under
+   the restricted role, before the call — the `app_user` policy admits only the session's own id.
+
+**Trust consequence (stated, not hidden).** A delegating token is a credential for *every* end user's memory at its
+tier, exactly as the app's own database credential is for its own tables. It is a service secret, rotated like one;
+`THREAT_MODEL.md` records it. Per-user tokens were rejected: the app would have to mint and store a secret per user, and
+the engine would gain an issuance API, for no isolation the RLS boundary does not already provide.
+
+
+### V2-D121 — The app's slot classifier is semantic and language-independent
+
+**Status:** adopted (2026-11-26). Amends `V2-D115` (which keeps *who* decides: the application).
+
+**The defect.** `V2-D115` shipped an English regular grammar (`I live in X`, `I moved to X`, a capitalised value). An
+Arabic or mixed-language user ("أنا ساكن في برلين", "انتقلت إلى باريس", "I live in Berlin, بس دلوقتي انتقلت لـ Paris")
+never got a single-valued claim, so their moves left two "known facts" — #248 fixed for one language only. More
+keyword rules per language would repeat the defect in every language not yet written.
+
+**Decision.** Understanding is delegated to a language model; acceptance stays deterministic and language-independent
+(`app/services/memory_slots.py`):
+
+1. One structured-output call (`SlotExtraction`: slot, temporal status, whether the subject is the speaker, the value
+   as written, confidence) on the app's LLM service, with Langfuse tracing. The prompt names no language's words.
+2. `decide` accepts it only when the slot is in the closed vocabulary, the status is `current` (a past value, plan,
+   hypothetical, denial or question is not), the subject is the speaker, the confidence is at least 0.8, and the value
+   is **grounded**: it has at least two letters or digits and occurs verbatim in the message after NFKC, case folding
+   and removal of combining marks. A translated, transliterated or invented value is refused, in any script. No
+   word-boundary rule: it would break Arabic, where a preposition attaches to the name (ببرلين).
+3. Only the newest user message of an `add()` call is classified: each earlier one was the newest of an earlier call and
+   replays by idempotency key, so one model call per turn. Up to four preceding messages are context, so a correction
+   ("No, I meant Paris") is readable; the value must still come from the newest message.
+4. Every failure — no model, timeout, invalid answer, any exception — is `multi` with no slot. `MEMORY_SLOT_CLASSIFIER=off`
+   selects that behaviour outright. The app logs the proposed slot and outcome, never the message or the value.
+
+**Alternatives rejected.** Per-language keyword grammars (the defect, multiplied). Classifying in the engine's slow lane:
+the engine has an LLM extractor, but the product path enqueues nothing and the worker serves a fixed user list, so it
+would be a larger change with no gain in what is decided; `V2-D115` keeps the decision in the app. Embedding similarity
+to prototype sentences: it cannot tell "I live in Berlin" from "I lived in Berlin in 2010", which is the distinction that
+matters.
+
+**Evidence.** `tests/test_memory_slots.py` (each refusal in Arabic, English and mixed text);
+`tests/integration/test_app_engine_boundary.py` (Arabic and English Berlin → Paris → Berlin and a mixed-language
+correction through the real host, one model call per turn); `tests/live/test_memory_slots_live.py` against real models
+(opt-in), 39 cases: Arabic, English, mixed, corrections, historical facts, plans, questions, third parties,
+Berlin → Paris → Berlin, and — since `V2-D124` item 9 — messages that state a slot *and* something else, plus reported
+speech. Measured on the final commit: `gpt-6.2-sol` **39/39, no false `single`, no failed call**. An earlier 34-case
+run measured `gpt-5.6-luna` through the production path and `gpt-6.2-sol`, `claude-sonnet-5-5` and `claude-haiku-5-5`
+through the gateway at 34/34 each. The two Claude models are **unmeasured** on the final commit: the gateway answered
+`400` with "this organization has been disabled", which is a provider condition, not a misclassification (the run
+counts failed calls separately and fails on them). The production path is unmeasured here because this checkout's
+`OPENAI_API_KEY` is a placeholder.
+Model choice matters less than the checks: a failed or malformed call is `multi`, never a false `single`, and the
+classifier no longer lets another model answer for the configured one (`V2-D124` item 8).
+
+**Cost and limits.** One small structured call per user turn, off the response path (`add()` runs as a background
+task). The model's tense judgement is the remaining precision risk; the grounding check bounds what it can invent, not
+whether it misreads a past statement as current. The live evaluation is opt-in because CI has no model credential.
+
+
+### V2-D122 — The erasure journal: a restore re-applies the deletions its backup predates
+
+**Status:** adopted (2026-11-26). Narrows the resurrection caveat of `V2-D119`; `D-ENG-04` is unchanged.
+
+**The risk.** A backup taken before a deletion holds the deleted rows, and restoring it also rolls back the
+`deletion_request` rows that recorded the erasure. The rehearsal measured it: the deleted memory is readable again and
+the restored database holds no trace of the deletion. A right-to-erasure promise that one routine restore undoes is not
+one.
+
+**Decision.** `deletion_request` is already an append-only, content-free log (user, scope, HMAC digest of the target,
+per-user epoch). It is copied *out of the database* and replayed after a restore (`deletion/journal.py`,
+`scripts/erasure_journal.py`):
+
+1. **Export** (`cme-erasure-journal.timer`, every five minutes, and before any restore): every completed request is
+   merged into a JSON-lines file. The merge never drops an entry, so an export from a restored, older database cannot
+   shrink the journal; two different entries under one id or one `(user, epoch)` are refused. The export role needs
+   `BYPASSRLS` (checked: under forced RLS a role without it reads zero rows and would write an empty journal that
+   looks valid) and is granted `SELECT` on `deletion_request` only. The export runs as its own transient Unix user
+   (`DynamicUser=yes`) from a `root:root 0600` environment file, so the worker's user can read neither the file nor the
+   process's environment; an exclusive lock keeps two exports from interleaving their read-merge-write. The header
+   carries a one-way key check of the deletion key, never the key. A replayed request differs from the original only
+   in `requested_at` and merges into it.
+2. **Replay** (a step of the restore procedure, before the host serves traffic): per user in epoch order, every
+   journalled request the restored database lacks is re-applied through `DeleteHandlers.replay` — the engine's own
+   deletion path, the deployment's handler configuration, the restricted role and the user's own RLS — keeping the
+   original request id, digest and epoch, so a second replay finds it and does nothing. The target is found by
+   recomputing the digest over the user's restored keys (`memory_key`; for `topic` also `subject_key` and entity ids):
+   the journal never holds a plaintext target (`T-29`). A target the backup never held is recorded with nothing to
+   erase. An `all` request needs no target (its digest may cover a `target_ref` the caller sent, which selects
+   nothing), so only a resolved target is checked against the digest. A journalled user the backup predates is re-provisioned first, exactly as the host provisions one, so their
+   epochs are taken and their next deletion continues after them. A replay under another deletion key is refused
+   before it writes (it would otherwise match nothing and
+   record every deletion as done); a restored database holding a *different* request at a journalled epoch is refused
+   as divergent.
+
+**Alternatives rejected.** Per-user encryption keys destroyed on deletion (crypto-shredding) would make old backups
+unreadable for that user and is the stronger design, but it touches every content column, index and embedding; it is
+the follow-up if the recovery-point residual below is unacceptable. A journal table in a second schema of the same
+database: zero recovery point when only the engine schema is restored, but lost with the cluster, and a second schema
+outside the migration runner's catalog checks. A plaintext or encrypted target in the journal: it would keep, outside
+the database, the very name the digest exists to hide.
+
+**Residual (stated).** Deletions after the newest journal copy the operator still has (the export interval plus the
+off-host shipping delay), and a journal lost together with the database. Retention expiry is re-applied by running
+maintenance after the restore.
+
+**Evidence.** `tests/integration/test_backup_restore_db.py` over a real `pg_dump`/`pg_restore`: three deletions after
+the backup (a resolved memory deletion, one the backup never held, a user's `delete all`); before the replay the
+deleted memories are readable and the leak scanner finds residuals in 6 measured channels; after it, nothing deleted is
+readable, the scanner finds 0, the kept memory survives, the request ids are the originals, and a second replay does
+nothing. Life after the restore is exercised too: the next export merges the replayed requests (no conflict), a user the
+backup predated deletes again at the next epoch, and the grown journal replays as all present. The independent final
+review of #259 found the two lifecycle defects these steps now pin (a replayed `requested_at` that made every later
+export conflict, and an unprovisioned user that made the next epoch collide). `tests/test_erasure_journal.py` pins the file, the merge and the key check.
+
+
+### V2-D123 — Hardening from the independent review of #259
+
+**Status:** adopted (2026-11-26).
+
+1. **Guarded rollbacks refuse a role that cannot see every row.** Thirteen rollback scripts guard a data loss with
+   `IF EXISTS (SELECT … FROM <forced-RLS table>)`. Run by an ordinary owner (the deployment `test_migration_owner.py`
+   supports), forced RLS hides every row, the guard passes on an empty view and the rollback drops the data it was
+   written to protect. Each now refuses first with `rollback_requires_bypassrls`, inside the same transaction.
+   (`tests/integration/test_migration_owner.py::test_a_guarded_rollback_refuses_an_owner_that_cannot_see_every_row`
+   fails without it.)
+2. **An unmeasured queue is not a zero.** `/metrics` counted `job` rows on a connection without a tenant scope; for a
+   login without `BYPASSRLS` forced RLS returned nothing and the host rendered `cme_queue_dead_letters_total 0`. The
+   host now reports `cme_queue_metrics_available 0` and omits the queue families when it cannot measure them; no
+   privileged function was added to measure them.
+3. **The rate limiter's map is bounded.** With a delegating token every end user is a principal; buckets that have
+   refilled to the burst (indistinguishable from absent ones) are swept at an amortised high-water mark.
+4. **Migration 32's header said the child visibility columns could not disagree with the parent.** They do, and are
+   inert because no policy reads them; the header now says so, and `test_migration_m2.py` pins every child policy to
+   `rls_parent_read`.
+
+
+### V2-D124 — The second independent review of #259: what it found, and what stays open
+
+**Status:** adopted (2026-11-26). Covers findings from four parallel read-only reviews (deletion/recovery, security and
+RLS, schema and invariants, app and instruments) plus the parent's own reading. Every fix below landed with a test that
+fails on the code before it.
+
+**Deletion and recovery (`V2-D122` completed).**
+
+1. **A journal export is now durable.** `os.replace` was not followed by an `fsync` of the directory, so a crash could
+   leave the *older, shorter* journal behind — silently losing exactly the newest deletions the feature exists to hold
+   (`tests/test_erasure_journal.py::test_the_written_journal_is_durable_in_its_directory`).
+2. **A truncated journal is refused, not read as a shorter one.** The header's `entries` count is now checked
+   (`journal_truncated`): an off-host copy cut at a line boundary used to load as valid.
+3. **A journal whose header carries no key check is never stamped with the current key** (`journal_key_check_missing`).
+4. **The replay's success is honest.** `scripts/erasure_journal.py replay` exits `1` on any unresolved entry
+   (`unresolved_entries_remain`) unless the operator passes `--accept-unresolved`, and on any divergent user
+   (`divergent_users_remain`); a missing journal file is `journal_missing`, not an empty success. An unresolved entry
+   is *indistinguishable* from a replay under the wrong deletion key, and exit `0` made both look like a clean restore.
+5. **One divergent tenant no longer costs every other tenant its replay.** `ReplayReport.divergent_users` names them,
+   the rest are applied, and the run is not a success.
+6. **The host requires `CME_DELETION_RECEIPT_KEY`.** `engine.deletion.default_receipt_key()` invents a random key per
+   process, and a digest made under it can never be matched by a replay or by an idempotent retry after a restart.
+   `settings_from_environment` now refuses (`cme_deletion_receipt_key_required`), `HostSettings` keeps both deployment
+   keys out of its `repr`, and re-provisioning a journalled user verifies the row exists rather than assuming it
+   (`journal_user_provision_failed`).
+7. **What is still not covered is stated, not hidden** (`THREAT_MODEL.md` T-46): the journal records the *target* of a
+   deletion, not the evidence turns it erased, so a turn ingested before a backup whose extraction completed after it
+   can be re-extracted once the worker runs. The replay's non-zero exit and the restore procedure (worker starts only
+   after a clean replay) are what keep that from happening silently; recording evidence-turn digests needs a schema
+   change and is recorded as the follow-up.
+
+**App (`V2-D121` amended).**
+
+8. **The classifier runs one model and never falls back.** `llm_service.call` walks the whole registry after a provider
+   error, so an untested model could decide that a past fact is current. `call(fallback=False)` is new, the classifier
+   uses it, and its model resolves at start-up to `MEMORY_SLOT_CLASSIFIER_MODEL` or `DEFAULT_LLM_MODEL`.
+9. **A message that states more than one fact is `multi`.** The claim's content is the whole message, so
+   "I live in Cairo and I work at Siemens" labelled as a residence update would retire the employer fact the next time
+   the user moved. The prompt now says one message/one attribute, and the live set gains multi-fact negatives.
+10. **`DELETE /messages` no longer makes a repeated message replay.** A message's identity was (session, position,
+    role, text) and clearing the history restarts the positions; `session.history_epoch` (migration
+    `c4a7f1e29b03`) is part of the identity now.
+11. **An unrecognized `MEMORY_SLOT_CLASSIFIER` value disables the classifier**: only `llm` enables it.
+
+**Schema and invariants.**
+
+12. **Migration 29's two `SECURITY DEFINER` trigger functions** rewrite `app.user_id`; `EXECUTE` is revoked from
+    `PUBLIC` and `app.user_id` is *reset* rather than set to `''` when it was unset (an empty tenant silently matches
+    nothing for the rest of the transaction). They take no receipt gate on purpose: re-derivation deletes and
+    re-inserts the version, and item 13 is what keeps that attribution.
+13. **Re-derivation no longer erases `I2` attribution.** The tombstoning trigger fires on the rebuild's own `DELETE`,
+    so an entity, alias or link citing a live, active version rendered "provenance removed by deletion" for ever.
+    `rederive.py` carries `(id, origin_kind, source_version_id)` across the rebuild and restores it.
+14. **`I11`'s pinning status is not caller-settable.** `verification.artifact_pinning_status` admitted
+    `'unpinned_pre_migration'` from any inserter, which skipped the artifact check entirely; a `BEFORE INSERT` trigger
+    refuses it. The value that predates the migration is created by `ADD COLUMN … DEFAULT`, which fires no trigger, so
+    upgrading a legacy database still works; the one path it refuses is a *data-only* restore of pre-migration
+    `verification` rows into an already-migrated schema, which `deploy/README.md` says to do at the dump's own version
+    (or with `pg_restore --disable-triggers`). Restorability wins over re-enforcing an invariant the product path
+    already enforces in code — but the value would otherwise be a one-token switch for skipping `I11`.
+15. **`I7` now has a behavioural alarm.** `verification_artifact_scope_read` is the one cross-user read policy the
+    migration-2 pin cannot cover (it delegates two hops); it is pinned against its own expression and against its own
+    `visibility` column, and the sharing test asserts that a grantee's `provenance` view of a shared row returns
+    *named* references rather than opaque handles (a `200` was true either way before).
+
+**Instruments and contracts.**
+
+16. **The admission levels are independent, as §5.4.3 specifies.** `closed_testing_admit` passed its FWER level into
+    the per-abstraction CP bound, so at FWER 0.05 the `(s=29, k=0, u=0)` row of §4.2 was admitted — the exact
+    convention error `r3` exists to prevent. The bound is always one-sided 97.5%; `fwer_alpha` (default 0.05) only sets
+    Holm. `assess_admission` also **requires** refutation and negative-control evidence (two of its five gates used to
+    pass by default), refuses a dependence report that describes another ledger, and gates on that report's
+    conservative bound (`SD-008`), and a new grid test pins it to the engine's `soundness.admission` over 1 352
+    tuples.
+17. **The calibration study is not `C-012` and not `G4`.** `evaluation/suites/null_suite.py` became
+    `admission_calibration.py` with `calibration_passed`; `V2-D114` is amended with what it actually proves and what
+    W4 still owes. Its per-stratum gate is on the observed rate with the CP bound reported beside it, because at 20
+    scenarios a perfect zero bounds at 0.168.
+18. **An export's manifest cannot state a scope its ids exceed.** `_narrow` kept the *grant's* entry while the manifest
+    recorded the *requested* selector, so a grantee exporting a sub-scope received the whole grant under a narrower
+    label. Entries are anchored at the requested path.
+19. **`x-request-id` is unique and is logged**, and transport refusals answer the contract's `validation_error` with a
+    static `detail` instead of six undefined codes.
+
+**Known and deliberately not done.** `ResultStore`/`CostStore` evict oldest-first *across* principals, so one caller
+can degrade another's drill-down handles (confidentiality holds; only availability; `THREAT_MODEL.md` T-47). A
+delegating token re-creates a tenant row that an operator removed, because `delete` erases memory, never tenancy
+(T-42). `read_artifact_provenance`/`read_entity_provenance` have no caller in `src/`: the structural read model is
+tested but not yet an operation (W4+). Rate limiting stays off by default, and `THREAT_MODEL.md` §3 now says the
+default mitigation for timing inference is the concurrency bound rather than a rate bound.

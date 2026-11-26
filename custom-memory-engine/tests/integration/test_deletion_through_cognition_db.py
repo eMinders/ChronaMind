@@ -20,6 +20,7 @@ import pytest_asyncio
 import structlog
 from psycopg import AsyncConnection, sql
 from psycopg.errors import InsufficientPrivilege, RaiseException
+from psycopg.rows import tuple_row
 
 from custom_memory_engine.api import delete_handlers
 from custom_memory_engine.api.delete_handlers import register_delete_handlers
@@ -45,6 +46,7 @@ from custom_memory_engine.deletion.scanner import (
     ScanContext,
     scan_deleted_key,
 )
+from custom_memory_engine.engine.artifact_provenance import record_entity_provenance
 from custom_memory_engine.engine.channels import stale_of
 from custom_memory_engine.engine.deletion import (
     RECEIPT_DIGEST_PREFIX,
@@ -214,13 +216,14 @@ async def _add_verified_abstraction(
         (version_id, MODEL, user, VEC_LIT),
     )
     closure = await compute_closure(conn, user, version_id, schema_name=schema)
+    ver_id = f"ver-{version_id}"
     await conn.execute(
         "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
         "negative_control_slice_id, support_window, held_out_window, support_context_key, held_out_context_key, "
         "outcome) VALUES (%s, %s, %s, %s, %s, %s, tstzrange(%s, %s), tstzrange(%s, %s), 'sup-ctx', 'held-ctx', "
         "'verified')",
         (
-            f"ver-{version_id}",
+            ver_id,
             version_id,
             user,
             split_id,
@@ -231,6 +234,11 @@ async def _add_verified_abstraction(
             START + timedelta(days=3),
             START + timedelta(days=5),
         ),
+    )
+    await conn.execute(
+        "INSERT INTO verification_artifact (verification_id, user_id, role, artifact_id) "
+        "VALUES (%s, %s, 'support', %s), (%s, %s, 'held_out', %s)",
+        (ver_id, user, f"sup-{version_id}", ver_id, user, f"held-{version_id}"),
     )
     await conn.execute(
         "UPDATE abstraction_stats SET support_count = 50, counter_count = 0, undetermined_count = 0, "
@@ -429,6 +437,54 @@ async def test_dependent_with_one_surviving_and_one_deleted_source(db) -> None:
         assert ch1.findings[0].measured is True
         assert ch1.findings[0].residual_count == 0
         assert ch1.findings[0].leaked is False
+
+
+async def test_rederivation_keeps_the_attribution_of_the_artifacts_that_cite_it(db) -> None:
+    """`I2`: re-deriving a version deletes and re-inserts it, and its tombstoning trigger used to be permanent.
+
+    An entity attributed to a version that is still alive and active must render its source, not
+    "provenance removed by deletion" (`V2-D124` item 13).
+    """
+    _, schema = db
+    entity_id = "ent-rederive"
+    async with connect(db) as conn:
+        await _set_user(conn)
+        async with conn.transaction():
+            await _add_claim(conn, "n0", "secret-zero")
+            await _add_claim(conn, "n1", "kept-one")
+            await _add_claim(conn, "n2", "combined secret-zero and kept-one", derived=True)
+            await conn.execute(
+                "INSERT INTO memory_derivation VALUES "
+                "('n2', 'n0', 'u1', 'consolidation'), ('n2', 'n1', 'u1', 'consolidation')"
+            )
+            await conn.execute(
+                "INSERT INTO entity (id, user_id, scope_path, canonical_name, entity_type, aliases) "
+                "VALUES (%s, 'u1', '/u/u1/', 'kombi', 'person', '{}')",
+                (entity_id,),
+            )
+            await record_entity_provenance(
+                conn,
+                user_id="u1",
+                entity_id=entity_id,
+                origin_kind="evidence_version",
+                source_version_ids=["n2"],
+                created_by="u1",
+                schema_name=schema,
+            )
+        async with conn.transaction():
+            receipt = await delete_memory(
+                conn, "u1", target_ref="n0", rederivation_builder=_builder, threshold=1, schema_name=schema
+            )
+        assert receipt.rederived_dependents == 1
+        async with conn.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                "SELECT origin_kind, source_version_id FROM artifact_provenance "
+                "WHERE user_id = 'u1' AND artifact_kind = 'entity' AND artifact_id = %s",
+                (entity_id,),
+            )
+            row = await cursor.fetchone()
+    # the version survived the rebuild, so the attribution must too
+    assert row == ("evidence_version", "n2")
 
 
 async def test_dependent_of_a_rederived_source_is_regenerated(db) -> None:
@@ -701,6 +757,11 @@ async def test_deleting_an_artifact_removes_its_associations_but_not_the_associa
             await conn.execute(
                 "INSERT INTO association (id, user_id, from_id, to_id, type, weight, created_by, origin) "
                 "VALUES ('assoc-1', 'u1', 'x', 'y', 'contradicts', 1.0, 'u1', 'tier_c')"
+            )
+            await conn.execute(
+                "INSERT INTO artifact_provenance "
+                "(id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+                "VALUES ('ap-assoc-1', 'u1', 'association', 'assoc-1', 'tier_c_call', 'u1')"
             )
         async with conn.transaction():
             receipt = await delete_memory(conn, "u1", target_ref="x", schema_name=schema)
@@ -1073,7 +1134,7 @@ async def test_eleven_channel_scan_clean_on_v2_deletion_and_a8_leaks_through_abs
                 channels=ALL_CHANNELS,
             )
             p_verdict = verdict(p_report)
-            assert len(p_report.findings) == 11
+            assert len(p_report.findings) == 12
             assert p_verdict.complete is True, (
                 f"incomplete: {p_verdict.unmeasured_channels} {p_verdict.partial_channels}"
             )
@@ -1093,7 +1154,7 @@ async def test_t29_receipt_stores_keyed_hmac_digest_not_plaintext_and_supports_i
     _, schema = db
     key_a = b"deployment-key-alpha-32bytes!!!!"
     key_b = b"deployment-key-bravo-32bytes!!!!"
-    secret_topic = "medical-diagnosis-secret"
+    secret_topic = "medical-diagnosis-secret"  # pragma: allowlist secret
     assert target_ref_digest(key_a, "u1", "memory", secret_topic) != target_ref_digest(
         key_b, "u1", "memory", secret_topic
     )
@@ -1312,6 +1373,11 @@ async def test_rederived_dependent_keeps_its_gate_references_evidence_and_associ
             await conn.execute(
                 "INSERT INTO association (id, user_id, from_id, to_id, type, weight, created_by, origin) "
                 "VALUES ('assoc-dep', 'u1', 'dep', 'other', 'contradicts', 1.0, 'u1', 'tier_c')"
+            )
+            await conn.execute(
+                "INSERT INTO artifact_provenance "
+                "(id, user_id, artifact_kind, artifact_id, origin_kind, created_by) "
+                "VALUES ('ap-assoc-dep', 'u1', 'association', 'assoc-dep', 'tier_c_call', 'u1')"
             )
         async with conn.transaction():
             receipt = await delete_memory(

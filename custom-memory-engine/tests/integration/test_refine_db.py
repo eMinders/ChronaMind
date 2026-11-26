@@ -476,12 +476,18 @@ async def verified_abstraction(engine: Engine, conn: AsyncConnection, version_id
             "VALUES (%s, 't-alice', 'alice', 'x', 'support')",
             (version_id,),
         )
+        ver_id = "ver-" + version_id
         await conn.execute(
             "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
             "negative_control_slice_id, support_window, held_out_window, support_context_key, held_out_context_key, "
             "outcome) VALUES (%s, %s, 'alice', 'split', clock_now(), 'neg', %s::tstzrange, %s::tstzrange, "
             "'ctx-a', 'ctx-b', 'verified')",
-            ("ver-" + version_id, version_id, WINDOW_A, WINDOW_B),
+            (ver_id, version_id, WINDOW_A, WINDOW_B),
+        )
+        await conn.execute(
+            "INSERT INTO verification_artifact (verification_id, user_id, role, artifact_id) "
+            "VALUES (%s, 'alice', 'support', %s), (%s, 'alice', 'held_out', %s)",
+            (ver_id, f"sup-{version_id}", ver_id, f"held-{version_id}"),
         )
         await conn.execute(
             "UPDATE abstraction_stats SET support_count = 40, counter_count = 0, undetermined_count = 0, "

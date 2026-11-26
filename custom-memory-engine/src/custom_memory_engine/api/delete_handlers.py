@@ -81,6 +81,39 @@ class DeleteHandlers:
                 raise EntryError("retryable_conflict", exc.code) from None
             raise EntryError("validation_error", exc.code) from None
 
+    async def replay(
+        self,
+        user: str,
+        *,
+        scope: DeletionScope,
+        target_ref: str,
+        request_id: str,
+        stored_target_ref: str,
+        deletion_epoch: int,
+    ) -> DeletionReceipt:
+        """Re-apply one journalled deletion after a restore, with this handler's own configuration (``V2-D122``).
+
+        Not an API operation: only :func:`custom_memory_engine.deletion.journal.replay_journal` calls it. The request
+        keeps its original id, digest and epoch, so the restored database ends in the state the journal records.
+        """
+        async with self.runtime.session(user) as connection:
+            return await delete_memory(
+                connection,
+                user,
+                scope=scope,
+                target_ref=target_ref,
+                ablation=self.ablation,
+                deletion_epoch=deletion_epoch,
+                summary_builder=self.summary_builder,
+                rederivation_builder=self.rederivation_builder,
+                threshold=self.threshold,
+                delete_exclusive_sources=self.delete_exclusive_sources,
+                receipt_key=self.runtime.deletion_key,
+                schema_name=self.runtime.schema_name,
+                request_id=request_id,
+                stored_target_ref=stored_target_ref,
+            )
+
 
 def register_delete_handlers(
     engine: Engine,

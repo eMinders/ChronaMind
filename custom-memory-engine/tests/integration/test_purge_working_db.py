@@ -442,9 +442,17 @@ async def test_an_episode_that_opens_a_contradiction_is_retained_and_the_claim_s
         receipt = await purge_scope(engine, SESSION)
         assert (receipt.purged_episodes, receipt.retained_as_evidence) == (1, 3)
         diff = changed(before, await snapshot(conn))
-        assert set(diff) == {"memory_version", "memory_evidence", "association", "audit_event"}, sorted(diff)
+        assert set(diff) == {
+            "memory_version",
+            "memory_evidence",
+            "association",
+            "artifact_provenance",
+            "audit_event",
+        }, sorted(diff)
         assert [row["id"] for row in diff["memory_version"][0]] == [w.fact_episode]
         assert [row["id"] for row in diff["association"][0]] == [related] and diff["association"][1] == []
+        assert [row["artifact_id"] for row in diff["artifact_provenance"][0]] == [related]
+        assert diff["artifact_provenance"][1] == []
         # V2-D80: membership does not depend on what the query retrieved, so a scoped query still shows the claim in
         # `conflicts` with both sides -- the episode that contradicts it is loaded, not required to be a candidate.
         scoped = await query(engine, REPO)

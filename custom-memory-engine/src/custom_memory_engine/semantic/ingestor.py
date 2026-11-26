@@ -43,8 +43,15 @@ from typing import Literal, Protocol, runtime_checkable
 
 import structlog
 from psycopg import AsyncConnection, sql
+from psycopg.rows import tuple_row
 
 from custom_memory_engine.clock import ClockTick, allocate_clock
+from custom_memory_engine.engine.artifact_provenance import (
+    ResolutionStage,
+    record_artifact_provenance,
+    record_entity_mention,
+    record_entity_provenance,
+)
 from custom_memory_engine.engine.gate import GateDecision, record_decision
 from custom_memory_engine.engine.ingest import (
     DEFAULT_EMBEDDING_MODEL,
@@ -307,7 +314,7 @@ async def _ingest_claim(
     # 4b. Entity resolution (E-041): every mention is resolved to one identity, or created, or left unresolved when
     #     two candidates tie. This is what makes a later mention of the same thing land on the same row instead of
     #     minting a second one; an ambiguity is reported, never guessed, so two people called "Sara" do not merge.
-    subject_key, subject_entity_id, entity_outcomes = await _resolve_entities(
+    batch = await _resolve_entities_batch(
         connection,
         user_id=user_id,
         scope_path=scope_path,
@@ -316,6 +323,11 @@ async def _ingest_claim(
         embedder=embedder,
         mention_embeddings=mention_embeddings,
         adjudicator=entity_adjudicator,
+    )
+    subject_key, subject_entity_id, entity_outcomes = (
+        batch.subject_key,
+        batch.subject_entity_id,
+        batch.counts,
     )
 
     # 5. Embedding, when the deployment has one. Computed before the conflict recall so the recall can use it.
@@ -334,6 +346,13 @@ async def _ingest_claim(
     proposals = await conflict.adjudicate(claim, neighbours, adjudicator, language=language)
     resolution = conflict.commit_strategy(claim, candidate_authority, proposals, neighbours)
     if resolution.strategy == "quarantine":
+        await _persist_claim_provenance_and_mentions(
+            connection,
+            user_id=user_id,
+            schema_name=schema_name,
+            version_id=None,
+            batch=batch,
+        )
         return (
             ClaimOutcome("quarantined", resolution.reason_code, existing_version_id=resolution.existing_id),
             entity_outcomes,
@@ -390,6 +409,13 @@ async def _ingest_claim(
             existing_id=resolution.existing_id,
             schema_name=schema_name,
         )
+        await _persist_claim_provenance_and_mentions(
+            connection,
+            user_id=user_id,
+            schema_name=schema_name,
+            version_id=candidate.version_id,
+            batch=batch,
+        )
         return (
             ClaimOutcome(
                 "conflict",
@@ -411,7 +437,30 @@ async def _ingest_claim(
         decided_by="semantic-ingestor",
     )
     if applied.decision.decision != "accept":
+        await _persist_claim_provenance_and_mentions(
+            connection,
+            user_id=user_id,
+            schema_name=schema_name,
+            version_id=candidate.version_id,
+            batch=batch,
+        )
         return ClaimOutcome("rejected", applied.decision.reason_code, version_id=candidate.version_id), entity_outcomes
+    persisted_version_id = (
+        applied.committed.version_id
+        if applied.committed is not None
+        else (
+            applied.supersession.inserted_version_id
+            if applied.supersession is not None
+            else applied.existing_version_id
+        )
+    )
+    await _persist_claim_provenance_and_mentions(
+        connection,
+        user_id=user_id,
+        schema_name=schema_name,
+        version_id=persisted_version_id,
+        batch=batch,
+    )
     outcome: Outcome = {
         "reinforce": "reinforced",
         "supersede": "superseded",
@@ -441,14 +490,101 @@ async def _open_conflict(
     """
     from uuid import uuid4
 
-    await connection.execute(
-        sql.SQL(
-            "INSERT INTO {a} (id, user_id, from_id, to_id, type, weight, created_by, origin) "
-            "VALUES (%s, %s, %s, %s, 'contradicts', 1.0, %s, 'tier_c') "
-            "ON CONFLICT (user_id, from_id, to_id, type) DO NOTHING"
-        ).format(a=sql.Identifier(schema_name, "association")),
-        (f"assoc_{uuid4().hex}", user_id, candidate_id, existing_id, user_id),
-    )
+    assoc_id = f"assoc_{uuid4().hex}"
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(
+            sql.SQL(
+                "INSERT INTO {a} (id, user_id, from_id, to_id, type, weight, created_by, origin) "
+                "VALUES (%s, %s, %s, %s, 'contradicts', 1.0, %s, 'tier_c') "
+                "ON CONFLICT (user_id, from_id, to_id, type) DO NOTHING RETURNING id"
+            ).format(a=sql.Identifier(schema_name, "association")),
+            (assoc_id, user_id, candidate_id, existing_id, user_id),
+        )
+        inserted = await cursor.fetchone()
+    if inserted is not None:
+        await record_artifact_provenance(
+            connection,
+            user_id=user_id,
+            artifact_kind="association",
+            artifact_id=str(inserted[0]),
+            origin_kind="evidence_version",
+            source_version_ids=(candidate_id,),
+            created_by="semantic-ingestor",
+            schema_name=schema_name,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _EntityResolutionBatch:
+    subject_key: str
+    subject_entity_id: str | None
+    counts: dict[str, int]
+    created_entities: tuple[tuple[str, tuple[str, ...]], ...]
+    resolved_mentions: tuple[tuple[str, ResolutionStage], ...]
+
+
+async def _persist_claim_provenance_and_mentions(
+    connection: AsyncConnection,
+    *,
+    user_id: str,
+    schema_name: str,
+    version_id: str | None,
+    batch: _EntityResolutionBatch,
+) -> None:
+    version_exists = False
+    if version_id is not None:
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL("SELECT 1 FROM {v} WHERE user_id = %s AND id = %s").format(
+                    v=sql.Identifier(schema_name, "memory_version")
+                ),
+                (user_id, version_id),
+            )
+            version_exists = await cursor.fetchone() is not None
+    if version_exists and version_id is not None:
+        for entity_id, aliases in batch.created_entities:
+            await record_entity_provenance(
+                connection,
+                user_id=user_id,
+                entity_id=entity_id,
+                aliases=aliases,
+                origin_kind="evidence_version",
+                source_version_ids=(version_id,),
+                created_by="semantic-ingestor",
+                schema_name=schema_name,
+            )
+        recorded_entities: set[str] = set()
+        for entity_id, stage in batch.resolved_mentions:
+            recorded_entities.add(entity_id)
+            await record_entity_mention(
+                connection,
+                user_id=user_id,
+                version_id=version_id,
+                entity_id=entity_id,
+                resolution_stage=stage,
+                schema_name=schema_name,
+            )
+        if batch.subject_entity_id is not None and batch.subject_entity_id not in recorded_entities:
+            await record_entity_mention(
+                connection,
+                user_id=user_id,
+                version_id=version_id,
+                entity_id=batch.subject_entity_id,
+                resolution_stage="subject",
+                schema_name=schema_name,
+            )
+        return
+
+    for entity_id, aliases in batch.created_entities:
+        await record_entity_provenance(
+            connection,
+            user_id=user_id,
+            entity_id=entity_id,
+            aliases=aliases,
+            origin_kind="tier_c_call",
+            created_by="semantic-ingestor",
+            schema_name=schema_name,
+        )
 
 
 async def _resolve_entities(
@@ -462,23 +598,47 @@ async def _resolve_entities(
     mention_embeddings: Mapping[str, tuple[float, ...]] | None = None,
     adjudicator: entities.EntityAdjudicator | None = None,
 ) -> tuple[str, str | None, dict[str, int]]:
-    """Resolve every mention, create the unknown ones, and decide the claim's subject.
+    """Resolve every mention, create the unknown ones, and decide the claim's subject."""
+    batch = await _resolve_entities_batch(
+        connection,
+        user_id=user_id,
+        scope_path=scope_path,
+        claim=claim,
+        schema_name=schema_name,
+        embedder=embedder,
+        mention_embeddings=mention_embeddings,
+        adjudicator=adjudicator,
+    )
+    for entity_id, aliases in batch.created_entities:
+        await record_entity_provenance(
+            connection,
+            user_id=user_id,
+            entity_id=entity_id,
+            aliases=aliases,
+            origin_kind="tier_c_call",
+            created_by="semantic-ingestor",
+            schema_name=schema_name,
+        )
+    return batch.subject_key, batch.subject_entity_id, batch.counts
 
-    Three outcomes and what each means for the write:
 
-    * **resolved** (exact, alias, trigram or adjudicated): the mention has an id. The claim's subject is that entity
-      only if the extractor named it as the subject; otherwise the subject stays ``self``.
-    * **created**: the mention is new, so an entity row is written in the claim's own scope. Creating eagerly is what
-      makes the *second* mention cheap; it costs one row and no belief, and the row is inside the deletion closure.
-    * **unresolved**: two or more candidates tied, or a vector proposal was not confirmed. Nothing is created and
-      nothing is attached — a wrong attach is worse
-      than no attach (``V2-D90``), and the count is reported so an operator can see it happening.
-
-    The returned counts are content-free by construction (integers keyed by stage), so they can go in the report.
-    """
+async def _resolve_entities_batch(
+    connection: AsyncConnection,
+    *,
+    user_id: str,
+    scope_path: str,
+    claim: ExtractedClaim,
+    schema_name: str,
+    embedder: Embedder | None = None,
+    mention_embeddings: Mapping[str, tuple[float, ...]] | None = None,
+    adjudicator: entities.EntityAdjudicator | None = None,
+) -> _EntityResolutionBatch:
+    """Resolve every mention, create the unknown ones, and return batch metadata for mention/provenance recording."""
     counts: dict[str, int] = {}
     subject_key, subject_entity_id = "self", None
     cache: dict[str, entities.ResolutionOutcome] = {}
+    created_entities: list[tuple[str, tuple[str, ...]]] = []
+    mentions_by_entity: dict[str, ResolutionStage] = {}
     mention_embeddings = mention_embeddings or {}
     for mention in claim.entities:
         outcome = cache.get(mention.label)
@@ -507,17 +667,28 @@ async def _resolve_entities(
                     embedding=mention_embeddings.get(mention.label),
                     embedding_model=embedder.model if embedder is not None else None,
                     schema_name=schema_name,
+                    origin="mention",
+                    record_provenance=False,
                 )
-                outcome = entities.ResolutionOutcome(mention.label, "created", created)
+                created_entities.append((created, ()))
+                outcome = entities.ResolutionOutcome(mention.label, "created", created, mention_stage="created")
             cache[mention.label] = outcome
         counts[outcome.stage] = counts.get(outcome.stage, 0) + 1
+        if outcome.entity_id is not None and outcome.entity_id not in mentions_by_entity:
+            mentions_by_entity[outcome.entity_id] = outcome.mention_stage or "exact"
         if outcome.resolved and claim.subject_mention is not None and mention.label == claim.subject_mention:
             subject_key, subject_entity_id = str(outcome.entity_id), outcome.entity_id
         elif outcome.resolved and claim.subject_mention is None and mention.entity_id is not None:
             # an extractor that already knows the entity id (a re-extraction of a known mention) is authoritative for
             # the subject only when it also says this mention is the subject; otherwise keep `self`
             counts["extractor_supplied_id"] = counts.get("extractor_supplied_id", 0) + 1
-    return subject_key, subject_entity_id, counts
+    return _EntityResolutionBatch(
+        subject_key=subject_key,
+        subject_entity_id=subject_entity_id,
+        counts=counts,
+        created_entities=tuple(created_entities),
+        resolved_mentions=tuple(mentions_by_entity.items()),
+    )
 
 
 def _kind_for(kind: ClaimKind) -> ClaimKind:

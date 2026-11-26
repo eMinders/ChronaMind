@@ -35,7 +35,12 @@ pytestmark = pytest.mark.integration
 PROFILE = Path(__file__).resolve().parents[2] / "src" / "custom_memory_engine" / "profiles" / "coding.json"
 # V2-D30 is open: the soundness thresholds are stated by whoever wires `infer`; these are its suggested values.
 TAU_CONFIDENCE, TAU_COVERAGE = 0.90, 0.60
-LEDGER = {"support": 2, "counter": 0, "undetermined": 0, "opportunity": 2}  # the two failing runs the source shows
+LEDGER = {
+    "support": 1,
+    "counter": 0,
+    "undetermined": 0,
+    "opportunity": 1,
+}  # matches the single observed episode source
 
 
 def agent(user: str, tier: Tier = "C") -> CallerContext:
@@ -183,7 +188,7 @@ async def test_each_fixture_is_stored_under_the_coding_profile_in_the_repository
                     "SELECT support_count, opportunity_count, verification_status FROM abstraction_stats "
                     "WHERE version_id = %s",
                     (artifact_id,),
-                ) == [(2, 2, "unverified")], item.name
+                ) == [(1, 1, "unverified")], item.name
                 artifact_id = stored.observation
             evidence = await rows(
                 conn,

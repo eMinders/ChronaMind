@@ -245,26 +245,31 @@ async def staleness_inputs(
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
             sql.SQL(
-                "SELECT s.verification_status, s.closed_over_hash, s.support_count, s.counter_count,"
+                "SELECT s.user_id, s.verification_status, s.closed_over_hash, s.support_count, s.counter_count,"
                 " s.undetermined_count,"
                 " s.expires_at, {clock}(), v.method_id, s.confidence_method_id"
                 " FROM {s} s JOIN {v} v ON v.id = s.version_id AND v.user_id = s.user_id"
-                " WHERE s.user_id = %s AND s.version_id = %s"
+                " WHERE s.version_id = %s"
             ).format(s=stats, v=versions, clock=sql.Identifier(schema_name, "clock_now")),
-            (user_id, artifact_id),
+            (artifact_id,),
         )
         row = await cursor.fetchone()
-        if row is None or row[0] != "verified":
+        if row is None or row[1] != "verified":
             return fresh
-        sealed, support, counter, undetermined, expires_at, now, method_id, confidence_method_id = row[1:]
-        closure = await cache.closure_of(connection, user_id, artifact_id, schema_name=schema_name)
+        row_owner_id = str(row[0])
+        sealed, support, counter, undetermined, expires_at, now, method_id, confidence_method_id = row[2:]
+        if row_owner_id == user_id:
+            closure = await cache.closure_of(connection, row_owner_id, artifact_id, schema_name=schema_name)
+        else:
+            # Cross-tenant grant reads never share the caller's or owner's ClosureCache entries (I7).
+            closure = await compute_closure(connection, row_owner_id, artifact_id, schema_name=schema_name)
         source_retired = False
         if closure.sources:
             await cursor.execute(
                 sql.SQL(
                     "SELECT EXISTS (SELECT 1 FROM {v} WHERE user_id = %s AND id = ANY(%s) AND lifecycle = 'retired')"
                 ).format(v=versions),
-                (user_id, list(closure.sources)),
+                (row_owner_id, list(closure.sources)),
             )
             exists = await cursor.fetchone()
             source_retired = bool(exists and exists[0])
