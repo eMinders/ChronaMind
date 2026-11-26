@@ -144,6 +144,31 @@ def test_the_store_is_bounded_and_evicts_the_oldest_handle_first() -> None:
     assert all(store.resolve("alice", handle) is not None for handle in handles[1:])
 
 
+def test_another_principal_burst_preserves_a_live_handle_and_total_capacity_stays_bounded() -> None:
+    store = ResultStore(capacity=3)
+    held = store.issue(
+        principal="bob", budgets=BUDGETS, read_set=alice("/u/bob/"), intent=INTENT, candidates=("held",)
+    )
+    for index in range(4):
+        store.issue(
+            principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=(str(index),)
+        )
+
+    assert store.resolve("bob", held) is not None
+    resident_by_principal = sum(len(handles) for handles in store._principals.values())
+    assert resident_by_principal == len(store)
+    assert resident_by_principal <= store._capacity
+
+
+def test_an_evicted_handle_still_resolves_as_unknown() -> None:
+    store = ResultStore(capacity=1)
+    first = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("first",)
+    )
+    store.issue(principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("second",))
+    assert store.resolve("alice", first) is None
+
+
 def test_issuing_while_full_drops_expired_entries_before_live_ones() -> None:
     clock = Clock()
     store = ResultStore(ttl=timedelta(minutes=1), capacity=2, clock=clock)

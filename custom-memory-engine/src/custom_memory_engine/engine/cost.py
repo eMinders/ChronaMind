@@ -27,6 +27,7 @@ billing tokens. :class:`QueryCost` enforces that ``charged_calls == 0`` requires
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -452,18 +453,21 @@ class CostStore:
         self._retention = retention
         self._capacity = capacity
         self._clock = clock
-        self._records: list[_RecordedCost] = []
+        self._records: OrderedDict[str, list[_RecordedCost]] = OrderedDict()
 
     def __len__(self) -> int:
-        return len(self._records)
+        return sum(len(records) for records in self._records.values())
 
     def record(self, principal: str, cost: QueryCost) -> None:
         """Append one immutable :class:`QueryCost` for ``principal``, evicting expired and overflow entries."""
         now = self._now()
         self._drop_expired(now)
-        self._records.append(_RecordedCost(principal=principal, recorded_at=now, cost=cost))
-        if len(self._records) > self._capacity:
-            del self._records[: len(self._records) - self._capacity]
+        records = self._records.setdefault(principal, [])
+        self._records.move_to_end(principal)
+        while len(self._records) > self._capacity:
+            self._records.popitem(last=False)
+        records.append(_RecordedCost(principal=principal, recorded_at=now, cost=cost))
+        self._make_room(principal)
 
     def report(self, principal: str, *, window: object = None) -> CostReport:
         """Aggregate ``principal``'s own recorded queries within ``window`` into an immutable :class:`CostReport`."""
@@ -471,9 +475,7 @@ class CostStore:
         self._drop_expired(now)
         window_start, window_end = parse_window(window, now=now, default_retention=self._retention)
         matched = [
-            entry.cost
-            for entry in self._records
-            if entry.principal == principal and window_start <= entry.recorded_at <= window_end
+            entry.cost for entry in self._records.get(principal, []) if window_start <= entry.recorded_at <= window_end
         ]
         stage_aggregates: list[StageAggregate] = []
         for stage_name in STAGES:
@@ -520,7 +522,26 @@ class CostStore:
 
     def _drop_expired(self, now: datetime) -> None:
         cutoff = now - self._retention
-        self._records = [entry for entry in self._records if entry.recorded_at >= cutoff]
+        for principal, records in list(self._records.items()):
+            self._records[principal] = [entry for entry in records if entry.recorded_at >= cutoff]
+            if not self._records[principal]:
+                del self._records[principal]
+
+    def _make_room(self, active_principal: str) -> None:
+        while len(self) > self._capacity:
+            active_records = self._records[active_principal]
+            if len(active_records) > 1:
+                del active_records[0]
+                continue
+            surplus = next(
+                ((principal, records) for principal, records in self._records.items() if len(records) > 1),
+                None,
+            )
+            if surplus is not None:
+                _, records = surplus
+                del records[0]
+                continue
+            self._records.popitem(last=False)
 
 
 __all__ = [

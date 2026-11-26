@@ -3540,10 +3540,7 @@ fails on the code before it.
 19. **`x-request-id` is unique and is logged**, and transport refusals answer the contract's `validation_error` with a
     static `detail` instead of six undefined codes.
 
-**Known and deliberately not done.** `ResultStore`/`CostStore` evict oldest-first *across* principals, so one caller
-can degrade another's drill-down handles (confidentiality holds; only availability; `THREAT_MODEL.md` T-47, **#261**).
-The restore reconciliation cannot see a data-only or PITR restore (**#262**), and a deletion older than both the backup
-and the journal copy is lost without a report (**#263**); both are stated in `deploy/README.md` and tracked, not fixed.
+**Known and deliberately not done.** The restore reconciliation cannot see a data-only or PITR restore (**#262**), and a deletion older than both the backup and the journal copy is lost without a report (**#263**); both are stated in `deploy/README.md` and tracked, not fixed.
 A
 delegating token re-creates a tenant row that an operator removed, because `delete` erases memory, never tenancy
 (T-42). `read_artifact_provenance`/`read_entity_provenance` have no caller in `src/`: the structural read model is
@@ -3617,3 +3614,11 @@ already walks for every entry; that is an offline recovery step measured in seco
 detected by `restore_reconciliation`; the procedure replays after any restore regardless. Markers are exported with the
 journal, so their recovery point is the journal's.
 
+
+### V2-D126 — Per-principal capacity for process-local read stores (`T-47`, #261)
+
+**Decision.** `ResultStore` and `CostStore` keep principal-specific ordered buckets while retaining one global capacity ceiling. A principal's burst evicts its own oldest surplus entries first. When every principal has one resident entry, the least-recently-used principal is evicted as a unit. Lookup and report semantics remain principal-scoped, and expired entries are still removed on the existing read and write paths.
+
+**Why.** A flat global LRU lets one caller's sustained query volume remove another caller's live drill-down handle and cost history. Principal buckets preserve availability across callers while the global ceiling prevents the number of principals from multiplying memory without bound. The stores remain process-local under `V2-D83` because result snapshots are answer-context material and cost rows are read-path telemetry, not durable memory or a ledger.
+
+**Evidence.** `tests/integration/test_refine_db.py::test_a_principal_burst_preserves_another_principals_handle_and_cost_window` drives two principals through one wired engine with capacity three. `tests/test_refine.py::test_another_principal_burst_preserves_a_live_handle_and_total_capacity_stays_bounded` and `tests/test_cost.py::test_another_principal_burst_preserves_costs_and_the_global_ceiling` assert the isolated burst and ceiling. `tests/test_refine.py::test_an_evicted_handle_still_resolves_as_unknown` preserves the T-11 indistinguishability property. `deploy/README.md` documents the per-process scope and reset behavior.

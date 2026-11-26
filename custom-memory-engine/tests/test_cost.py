@@ -226,6 +226,22 @@ def test_parse_window_accepts_valid_forms_and_rejects_invalid() -> None:
             parse_window(bad, now=T0)
 
 
+def test_another_principal_burst_preserves_costs_and_the_global_ceiling() -> None:
+    store = CostStore(capacity=3, clock=lambda: T0)
+    alice_cost = _sample_query_cost(latencies=dict.fromkeys(STAGES, 7.0))
+    bob_cost = _sample_query_cost(latencies=dict.fromkeys(STAGES, 11.0))
+    store.record("bob", alice_cost)
+    for _ in range(4):
+        store.record("alice", bob_cost)
+
+    report = store.report("bob")
+    assert report.query_count == 1
+    assert report.total_latency_ms == pytest.approx(35.0)
+    resident_by_principal = sum(len(records) for records in store._records.values())
+    assert resident_by_principal == len(store)
+    assert resident_by_principal <= store._capacity
+
+
 def test_cost_store_isolates_principals_filters_windows_and_evicts_by_capacity_and_retention() -> None:
     current = [T0]
     store = CostStore(retention=timedelta(minutes=10), capacity=3, clock=lambda: current[0])

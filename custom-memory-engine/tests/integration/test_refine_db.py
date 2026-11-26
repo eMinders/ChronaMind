@@ -24,6 +24,7 @@ from custom_memory_engine.api.maintain_handlers import register_maintain_handler
 from custom_memory_engine.api.read_handlers import QueryResult, register_read_handlers
 from custom_memory_engine.api.refine import MAX_REFINE_DEPTH, ResultStore
 from custom_memory_engine.api.runtime import DbTargets, Receipt
+from custom_memory_engine.engine.cost import CostReport, CostStore
 from custom_memory_engine.scope.access import ReadSet, Selector, resolve, resolve_read_set
 from tests.integration.test_api_wiring_structure import (
     T0,
@@ -85,8 +86,8 @@ def ids(result: QueryResult, channel: str) -> set[str]:
     return {item.artifact_id for item in result.channel(channel)}
 
 
-async def seed(engine: Engine, scope: str, key: str, content: str) -> str:
-    receipt = await engine.call(caller("alice"), "ingest_episode", episode(scope, key, content))
+async def seed(engine: Engine, scope: str, key: str, content: str, user: str = "alice") -> str:
+    receipt = await engine.call(caller(user), "ingest_episode", episode(scope, key, content))
     assert isinstance(receipt, Receipt)
     return receipt.id
 
@@ -202,6 +203,32 @@ async def test_a_narrowed_change_result_reports_only_the_keys_it_kept(database) 
         narrowed = await refined(engine, reader("alice", REPO_A), prior, f"artifact {kept}")
         named = {identifier for change in narrowed.changes for identifier in (*change.previous, *change.current)}
         assert named == {kept}, "the drill-down must not report the change it narrowed away"
+
+
+async def test_a_principal_burst_preserves_another_principals_handle_and_cost_window(database) -> None:  # noqa: F811
+    async with world(database) as (_conn, engine, _schema):
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        results = ResultStore(capacity=3)
+        costs = CostStore(capacity=3)
+        register_ingest_handlers(engine, runtime, CODING_PROFILE)
+        register_read_handlers(engine, runtime, results=results, costs=costs)
+        await seed(engine, "/u/alice/", "alice-1", "alice activity")
+        bob_id = await seed(engine, "/u/bob/", "bob-1", "bob activity", user="bob")
+
+        bob_result = await answer(engine, reader("bob"))
+        assert bob_result.result_id is not None
+        for _ in range(4):
+            burst = await answer(engine, reader("alice"))
+            assert burst.result_id is not None
+
+        bob_cost = await engine.call(caller("bob"), "cost", {"window": None})
+        assert isinstance(bob_cost, CostReport)
+        assert bob_cost.query_count == 1
+        refined_bob = await refined(engine, reader("bob"), bob_result, "mention activity")
+        assert ids(refined_bob, "facts") == {bob_id}
+
+        assert len(results) <= 3
+        assert len(costs) <= 3
 
 
 async def test_an_answer_with_nothing_read_still_carries_a_handle(database) -> None:  # noqa: F811
