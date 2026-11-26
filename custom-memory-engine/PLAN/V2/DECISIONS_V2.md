@@ -3541,7 +3541,10 @@ fails on the code before it.
     static `detail` instead of six undefined codes.
 
 **Known and deliberately not done.** `ResultStore`/`CostStore` evict oldest-first *across* principals, so one caller
-can degrade another's drill-down handles (confidentiality holds; only availability; `THREAT_MODEL.md` T-47). A
+can degrade another's drill-down handles (confidentiality holds; only availability; `THREAT_MODEL.md` T-47, **#261**).
+The restore reconciliation cannot see a data-only or PITR restore (**#262**), and a deletion older than both the backup
+and the journal copy is lost without a report (**#263**); both are stated in `deploy/README.md` and tracked, not fixed.
+A
 delegating token re-creates a tenant row that an operator removed, because `delete` erases memory, never tenancy
 (T-42). `read_artifact_provenance`/`read_entity_provenance` have no caller in `src/`: the structural read model is
 tested but not yet an operation (W4+). Rate limiting stays off by default, and `THREAT_MODEL.md` §3 now says the
