@@ -237,6 +237,18 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    - answers a client's resend under an erased idempotency key with the erased result instead of writing the claim
      again (the app resends its whole conversation every turn).
 
+   **Upgrading to migration 33, or restoring at all.** A migration never records the identity itself: a dump taken
+   before 33 is restored *at its own version and then migrated*, so a self-stamping migration would mark a restored copy
+   as reconciled with no replay. A fresh install is stamped by the runner; everything else needs one of these, and until
+   then the worker claims nothing and the host does not start:
+
+   ```bash
+   # the normal case: replay (a no-op on an intact database, and it exits 0)
+   python scripts/erasure_journal.py replay --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+   # no journal to replay (an in-place upgrade, or the timer was never enabled): an explicit operator assertion
+   python scripts/erasure_journal.py replay --mark-reconciled --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+   ```
+
    Both the worker and the host **refuse a database the journal has not been replayed into**
    (`restore_not_reconciled`): `restore_reconciliation` records the identity of the database the last successful replay
    touched, and a `pg_restore` re-creates that table, so the restored copy no longer matches its own row. The worker

@@ -381,3 +381,41 @@ async def test_a_replay_erases_the_marked_turn_even_when_its_target_is_not_in_th
     assert await world.rows(f"SELECT id FROM {world.schema}.turn WHERE id = 't-unmarked'") == [("t-unmarked",)]
     # and the next export carries the same markers, so the journal does not lose them by being replayed
     assert await world.markers("del-t46") == [("turn", turn_digest(KEY, "alice", "t-peanut"), "")]
+
+
+async def test_migrating_a_restored_database_does_not_mark_it_reconciled(database) -> None:  # noqa: F811
+    """The trap the first version of this fix had: a restored pre-33 dump is *migrated*, so a migration that stamped
+    itself would mark a restored copy as reconciled and let the worker and the host run on it with no replay.
+
+    Rolled back to 32 and migrated forward again, which is exactly what restoring such a dump and then upgrading does.
+    """
+    from custom_memory_engine.schema import migrate
+    from tests.integration.rollbacks import rollback_sql
+
+    config, schema = database
+    runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
+    async with await AsyncConnection.connect(config.database_url.get_secret_value(), autocommit=True) as conn:
+        await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+        await conn.execute(cast(Any, rollback_sql(from_version=migrate.VERSION, to_version=32)), prepare=False)
+        await conn.execute("SELECT set_config('app.user_id', 'alice', false)")
+        assert await (
+            await conn.execute(
+                "SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = 'restore_reconciliation'"
+            )
+        ).fetchone() == (0,)
+    assert (await runner.apply()).action == "applied"
+    async with await AsyncConnection.connect(config.database_url.get_secret_value(), autocommit=True) as conn:
+        await conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+        rows = await (
+            await conn.execute(cast(Any, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
+        ).fetchall()
+    assert rows == [(0,)], (
+        "an upgraded database is not reconciled: only a replay, or an explicit operator assertion, is"
+    )
+    # and the explicit assertion records it, so an upgrade with no journal to replay is not stuck
+    async with await AsyncConnection.connect(config.database_url.get_secret_value(), autocommit=True) as conn:
+        await record_reconciliation(conn, schema_name=schema)
+        assert await (
+            await conn.execute(cast(Any, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
+        ).fetchall() == [(1,)]

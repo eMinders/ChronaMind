@@ -80,6 +80,9 @@ ALTER TABLE restore_reconciliation FORCE ROW LEVEL SECURITY;
 CREATE POLICY restore_reconciliation_read ON restore_reconciliation FOR SELECT USING (true);
 CREATE POLICY restore_reconciliation_append ON restore_reconciliation FOR INSERT WITH CHECK (true);
 
--- the database this migration runs in is, by definition, the one the journal describes
-INSERT INTO restore_reconciliation (relation_oid)
-SELECT pg_catalog.to_regclass(pg_catalog.quote_ident(pg_catalog.current_schema()) || '.restore_reconciliation')::oid;
+-- This migration deliberately does NOT record an identity for itself. A dump taken before 33 and restored is
+-- *migrated* too (deploy/README.md restores it at its own version, then migrates), so a stamp written here would mark a
+-- restored copy as reconciled with no replay -- exactly the state the check exists to catch. A fresh install is stamped
+-- by `MigrationRunner.apply` after the schema is created from nothing (`schema/migrate.py`), and an upgraded or
+-- restored database is stamped by the journal replay, or by `scripts/erasure_journal.py replay --mark-reconciled` when
+-- an operator asserts there is no journal to replay.

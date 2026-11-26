@@ -19,7 +19,10 @@ to the journalled value. The script therefore exits ``1`` with ``unresolved_entr
 "nothing to do" either: it means the off-host copy was not restored, so replay refuses (``journal_missing``) rather
 than reporting an empty success.
 
-**Only a successful replay reconciles the database** (``V2-D125``). Until a replay exits ``0`` here, the worker claims
+**Only a successful replay reconciles the database** (``V2-D125``), and a migration never does: a dump taken before
+migration 33 is restored *and migrated*, so a migration that stamped itself would mark a restored copy as reconciled.
+``replay --mark-reconciled`` is the operator's assertion for a database with no journal to replay (an in-place upgrade,
+or a deployment that never enabled the timer). Until a replay exits ``0`` here, the worker claims
 nothing (``unreconciled``) and the host refuses to start and reports not-ready (``restore_not_reconciled``): a restored
 copy still holds what later deletions erased.
 """
@@ -53,6 +56,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--journal", required=True, type=Path, help="The journal file (JSON lines).")
     parser.add_argument("--json", action="store_true", help="Print the result as one JSON object.")
     parser.add_argument(
+        "--mark-reconciled",
+        action="store_true",
+        help="For `replay` on a database with no journal to replay (an in-place upgrade, or a deployment that never "
+        "enabled the timer): record that this database is not a restored copy, and run no request. An operator "
+        "assertion, like --accept-unresolved.",
+    )
+    parser.add_argument(
         "--accept-unresolved",
         action="store_true",
         help="Succeed even when journalled targets were absent from the restored database (the backup never held "
@@ -82,6 +92,18 @@ async def _export(journal: Path, schema: str) -> dict[str, object]:
     ) as connection:
         entries = await export_to_file(connection, journal, key=key, schema_name=schema)
     return {"command": "export", "entries": entries}
+
+
+async def _mark_reconciled(schema: str) -> dict[str, object]:
+    """Record this database as reconciled without replaying anything (an upgrade with no journal to replay)."""
+    role = _required("CME_RUNTIME_ROLE")
+    async with await AsyncConnection.connect(
+        _required("CME_DATABASE_URL"), autocommit=True, connect_timeout=5
+    ) as connection:
+        async with connection.transaction():
+            await connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+            await record_reconciliation(connection, schema_name=schema)
+    return {"command": "replay", "entries": 0, "reconciled": True, "refusal": None, "marked_reconciled": True}
 
 
 async def _replay(journal: Path, schema: str, *, accept_unresolved: bool) -> dict[str, object]:
@@ -119,11 +141,12 @@ async def main(argv: list[str] | None = None) -> int:
     schema = os.environ.get("CME_SCHEMA", "").strip() or "cme_engine"
     console = Console(stderr=True)
     try:
-        result = await (
-            _export(args.journal, schema)
-            if args.command == "export"
-            else _replay(args.journal, schema, accept_unresolved=args.accept_unresolved)
-        )
+        if args.command == "export":
+            result = await _export(args.journal, schema)
+        elif args.mark_reconciled:
+            result = await _mark_reconciled(schema)
+        else:
+            result = await _replay(args.journal, schema, accept_unresolved=args.accept_unresolved)
     except KeyError as missing:
         console.print(f"[red]{str(missing.args[0]).lower()}_required[/red]")
         return 2

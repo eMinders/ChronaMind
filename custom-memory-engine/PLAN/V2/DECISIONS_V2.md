@@ -3573,6 +3573,12 @@ where the backup lacks the target, which is precisely when the surviving evidenc
 * **The flag is a plaintext id, and that is deliberate.** `erased_turn` holds a turn's own id, which `turn` already
   holds, and goes with the turn by cascade (migration 33). The worker therefore needs no deletion key -- the key stays
   in the host and the journal unit -- and a marked turn cannot be re-extracted by any code path.
+* **A migration never stamps itself.** The first version of this fix recorded the identity inside migration 33, and a
+  review caught what that costs: `deploy/README.md` restores a pre-33 dump *at its own version and then migrates it*, so
+  the migration ran in the restored database, stamped its own new relation, and marked a restored copy reconciled with
+  no replay at all -- the exact state the check exists to catch. Only `MigrationRunner.apply` on a schema created from
+  nothing stamps (a fresh install is reconciled by construction); an upgraded or restored database is stamped by the
+  replay, or by `replay --mark-reconciled` when an operator asserts there is no journal to replay.
 * **Reconciliation is an identity, not a timestamp.** `restore_reconciliation` records its own relation OID: a
   `pg_restore` re-creates the table, so the row it carries names another relation and the check fails closed. A clone
   (`CREATE DATABASE ... TEMPLATE`, which every test fixture makes) keeps relation OIDs and is a reconciled copy of a
@@ -3590,7 +3596,9 @@ extracts and deletes the claim after it, and asserts after the restore and repla
 the worker finds nothing to extract, and the claim does not return (`t46_markers_exported`,
 `t46_turn_erased_by_replay`, `t46_worker_cannot_re_extract`); `tests/test_erasure_journal.py` (format 2, a format-1
 journal still readable, a malformed marker refused, the markers part of a request's identity);
-`tests/integration/test_backup_restore_db.py` runs the rehearsal in CI.
+`tests/integration/test_backup_restore_db.py` runs the rehearsal in CI;
+`test_migrating_a_restored_database_does_not_mark_it_reconciled` rolls a schema back to 32 and migrates it forward, the
+way a restored dump is upgraded, and requires that it stay unreconciled until a replay or an explicit assertion.
 
 **Cost, measured.** Two statements per deletion (the marker insert and the turn bookkeeping: 3.0 ms for 50 markers,
 0.4 ms to flag a turn), one indexed lookup per extraction (the flag) and one per idempotent write (the marker probe:
