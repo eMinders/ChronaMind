@@ -3606,7 +3606,9 @@ way a restored dump is upgraded, and requires that it stay unreconciled until a 
 0.125 ms → 0.186 ms median at 50 000 markers and 50 000 idempotency rows). The reconciliation check costs one query per
 *claimed* job, not per idle tick: the worker claims first and puts the job back when the database is not reconciled, so
 an idle worker on a healthy database is exactly as cheap as it was. The journal grows by the digests a deletion erased,
-which is bounded by the closure it already traversed.
+which is bounded by the closure it already traversed. A replay resolves an entry's `turn` digests against the user's
+stored turns (the key is only in Python), so its cost is O(requests x turns) per user, alongside the deletion closure it
+already walks for every entry; that is an offline recovery step measured in seconds, not a request path.
 
 **Limit, stated.** A data-only restore into the same relation, and a physical (PITR) restore, keep every OID and are not
 detected by `restore_reconciliation`; the procedure replays after any restore regardless. Markers are exported with the
