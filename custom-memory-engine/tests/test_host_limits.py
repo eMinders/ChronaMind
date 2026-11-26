@@ -13,6 +13,9 @@ from custom_memory_engine.host.service import HostSettings, settings_from_enviro
 BASE_ENV = {
     "CME_DATABASE_URL": "postgresql://u:p@127.0.0.1:5432/db",
     "CME_RUNTIME_ROLE": "cme_rt",
+    # process-wide and required: a random per-process key would make every deletion digest unverifiable after a
+    # restart, which is exactly what the erasure journal's replay depends on (V2-D122)
+    "CME_DELETION_RECEIPT_KEY": "k" * 32,
 }
 
 
@@ -265,3 +268,19 @@ def test_settings_from_environment_parses_limits_and_never_leaks_secrets() -> No
         settings_from_environment({"CME_DATABASE_URL": dsn})
     assert (missing.value.code, missing.value.detail) == ("validation_error", "cme_runtime_role_required")
     assert "secret-pass" not in str(missing.value)
+
+
+def test_the_host_refuses_to_start_without_a_process_wide_deletion_key() -> None:
+    """The key cannot default: a random one per process makes every journalled digest unmatchable (V2-D122)."""
+    env = {"CME_DATABASE_URL": BASE_ENV["CME_DATABASE_URL"], "CME_RUNTIME_ROLE": "cme_rt"}
+    with pytest.raises(EntryError) as absent:
+        settings_from_environment(env)
+    assert (absent.value.code, absent.value.detail) == ("validation_error", "cme_deletion_receipt_key_required")
+
+    with pytest.raises(EntryError) as short:
+        settings_from_environment({**env, "CME_DELETION_RECEIPT_KEY": "too-short"})
+    assert (short.value.code, short.value.detail) == ("validation_error", "cme_deletion_receipt_key_too_short")
+
+    parsed = settings_from_environment({**env, "CME_DELETION_RECEIPT_KEY": "k" * 32})
+    assert parsed.deletion_key == b"k" * 32
+    assert "k" * 32 not in repr(parsed)

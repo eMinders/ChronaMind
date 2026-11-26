@@ -509,6 +509,26 @@ async def test_deleting_source_version_marks_provenance_deleted_and_artifact_del
         ) == [(0,)]
 
 
+async def test_m29_privileged_trigger_functions_are_not_executable_by_public(database) -> None:  # noqa: F811
+    """Rule 4: a SECURITY DEFINER function that rewrites ``app.user_id`` must not be reachable by an ordinary role."""
+    async with _world(database) as (conn, _engine, _runtime, schema):
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                "SELECT p.proname, pg_catalog.array_agg(a.grantee) FILTER (WHERE a.grantee = 0) "
+                "FROM pg_catalog.pg_proc AS p "
+                "JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace "
+                "LEFT JOIN LATERAL pg_catalog.aclexplode(p.proacl) AS a ON true "
+                "WHERE n.nspname = %s AND p.proname IN "
+                "('mark_artifact_provenance_source_deleted', 'cascade_artifact_provenance_delete') "
+                "GROUP BY p.proname",
+                (schema,),
+            )
+            rows = await cursor.fetchall()
+        assert len(rows) == 2, "both trigger functions exist"
+        for name, public_grants in rows:
+            assert public_grants is None, f"{name} still grants EXECUTE to PUBLIC"
+
+
 async def test_pre_migration_rows_render_unattributed_and_never_look_newly_attributed(database) -> None:  # noqa: F811
     config, schema = database
     runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))

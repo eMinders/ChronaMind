@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
 
 import structlog
@@ -30,6 +30,7 @@ from custom_memory_engine.api.refine import ResultStore
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.api.wiring import wire_engine
 from custom_memory_engine.engine.cost import CostStore
+from custom_memory_engine.engine.deletion import RECEIPT_KEY_ENV
 from custom_memory_engine.engine.hybrid import JUDGE_RELEVANCE_FLOOR, RecallError, RelevanceJudge, slot_for_dimension
 from custom_memory_engine.host.credentials import HostCredentials
 from custom_memory_engine.host.limits import ConcurrencyLimiter, RateLimiter, ResourceLimitError
@@ -117,8 +118,9 @@ class HostSettings:
     max_inflight: int = 6
     per_principal_max_inflight: int | None = None
     inflight_acquire_timeout: float = 0.05
-    provenance_key: bytes | None = None
-    deletion_key: bytes | None = None
+    # `repr=False`: a settings object reaches tracebacks and log lines, and these are the deployment's signing keys.
+    provenance_key: bytes | None = field(default=None, repr=False)
+    deletion_key: bytes | None = field(default=None, repr=False)
     #: The dense arm's query embedder (``V2-D98``). ``None`` leaves the engine lexical-only, which is honest: it
     #: ranks by the two language-agnostic arms rather than pretending a vector it does not have.
     embedder: Embedder | None = None
@@ -503,6 +505,12 @@ def settings_from_environment(environment: Mapping[str, str] | None = None) -> H
             raise EntryError("validation_error", f"{name.lower()}_required")
         return value
 
+    def required_key(name: str) -> bytes:
+        value = key(name)
+        if value is None:
+            raise EntryError("validation_error", f"{name.lower()}_required")
+        return value
+
     def key(name: str) -> bytes | None:
         value = env.get(name, "").strip()
         if not value:
@@ -550,7 +558,11 @@ def settings_from_environment(environment: Mapping[str, str] | None = None) -> H
         per_principal_max_inflight=per_principal_max_inflight,
         inflight_acquire_timeout=parse_float("CME_HOST_INFLIGHT_TIMEOUT_SECONDS", "0.05"),
         provenance_key=key(PROVENANCE_KEY_ENV),
-        deletion_key=key("CME_DELETION_RECEIPT_KEY"),
+        # required, never defaulted: `engine.deletion.default_receipt_key()` invents a random key per process when this
+        # is absent, and a digest made under a random key can never be matched by the erasure journal's replay (it
+        # reads as "a target the backup never held") or by an idempotent retry after a restart. Refusing here is the
+        # one place that failure is caught before it becomes silent (V2-D122).
+        deletion_key=required_key(RECEIPT_KEY_ENV),
         embedder=embedder_from_environment(env),
         judge=judge_from_environment(env),
         judge_floor=judge_floor_from_environment(env),

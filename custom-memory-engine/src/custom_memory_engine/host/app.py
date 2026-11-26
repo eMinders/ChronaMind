@@ -27,7 +27,9 @@ values are all enums or numbers, which is what makes the log safe to ship.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import json
+import secrets
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -50,6 +52,8 @@ logger = structlog.get_logger(__name__)
 
 #: The seven codes of ``API_V2.md`` section 1.1 and the status each becomes. Deliberately a total mapping: a new code
 #: added to the contract without a line here is a ``KeyError`` at start-up (see :func:`_status_for`), not a silent 500.
+#: The process-wide request sequence, so two calls in the same clock tick still differ.
+REQUEST_COUNTER = itertools.count(1)
 STATUS_BY_CODE: dict[str, int] = {
     "validation_error": 400,
     "forbidden": 403,
@@ -80,7 +84,9 @@ def create_app(service: HostService) -> Starlette:
 
     async def call(request: Request) -> Response:
         started = time.perf_counter()
-        request_id = f"req_{time.perf_counter_ns():x}"  # process-scoped, never derived from content
+        # unique per request and never derived from content; the counter defeats a same-clock collision and the random
+        # suffix makes the value useless for inferring host uptime (a raw monotonic clock would be)
+        request_id = f"req_{next(REQUEST_COUNTER):x}_{secrets.token_hex(4)}"
         caller = service.credentials.authenticate(request.headers.get("authorization"))
         if caller is None:
             # 401 with no body detail: whether a token exists and whether it is close are not questions this answers.
@@ -97,10 +103,13 @@ def create_app(service: HostService) -> Starlette:
             body = await _body(request, service.settings.max_body_bytes)
             operation, arguments, principal = _envelope(body)
         except _BadRequest as refusal:
+            # the contract defines seven codes and none of them is a transport fault: answer `validation_error` and put
+            # the static sub-code in `detail`, so a client switching on `error.code` never meets an undefined value
             return _error(
-                refusal.code,
+                "validation_error",
                 request_id,
                 status=400,
+                detail=refusal.code,
                 started=started,
                 operation=None,
                 tier=caller.credential.tier,
@@ -133,7 +142,9 @@ def create_app(service: HostService) -> Starlette:
                 service=service,
             )
         except Exception as error:  # noqa: BLE001 - the last resort, and it must not disclose the exception
-            logger.error("host_call_crashed", operation=operation, error_type=type(error).__name__)
+            logger.error(
+                "host_call_crashed", operation=operation, request_id=request_id, error_type=type(error).__name__
+            )
             return _error(
                 "internal_error",
                 request_id,
@@ -155,6 +166,7 @@ def create_app(service: HostService) -> Starlette:
             operation=operation,
             tier=credential.tier,
             status=200,
+            request_id=request_id,
             duration_ms=round(duration_seconds * 1000, 2),
         )
         return JSONResponse({"result": _jsonable(result)}, headers={"x-request-id": request_id})
@@ -265,6 +277,7 @@ def _error(
         tier=tier,
         status=status,
         error_code=code,
+        request_id=request_id,
         duration_ms=round(duration_seconds * 1000, 2),
     )
     return JSONResponse(payload, status_code=status, headers={"x-request-id": request_id})

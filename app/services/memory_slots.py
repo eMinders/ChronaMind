@@ -20,6 +20,12 @@ every check in :func:`decide` passes, and none of those checks depends on a lang
   and scripts written without spaces;
 * the model's own confidence clears :data:`MIN_CONFIDENCE`.
 
+**One model, never a fallback.** The classification runs against the model this deployment configured and no other:
+the app's LLM service normally walks the whole registry after a provider error, which would let an untested model -
+a small local one, a free tier - decide that a past fact is current. A classifier whose answer retires a user's true
+belief is not a place for a silent substitution, so ``llm_service.call`` is asked with ``fallback=False`` and a
+failure is ``multi``.
+
 **Failure is the safe side.** No model configured, a timeout, a refusal, an invalid answer or any exception gives
 ``("multi", None)``: the claim is still recorded, it just does not supersede anything.
 
@@ -119,6 +125,9 @@ Decide whether the message states one of these attributes of the SPEAKER, and wh
 Rules:
 - slot is 'none' if the message states none of them, states several values for one attribute, or is about someone
   else (then subject_is_speaker is false).
+- slot is 'none' if the message states anything *besides* that one attribute. A claim is stored as the whole message,
+  so labelling "I live in Cairo and I work at Siemens" as a residence update would retire the employer fact the next
+  time the user moves. One message, one attribute, or 'none'.
 - temporal_status is 'current' only when the message asserts the value as true now. A correction ("no, I meant Paris")
   or a completed move ("I moved to Paris") is current. A former value ("I lived in Berlin in 2010"), a plan
   ("I will move to Rome"), a wish, a condition, a denial without a new value, and a question are not current.
@@ -240,24 +249,37 @@ class LLMSlotClassifier:
         return classification
 
 
-async def llm_service_extract(messages: list[BaseMessage], config: RunnableConfig) -> SlotExtraction:
-    """The production :data:`Extract`: the app's LLM service (retries, fallback) with structured output."""
-    return await llm_service.call(
+def classifier_model() -> str:
+    """The one model this classifier may use: the configured name, or the app's default model."""
+    return settings.MEMORY_SLOT_CLASSIFIER_MODEL or settings.DEFAULT_LLM_MODEL
+
+
+def llm_service_extract(messages: list[BaseMessage], config: RunnableConfig) -> Awaitable[SlotExtraction]:
+    """The production :data:`Extract`: the app's LLM service with structured output, on one model only."""
+    return llm_service.call(
         messages,
-        model_name=settings.MEMORY_SLOT_CLASSIFIER_MODEL or None,
+        model_name=classifier_model(),
         response_format=SlotExtraction,
         config=config,
+        fallback=False,
         temperature=0,
     )
 
 
 def configured_classifier() -> SlotClassifier:
-    """The classifier the settings select: the semantic one unless ``MEMORY_SLOT_CLASSIFIER=off``."""
-    if settings.MEMORY_SLOT_CLASSIFIER == "off":
+    """The classifier the settings select: the semantic one unless ``MEMORY_SLOT_CLASSIFIER`` says ``off``.
+
+    Only ``llm`` and ``off`` are understood. Any other value (a typo, ``false``, ``0``) turns the classifier **off**:
+    an unrecognized setting must never be the one that enables the risky direction.
+    """
+    selected = (settings.MEMORY_SLOT_CLASSIFIER or "").strip().lower()
+    if selected != "llm":
+        if selected != "off":
+            logger.warning("memory_slot_classifier_setting_unknown", setting=selected or "(empty)")
         return NullSlotClassifier()
-    model = settings.MEMORY_SLOT_CLASSIFIER_MODEL
-    if model and model not in LLMRegistry.get_all_names():
-        # said once at start-up, rather than as one failed model call per turn that silently records every claim multi
+    model = classifier_model()
+    if model not in LLMRegistry.get_all_names():
+        # said once at start-up, rather than one failed model call per turn that records every claim multi
         logger.warning("memory_slot_classifier_model_unknown", model=model)
         return NullSlotClassifier()
     return LLMSlotClassifier(llm_service_extract)

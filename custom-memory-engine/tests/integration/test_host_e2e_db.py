@@ -25,6 +25,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import structlog
 import uvicorn
 from psycopg import AsyncConnection, sql
 from psycopg.conninfo import make_conninfo
@@ -372,7 +373,8 @@ async def test_a_body_over_the_limit_is_refused_before_it_is_parsed(database) ->
         huge = {"operation": "query", "arguments": {"request": {"text": "x" * 2_000_000}}}
         response = await host.client.post("/v1/call", headers=host.alice_b, json=huge)
         assert response.status_code in (400, 413)
-        assert response.json()["error"]["code"] in {"request_too_large", "validation_error"}
+        # the wire code is always one of the contract's seven; the transport reason travels as a static detail
+        assert response.json()["error"] == {"code": "validation_error", "detail": "request_too_large"}
 
 
 async def test_a_malformed_body_is_a_static_400(database) -> None:  # noqa: F811
@@ -380,11 +382,25 @@ async def test_a_malformed_body_is_a_static_400(database) -> None:  # noqa: F811
         for body in (b"not json", b"[]", b'{"arguments": {}}', b'{"operation": 3}'):
             response = await host.client.post("/v1/call", headers=host.alice_b, content=body)
             assert response.status_code == 400, body
-            assert response.json()["error"]["code"] in {
+            assert response.json()["error"]["code"] == "validation_error", body
+            assert response.json()["error"]["detail"] in {
                 "body_not_json",
                 "body_must_be_an_object",
                 "operation_required",
-            }
+            }, body
+
+
+async def test_the_request_id_is_unique_and_appears_in_the_calls_log_record(database) -> None:  # noqa: F811
+    """A correlation handle must be unique and findable; a raw monotonic clock is neither, and leaks host uptime."""
+    async with live(database) as host:
+        with structlog.testing.capture_logs() as logs:
+            first = await call(host.client, host.alice_b, "query", request={"limit": 1})
+            second = await call(host.client, host.alice_b, "query", request={"limit": 1})
+        first_id = first.headers["x-request-id"]
+        second_id = second.headers["x-request-id"]
+        assert first_id != second_id
+        logged = [record for record in logs if record.get("event") == "host_call"]
+        assert [record["request_id"] for record in logged] == [first_id, second_id]
 
 
 async def test_a_validation_refusal_never_echoes_the_callers_text(database) -> None:  # noqa: F811

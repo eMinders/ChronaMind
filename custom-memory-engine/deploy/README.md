@@ -180,20 +180,45 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    - `CME_DELETION_RECEIPT_KEY`: only a one-way key check is written, so a replay under another key is refused.
 
    **Ship the journal off-host** with every backup and continuously (it is small and holds no content); the database
-   cannot protect a copy of its own history. **Restore procedure:** stop the host and worker; if the old database is
-   still reachable, stop `cme-erasure-journal.timer` and run one last `export`; restore the backup (steps 3–4); then, before re-enabling traffic,
+   cannot protect a copy of its own history.
+
+   **Restore procedure.** Every step matters; three of them used to be implicit.
 
    ```bash
+   # 1. stop the host and the worker, and ALWAYS stop the timer: with `Persistent=true` it fires at boot and would
+   #    export from the restored database before the replay, writing a journal that only knows the restored history
+   systemctl stop cme-worker.service cme-erasure-journal.timer
+   # 2. one last export, as the unit (never by hand as root: a root-owned file would make the next timer run fail)
+   systemctl start cme-erasure-journal.service
+   # 3. ship that file off-host, then restore the backup (steps 3-4 above)
+   # 4. put the off-host journal back where the unit expects it, and CHECK IT: `entries` in the header is the count,
+   #    and a replay refuses a file whose count does not match (`journal_truncated`)
+   install -o root -g root -m 0600 /path/to/off-host/erasure-journal.jsonl /var/lib/chronamind-journal/
+   head -1 /var/lib/chronamind-journal/erasure-journal.jsonl
+   # 5. replay before ANY worker runs
    CME_DATABASE_URL=... CME_RUNTIME_ROLE=... CME_DELETION_RECEIPT_KEY=... \
        python scripts/erasure_journal.py replay --journal /var/lib/chronamind-journal/erasure-journal.jsonl
    ```
 
-   It re-applies, per user in epoch order and through the engine's own deletion path under the restricted role, every
-   journalled request the restored database lacks, keeping the original request ids; a second run does nothing. A
-   target the backup never held is recorded with nothing to erase. Then run `scripts/run_maintenance.py --once` so
-   retention (`expire`, `purge_working`) catches up too. **What it does not cover:** deletions made after the newest
-   journal copy you still have (the recovery point is the export interval plus your off-host shipping delay), and a
-   journal lost together with the database.
+   The replay re-applies, per user in epoch order and through the engine's own deletion path under the restricted
+   role, every journalled request the restored database lacks, keeping the original request ids; a second run does
+   nothing. It **exits non-zero** when anything is unresolved (`unresolved_entries_remain`) or a user's restored
+   history contradicts the journal (`divergent_users_remain`), and a missing journal file is `journal_missing` rather
+   than a success with zero entries. Do not start the worker on a non-zero exit: an unresolved entry is indistinguishable
+   from a wrong deletion key, and it is also the one case where a turn the backup still holds could re-derive the
+   deleted claim. `--accept-unresolved` says, per run, that those targets really were memories the backup never held.
+
+   Then `scripts/run_maintenance.py --once` so retention (`expire`, `purge_working`) catches up, and only then:
+
+   ```bash
+   systemctl start cme-erasure-journal.timer cme-worker.service   # the journal stops recording until you do this
+   ```
+
+   **What it does not cover.** Deletions made after the newest journal copy you still have: the recovery point is the
+   export interval plus your off-host shipping delay. A journal lost together with the database (`V2-D122`). And a
+   turn ingested before the backup whose extraction completed *after* it: the journal records the deleted target, not
+   the evidence turns the deletion also erased, so that turn can still be re-extracted once the worker runs
+   (`THREAT_MODEL.md` T-46). The replay's non-zero exit is what keeps that from happening silently.
 
 Run a full local restore rehearsal at any time with:
 

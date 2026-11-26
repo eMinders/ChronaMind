@@ -101,6 +101,23 @@ class ReplayReport:
     #: Journalled users the restored database did not hold (created after the backup), re-provisioned so their
     #: requests and epochs are recorded and their next deletion continues after them.
     users_reprovisioned: int
+    #: Users whose restored history contradicts the journal. Their entries were skipped and every other user was still
+    #: replayed: a conflict in one tenant must not leave the rest of the deployment unerased. The run is not a success.
+    divergent_users: tuple[str, ...] = ()
+
+    def refusal_reason(self, *, accept_unresolved: bool) -> str | None:
+        """The static reason this replay is not a success, or ``None``.
+
+        Two results look successful while having erased nothing: entries whose target the restored database does not
+        hold (which is also exactly what a wrong deletion key produces, since no candidate digest matches), and users
+        whose restored history contradicts the journal. The caller decides whether the first is expected; the second
+        never is. This lives here, not in the script, so the rule is testable without a connection.
+        """
+        if self.recorded_unresolved > 0 and not accept_unresolved:
+            return "unresolved_entries_remain"
+        if self.divergent_users:
+            return "divergent_users_remain"
+        return None
 
 
 # ------------------------------------------------------------------------------------------------------ export
@@ -167,6 +184,7 @@ def read_journal(path: Path) -> Journal:
         header = json.loads(lines[0])
         if header.get("format") != JOURNAL_FORMAT or header.get("version") != JOURNAL_VERSION:
             raise JournalError("journal_format_unsupported")
+        declared = header.get("entries")
         entries: list[JournalEntry] = []
         for line in lines[1:]:
             if not line.strip():
@@ -175,6 +193,10 @@ def read_journal(path: Path) -> Journal:
             if fields.get("scope") not in ("memory", "topic", "all"):
                 raise JournalError("journal_entry_invalid")
             entries.append(JournalEntry(**fields))
+        # an off-host copy cut at a line boundary would otherwise load as a valid, shorter journal and the missing
+        # deletions would never be replayed (`M2`, review of #259)
+        if isinstance(declared, int) and declared != len(entries):
+            raise JournalError("journal_truncated")
     except JournalError:
         raise
     except (ValueError, TypeError, AttributeError):  # malformed JSON, a missing or unknown field, a non-object line
@@ -203,6 +225,13 @@ def write_journal(path: Path, entries: Sequence[JournalEntry], *, schema_name: s
             os.fsync(handle.fileno())
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
+        # the rename must reach the disk: without it a crash can leave the older, shorter journal behind, losing
+        # exactly the newest deletions the journal exists to hold
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
@@ -232,6 +261,10 @@ async def export_to_file(
     exported = await export_journal(connection, schema_name=schema_name)
     with _exclusive(path):
         existing = read_journal(path)
+        if existing.key_check is None and existing.entries:
+            # entries this file cannot vouch for: stamping the current key on them would make a mixed or hand-made
+            # journal look authentic (`L2`, review of #259)
+            raise JournalError("journal_key_check_missing")
         if existing.key_check is not None and not hmac.compare_digest(existing.key_check, key_check(key)):
             raise JournalError("journal_key_mismatch")
         merged = merge_journal(existing.entries, exported)
@@ -243,8 +276,15 @@ async def export_to_file(
 # ------------------------------------------------------------------------------------------------------ replay
 
 
-async def _restored_requests(handlers: DeleteHandlers, user_id: str) -> tuple[dict[int, tuple[str, str, str]], bool]:
-    """``epoch -> (request id, scope, digest)`` in the restored database, and whether the user was re-provisioned.
+async def _restored_requests(
+    handlers: DeleteHandlers, user_id: str
+) -> tuple[dict[int, tuple[str, str, str]], dict[str, int], bool]:
+    """``epoch -> (request id, scope, digest)``, ``request id -> epoch``, and whether the user was re-provisioned.
+
+    Both maps come from one read, and both carry ``status``: a journalled request is only ``already_present`` when the
+    restored database holds it *completed*. A non-completed row under that epoch, or the same request id under another
+    epoch, is a different history and is refused (``journal_diverges_from_database``) rather than treated as done.
+
 
     A journalled user the backup predates is created exactly as the host creates one (``HostService._provision``):
     otherwise their journalled epochs stay unrecorded, the host re-creates them on their next call, their next
@@ -260,14 +300,28 @@ async def _restored_requests(handlers: DeleteHandlers, user_id: str) -> tuple[di
             (user_id, user_id),
         )
         provisioned = await cursor.fetchone() is not None
+        if not provisioned:
+            # a conflict on another unique column (an operator-provisioned `external_ref`) skips the insert without
+            # creating the id, and the request insert below would then fail its foreign key: refuse with a static code
+            await cursor.execute(
+                sql.SQL("SELECT 1 FROM {u} WHERE id = %s").format(u=runtime.table("app_user")), (user_id,)
+            )
+            if await cursor.fetchone() is None:
+                raise JournalError("journal_user_provision_failed")
         await cursor.execute(
-            sql.SQL("SELECT deletion_epoch, id, scope, target_ref FROM {r} WHERE user_id = %s").format(
+            sql.SQL("SELECT deletion_epoch, id, scope, target_ref, status FROM {r} WHERE user_id = %s").format(
                 r=runtime.table("deletion_request")
             ),
             (user_id,),
         )
         rows = await cursor.fetchall()
-    return {int(epoch): (str(rid), str(scope), str(ref)) for epoch, rid, scope, ref in rows}, provisioned
+    by_epoch: dict[int, tuple[str, str, str]] = {}
+    by_request: dict[str, int] = {}
+    for epoch, rid, scope, ref, status in rows:
+        by_request[str(rid)] = int(epoch)
+        # a request that is not `completed` erased nothing, so it cannot stand in for the journalled one
+        by_epoch[int(epoch)] = (str(rid), str(scope), str(ref)) if status == "completed" else ("", "", "")
+    return by_epoch, by_request, provisioned
 
 
 async def _resolve_target(handlers: DeleteHandlers, entry: JournalEntry) -> str:
@@ -297,11 +351,15 @@ async def _resolve_target(handlers: DeleteHandlers, entry: JournalEntry) -> str:
 
 async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[ReplayOutcome, bool]:
     """Re-apply one journalled request unless the restored database already holds it; also: was the user created."""
-    restored, provisioned = await _restored_requests(handlers, entry.user_id)
+    restored, by_request, provisioned = await _restored_requests(handlers, entry.user_id)
+    held_at = by_request.get(entry.request_id)
+    if held_at is not None and held_at != entry.deletion_epoch:
+        # the same request id under another epoch: two different histories, not a replay of this one
+        raise JournalError("journal_diverges_from_database")
     present = restored.get(entry.deletion_epoch)
     if present is not None:
         if present != (entry.request_id, entry.scope, entry.target_ref):
-            # the restored database recorded a different deletion under this epoch: it is not this journal's history
+            # the restored database recorded a different (or an incomplete) deletion under this epoch
             raise JournalError("journal_diverges_from_database")
         return "already_present", provisioned
     target = await _resolve_target(handlers, entry)
@@ -328,11 +386,20 @@ async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayRe
         raise JournalError("journal_key_mismatch")
     counts: dict[ReplayOutcome, int] = {"already_present": 0, "replayed": 0, "recorded_unresolved": 0}
     reprovisioned = 0
+    divergent: set[str] = set()
     for entry in merge_journal([], journal.entries):
-        outcome, provisioned = await replay_entry(handlers, entry)
+        try:
+            outcome, provisioned = await replay_entry(handlers, entry)
+        except JournalError as error:
+            if error.code != "journal_diverges_from_database":
+                raise
+            # fail closed for this user, and only this user: the operator gets the name and the count, and the entries
+            # of every other tenant are still applied
+            divergent.add(entry.user_id)
+            continue
         counts[outcome] += 1
         reprovisioned += int(provisioned)
-    report = ReplayReport(**counts, users_reprovisioned=reprovisioned)
+    report = ReplayReport(**counts, users_reprovisioned=reprovisioned, divergent_users=tuple(sorted(divergent)))
     logger.info("erasure_journal_replayed", **asdict(report))
     return report
 

@@ -150,6 +150,31 @@ class DatabaseService:
             logger.info("session_deleted", session_id=session_id)
             return True
 
+    async def advance_history_epoch(self, session_id: str) -> int:
+        """Record that this session's chat history was cleared; returns the new epoch.
+
+        A message's identity is (session, epoch, position, role, text). Clearing the history restarts the positions,
+        so without a new epoch a message repeated afterwards would carry the identity of the pre-clear one and the
+        engine would replay the already-superseded claim instead of recording the new statement.
+
+        Args:
+            session_id: The session whose history was cleared
+
+        Returns:
+            int: The session's new history epoch, which the caller passes to the agent
+        """
+        async with self.session() as session:
+            chat_session = await session.get(ChatSession, session_id)
+            if chat_session is None:
+                raise ValueError("session_not_found")
+            chat_session.history_epoch += 1
+            session.add(chat_session)
+            await session.commit()
+            logger.info(
+                "session_history_epoch_advanced", session_id=session_id, history_epoch=chat_session.history_epoch
+            )
+            return chat_session.history_epoch
+
     async def get_session(self, session_id: str) -> Optional[ChatSession]:
         """Get a session by ID.
 

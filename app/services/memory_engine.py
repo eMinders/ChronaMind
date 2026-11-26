@@ -172,15 +172,18 @@ class MemoryEngineClient:
         metadata: dict | None = None,
         *,
         session_id: str | None = None,
+        history_epoch: int = 0,
     ) -> None:
         """Record the conversation: the turn as an episode, then each user message as a grounded claim.
 
         The agent passes the session's **whole** history on every turn, so each message needs an identity that is
         stable across those resends (a resend must replay, not duplicate) yet distinct for the same words said again
         later (a user who returns to "I live in Berlin" after "I moved to Paris" must win the slot back, not replay
-        the superseded claim). With ``session_id`` the identity is (session, position, role, text): the checkpointed
-        history is append-only, so a message keeps its position. Without one, the text alone is the identity, which
-        dedupes resends but cannot tell a repeated statement from a resent one.
+        the superseded claim). With ``session_id`` the identity is (session, ``history_epoch``, position, role, text).
+        Position alone is not enough: the history is append-only *within* an epoch, but ``DELETE /messages`` clears it
+        and restarts the positions, so without the epoch a message repeated afterwards would collide with the one
+        before the clear and replay a claim that had already been superseded. Without a session, the text alone is the
+        identity, which dedupes resends but cannot tell a repeated statement from a resent one.
 
         The episode is written first, so the turn is durable and inside the deletion boundary even if the claim step
         fails. Only ``role == "user"`` messages become claims: an assistant's text is not evidence about the user, and
@@ -204,7 +207,7 @@ class MemoryEngineClient:
                 text = str(message.get("content") or "")
                 if not text.strip():
                     continue
-                turn_id = _turn_id(session_id, position, str(message.get("role") or ""), text)
+                turn_id = _turn_id(session_id, position, str(message.get("role") or ""), text, history_epoch)
                 await self._post(
                     user_id,
                     "ingest_episode",
@@ -247,9 +250,9 @@ class MemoryEngineClient:
         return result
 
 
-def _turn_id(session_id: str | None, position: int, role: str, text: str) -> str:
-    """The message's stable identity: (session, position, role, text) when the session is known, else the text."""
-    identity = text if session_id is None else "\x1f".join((session_id, str(position), role, text))
+def _turn_id(session_id: str | None, position: int, role: str, text: str, history_epoch: int = 0) -> str:
+    """The message's stable identity: (session, epoch, position, role, text) when the session is known, else the text."""
+    identity = text if session_id is None else "\x1f".join((session_id, str(history_epoch), str(position), role, text))
     return f"turn-{canonical_hash(identity)[:32]}"
 
 

@@ -3201,9 +3201,31 @@ Tests: `tests/integration/test_visibility_sharing_db.py`, `tests/integration/tes
 
 **Status:** adopted (2026-11-25). Closes `I15` (#245) under Amendment 3 authorization.
 
-Adds W4 instruments (`evaluation/stats/abstraction_metrics.py`, `admission.py`, `dependence.py`,
-`evaluation/suites/null_suite.py`, G4 null-suite proof `FAR_τ <= 0.05`) and engine evidence derivation
-(`engine/abstraction_ledger.py`, `engine/refutation.py`). `infer` derives `(s, k, u, o)` directly from the named
+Adds engine evidence derivation (`engine/abstraction_ledger.py`, `engine/refutation.py`) plus **two early drafts of
+W4 instruments**, landed only because `I15` and `I11` need a bound and a run to be meaningful, not as a claim that
+W4 has started (`ROADMAP_V2.md` §7 marks what each still owes):
+
+* `evaluation/stats/abstraction_metrics.py` — a draft of `SD-001`'s three-state metrics (`o = s + k + u`,
+  `confidence_lower = 1 - CP_upper(k + u, o)`, coverage, `FAR_τ`, Brier, ECE with a hand-computable reference).
+  W4 still owes `SD-001`'s acceptance: `precision@verified` against a base rate, per-facet reliability, and the
+  hand-computed constants in `STATISTICS.md` §10.
+* `evaluation/stats/admission.py` and `dependence.py` — drafts of `SD-002` and `SD-008`: the §4.2 predicate composed
+  with Holm at the specified **independent** levels (per-abstraction one-sided 97.5%, FWER 0.05), refusing to admit
+  without refutation and negative-control evidence, and gating on the dependence report's conservative bound. W4
+  still owes `SD-002`'s equivalence pinning with the engine's `soundness.admission` (landed: 
+  `tests/test_admission_and_dependence.py::test_the_evaluation_admission_predicate_equals_the_engine_admission_predicate`)
+  and §5.4.3's third condition (`SD-005`), which no module here implements.
+* `evaluation/suites/admission_calibration.py` — **not** `C-012` and **not** gate `G4`. It checks the admission
+  rule's size and the separation of its controls against a known generative model, per stratum, and never calls the
+  engine. `C-012`'s null suite — no-pattern streams through `infer` and `verify` — remains W4 work, and `G4` is not
+  claimed here.
+
+An earlier version of this record described `evaluation/suites/null_suite.py` as a "G4 null-suite proof
+`FAR_τ <= 0.05`". That was wrong: the module is a Monte-Carlo self-check of the predicate, and the boundary stratum's
+near-zero rate follows from Clopper–Pearson's coverage rather than from anything the engine did. The module is renamed
+`admission_calibration.py`, its `g4_passed` field is `calibration_passed`, and its per-stratum gate is on the observed
+rate with the CP bound reported beside it (at 20 scenarios a perfect zero bounds at 0.168, so a gated bound needs 72
+scenarios per stratum and is a W4 decision). `infer` derives `(s, k, u, o)` directly from the named
 evidence sources and structured predicate (refusing zero/contradictory ledgers), runs active refutation probes, and
 `verify` enforces `soundness.admission.assess` for `'verified'` outcomes while sealing `confidence`,
 `confidence_method_id`, `counter_absence_basis`, and `closed_over_hash`.
@@ -3341,10 +3363,16 @@ matters.
 **Evidence.** `tests/test_memory_slots.py` (each refusal in Arabic, English and mixed text);
 `tests/integration/test_app_engine_boundary.py` (Arabic and English Berlin → Paris → Berlin and a mixed-language
 correction through the real host, one model call per turn); `tests/live/test_memory_slots_live.py` against real models
-(opt-in): 34 cases (Arabic, English, mixed, corrections, historical facts, plans, questions, third parties, Berlin →
-Paris → Berlin), on 2026-11-26 through the production path on `gpt-5.6-luna` and through the gateway on `gpt-6.2-sol`,
-`claude-sonnet-5-5` and `claude-haiku-5-5`: 34/34 each, no false `single`, no failed call. Model choice matters less
-than the checks: a failed or malformed call is `multi`, never a false `single`.
+(opt-in), 39 cases: Arabic, English, mixed, corrections, historical facts, plans, questions, third parties,
+Berlin → Paris → Berlin, and — since `V2-D124` item 9 — messages that state a slot *and* something else, plus reported
+speech. Measured on the final commit: `gpt-6.2-sol` **39/39, no false `single`, no failed call**. An earlier 34-case
+run measured `gpt-5.6-luna` through the production path and `gpt-6.2-sol`, `claude-sonnet-5-5` and `claude-haiku-5-5`
+through the gateway at 34/34 each. The two Claude models are **unmeasured** on the final commit: the gateway answered
+`400` with "this organization has been disabled", which is a provider condition, not a misclassification (the run
+counts failed calls separately and fails on them). The production path is unmeasured here because this checkout's
+`OPENAI_API_KEY` is a placeholder.
+Model choice matters less than the checks: a failed or malformed call is `multi`, never a false `single`, and the
+classifier no longer lets another model answer for the configured one (`V2-D124` item 8).
 
 **Cost and limits.** One small structured call per user turn, off the response path (`add()` runs as a background
 task). The model's tense judgement is the remaining precision risk; the grounding check bounds what it can invent, not
@@ -3427,3 +3455,90 @@ export conflict, and an unprovisioned user that made the next epoch collide). `t
    inert because no policy reads them; the header now says so, and `test_migration_m2.py` pins every child policy to
    `rls_parent_read`.
 
+
+### V2-D124 — The second independent review of #259: what it found, and what stays open
+
+**Status:** adopted (2026-11-26). Covers findings from four parallel read-only reviews (deletion/recovery, security and
+RLS, schema and invariants, app and instruments) plus the parent's own reading. Every fix below landed with a test that
+fails on the code before it.
+
+**Deletion and recovery (`V2-D122` completed).**
+
+1. **A journal export is now durable.** `os.replace` was not followed by an `fsync` of the directory, so a crash could
+   leave the *older, shorter* journal behind — silently losing exactly the newest deletions the feature exists to hold
+   (`tests/test_erasure_journal.py::test_the_written_journal_is_durable_in_its_directory`).
+2. **A truncated journal is refused, not read as a shorter one.** The header's `entries` count is now checked
+   (`journal_truncated`): an off-host copy cut at a line boundary used to load as valid.
+3. **A journal whose header carries no key check is never stamped with the current key** (`journal_key_check_missing`).
+4. **The replay's success is honest.** `scripts/erasure_journal.py replay` exits `1` on any unresolved entry
+   (`unresolved_entries_remain`) unless the operator passes `--accept-unresolved`, and on any divergent user
+   (`divergent_users_remain`); a missing journal file is `journal_missing`, not an empty success. An unresolved entry
+   is *indistinguishable* from a replay under the wrong deletion key, and exit `0` made both look like a clean restore.
+5. **One divergent tenant no longer costs every other tenant its replay.** `ReplayReport.divergent_users` names them,
+   the rest are applied, and the run is not a success.
+6. **The host requires `CME_DELETION_RECEIPT_KEY`.** `engine.deletion.default_receipt_key()` invents a random key per
+   process, and a digest made under it can never be matched by a replay or by an idempotent retry after a restart.
+   `settings_from_environment` now refuses (`cme_deletion_receipt_key_required`), `HostSettings` keeps both deployment
+   keys out of its `repr`, and re-provisioning a journalled user verifies the row exists rather than assuming it
+   (`journal_user_provision_failed`).
+7. **What is still not covered is stated, not hidden** (`THREAT_MODEL.md` T-46): the journal records the *target* of a
+   deletion, not the evidence turns it erased, so a turn ingested before a backup whose extraction completed after it
+   can be re-extracted once the worker runs. The replay's non-zero exit and the restore procedure (worker starts only
+   after a clean replay) are what keep that from happening silently; recording evidence-turn digests needs a schema
+   change and is recorded as the follow-up.
+
+**App (`V2-D121` amended).**
+
+8. **The classifier runs one model and never falls back.** `llm_service.call` walks the whole registry after a provider
+   error, so an untested model could decide that a past fact is current. `call(fallback=False)` is new, the classifier
+   uses it, and its model resolves at start-up to `MEMORY_SLOT_CLASSIFIER_MODEL` or `DEFAULT_LLM_MODEL`.
+9. **A message that states more than one fact is `multi`.** The claim's content is the whole message, so
+   "I live in Cairo and I work at Siemens" labelled as a residence update would retire the employer fact the next time
+   the user moved. The prompt now says one message/one attribute, and the live set gains multi-fact negatives.
+10. **`DELETE /messages` no longer makes a repeated message replay.** A message's identity was (session, position,
+    role, text) and clearing the history restarts the positions; `session.history_epoch` (migration
+    `c4a7f1e29b03`) is part of the identity now.
+11. **An unrecognized `MEMORY_SLOT_CLASSIFIER` value disables the classifier**: only `llm` enables it.
+
+**Schema and invariants.**
+
+12. **Migration 29's two `SECURITY DEFINER` trigger functions** rewrite `app.user_id`; `EXECUTE` is revoked from
+    `PUBLIC` and `app.user_id` is *reset* rather than set to `''` when it was unset (an empty tenant silently matches
+    nothing for the rest of the transaction). They take no receipt gate on purpose: re-derivation deletes and
+    re-inserts the version, and item 13 is what keeps that attribution.
+13. **Re-derivation no longer erases `I2` attribution.** The tombstoning trigger fires on the rebuild's own `DELETE`,
+    so an entity, alias or link citing a live, active version rendered "provenance removed by deletion" for ever.
+    `rederive.py` carries `(id, origin_kind, source_version_id)` across the rebuild and restores it.
+14. **`I11`'s pinning status is not caller-settable.** `verification.artifact_pinning_status` admitted
+    `'unpinned_pre_migration'` from any inserter, which skipped the artifact check entirely; a `BEFORE INSERT` trigger
+    refuses it, and the value that predates the migration is created by `ADD COLUMN … DEFAULT`, which fires no trigger.
+15. **`I7` now has a behavioural alarm.** `verification_artifact_scope_read` is the one cross-user read policy the
+    migration-2 pin cannot cover (it delegates two hops); it is pinned against its own expression and against its own
+    `visibility` column, and the sharing test asserts that a grantee's `provenance` view of a shared row returns
+    *named* references rather than opaque handles (a `200` was true either way before).
+
+**Instruments and contracts.**
+
+16. **The admission levels are independent, as §5.4.3 specifies.** `closed_testing_admit` passed its FWER level into
+    the per-abstraction CP bound, so at FWER 0.05 the `(s=29, k=0, u=0)` row of §4.2 was admitted — the exact
+    convention error `r3` exists to prevent. The bound is always one-sided 97.5%; `fwer_alpha` (default 0.05) only sets
+    Holm. `assess_admission` also **requires** refutation and negative-control evidence (two of its five gates used to
+    pass by default), refuses a dependence report that describes another ledger, and gates on that report's
+    conservative bound (`SD-008`), and a new grid test pins it to the engine's `soundness.admission` over 1 352
+    tuples.
+17. **The calibration study is not `C-012` and not `G4`.** `evaluation/suites/null_suite.py` became
+    `admission_calibration.py` with `calibration_passed`; `V2-D114` is amended with what it actually proves and what
+    W4 still owes. Its per-stratum gate is on the observed rate with the CP bound reported beside it, because at 20
+    scenarios a perfect zero bounds at 0.168.
+18. **An export's manifest cannot state a scope its ids exceed.** `_narrow` kept the *grant's* entry while the manifest
+    recorded the *requested* selector, so a grantee exporting a sub-scope received the whole grant under a narrower
+    label. Entries are anchored at the requested path.
+19. **`x-request-id` is unique and is logged**, and transport refusals answer the contract's `validation_error` with a
+    static `detail` instead of six undefined codes.
+
+**Known and deliberately not done.** `ResultStore`/`CostStore` evict oldest-first *across* principals, so one caller
+can degrade another's drill-down handles (confidentiality holds; only availability; `THREAT_MODEL.md` T-47). A
+delegating token re-creates a tenant row that an operator removed, because `delete` erases memory, never tenancy
+(T-42). `read_artifact_provenance`/`read_entity_provenance` have no caller in `src/`: the structural read model is
+tested but not yet an operation (W4+). Rate limiting stays off by default, and `THREAT_MODEL.md` §3 now says the
+default mitigation for timing inference is the concurrency bound rather than a rate bound.

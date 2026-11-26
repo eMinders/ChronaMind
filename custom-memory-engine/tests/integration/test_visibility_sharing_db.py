@@ -74,11 +74,19 @@ async def test_a_grantee_reads_exactly_the_shared_row_and_revocation_closes_it(d
         got = await call(host.client, host.bob_b, "get", artifact_id=shared, read_scopes=["/u/alice/"])
         assert got.status_code == 200, got.text
         assert got.json()["result"]["content"] == SHARED
-        # the shared row's evidence is readable with it (child readability is the parent's), so it renders
+        # the shared row's evidence is readable with it (child readability is the parent's), so it renders as a named
+        # source rather than an opaque handle. A 200 alone would not say that: the route answers 200 either way.
         lineage = await call(
             host.client, host.bob_b, "provenance", artifact_id=shared, depth=1, read_scopes=["/u/alice/"]
         )
         assert lineage.status_code == 200, lineage.text
+        view = lineage.json()["result"]
+        references = [edge["reference"] for edge in view["edges"]]
+        assert references, "the shared row's evidence is returned, not withheld"
+        # `readable` is what separates a named source from an opaque handle; the route answers 200 either way
+        assert all(reference["readable"] is True for reference in references), references
+        assert all(reference.get("source_id") for reference in references), references
+        assert all(reference.get("source_type") for reference in references), references
         # the private row stays private through the same grant: absent and unreadable are one answer
         hidden = await call(host.client, host.bob_b, "get", artifact_id=private, read_scopes=["/u/alice/"])
         assert hidden.status_code == 403

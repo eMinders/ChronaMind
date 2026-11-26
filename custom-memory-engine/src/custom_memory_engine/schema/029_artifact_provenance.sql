@@ -123,6 +123,12 @@ CREATE CONSTRAINT TRIGGER trg_entity_link_provenance
   EXECUTE FUNCTION enforce_artifact_provenance();
 
 -- Explicit source-deleted tombstoning on memory_version delete (no dangling source_version_id).
+--
+-- SECURITY DEFINER, and the one thing it trusts is `OLD.user_id` -- the row being deleted, never a caller-supplied
+-- value -- which it uses to scope the update under the row's own policy. It is a trigger function, so PostgreSQL
+-- refuses a direct call, and its EXECUTE privilege is revoked from PUBLIC (`CLAUDE.md` rule 4: a privileged function
+-- must not be reachable on a caller-settable GUC). A re-derivation deletes and re-inserts the version, so this must
+-- NOT require a deletion receipt: `deletion/rederive.py` restores the attribution it tombstones.
 CREATE FUNCTION mark_artifact_provenance_source_deleted() RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -135,7 +141,13 @@ BEGIN
      SET source_version_id = NULL,
          origin_kind = 'source_deleted'
    WHERE user_id = OLD.user_id AND source_version_id = OLD.id;
-  PERFORM pg_catalog.set_config('app.user_id', COALESCE(previous_tenant, ''), true);
+  -- `SET LOCAL` with '' would leak an empty tenant into the rest of the transaction, and every policy NULLIFs '' to
+  -- NULL, so a later statement would silently match nothing: reset instead of clearing when there was no tenant.
+  IF previous_tenant IS NULL THEN
+    EXECUTE 'RESET app.user_id';
+  ELSE
+    PERFORM pg_catalog.set_config('app.user_id', previous_tenant, true);
+  END IF;
   RETURN OLD;
 END
 $$;
@@ -161,7 +173,11 @@ BEGIN
     DELETE FROM artifact_provenance
      WHERE user_id = OLD.user_id AND artifact_kind = TG_TABLE_NAME AND artifact_id = OLD.id;
   END IF;
-  PERFORM pg_catalog.set_config('app.user_id', COALESCE(previous_tenant, ''), true);
+  IF previous_tenant IS NULL THEN
+    EXECUTE 'RESET app.user_id';
+  ELSE
+    PERFORM pg_catalog.set_config('app.user_id', previous_tenant, true);
+  END IF;
   RETURN NULL;
 END
 $$;
@@ -180,6 +196,11 @@ CREATE TRIGGER trg_entity_link_cascade_provenance
   AFTER DELETE ON entity_link
   FOR EACH ROW
   EXECUTE FUNCTION cascade_artifact_provenance_delete();
+
+-- Neither function may be callable by a role that merely connects: rule 4's shape, and EXECUTE on a new function is
+-- granted to PUBLIC by default.
+REVOKE ALL ON FUNCTION mark_artifact_provenance_source_deleted() FROM PUBLIC;
+REVOKE ALL ON FUNCTION cascade_artifact_provenance_delete() FROM PUBLIC;
 
 DO $pin$
 DECLARE

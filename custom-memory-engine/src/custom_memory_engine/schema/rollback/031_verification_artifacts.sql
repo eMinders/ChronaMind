@@ -23,6 +23,8 @@ BEGIN
 END
 $$;
 
+DROP TRIGGER IF EXISTS trg_verification_pinning_status_is_not_caller_settable ON verification;
+DROP FUNCTION IF EXISTS guard_verification_pinning_status();
 DROP TRIGGER IF EXISTS trg_verification_requires_artifacts ON verification;
 DROP TRIGGER IF EXISTS trg_verification_artifact_no_truncate ON verification_artifact;
 DROP TRIGGER IF EXISTS trg_verification_artifact_append_only ON verification_artifact;

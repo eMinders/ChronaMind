@@ -82,6 +82,9 @@ class _CarriedRows:
     rows: tuple[tuple[str, str], ...]  # (table, row as JSON text) to re-insert after the rebuild
     gate_refs: tuple[str, ...]  # memory_conflict ids whose existing_version_id names the rebuilt version
     provenance_rows: tuple[str, ...] = ()  # carried artifact_provenance JSON rows for carried associations
+    #: ``(artifact_provenance id, origin_kind, source_version_id)`` of every row citing this version as its source.
+    #: Deleting the version tombstones them (`mark_artifact_provenance_source_deleted`); the rebuild puts them back.
+    source_provenance: tuple[tuple[str, str, str], ...] = ()
 
 
 async def _relation_exists(cursor: object, schema_name: str, table: str) -> bool:
@@ -168,6 +171,19 @@ async def _detach_carried_rows(
                 (user_id, association_ids),
             )
             provenance_rows = [str(record[0]) for record in await cursor.fetchall()]
+        source_provenance: list[tuple[str, str, str]] = []
+        if await _relation_exists(cursor, schema_name, "artifact_provenance"):
+            # an entity, alias or link attributed to this version: its source survives the rebuild, so the attribution
+            # must too (`I2`). Without this the tombstoning below is permanent and a live artifact renders as
+            # "provenance removed by deletion".
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT p.id, p.origin_kind, p.source_version_id FROM {ap} AS p "
+                    "WHERE p.user_id = %s AND p.source_version_id = %s ORDER BY p.id"
+                ).format(ap=sql.Identifier(schema_name, "artifact_provenance")),
+                (user_id, version_id),
+            )
+            source_provenance = [(str(i), str(kind), str(source)) for i, kind, source in await cursor.fetchall()]
         conflicts = sql.Identifier(schema_name, "memory_conflict")
         await cursor.execute(
             sql.SQL(
@@ -177,7 +193,7 @@ async def _detach_carried_rows(
             (user_id, version_id, version_id),
         )
         gate_refs = tuple(str(record[0]) for record in await cursor.fetchall())
-    return _CarriedRows(tuple(rows), gate_refs, tuple(provenance_rows))
+    return _CarriedRows(tuple(rows), gate_refs, tuple(provenance_rows), tuple(source_provenance))
 
 
 async def _insertable_columns(cursor: Any, schema_name: str, table: str) -> tuple[str, ...]:
@@ -229,6 +245,15 @@ async def _restore_carried_rows(
                         "ON CONFLICT (id) DO NOTHING"
                     ).format(t=ap_target, columns=ap_columns),
                     (prov_record,),
+                )
+        if carried.source_provenance:
+            # restore exactly what the tombstoning trigger changed: the row itself was never deleted
+            for provenance_id, origin_kind, source_version_id in carried.source_provenance:
+                await cursor.execute(
+                    sql.SQL(
+                        "UPDATE {ap} SET origin_kind = %s, source_version_id = %s WHERE user_id = %s AND id = %s"
+                    ).format(ap=sql.Identifier(schema_name, "artifact_provenance")),
+                    (origin_kind, source_version_id, user_id, provenance_id),
                 )
         if carried.gate_refs:
             await cursor.execute(

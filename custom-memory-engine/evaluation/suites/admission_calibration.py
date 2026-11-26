@@ -1,13 +1,29 @@
-"""Gate G4 Null Suite (C-012): measures confabulation (FAR_tau), clustering resilience, and signal separation.
+"""Admission calibration: the §4.2 predicate's false-admission rate under known generative processes.
 
-Proves three load-bearing Gate G4 properties (``PLAN/V2/ROADMAP_V2.md`` §7):
+**What this is not.** It is not gate `G4` and it is not task `C-012`. `C-012`'s null suite measures *confabulation
+in the engine*: no-pattern event streams driven through `infer` and `verify`, so that the acceptance rate of stored
+abstractions is observed rather than assumed. That instrument does not exist yet and is W4 work
+(`ROADMAP_V2.md` §7). This module never calls the engine.
 
-1. Under stratified null processes (``p_true <= tau_confidence`` — spurious 0.50, base-rate 0.75, boundary 0.90,
-   high-censoring r3 trap, and small-sample ``o < 36`` trap), empirical ``FAR_tau <= 0.05`` (with CP upper bound).
-2. Under clustered / dependent null evidence (sessions of correlated items), naive independence-assuming admission
-   violates ``FAR_tau <= 0.05``, whereas ``SD-008`` dependence adjustment keeps ``FAR_tau <= 0.05``.
-3. Under a planted signal (``p_true = 0.99``, ``o >= 36``), admission clears cleanly while rejecting the ``r2``
-   ``X-ignore-undetermined`` baseline defect.
+**What it is.** A self-check of the admission rule itself, in the sense in which a statistical procedure can be
+checked against its own generative model. It draws `(s, k, u)` from Bernoulli trials with a known true support
+probability and feeds them to `evaluation.stats.admission.assess_admission`, then reports whether:
+
+1. **The size is not exceeded.** Across stratified null processes (`p_true <= tau_confidence`: spurious 0.50,
+   base-rate 0.75, the boundary 0.90, high censoring, and the small-sample `o < 36` trap), the scenario-level
+   false-admission rate stays at or below `MAX_NULL_FAR`, **per stratum as well as pooled**, each with its own
+   Clopper–Pearson upper bound reported beside it. The boundary stratum is where Clopper–Pearson's coverage guarantee
+   does the work, so its near-zero count is a property of the bound rather than an empirical discovery; the
+   informative strata are the censoring and small-sample ones, where coverage or the zero-counter rule could fail.
+2. **The controls separate.** Under clustered null evidence the naive independence assumption exceeds
+   `MAX_NULL_FAR` while the `SD-008` design-effect correction keeps it below, so the correction is shown to be
+   load-bearing rather than decorative. The `r2` (`X-ignore-undetermined`) control admits and the `r3` form rejects,
+   so treating undetermined outcomes as failures is shown to buy its conservatism.
+3. **It is not merely conservative.** With a planted signal (`p_true = 0.99`, `o >= 36`) admission clears, so a rule
+   that never admits cannot pass this study.
+
+The verdict is a function of the drawn counts at one pinned seed, and the report records the seed for that reason: it
+is a calibration check, not a gate whose level is a claim about the engine.
 """
 
 from __future__ import annotations
@@ -33,7 +49,7 @@ MAX_NULL_FAR = 0.05
 
 
 class StratumResult(StatsRecord):
-    """Summary of one stratified null or signal cohort in the G4 null suite."""
+    """Summary of one stratified null or signal cohort."""
 
     name: str = Field(min_length=1)
     regime: Literal["null", "clustered_null", "planted_signal", "r2_regression_control"]
@@ -44,8 +60,8 @@ class StratumResult(StatsRecord):
     naive_clustered_admission_rate: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
-class NullSuiteReport(StatsRecord):
-    """Complete Gate G4 benchmark output across null, clustered-null, and planted-signal cohorts."""
+class AdmissionCalibrationReport(StatsRecord):
+    """One calibration run across the null, clustered-null, planted-signal and control cohorts."""
 
     seed: int = Field(ge=0)
     tau_confidence: float = Field(gt=0.0, lt=1.0)
@@ -59,7 +75,13 @@ class NullSuiteReport(StatsRecord):
     planted_signal_admission_rate: float = Field(ge=0.0, le=1.0)
     r2_baseline_false_admission_rate: float = Field(ge=0.0, le=1.0)
     strata: tuple[StratumResult, ...] = Field(min_length=1)
-    g4_passed: bool
+    #: The largest per-stratum admission rate over the null strata, which is what the gate tests: pooling alone would
+    #: let one failing stratum hide among strata that never admit.
+    worst_stratum_admission_rate: float = Field(ge=0.0, le=1.0)
+    #: The same stratum's Clopper–Pearson upper bound, reported and not gated: at the study's 20 scenarios a perfect
+    #: zero still bounds at 0.168, so a gated bound would need 72 scenarios per stratum and is a W4 decision.
+    worst_stratum_cp_upper: float = Field(ge=0.0, le=1.0)
+    calibration_passed: bool
 
 
 def _simulate_iid_stratum(
@@ -183,7 +205,15 @@ def _simulate_r2_regression_control(
     for _ in range(scenarios):
         if r2_conf >= tau_confidence:
             r2_admitted += 1
-        if assess_admission(s, k, u, tau_confidence=tau_confidence).admissible:
+        # The control isolates the confidence bound: every other gate is satisfied, so 0 attempts cannot reject it.
+        if assess_admission(
+            s,
+            k,
+            u,
+            refutation_attempts=MIN_REFUTATION_ATTEMPTS,
+            negative_control_clean=True,
+            tau_confidence=tau_confidence,
+        ).admissible:
             r3_admitted += 1
     return (
         StratumResult(
@@ -198,14 +228,14 @@ def _simulate_r2_regression_control(
     )
 
 
-def run_null_suite(
+def run_admission_calibration(
     *,
     seed: int = 20261125,
     scenarios_per_stratum: int = 120,
     tau_confidence: float = DEFAULT_TAU_CONFIDENCE,
     tau_coverage: float = DEFAULT_TAU_COVERAGE,
     bootstrap_resamples: int = 10_000,
-) -> NullSuiteReport:
+) -> AdmissionCalibrationReport:
     """Run the complete deterministic Gate G4 synthetic null + planted-signal suite."""
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise ValueError("nonnegative_integer_seed_required")
@@ -311,9 +341,13 @@ def run_null_suite(
     null_far_upper = far_report.scenario_cp_upper if far_report.scenario_cp_upper is not None else 1.0
     naive_clustered = clustered.naive_clustered_admission_rate or 0.0
 
+    # per stratum, not only pooled: a single stratum at 16% would still pool with strata that never admit and pass
+    worst_stratum = max(null_strata, key=lambda stratum: stratum.admission_rate)
+    worst_stratum_upper = worst_stratum.cp_upper
     passed = (
         null_far <= MAX_NULL_FAR
         and null_far_upper <= MAX_NULL_FAR
+        and worst_stratum.admission_rate <= MAX_NULL_FAR
         and clustered.admission_rate <= MAX_NULL_FAR
         and naive_clustered > MAX_NULL_FAR
         and planted.admission_rate >= 0.80
@@ -321,7 +355,7 @@ def run_null_suite(
         and r3_guard.admission_rate == 0.0
     )
 
-    return NullSuiteReport(
+    return AdmissionCalibrationReport(
         seed=seed,
         tau_confidence=tau_confidence,
         tau_coverage=tau_coverage,
@@ -334,13 +368,15 @@ def run_null_suite(
         planted_signal_admission_rate=planted.admission_rate,
         r2_baseline_false_admission_rate=r2_far,
         strata=(*null_strata, planted),
-        g4_passed=passed,
+        worst_stratum_admission_rate=worst_stratum.admission_rate,
+        worst_stratum_cp_upper=worst_stratum_upper,
+        calibration_passed=passed,
     )
 
 
 __all__ = [
     "MAX_NULL_FAR",
-    "NullSuiteReport",
+    "AdmissionCalibrationReport",
     "StratumResult",
-    "run_null_suite",
+    "run_admission_calibration",
 ]

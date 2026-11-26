@@ -26,6 +26,7 @@ from app.schemas.chat import (
     ChatResponse,
     StreamResponse,
 )
+from app.services.database import database_service
 from app.services.session_naming import maybe_name_session
 
 router = APIRouter()
@@ -63,7 +64,11 @@ async def chat(
             await maybe_name_session(session.id, session.name, chat_request.messages)
 
         result = await agent.get_response(
-            chat_request.messages, session.id, user_id=str(session.user_id), username=session.username
+            chat_request.messages,
+            session.id,
+            user_id=str(session.user_id),
+            username=session.username,
+            history_epoch=session.history_epoch,
         )
 
         logger.info("chat_request_processed", session_id=session.id)
@@ -116,7 +121,11 @@ async def chat_stream(
             try:
                 with llm_stream_duration_seconds.labels(model=agent.llm_service.get_llm().get_name()).time():
                     async for chunk in agent.get_stream_response(
-                        chat_request.messages, session.id, user_id=str(session.user_id), username=session.username
+                        chat_request.messages,
+                        session.id,
+                        user_id=str(session.user_id),
+                        username=session.username,
+                        history_epoch=session.history_epoch,
                     ):
                         response = StreamResponse(content=chunk, done=False)
                         yield f"data: {json.dumps(response.model_dump(mode='json'))}\n\n"
@@ -188,6 +197,9 @@ async def clear_chat_history(
     """
     try:
         await agent.clear_chat_history(session.id)
+        # the positions restart with the history, so a message repeated afterwards must be a new claim rather than a
+        # replay of the one before the clear (see `_turn_id`)
+        await database_service.advance_history_epoch(session.id)
         return {"message": "Chat history cleared successfully"}
     except Exception as e:
         logger.exception("clear_chat_history_failed", session_id=session.id, error=str(e))

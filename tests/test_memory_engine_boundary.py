@@ -316,6 +316,17 @@ def test_rendering_omits_an_empty_channel_and_never_invents_one() -> None:
     assert _render({"facts": [{"content": "  "}]}) == ""
 
 
+def test_a_message_repeated_after_the_history_is_cleared_is_a_new_claim() -> None:
+    """`DELETE /messages` restarts the positions, so position alone would replay the pre-clear claim."""
+    from app.services.memory_engine import _turn_id
+
+    before = _turn_id("session-1", 0, "user", "I live in Berlin", 0)
+    resent = _turn_id("session-1", 0, "user", "I live in Berlin", 0)
+    after_clear = _turn_id("session-1", 0, "user", "I live in Berlin", 1)
+    assert resent == before, "a resend of the same history replays instead of duplicating"
+    assert after_clear != before, "the same words after a clear are a new statement"
+
+
 def test_no_module_on_the_agents_path_imports_mem0() -> None:
     """The regression this phase exists to prevent: the agent running on the retired store."""
     from pathlib import Path
@@ -326,8 +337,10 @@ def test_no_module_on_the_agents_path_imports_mem0() -> None:
         text = path.read_text(encoding="utf-8")
         if "from mem0" in text or "import mem0" in text:
             offenders.append(path.name)
-    # `app/services/memory.py` is the legacy mem0 implementation; nothing on the agent's path imports it.
-    assert offenders == ["memory.py"], offenders
+    # exactly one memory client: the engine's. The mem0 client that shipped with the template is gone (T-43), so a
+    # reintroduction is a failure rather than one module nobody imports.
+    assert offenders == [], offenders
+    assert not (root / "app/services/memory.py").exists()
     for path in (root / "app/core/langgraph/graph.py", root / "app/main.py"):
         assert "services.memory " not in path.read_text(encoding="utf-8"), path
 

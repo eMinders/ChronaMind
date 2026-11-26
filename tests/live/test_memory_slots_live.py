@@ -150,6 +150,14 @@ CASES: list[tuple[tuple[str, ...], str, SlotClassification]] = [
     ((), "I love Paris in the spring", MULTI),
     ((), "عندي اجتماع في برلين بكرة", MULTI),
     ((), "I visited Berlin and Paris last year", MULTI),
+    # A message that states the slot *and* something else: the claim's content is the whole message, so calling it a
+    # residence update would retire the employer fact the next time the user moves (V2-D124 item 9).
+    ((), "I live in Cairo and I work at Siemens", MULTI),
+    ((), "I'm Omar and I live in Cairo", MULTI),
+    ((), "ساكن في القاهرة وبشتغل في سيمنس", MULTI),
+    ((), "My name is Omar and I live in Cairo", MULTI),
+    # reported speech about the speaker is not the speaker asserting it
+    ((), 'My manager said "you live in Paris now"', MULTI),
 ]
 
 

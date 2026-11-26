@@ -49,6 +49,8 @@ def test_backup_and_restore_rehearsal_passes_against_real_postgres() -> None:
     assert report["journal_entries"] == 4
     assert report["journal_entries_after_stale_export"] == 4  # exporting from the older database cannot shrink it
     assert report["journal_wrong_key_refused"] is True
+    assert report["journal_unstamped_refused"] is True
+    assert report["journal_truncated_refused"] is True
     # replayed into the restored database: the resolved memory deletion and bob's and carol's `delete all` erase
     # again, the memory the backup never held is recorded with nothing to erase, and carol (whom the backup predates)
     # is re-provisioned so her epochs are taken

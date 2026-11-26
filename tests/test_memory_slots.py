@@ -216,3 +216,53 @@ async def test_a_failed_classification_logs_no_message_content(monkeypatch: pyte
     with pytest.raises(ValueError) as error:
         SlotExtraction.model_validate({"slot": "residence", "value": "SECRET-PLACE"})
     assert "SECRET-PLACE" not in str(error.value)
+
+
+async def test_the_classifier_never_falls_back_to_a_model_it_was_not_evaluated_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One model, no substitution: an untested model must not decide that a past fact is current."""
+    import app.services.memory_slots as memory_slots
+
+    seen: list[str | None] = []
+
+    async def only_this_model(messages: list[BaseMessage], config: RunnableConfig) -> SlotExtraction:
+        seen.append(memory_slots.classifier_model())
+        raise RuntimeError("provider_error")
+
+    classifier = LLMSlotClassifier(only_this_model)
+    assert await classifier.classify("I live in Paris", []) == MULTI
+    assert seen == [memory_slots.classifier_model()]
+
+    # and the service is asked for exactly one model: `fallback=False` is what makes the second call impossible
+    captured: dict[str, object] = {}
+
+    async def record_call(messages: list[BaseMessage], **kwargs: object) -> SlotExtraction:
+        captured.update(kwargs)
+        return SlotExtraction(slot="none", temporal_status="other", subject_is_speaker=False, value="", confidence=1.0)
+
+    monkeypatch.setattr(memory_slots.llm_service, "call", record_call)
+    await memory_slots.llm_service_extract([], {})
+    assert captured["fallback"] is False
+    assert captured["model_name"] == memory_slots.classifier_model()
+
+
+def test_only_llm_enables_the_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A typo, `false` or `0` must disable the classifier; an unrecognized setting never switches on the risky side."""
+    import app.services.memory_slots as memory_slots
+
+    for value, expected_null in (("llm", False), ("off", True), ("false", True), ("0", True), ("lmm", True)):
+        monkeypatch.setattr(memory_slots.settings, "MEMORY_SLOT_CLASSIFIER", value)
+        monkeypatch.setattr(memory_slots.settings, "MEMORY_SLOT_CLASSIFIER_MODEL", "")
+        monkeypatch.setattr(memory_slots, "classifier_model", lambda: "gpt-5.6-luna")
+        classifier = memory_slots.configured_classifier()
+        assert isinstance(classifier, NullSlotClassifier) is expected_null, value
+
+
+def test_an_unknown_classifier_model_disables_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.services.memory_slots as memory_slots
+
+    monkeypatch.setattr(memory_slots.settings, "MEMORY_SLOT_CLASSIFIER", "llm")
+    monkeypatch.setattr(memory_slots, "classifier_model", lambda: "no-such-model")
+    monkeypatch.setattr(memory_slots.LLMRegistry, "get_all_names", classmethod(lambda cls: ["gpt-5.6-luna"]))
+    assert isinstance(memory_slots.configured_classifier(), NullSlotClassifier)

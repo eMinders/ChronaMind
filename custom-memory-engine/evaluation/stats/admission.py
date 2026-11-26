@@ -6,6 +6,10 @@ Consistent with ``PLAN/V2/STATISTICS.md`` §4.2, ``V2-D30`` (defaults ``tau_conf
 Not labelled "exact" in general: Clopper–Pearson bounds are exact only under exchangeability at fixed ``n``
 (``STATISTICS.md`` §5.4.2). Under temporal or session clustering, callers supply ``effective_opportunity`` from
 ``evaluation.stats.dependence`` so the finite-sample bound cannot understate uncertainty.
+
+Implements two of ``STATISTICS.md`` §5.4.3's three admission conditions: the per-abstraction bound (one-sided 97.5%,
+``TAIL_PROBABILITY``) and family-wise significance (Holm, FWER 0.05); time-uniform validity is SD-005 and is not
+part of this module.
 """
 
 from __future__ import annotations
@@ -23,11 +27,13 @@ from evaluation.stats.abstraction_metrics import (
     resolved_failure_rate,
 )
 from evaluation.stats.clopper_pearson import cp_interval, cp_upper
+from evaluation.stats.dependence import DependenceReport
 from evaluation.stats.models import StatsRecord
 from evaluation.stats.multiplicity import holm_adjust
 
 DEFAULT_TAU_CONFIDENCE = 0.90  # V2-D30
 DEFAULT_TAU_COVERAGE = 0.60  # V2-D30
+DEFAULT_FWER_ALPHA = 0.05  # STATISTICS.md §5.4.3, independent of the per-abstraction TAIL_PROBABILITY
 MIN_REFUTATION_ATTEMPTS = 3
 
 
@@ -77,6 +83,7 @@ class AdmissionResult(StatsRecord):
     ledger: LedgerSummary
     effective_opportunity: int | None = Field(default=None, ge=1)
     effective_confidence_lower: float | None = Field(default=None, ge=0.0, le=1.0)
+    dependence_confidence_lower: float | None = Field(default=None, ge=0.0, le=1.0)
     refutation_attempts: int = Field(ge=0)
     negative_control_clean: bool
     tau_confidence: float = Field(gt=0.0, lt=1.0)
@@ -175,14 +182,20 @@ def assess_admission(
     counter: int,
     undetermined: int,
     *,
-    refutation_attempts: int = MIN_REFUTATION_ATTEMPTS,
-    negative_control_clean: bool = True,
+    refutation_attempts: int,
+    negative_control_clean: bool,
     tau_confidence: float = DEFAULT_TAU_CONFIDENCE,
     tau_coverage: float = DEFAULT_TAU_COVERAGE,
     effective_opportunity: int | None = None,
+    dependence: DependenceReport | None = None,
     tail_probability: float = TAIL_PROBABILITY,
 ) -> AdmissionResult:
-    """Apply the ``STATISTICS.md`` §4.2 admission predicate with optional conservative ``n_eff`` adjustment."""
+    """Apply the ``STATISTICS.md`` §4.2 admission predicate with optional conservative dependence adjustment.
+
+    ``refutation_attempts`` and ``negative_control_clean`` have no default: both are §4.2 gates and must be
+    evidenced by the caller. When ``dependence`` is supplied (SD-008), the report's most conservative confidence
+    bound must clear ``tau_confidence`` in addition to the ``n_eff`` bound; the report must describe this ledger.
+    """
     attempts = _count(refutation_attempts, "refutation_attempts_invalid")
     if not isinstance(negative_control_clean, bool):
         raise ValueError("negative_control_flag_must_be_boolean")
@@ -190,6 +203,10 @@ def assess_admission(
     tau_cov = _threshold(tau_coverage, "threshold_out_of_range")
     summary = ledger(support, counter, undetermined, tail_probability=tail_probability)
     o = summary.opportunity
+    if dependence is not None and (
+        dependence.raw_opportunity != o or dependence.raw_failures != summary.counter + summary.undetermined
+    ):
+        raise ValueError("dependence_report_ledger_mismatch")
     eff_failures, eff_trials = _scaled_trials(summary.counter + summary.undetermined, o, effective_opportunity)
     if effective_opportunity is not None:
         eff_upper = cp_upper(eff_failures, eff_trials, tail_probability=tail_probability)
@@ -208,6 +225,8 @@ def assess_admission(
         reasons.append("zero_counter_opportunity_too_small")
     if not negative_control_clean:
         reasons.append("negative_control_slice_not_clean")
+    if dependence is not None and dependence.conservative_confidence_lower < tau_conf:
+        reasons.append("dependence_conservative_confidence_below_threshold")
 
     return AdmissionResult(
         admissible=not reasons,
@@ -215,6 +234,7 @@ def assess_admission(
         ledger=summary,
         effective_opportunity=None if effective_opportunity is None else eff_trials,
         effective_confidence_lower=None if effective_opportunity is None else eff_conf,
+        dependence_confidence_lower=None if dependence is None else dependence.conservative_confidence_lower,
         refutation_attempts=attempts,
         negative_control_clean=negative_control_clean,
         tau_confidence=tau_conf,
@@ -228,7 +248,10 @@ def candidate_failure_p_value(
     *,
     tau_confidence: float = DEFAULT_TAU_CONFIDENCE,
 ) -> float:
-    """Exact one-sided binomial p-value for ``H0: p_f >= 1 - tau_confidence`` vs ``p_f < 1 - tau_confidence``."""
+    """One-sided binomial p-value for ``H0: p_f >= 1 - tau_confidence`` vs ``p_f < 1 - tau_confidence``.
+
+    Finite-sample at fixed ``trials``, valid under exchangeability only (``STATISTICS.md`` §5.4.2).
+    """
     k = _count(failures, "failures_must_be_a_nonnegative_integer")
     n = _count(trials, "trials_must_be_a_positive_integer")
     if n <= 0 or k > n:
@@ -243,9 +266,13 @@ def closed_testing_admit(
     *,
     tau_confidence: float = DEFAULT_TAU_CONFIDENCE,
     tau_coverage: float = DEFAULT_TAU_COVERAGE,
-    fwer_alpha: float = TAIL_PROBABILITY,
+    fwer_alpha: float = DEFAULT_FWER_ALPHA,
 ) -> tuple[ClosedTestingOutcome, ...]:
-    """Compose per-abstraction admission with Holm step-down FWER control across candidate abstractions."""
+    """Compose per-abstraction admission with Holm step-down FWER control across candidate abstractions.
+
+    The two levels are independent (``STATISTICS.md`` §5.4.3): each candidate's bound is always the one-sided
+    97.5% ``TAIL_PROBABILITY`` limit, and ``fwer_alpha`` (default 0.05) only sets the Holm family-wise level.
+    """
     if not candidates:
         raise ValueError("nonempty_candidates_required")
     ids = [c.candidate_id for c in candidates]
@@ -267,7 +294,7 @@ def closed_testing_admit(
             tau_confidence=tau_conf,
             tau_coverage=tau_cov,
             effective_opportunity=cand.effective_opportunity,
-            tail_probability=alpha,
+            tail_probability=TAIL_PROBABILITY,
         )
         assessments[cand.candidate_id] = assessment
         eff_failures, eff_trials = _scaled_trials(
@@ -361,6 +388,7 @@ def compute_far_tau(
 
 
 __all__ = [
+    "DEFAULT_FWER_ALPHA",
     "DEFAULT_TAU_CONFIDENCE",
     "DEFAULT_TAU_COVERAGE",
     "MIN_REFUTATION_ATTEMPTS",

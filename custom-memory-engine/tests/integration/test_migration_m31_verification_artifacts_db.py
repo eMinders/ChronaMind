@@ -8,6 +8,7 @@ from typing import LiteralString, cast
 import pytest
 from psycopg import sql
 from psycopg.errors import RaiseException
+from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.runtime import DbTargets, Receipt
 from custom_memory_engine.engine.staleness import ClosureCache
@@ -217,6 +218,64 @@ async def test_verify_api_pins_artifacts_and_enforces_admission_and_t11_readabil
             "SELECT details->>'reason_code', details->>'pinning_status' FROM audit_event "
             "WHERE event_type = 'verification_recorded' AND memory_ref = 'v-pin'",
         ) == [("verified", "pinned")]
+
+
+async def test_m31_the_artifact_read_policy_delegates_to_its_verification_and_never_to_its_own_visibility(
+    database,  # noqa: F811  (the fixture)
+) -> None:
+    """The one cross-user read policy the migration-2 pin cannot cover: it delegates two hops, not one.
+
+    A regression to "read the row's own `visibility` column" would show up here and nowhere else, because every child
+    row is written `private` and no other test asserts what a grantee can see through it.
+    """
+    async with world(database) as (conn, _engine, schema):
+        async with conn.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                "SELECT p.polcmd::text, pg_catalog.pg_get_expr(p.polqual, p.polrelid) "
+                "FROM pg_catalog.pg_policy AS p "
+                "JOIN pg_catalog.pg_class AS c ON c.oid = p.polrelid "
+                "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = %s AND c.relname = 'verification_artifact' "
+                "AND p.polname = 'verification_artifact_scope_read'",
+                (schema,),
+            )
+            row = await cursor.fetchone()
+        assert row is not None, "the read policy exists"
+        command, expression = str(row[0]), str(row[1])
+        assert command == "r", "SELECT-only: a grant must never widen a write"
+        assert "verification" in expression, expression
+        # the child's own visibility column must not decide readability: that is the second copy of the rule (V2-D113)
+        assert "verification_artifact.visibility" not in expression, expression
+
+
+async def test_m31_the_legacy_unpinned_status_cannot_be_chosen_by_an_inserter(database) -> None:  # noqa: F811
+    """`unpinned_pre_migration` belongs to rows the migration created; an INSERT of it would skip `I11` entirely."""
+    async with world(database) as (conn, engine, _schema):
+        assert isinstance(engine.resolver, DbTargets)
+        await inferred(conn, "v-unpin")
+        with pytest.raises(RaiseException, match="verification_pinning_status_is_not_caller_settable"):
+            async with conn.transaction():
+                await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+                await conn.execute(
+                    "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
+                    "negative_control_slice_id, support_window, held_out_window, support_context_key, "
+                    "held_out_context_key, outcome, artifact_pinning_status) VALUES ('ver-unpin', 'v-unpin', "
+                    "'alice', 'sp-unpin', clock_now(), 'ctrl-unpin', "
+                    "tstzrange('2026-01-01','2026-02-01','[)'), tstzrange('2026-03-01','2026-04-01','[)'), "
+                    "'ctx-a', 'ctx-b', 'verified', 'unpinned_pre_migration')"
+                )
+        # the default value is unaffected: a normal insert is still `pinned` and still fails its artifact check
+        # (support is checked first, so that is the message an insert with no artifacts at all receives)
+        with pytest.raises(RaiseException, match="verification_support_artifacts_required"):
+            async with conn.transaction():
+                await conn.execute("SELECT set_config('app.user_id', 'alice', true)")
+                await conn.execute(
+                    "INSERT INTO verification (id, version_id, user_id, held_out_split_id, verified_on, "
+                    "negative_control_slice_id, support_window, held_out_window, support_context_key, "
+                    "held_out_context_key, outcome) VALUES ('ver-default', 'v-unpin', 'alice', 'sp-def', "
+                    "clock_now(), 'ctrl-def', tstzrange('2026-01-01','2026-02-01','[)'), "
+                    "tstzrange('2026-03-01','2026-04-01','[)'), 'ctx-a', 'ctx-b', 'verified')"
+                )
 
 
 async def test_m31_upgrade_marks_legacy_rows_unpinned_and_rollback_restores_v30(database) -> None:  # noqa: F811

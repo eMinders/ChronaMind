@@ -107,6 +107,25 @@ CREATE CONSTRAINT TRIGGER trg_verification_requires_artifacts
   FOR EACH ROW
   EXECUTE FUNCTION enforce_verification_artifacts();
 
+-- `unpinned_pre_migration` exists for rows that predate this migration, whose `ADD COLUMN ... DEFAULT` fires no trigger.
+-- It must not be selectable by an inserter: the runtime role holds INSERT on `verification`, so one token in the
+-- column would otherwise commit a `verified` record with no held-out artifact and skip `I11`'s check entirely.
+CREATE FUNCTION guard_verification_pinning_status() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.artifact_pinning_status = 'unpinned_pre_migration' THEN
+    RAISE EXCEPTION 'verification_pinning_status_is_not_caller_settable' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER trg_verification_pinning_status_is_not_caller_settable
+  BEFORE INSERT ON verification
+  FOR EACH ROW
+  EXECUTE FUNCTION guard_verification_pinning_status();
+
 DO $pin$
 DECLARE
   engine_schema text := pg_catalog.current_schema();
@@ -114,7 +133,8 @@ DECLARE
 BEGIN
   FOREACH fn IN ARRAY ARRAY[
     'guard_verification_artifact_append_only()',
-    'enforce_verification_artifacts()'
+    'enforce_verification_artifacts()',
+    'guard_verification_pinning_status()'
   ] LOOP
     EXECUTE pg_catalog.format(
       'ALTER FUNCTION %I.%s SET search_path = %I, pg_catalog, pg_temp', engine_schema, fn, engine_schema

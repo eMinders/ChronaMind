@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from evaluation.stats.abstraction_metrics import (
@@ -104,3 +106,34 @@ def test_invalid_metric_inputs_fail_loudly() -> None:
         brier_score([1.2], [1])
     with pytest.raises(ValueError):
         expected_calibration_error([0.5], [1, 0])
+
+
+def test_expected_calibration_error_and_reference_ece_bin_a_float_edge_identically() -> None:
+    # 0.57 * 100 == 56.99999999999999, but 57 / 100 == 0.57: 0.57 belongs to the half-open bin [0.57, 0.58).
+    probs = (0.57, 0.565)
+    outcomes = (1, 0)
+    summary = expected_calibration_error(probs, outcomes, n_bins=100)
+    assert summary.ece == pytest.approx(reference_ece(probs, outcomes, n_bins=100), abs=1e-12)
+    assert summary.ece == pytest.approx(0.4975, abs=1e-12)
+    occupied = {b.bin_index: b.count for b in summary.bins if b.count}
+    assert occupied == {56: 1, 57: 1}
+
+
+def test_expected_calibration_error_equals_reference_ece_on_a_seeded_sweep() -> None:
+    rng = random.Random(20261121)
+    for _ in range(400):
+        n_bins = rng.randint(1, 120)
+        size = rng.randint(1, 40)
+        probs: list[float] = []
+        for _ in range(size):
+            draw = rng.random()
+            if draw < 0.4:
+                probs.append(rng.randint(0, n_bins) / n_bins)
+            elif draw < 0.5:
+                probs.append(rng.choice((0.0, 1.0)))
+            else:
+                probs.append(rng.random())
+        outcomes = [rng.randint(0, 1) for _ in probs]
+        summary = expected_calibration_error(probs, outcomes, n_bins=n_bins)
+        assert summary.ece == pytest.approx(reference_ece(probs, outcomes, n_bins=n_bins), abs=1e-12)
+        assert sum(b.count for b in summary.bins) == size

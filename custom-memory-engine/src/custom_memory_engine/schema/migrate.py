@@ -132,6 +132,7 @@ FUNCTIONS = (
     "guard_verification_artifact_append_only",  # migration 31 (I11, V2-D112): append-only verification artifacts
     "enforce_verification_artifacts",  # migration 31 (I11, V2-D112): pinned verification requires both sides
     "guard_scope_identity",  # migration 32 (I7, V2-D113): scope_path is immutable on the three artifact tables
+    "guard_verification_pinning_status",  # migration 31 (I11, V2-D124): the legacy status is not caller-settable
 )
 # Parameterized SQL argument lists for non-zero-arg functions in FUNCTIONS so reset() drops them cleanly.
 FUNCTION_ARG_TYPES: Mapping[str, str] = {

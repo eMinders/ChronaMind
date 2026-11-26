@@ -176,12 +176,10 @@ class Settings:
         # The semantic slot classifier (`app/services/memory_slots.py`, `V2-D121`): `llm` (default) asks a language model
         # whether the newest user message states the speaker's current residence, employer or name, in any language;
         # `off` records every claim as multi-valued. An empty model name uses the default model.
+        # `llm` enables the semantic slot classifier; anything else (including `off`, a typo or a falsy word) disables
+        # it, so an unrecognized value can never switch on the risky direction.
         self.MEMORY_SLOT_CLASSIFIER = os.getenv("MEMORY_SLOT_CLASSIFIER", "llm").strip().lower()
         self.MEMORY_SLOT_CLASSIFIER_MODEL = os.getenv("MEMORY_SLOT_CLASSIFIER_MODEL", "").strip()
-        # The mem0 settings remain only for the legacy client, which `tests/test_memory_engine_boundary.py` proves is
-        # no longer on the agent's path.
-        self.LONG_TERM_MEMORY_MODEL = os.getenv("LONG_TERM_MEMORY_MODEL", "gpt-5-nano")
-        self.LONG_TERM_MEMORY_EMBEDDER_MODEL = os.getenv("LONG_TERM_MEMORY_EMBEDDER_MODEL", "text-embedding-3-small")
         self.LONG_TERM_MEMORY_COLLECTION_NAME = os.getenv("LONG_TERM_MEMORY_COLLECTION_NAME", "longterm_memory")
         # JWT Configuration
         self.JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")

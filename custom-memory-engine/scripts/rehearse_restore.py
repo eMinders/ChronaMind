@@ -100,6 +100,8 @@ class RehearsalReport:
     journal_entries: int
     journal_entries_after_stale_export: int
     journal_wrong_key_refused: bool
+    journal_unstamped_refused: bool
+    journal_truncated_refused: bool
     replay_replayed: int
     replay_recorded_unresolved: int
     replay_already_present: int
@@ -521,6 +523,25 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 )
                 journal = read_journal(journal_path)
 
+                # a journal whose header carries no key check is never stamped with the current key: an entry file the
+                # database cannot vouch for must not be merged into (L2)
+                unstamped = journal_path.with_name("unstamped.jsonl")
+                header_line, *body = journal_path.read_text(encoding="utf-8").splitlines()
+                unstamped_header = json.loads(header_line)
+                unstamped_header.pop("key_check", None)
+                unstamped.write_text("\n".join([json.dumps(unstamped_header), *body]) + "\n", encoding="utf-8")
+                unprefixed = journal_path.with_name("truncated.jsonl")
+                unprefixed.write_text("\n".join([header_line, *body[:-1]]) + "\n", encoding="utf-8")
+                unstamped_refused = truncated_refused = False
+                try:
+                    await export_to_file(pre_conn, unstamped, key=DELETION_KEY, schema_name=schema_name)
+                except JournalError as error:
+                    unstamped_refused = error.code == "journal_key_check_missing"
+                try:
+                    await export_to_file(pre_conn, unprefixed, key=DELETION_KEY, schema_name=schema_name)
+                except JournalError as error:
+                    truncated_refused = error.code == "journal_truncated"
+
                 # a replay under the wrong deletion key is refused before it writes anything
                 wrong_key_refused = False
                 wrong = Runtime(pre_conn, pre_role, schema_name, provenance_key=PROVENANCE_KEY, deletion_key=b"w" * 32)
@@ -584,6 +605,8 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 journal_entries=journal_entries,
                 journal_entries_after_stale_export=stale_export_entries,
                 journal_wrong_key_refused=wrong_key_refused,
+                journal_unstamped_refused=unstamped_refused,
+                journal_truncated_refused=truncated_refused,
                 replay_replayed=first.replayed,
                 replay_recorded_unresolved=first.recorded_unresolved,
                 replay_already_present=first.already_present,

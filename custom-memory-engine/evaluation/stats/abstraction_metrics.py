@@ -8,6 +8,12 @@ Implements the three-state partial-identification metrics of ``PLAN/V2/STATISTIC
 * set-level monitoring metrics (precision, recall, Brier score, ECE + reliability bins, ``FAR_tau``).
 
 ECE and Brier score are strictly **monitoring** metrics (``STATISTICS.md`` §4.3) and never admission gates.
+Both ECE implementations bin with one rule: bin ``b`` is the half-open ``[b / n_bins, (b + 1) / n_bins)``, the
+last bin closed at 1.0, with edges computed as ``b / n_bins``.
+
+The admission helper built on these bounds (``evaluation.stats.admission``) implements two of ``STATISTICS.md``
+§5.4.3's three conditions (per-abstraction bound and family-wise significance); time-uniform validity is SD-005
+and is not part of this module.
 """
 
 from __future__ import annotations
@@ -193,7 +199,10 @@ def failure_rate_interval(support: int, counter: int, undetermined: int) -> tupl
 
 
 def cp_lower(failures: int, trials: int, *, tail_probability: float = TAIL_PROBABILITY) -> float:
-    """Exact one-sided Clopper–Pearson lower limit with coverage ``1 - tail_probability``."""
+    """One-sided Clopper–Pearson lower limit with coverage ``1 - tail_probability``.
+
+    Finite-sample at fixed ``trials``, valid under exchangeability only (``STATISTICS.md`` §5.4.2).
+    """
     k = _nonneg_int(failures, "failures_must_be_a_nonnegative_integer")
     n = _pos_int(trials, "trials_must_be_a_positive_integer")
     if k > n:
@@ -329,6 +338,20 @@ def brier_score(probabilities: Sequence[float], outcomes: Sequence[int | bool]) 
     return sum((p - y) ** 2 for p, y in zip(probs, ys, strict=True)) / len(probs)
 
 
+def _calibration_bin(probability: float, n_bins: int) -> int:
+    """Index of the half-open bin ``[b / n_bins, (b + 1) / n_bins)`` holding ``probability``; the last bin is closed.
+
+    ``int(p * n_bins)`` alone can disagree with the edge ``b / n_bins`` by one ulp (``0.57 * 100 < 57``), so the
+    candidate index is corrected against the same edges ``reference_ece`` compares with.
+    """
+    idx = min(n_bins - 1, int(probability * n_bins))
+    while idx > 0 and probability < idx / n_bins:
+        idx -= 1
+    while idx < n_bins - 1 and probability >= (idx + 1) / n_bins:
+        idx += 1
+    return idx
+
+
 def expected_calibration_error(
     probabilities: Sequence[float],
     outcomes: Sequence[int | bool],
@@ -344,8 +367,7 @@ def expected_calibration_error(
     total = len(probs)
     buckets: list[list[tuple[float, int]]] = [[] for _ in range(bins_count)]
     for p, y in zip(probs, ys, strict=True):
-        idx = min(bins_count - 1, int(p * bins_count))
-        buckets[idx].append((p, y))
+        buckets[_calibration_bin(p, bins_count)].append((p, y))
     bins: list[ReliabilityBin] = []
     ece = 0.0
     for idx, items in enumerate(buckets):
@@ -454,7 +476,7 @@ def reference_brier_score(probabilities: Sequence[float], outcomes: Sequence[int
 
 
 def reference_ece(probabilities: Sequence[float], outcomes: Sequence[int | bool], *, n_bins: int = 10) -> float:
-    """Reference hand-computable ECE."""
+    """Reference hand-computable ECE, binned by the half-open ``[lo, hi)`` rule with the last bin closed."""
     probs = _prob_sequence(probabilities, "invalid_probability")
     ys = _binary_sequence(outcomes, "invalid_binary_outcome")
     bins_count = _pos_int(n_bins, "n_bins_must_be_positive")

@@ -202,6 +202,31 @@ async def fresh_database() -> AsyncIterator[migrate.MigrationConfig]:
 
 
 @pytest.mark.integration
+async def test_every_function_the_migrations_create_is_registered_for_a_clean_reset(database) -> None:
+    """`reset` drops a fixed list of tables and functions; a migration that adds one and forgets the list breaks it.
+
+    The symptom is not local: `reset` ends with `DROP SCHEMA ... RESTRICT`, so an unregistered function fails the
+    clean-slate path every database test uses, with `sqlstate 2BP01` and no name. Migrations 29-32 each added
+    functions; the list is the integration point, and this is the alarm for it.
+    """
+    await migrate.MigrationRunner(database).apply()
+    async with await AsyncConnection.connect(database.database_url.get_secret_value(), connect_timeout=5) as conn:
+        cursor = await conn.execute(
+            "SELECT p.proname FROM pg_catalog.pg_proc AS p "
+            "JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = %s ORDER BY p.proname",
+            (database.schema_name,),
+        )
+        present = {str(row[0]) for row in await cursor.fetchall()}
+    assert present, "the schema has functions"
+    missing = present - set(migrate.FUNCTIONS)
+    assert missing == set(), f"register in migrate.FUNCTIONS (+ FUNCTION_ARG_TYPES): {missing}"
+
+    # and the registered list is not stale in the other direction: every registered name exists
+    absent = set(migrate.FUNCTIONS) - present
+    assert absent == set(), f"registered but not created by any migration: {absent}"
+
+
+@pytest.mark.integration
 async def test_cli_apply_status_and_confirmed_reset_use_the_explicit_database(
     database: migrate.MigrationConfig,
 ) -> None:

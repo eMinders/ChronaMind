@@ -24,6 +24,7 @@ from custom_memory_engine.api.wiring import UNWIRED_OPERATIONS, wire_engine
 from custom_memory_engine.engine.export import ExportManifest
 from custom_memory_engine.engine.statistics import ArtifactStats
 from custom_memory_engine.profile import parse_profile
+from custom_memory_engine.scope.access import Selector, resolve_read_set
 from tests.integration.test_api_wiring_structure import (  # noqa: F401  (fixtures)
     caller,
     connect,
@@ -514,6 +515,30 @@ async def test_export_manifests_what_the_caller_can_read_and_replays_the_same_ma
         second = await engine.call(alice, "export", {"selectors": ["/u/alice/"]})
         assert isinstance(second, ExportManifest)
         assert (second.snapshot_id, second.created) == (first.snapshot_id, False)
+
+
+async def test_a_selector_narrower_than_the_read_set_does_not_widen_the_export(database) -> None:  # noqa: F811
+    """The manifest cannot state a scope its ids exceed.
+
+    Reachable through sharing: bob holds a grant on ``/u/alice/``, so his read set covers the whole namespace, and he
+    exports the narrower ``/u/alice/work/``. Keeping the grant's entry would read every row alice owns at
+    ``/u/alice/`` while the manifest recorded ``/u/alice/work/``; anchoring at the request reads exactly that
+    sub-scope, which holds nothing (migration 11 pins an artifact to its owner's root).
+    """
+    from custom_memory_engine.api.export_handlers import ExportHandlers
+
+    async with world(database) as (conn, _engine, _):
+        await grounded(conn, "v-root", content="I live in Berlin")
+        # the host resolves bob's read set from his grants, so it covers all of alice's namespace ...
+        read_set = resolve_read_set("bob", [Selector.of("/u/alice/")], ["/u/alice/"])
+        assert [entry.path for entry in read_set.entries] == ["/u/alice/"]
+        # ... while the export he asks for names only a sub-scope
+
+        narrowed = ExportHandlers._narrow(read_set, ("/u/alice/work/",))
+        assert [entry.path for entry in narrowed.entries] == ["/u/alice/work/"]
+        assert narrowed.entries[0].visibilities == read_set.entries[0].visibilities
+        # and the request the caller actually sent is still refused when nothing in the read set covers it
+        assert ExportHandlers._narrow(read_set, ("/u/carol/",)).entries == ()
 
 
 async def test_export_is_tier_c_only_and_refuses_a_malformed_selector(database) -> None:  # noqa: F811
