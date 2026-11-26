@@ -40,6 +40,7 @@ journal lost together with the database.
 
 from __future__ import annotations
 
+import dataclasses
 import fcntl
 import hmac
 import json
@@ -75,9 +76,10 @@ type ReplayOutcome = Literal["already_present", "replayed", "recorded_unresolved
 class JournalError(ValueError):
     """A static, content-free refusal code."""
 
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
+    def __init__(self, code: str, *, detail: str | None = None) -> None:
+        super().__init__(code if detail is None else f"{code}: {detail}")
         self.code = code
+        self.detail = detail
 
 
 @dataclass(frozen=True, order=True)
@@ -96,10 +98,11 @@ class JournalEntry:
 
 @dataclass(frozen=True)
 class Journal:
-    """A journal file: its entries and the key check of the deletion key its digests were made with."""
+    """A journal file: entries, its export recovery point and its deletion-key check."""
 
     entries: tuple[JournalEntry, ...]
     key_check: str | None
+    exported_at: str | None = None
 
 
 def key_check(key: bytes) -> str:
@@ -107,9 +110,46 @@ def key_check(key: bytes) -> str:
     return hmac.new(key, _KEY_CHECK_MESSAGE, "sha256").hexdigest()
 
 
+def _timestamp(value: str) -> datetime:
+    """Parse an aware ISO-8601 timestamp used by the recovery-point check."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must include a timezone")
+    return parsed.astimezone(UTC)
+
+
+def check_recovery_point(journal: Journal, restored_from_backup_at: str) -> None:
+    """Refuse a journal whose header or newest per-user entry predates the restored backup."""
+    try:
+        backup = _timestamp(restored_from_backup_at)
+        header = _timestamp(journal.exported_at) if journal.exported_at is not None else None
+        newest_by_user: dict[str, str] = {}
+        for entry in journal.entries:
+            previous = newest_by_user.get(entry.user_id)
+            if previous is None or _timestamp(entry.requested_at) > _timestamp(previous):
+                newest_by_user[entry.user_id] = entry.requested_at
+        points = [journal.exported_at, *newest_by_user.values()]
+        for point in points:
+            if point is None or _timestamp(point) < backup:
+                displayed = "missing" if point is None else point
+                raise JournalError(
+                    "journal_older_than_backup",
+                    detail=f"journal_timestamp={displayed} restored_from_backup_at={restored_from_backup_at}",
+                )
+        if header is None:
+            raise JournalError(
+                "journal_older_than_backup",
+                detail=f"journal_timestamp=missing restored_from_backup_at={restored_from_backup_at}",
+            )
+    except JournalError:
+        raise
+    except (TypeError, ValueError):
+        raise JournalError("journal_timestamp_invalid") from None
+
+
 @dataclass(frozen=True)
 class ReplayReport:
-    """Counts only: what the replay found and did."""
+    """Counts and recovery evidence from one replay."""
 
     already_present: int
     replayed: int
@@ -117,6 +157,10 @@ class ReplayReport:
     #: Journalled users the restored database did not hold (created after the backup), re-provisioned so their
     #: requests and epochs are recorded and their next deletion continues after them.
     users_reprovisioned: int
+    #: The newest journal epoch per user, compared with the restored database before replay writes it.
+    journal_newest_epochs: dict[str, int] = dataclasses.field(default_factory=dict)
+    #: The newest completed deletion epoch per user in the restored database before replay.
+    restored_newest_epochs: dict[str, int | None] = dataclasses.field(default_factory=dict)
     #: Users whose restored history contradicts the journal. Their entries were skipped and every other user was still
     #: replayed: a conflict in one tenant must not leave the rest of the deployment unerased. The run is not a success.
     divergent_users: tuple[str, ...] = ()
@@ -226,7 +270,14 @@ def read_journal(path: Path) -> Journal:
     except (ValueError, TypeError, AttributeError, MarkerError):  # malformed JSON, a bad field or marker, a non-object
         raise JournalError("journal_entry_invalid") from None
     check = header.get("key_check")
-    return Journal(tuple(merge_journal([], entries)), check if isinstance(check, str) else None)
+    exported_at = header.get("exported_at")
+    if exported_at is not None and not isinstance(exported_at, str):
+        raise JournalError("journal_header_invalid")
+    return Journal(
+        tuple(merge_journal([], entries)),
+        check if isinstance(check, str) else None,
+        exported_at,
+    )
 
 
 def _record(entry: JournalEntry) -> dict[str, object]:
@@ -380,9 +431,10 @@ async def _resolve_target(handlers: DeleteHandlers, entry: JournalEntry) -> str:
     return ""
 
 
-async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[ReplayOutcome, bool]:
-    """Re-apply one journalled request unless the restored database already holds it; also: was the user created."""
+async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[ReplayOutcome, bool, int | None]:
+    """Re-apply one request and return its pre-replay newest completed database epoch."""
     restored, by_request, provisioned = await _restored_requests(handlers, entry.user_id)
+    newest_restored_epoch = max((epoch for epoch, value in restored.items() if value[0]), default=None)
     held_at = by_request.get(entry.request_id)
     if held_at is not None and held_at != entry.deletion_epoch:
         # the same request id under another epoch: two different histories, not a replay of this one
@@ -392,7 +444,7 @@ async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[R
         if present != (entry.request_id, entry.scope, entry.target_ref):
             # the restored database recorded a different (or an incomplete) deletion under this epoch
             raise JournalError("journal_diverges_from_database")
-        return "already_present", provisioned
+        return "already_present", provisioned, newest_restored_epoch
     target = await _resolve_target(handlers, entry)
     await handlers.replay(
         entry.user_id,
@@ -403,7 +455,8 @@ async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[R
         deletion_epoch=entry.deletion_epoch,
         erasure_markers=entry.markers,
     )
-    return ("replayed" if target or entry.scope == "all" else "recorded_unresolved"), provisioned
+    outcome = "replayed" if target or entry.scope == "all" else "recorded_unresolved"
+    return outcome, provisioned, newest_restored_epoch
 
 
 async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayReport:
@@ -419,9 +472,13 @@ async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayRe
     counts: dict[ReplayOutcome, int] = {"already_present": 0, "replayed": 0, "recorded_unresolved": 0}
     reprovisioned = 0
     divergent: set[str] = set()
+    journal_epochs: dict[str, int] = {}
+    restored_epochs: dict[str, int | None] = {}
     for entry in merge_journal([], journal.entries):
+        journal_epochs[entry.user_id] = max(journal_epochs.get(entry.user_id, 0), entry.deletion_epoch)
         try:
-            outcome, provisioned = await replay_entry(handlers, entry)
+            outcome, provisioned, restored_epoch = await replay_entry(handlers, entry)
+            restored_epochs.setdefault(entry.user_id, restored_epoch)
         except JournalError as error:
             if error.code != "journal_diverges_from_database":
                 raise
@@ -431,7 +488,13 @@ async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayRe
             continue
         counts[outcome] += 1
         reprovisioned += int(provisioned)
-    report = ReplayReport(**counts, users_reprovisioned=reprovisioned, divergent_users=tuple(sorted(divergent)))
+    report = ReplayReport(
+        **counts,
+        users_reprovisioned=reprovisioned,
+        journal_newest_epochs=journal_epochs,
+        restored_newest_epochs=restored_epochs,
+        divergent_users=tuple(sorted(divergent)),
+    )
     logger.info("erasure_journal_replayed", **asdict(report))
     return report
 
@@ -445,6 +508,7 @@ __all__ = [
     "ReplayReport",
     "export_journal",
     "export_to_file",
+    "check_recovery_point",
     "key_check",
     "merge_journal",
     "read_journal",

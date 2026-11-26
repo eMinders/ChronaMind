@@ -195,7 +195,7 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    **Ship the journal off-host** with every backup and continuously (it is small and holds no content); the database
    cannot protect a copy of its own history.
 
-   **Restore procedure.** Every step matters; three of them used to be implicit.
+   **Restore procedure.** Every step matters; four of them used to be implicit. Pair every backup with a journal copy whose `exported_at` is at least the backup's start time. The shipped timer runs every 5 minutes, and the deployment's off-host shipping target is 5 minutes, so the stated exposure window is **10 minutes**. A longer shipping delay extends that window and must be corrected before restoring.
 
    ```bash
    # 1. stop the host and the worker, and ALWAYS stop the timer: with `Persistent=true` it fires at boot and would
@@ -208,16 +208,21 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    #    and a replay refuses a file whose count does not match (`journal_truncated`)
    install -o root -g root -m 0600 /path/to/off-host/erasure-journal.jsonl /var/lib/chronamind-journal/
    head -1 /var/lib/chronamind-journal/erasure-journal.jsonl
-   # 5. replay before ANY worker runs
+   # 5. replay before ANY worker runs; the timestamp is the backup's start/recovery point
    CME_DATABASE_URL=... CME_RUNTIME_ROLE=... CME_DELETION_RECEIPT_KEY=... \
-       python scripts/erasure_journal.py replay --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+       python scripts/erasure_journal.py replay \
+       --restored-from-backup-at 2026-11-26T00:00:00+00:00 \
+       --journal /var/lib/chronamind-journal/erasure-journal.jsonl
    ```
 
    The replay re-applies, per user in epoch order and through the engine's own deletion path under the restricted
    role, every journalled request the restored database lacks, keeping the original request ids; a second run does
-   nothing. It **exits non-zero** when anything is unresolved (`unresolved_entries_remain`) or a user's restored
-   history contradicts the journal (`divergent_users_remain`), and a missing journal file is `journal_missing` rather
-   than a success with zero entries. Do not start the worker on a non-zero exit: an unresolved entry is indistinguishable
+   nothing. It **exits non-zero** when the journal recovery point is older than the backup (`journal_older_than_backup`),
+   when anything is unresolved (`unresolved_entries_remain`) or a user's restored history contradicts the journal
+   (`divergent_users_remain`), and a missing journal file is `journal_missing` rather than a success with zero entries.
+   The refusal names only the journal and backup timestamps. The JSON report includes `recorded_unresolved`,
+   `journal_newest_epochs`, and `restored_newest_epochs` so requests re-applied against a database that never held
+   their targets are not presented as a clean restore. Do not start the worker on a non-zero exit: an unresolved entry is indistinguishable
    from a wrong deletion key, and it is also the one case where a turn the backup still holds could re-derive the
    deleted claim. `--accept-unresolved` says, per run, that those targets really were memories the backup never held.
 
@@ -245,7 +250,7 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
 
    ```bash
    # the normal case: replay (a no-op on an intact database, and it exits 0)
-   python scripts/erasure_journal.py replay --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+   python scripts/erasure_journal.py replay --restored-from-backup-at <backup-start-iso8601> --journal /var/lib/chronamind-journal/erasure-journal.jsonl
    # no journal to replay (an in-place upgrade, or the timer was never enabled): an explicit operator assertion
    python scripts/erasure_journal.py replay --mark-reconciled --journal /var/lib/chronamind-journal/erasure-journal.jsonl
    ```
@@ -257,8 +262,10 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    `0` records the new identity — including `--accept-unresolved`, which says the missing targets really were memories
    the backup never held.
 
-   **What it does not cover.** Deletions made after the newest journal copy you still have: the recovery point is the
-   export interval plus your off-host shipping delay. A journal lost together with the database (`V2-D122`). A
+   **What it does not cover.** A deletion made after both the backup and the newest journal copy is outside the pair's
+   recovery point and cannot be reconstructed. The pairing check catches a journal older than the backup, while two
+   artefacts that are both older than a deletion have no surviving timestamp for the deletion. A journal lost together
+   with the database (`V2-D122`). A
    *data-only* restore into the existing relation, and a physical (PITR) restore, keep every OID, so the
    reconciliation identity cannot see them; the procedure replays after any restore regardless. And the markers share
    the journal's recovery point: a deletion whose journal copy was lost takes with it the record of the turns it

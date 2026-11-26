@@ -3617,3 +3617,10 @@ already walks for every entry; that is an offline recovery step measured in seco
 detected by `restore_reconciliation`; the procedure replays after any restore regardless. Markers are exported with the
 journal, so their recovery point is the journal's.
 
+### V2-D126 — Pair the backup with a journal recovery point (#263)
+
+A replay requires `--restored-from-backup-at` and refuses with `journal_older_than_backup` when the journal header's
+`exported_at` or any per-user newest `requested_at` predates that recovery point. Equal timestamps are accepted. The
+report includes the newest journal epoch and newest completed deletion epoch present before replay for each user, so
+requests applied to a database that never held their targets remain visible as unresolved recovery work.
+

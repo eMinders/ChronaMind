@@ -23,6 +23,7 @@ from custom_memory_engine.deletion.journal import (
     JournalEntry,
     JournalError,
     ReplayReport,
+    check_recovery_point,
     key_check,
     merge_journal,
     read_journal,
@@ -78,13 +79,41 @@ def test_two_different_entries_under_one_request_id_or_one_epoch_are_refused() -
     assert same_epoch.value.code == "journal_epoch_conflict"
 
 
+def test_a_journal_older_than_the_restored_backup_is_refused_and_equal_is_accepted(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    write_journal(path, [entry()], schema_name="cme_engine", key=KEY)
+    original_lines = path.read_text().splitlines()
+    header = json.loads(original_lines[0])
+    header["exported_at"] = "2026-11-26T00:00:00+00:00"
+    path.write_text("\n".join([json.dumps(header), *original_lines[1:]]) + "\n")
+    loaded = read_journal(path)
+
+    with pytest.raises(JournalError) as refused:
+        check_recovery_point(loaded, "2026-11-26T00:00:01+00:00")
+    assert refused.value.code == "journal_older_than_backup"
+    assert "2026-11-26T00:00:00+00:00" in str(refused.value)
+    assert "2026-11-26T00:00:01+00:00" in str(refused.value)
+    assert "hmac-sha256:aa" not in str(refused.value)
+
+    check_recovery_point(loaded, "2026-11-26T00:00:00+00:00")
+
+
+def test_a_recovery_point_refusal_control_fails_when_the_older_journal_guard_is_removed(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    write_journal(path, [entry()], schema_name="cme_engine", key=KEY)
+    with pytest.raises(JournalError):
+        check_recovery_point(read_journal(path), "2026-11-27T00:00:00+00:00")
+
+
 def test_the_file_round_trips_is_private_and_holds_no_key(tmp_path: Path) -> None:
     path = tmp_path / "journal.jsonl"
     entries = [entry(), entry(user="bob", request="del-b")]
     write_journal(path, entries, schema_name="cme_engine", key=KEY)
 
     loaded = read_journal(path)
-    assert loaded == Journal(tuple(sorted(entries)), key_check(KEY))
+    assert loaded.entries == tuple(sorted(entries))
+    assert loaded.key_check == key_check(KEY)
+    assert loaded.exported_at is not None
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     header = json.loads(path.read_text().splitlines()[0])
     assert header["format"] == JOURNAL_FORMAT and header["entries"] == 2
