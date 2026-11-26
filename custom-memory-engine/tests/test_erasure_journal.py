@@ -101,8 +101,46 @@ def test_a_journal_older_than_the_restored_backup_is_refused_and_equal_is_accept
 def test_a_recovery_point_refusal_control_fails_when_the_older_journal_guard_is_removed(tmp_path: Path) -> None:
     path = tmp_path / "journal.jsonl"
     write_journal(path, [entry()], schema_name="cme_engine", key=KEY)
-    with pytest.raises(JournalError):
+    lines = path.read_text().splitlines()
+    header = json.loads(lines[0])
+    header["exported_at"] = "2026-11-20T00:00:00+00:00"
+    path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n")
+    with pytest.raises(JournalError) as refused:
         check_recovery_point(read_journal(path), "2026-11-27T00:00:00+00:00")
+    assert refused.value.code == "journal_older_than_backup"
+
+
+def test_a_principal_who_has_not_deleted_since_before_the_backup_does_not_refuse_the_restore(
+    tmp_path: Path,
+) -> None:
+    """A quiet principal is not evidence of a lost deletion: refusing on it would block a restore the pair covers.
+
+    The control is the counterfactual: comparing each principal's newest ``requested_at`` against the backup start
+    refuses this journal, and the only remaining path for an operator is ``--mark-reconciled``, which replays nothing.
+    """
+    path = tmp_path / "journal.jsonl"
+    quiet = dataclasses.replace(entry(user="quiet", request="del-quiet"), requested_at="2026-01-01T00:00:00+00:00")
+    write_journal(path, [entry(user="busy"), quiet], schema_name="cme_engine", key=KEY)
+    lines = path.read_text().splitlines()
+    header = json.loads(lines[0])
+    header["exported_at"] = "2026-11-26T00:10:00+00:00"  # exported ten minutes AFTER the backup's start
+    path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n")
+
+    check_recovery_point(read_journal(path), "2026-11-26T00:00:00+00:00")
+
+
+def test_a_journal_with_no_recovery_point_is_refused_rather_than_assumed_recent(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    write_journal(path, [entry()], schema_name="cme_engine", key=KEY)
+    lines = path.read_text().splitlines()
+    header = json.loads(lines[0])
+    del header["exported_at"]
+    path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n")
+
+    with pytest.raises(JournalError) as refused:
+        check_recovery_point(read_journal(path), "2026-11-26T00:00:00+00:00")
+    assert refused.value.code == "journal_older_than_backup"
+    assert "missing" in str(refused.value)
 
 
 def test_the_file_round_trips_is_private_and_holds_no_key(tmp_path: Path) -> None:

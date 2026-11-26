@@ -3620,7 +3620,10 @@ journal, so their recovery point is the journal's.
 ### V2-D126 — Pair the backup with a journal recovery point (#263)
 
 A replay requires `--restored-from-backup-at` and refuses with `journal_older_than_backup` when the journal header's
-`exported_at` or any per-user newest `requested_at` predates that recovery point. Equal timestamps are accepted. The
-report includes the newest journal epoch and newest completed deletion epoch present before replay for each user, so
-requests applied to a database that never held their targets remain visible as unresolved recovery work.
+`exported_at` predates that recovery point. Equal timestamps are accepted. The comparison is the file's own recovery
+point and never a principal's newest `requested_at`: a principal who has deleted nothing since before the backup is not
+evidence of a lost deletion, and refusing on it would block a restore the pair actually covers, leaving
+`--mark-reconciled` -- which replays nothing -- as the only way through. The report includes the newest journal epoch
+and newest completed deletion epoch present before replay for each user, so requests applied to a database that never
+held their targets remain visible as unresolved recovery work.
 

@@ -119,32 +119,35 @@ def _timestamp(value: str) -> datetime:
 
 
 def check_recovery_point(journal: Journal, restored_from_backup_at: str) -> None:
-    """Refuse a journal whose header or newest per-user entry predates the restored backup."""
+    """Refuse a journal whose own recovery point predates the restored backup.
+
+    The comparison is the file's ``exported_at``: the instant the export read the database. That is the one instant the
+    pair can be compared on, because an export made after the backup's start has seen every request the backup could
+    be missing. A principal's newest ``requested_at`` is deliberately **not** compared: a principal who has deleted
+    nothing since before the backup is not evidence of a lost deletion, and refusing on it would block the restore of
+    any deployment whose deletions are sparse -- leaving ``--mark-reconciled``, which replays nothing, as the
+    operator's only way through. Those per-principal instants are reported instead
+    (:attr:`ReplayReport.journal_newest_epochs`).
+    """
     try:
         backup = _timestamp(restored_from_backup_at)
-        header = _timestamp(journal.exported_at) if journal.exported_at is not None else None
-        newest_by_user: dict[str, str] = {}
-        for entry in journal.entries:
-            previous = newest_by_user.get(entry.user_id)
-            if previous is None or _timestamp(entry.requested_at) > _timestamp(previous):
-                newest_by_user[entry.user_id] = entry.requested_at
-        points = [journal.exported_at, *newest_by_user.values()]
-        for point in points:
-            if point is None or _timestamp(point) < backup:
-                displayed = "missing" if point is None else point
-                raise JournalError(
-                    "journal_older_than_backup",
-                    detail=f"journal_timestamp={displayed} restored_from_backup_at={restored_from_backup_at}",
-                )
-        if header is None:
-            raise JournalError(
-                "journal_older_than_backup",
-                detail=f"journal_timestamp=missing restored_from_backup_at={restored_from_backup_at}",
-            )
-    except JournalError:
-        raise
     except (TypeError, ValueError):
         raise JournalError("journal_timestamp_invalid") from None
+    if journal.exported_at is None:
+        # a journal with no recovery point cannot be paired with a backup: fail closed, never assume it is recent
+        raise JournalError(
+            "journal_older_than_backup",
+            detail=f"journal_timestamp=missing restored_from_backup_at={restored_from_backup_at}",
+        )
+    try:
+        exported = _timestamp(journal.exported_at)
+    except (TypeError, ValueError):
+        raise JournalError("journal_timestamp_invalid") from None
+    if exported < backup:
+        raise JournalError(
+            "journal_older_than_backup",
+            detail=f"journal_timestamp={journal.exported_at} restored_from_backup_at={restored_from_backup_at}",
+        )
 
 
 @dataclass(frozen=True)
