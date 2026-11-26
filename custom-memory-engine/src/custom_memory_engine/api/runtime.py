@@ -20,6 +20,7 @@ from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.contract import Tier
 from custom_memory_engine.api.entry import CallerContext, TargetInfo
+from custom_memory_engine.deletion.markers import replayed_write
 from custom_memory_engine.engine.deletion import default_receipt_key
 from custom_memory_engine.model.axes import LIFECYCLES, Lifecycle
 from custom_memory_engine.scope.provenance import ProvenanceKey
@@ -113,20 +114,24 @@ async def replayed(runtime: Runtime, connection: AsyncConnection, user: str, ope
 
     Takes a transaction lock on ``(user, operation, key)`` first, so a concurrent call with the same key waits for the
     first one to commit and then replays its result, instead of racing it to a unique violation.
+
+    A write a deletion erased answers with its erased result too, from the deletion's ``write`` marker (``T-46``,
+    ``V2-D125``). Live, the ``api_idempotency`` row survives the deletion and answers first; after a restore into a
+    backup older than the write, the row is gone and only the replayed marker stops a resend from writing it again.
     """
-    async with connection.cursor(row_factory=tuple_row) as cursor:
+    async with connection.cursor() as cursor:
         await cursor.execute(
             "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(%s), pg_catalog.hashtext(%s))",
             (user, operation + ":" + key),
         )
-        await cursor.execute(
-            sql.SQL("SELECT result_id FROM {t} WHERE user_id = %s AND operation = %s AND idempotency_key = %s").format(
-                t=runtime.table("api_idempotency")
-            ),
-            (user, operation, key),
-        )
-        row = await cursor.fetchone()
-    return None if row is None else str(row[0])
+    return await replayed_write(
+        connection,
+        user_id=user,
+        operation=operation,
+        idempotency_key=key,
+        key=runtime.deletion_key,
+        schema_name=runtime.schema_name,
+    )
 
 
 async def remember(

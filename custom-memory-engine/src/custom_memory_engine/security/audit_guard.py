@@ -52,6 +52,7 @@ AUDIT_DETAIL_KEYS = frozenset(
         "re_derived_versions",
         "retired_dependents",  # E-037 (V2-D50): count of dependents tombstoned by source deletion
         "deleted_turns",  # E-037 (S-08): count of exclusive evidence turns deleted in-transaction
+        "erasure_markers",  # T-46 (V2-D125): count of erasure markers the request recorded
         "deleted_entities",  # V2-D108: count of orphaned entities erased by the deletion (never a name)
         "deleted_mentions",  # V2-D111: count of entity_mention rows removed by deletion (never a name)
         "purged_jobs",

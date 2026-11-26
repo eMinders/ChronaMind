@@ -53,9 +53,19 @@ async def _environment(through: int | None) -> AsyncIterator[Env]:
         # under test never touch them.
         cursor = await conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()")
         present = {row[0] for row in await cursor.fetchall()}
-        for table in (*USER_TABLES, "method"):
+        # The stubs carry the columns the code under test reads (migration 33's erasure markers and the
+        # restore-reconciliation identity), not just `user_id`: a control must exercise the deletion, not a shape no
+        # schema ever has.
+        extra_columns: dict[str, str] = {
+            "erasure_marker": "request_id text, kind text, digest text, result_id text",
+            "erased_turn": "turn_id text",
+            "restore_reconciliation": "relation_oid oid",
+        }
+        # `restore_reconciliation` is not a tenant table but the runtime grants name it (migration 33)
+        for table in (*USER_TABLES, "method", "restore_reconciliation"):
             if table not in present:
-                await conn.execute(sql.SQL("CREATE TABLE {} (user_id text)").format(sql.Identifier(table)))
+                columns = cast(LiteralString, ", ".join(filter(None, ("user_id text", extra_columns.get(table, "")))))
+                await conn.execute(sql.SQL("CREATE TABLE {} ({})").format(sql.Identifier(table), sql.SQL(columns)))
                 await conn.execute(sql.SQL("ALTER TABLE {} ENABLE ROW LEVEL SECURITY").format(sql.Identifier(table)))
                 await conn.execute(sql.SQL("ALTER TABLE {} FORCE ROW LEVEL SECURITY").format(sql.Identifier(table)))
         stub_created = False

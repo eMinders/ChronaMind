@@ -232,6 +232,9 @@ async def test_full_schema_creates_twelve_tables_and_named_constraints(
             "artifact_provenance",  # migration 29 (I2, V2-D110)
             "entity_mention",  # migration 30 (I8, V2-D111)
             "verification_artifact",  # migration 31 (I11, V2-D112)
+            "erasure_marker",  # migration 33 (T-46, V2-D125)
+            "erased_turn",  # migration 33 (T-46, V2-D125)
+            "restore_reconciliation",  # migration 33 (T-46, V2-D125)
         }
         cursor = await conn.execute(
             """

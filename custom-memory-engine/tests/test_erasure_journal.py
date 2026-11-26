@@ -29,6 +29,7 @@ from custom_memory_engine.deletion.journal import (
     replay_journal,
     write_journal,
 )
+from custom_memory_engine.deletion.markers import ErasureMarker
 
 KEY = b"k" * 32
 
@@ -202,3 +203,75 @@ def test_a_replay_is_a_failure_when_anything_is_unresolved_or_divergent() -> Non
         already_present=0, replayed=3, recorded_unresolved=0, users_reprovisioned=0, divergent_users=("alice",)
     )
     assert divergent.refusal_reason(accept_unresolved=True) == "divergent_users_remain"
+
+
+def marked(*markers: tuple[str, str, str]) -> JournalEntry:
+    return JournalEntry(
+        "alice",
+        1,
+        "del-1",
+        "memory",
+        "hmac-sha256:aa",
+        "2026-11-26T00:00:00+00:00",
+        markers=tuple(ErasureMarker(kind, digest, result) for kind, digest, result in markers),  # type: ignore[arg-type]
+    )
+
+
+def test_a_request_carries_what_it_erased_besides_its_target_through_the_file(tmp_path: Path) -> None:
+    """T-46 (V2-D125): a marker survives the round trip, in a canonical order, and names nothing in plaintext."""
+    path = tmp_path / "journal.jsonl"
+    written = marked(("turn", "b" * 64, ""), ("write", "a" * 64, "v_1"))
+    write_journal(path, [written], schema_name="cme_engine", key=KEY)
+    loaded = read_journal(path)
+    # the file lists them as the export wrote them; reading them yields the canonical order, sorted by kind
+    assert loaded.entries == (marked(("turn", "b" * 64, ""), ("write", "a" * 64, "v_1")),)
+    body = path.read_text().splitlines()[1]
+    assert json.loads(body)["markers"] == [["turn", "b" * 64, ""], ["write", "a" * 64, "v_1"]]
+    # a digest carries nothing: only the key can tell what a marker names
+    assert "b" * 64 in body and KEY.hex() not in body
+
+
+def test_a_version_one_journal_is_still_read_and_carries_no_markers(tmp_path: Path) -> None:
+    """A journal exported before V2-D125 is read, and its entries have nothing to erase besides the target."""
+    path = tmp_path / "journal.jsonl"
+    write_journal(path, [entry()], schema_name="cme_engine", key=KEY)
+    header, body = path.read_text().splitlines()
+    header_fields = json.loads(header) | {"version": 1}
+    fields = {key: value for key, value in json.loads(body).items() if key != "markers"}
+    path.write_text("\n".join([json.dumps(header_fields), json.dumps(fields)]) + "\n")
+    loaded = read_journal(path)
+    assert loaded.entries == (entry(),)
+    assert loaded.entries[0].markers == ()
+
+
+@pytest.mark.parametrize(
+    "markers",
+    [
+        [["turn", "z" * 64, ""]],  # not a digest
+        [["erase", "a" * 64, ""]],  # not a kind
+        [["write", "a" * 64, ""]],  # a write marker without its result
+        [["turn", "a" * 64, "v_1"]],  # a turn marker with one
+        [["turn", "a" * 64, ""], ["turn", "a" * 64, ""]],  # an export never writes the same marker twice
+        "not-a-list",
+    ],
+    ids=["bad-digest", "bad-kind", "write-without-result", "turn-with-result", "duplicate", "not-a-list"],
+)
+def test_a_journal_entry_with_a_malformed_marker_is_refused(tmp_path: Path, markers: object) -> None:
+    path = tmp_path / "journal.jsonl"
+    write_journal(path, [entry()], schema_name="cme_engine", key=KEY)
+    header, body = path.read_text().splitlines()
+    path.write_text("\n".join([header, json.dumps(json.loads(body) | {"markers": markers})]) + "\n")
+    with pytest.raises(JournalError) as refused:
+        read_journal(path)
+    assert refused.value.code == "journal_entry_invalid"
+
+
+def test_two_entries_under_one_request_differ_in_what_they_erased_are_refused() -> None:
+    """The markers are part of a request's identity: they cannot silently change under one id."""
+    with pytest.raises(JournalError) as conflict:
+        merge_journal([marked(("turn", "a" * 64, ""))], [marked(("turn", "b" * 64, ""))])
+    assert conflict.value.code == "journal_entry_conflict"
+    # and an entry with no markers merges into one that has them only if it is the same request
+    assert merge_journal([marked(("turn", "a" * 64, ""))], [marked(("turn", "a" * 64, ""))]) == [
+        marked(("turn", "a" * 64, ""))
+    ]

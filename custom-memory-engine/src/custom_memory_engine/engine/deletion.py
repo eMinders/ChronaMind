@@ -43,6 +43,14 @@ from custom_memory_engine.deletion.closure import (
     classify_deletion_closure,
     should_follow_lineage,
 )
+from custom_memory_engine.deletion.markers import (
+    ErasureMarker,
+    flag_erased_turns,
+    record_markers,
+    resolve_turns,
+    turn_digest,
+    write_markers_for,
+)
 from custom_memory_engine.deletion.rederive import (
     SummaryBuilder,
     rederivation_blocker,
@@ -267,6 +275,113 @@ async def _discover_closure_and_scopes(
     return seeds, dependents, frozenset(scopes)
 
 
+@dataclass(frozen=True)
+class _Marked:
+    recorded: int
+    purged_jobs: int
+    deleted_turns: int
+
+
+async def _all_turns(cursor: object, schema_name: str, user_id: str) -> list[str]:
+    await cursor.execute(  # type: ignore[attr-defined]
+        sql.SQL("SELECT id FROM {t} WHERE user_id = %s ORDER BY id").format(t=sql.Identifier(schema_name, "turn")),
+        (user_id,),
+    )
+    return [str(row[0]) for row in await cursor.fetchall()]  # type: ignore[attr-defined]
+
+
+async def _entity_ids(
+    cursor: object, schema_name: str, user_id: str, scope: DeletionScope, target_ref: str
+) -> list[str]:
+    """The entities an `all`/`topic` deletion may erase, read before it does (their ids are what a write answered)."""
+    entity = sql.Identifier(schema_name, "entity")
+    if scope == "all":
+        await cursor.execute(  # type: ignore[attr-defined]
+            sql.SQL("SELECT id FROM {e} WHERE user_id = %s").format(e=entity), (user_id,)
+        )
+    else:
+        await cursor.execute(  # type: ignore[attr-defined]
+            sql.SQL("SELECT id FROM {e} WHERE user_id = %s AND id = %s").format(e=entity), (user_id, target_ref)
+        )
+    return [str(row[0]) for row in await cursor.fetchall()]  # type: ignore[attr-defined]
+
+
+async def _vanished(cursor: object, schema_name: str, table: str, user_id: str, ids: Sequence[str]) -> list[str]:
+    """The ``ids`` no longer stored: what this transaction erased."""
+    if not ids:
+        return []
+    await cursor.execute(  # type: ignore[attr-defined]
+        sql.SQL("SELECT id FROM {t} WHERE user_id = %s AND id = ANY(%s)").format(t=sql.Identifier(schema_name, table)),
+        (user_id, list(ids)),
+    )
+    remaining = {str(row[0]) for row in await cursor.fetchall()}  # type: ignore[attr-defined]
+    return sorted(set(ids) - remaining)
+
+
+async def _erase_marked(
+    connection: AsyncConnection,
+    *,
+    user_id: str,
+    request_id: str,
+    key: bytes,
+    schema_name: str,
+    given: Sequence[ErasureMarker] | None,
+    marked_turn_ids: Sequence[str],
+    erased_result_ids: Sequence[str],
+    delete_turns: bool,
+    jobs: sql.Identifier,
+    exclusive_turns_fn: sql.Identifier,
+) -> _Marked:
+    """Record this request's erasure markers and erase the turns they name (``T-46``, ``V2-D125``).
+
+    Live (``given is None``) the markers are computed from what the deletion erased. A replay (``given``) records the
+    journalled markers verbatim, so the next export reproduces the journal exactly, and finds the marked turns among
+    the ones the restored database holds. Either way a marked turn loses its jobs, is erased when nothing surviving
+    cites it (and ``delete_turns``), and is flagged against extraction when something does. A replay also purges a
+    *running* job: a restored lease belongs to no live worker, and the worker refuses to run before the replay
+    (``restore_reconciliation``); live, a running job is left to the deletion-epoch guard, as before.
+
+    Must run inside the deletion's transaction with ``app.deletion_active`` set (``delete_exclusive_turns``).
+    """
+    if given is None:
+        markers = [ErasureMarker("turn", turn_digest(key, user_id, turn_id)) for turn_id in marked_turn_ids]
+        markers += await write_markers_for(
+            connection, user_id=user_id, result_ids=erased_result_ids, key=key, schema_name=schema_name
+        )
+        turns = sorted(set(marked_turn_ids))
+    else:
+        markers = list(given)
+        resolved = await resolve_turns(
+            connection,
+            user_id=user_id,
+            digests=[marker.digest for marker in given if marker.kind == "turn"],
+            key=key,
+            schema_name=schema_name,
+        )
+        turns = sorted({*resolved, *marked_turn_ids})
+    recorded = await record_markers(
+        connection, user_id=user_id, request_id=request_id, markers=markers, schema_name=schema_name
+    )
+    if not turns:
+        return _Marked(recorded, 0, 0)
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        running = sql.SQL("") if given is not None else sql.SQL(" AND status <> 'running'")
+        await cursor.execute(
+            sql.SQL("DELETE FROM {j} WHERE user_id = %s AND turn_id = ANY(%s){running}").format(
+                j=jobs, running=running
+            ),
+            (user_id, turns),
+        )
+        purged = max(cursor.rowcount, 0)
+        deleted = 0
+        if delete_turns:
+            await cursor.execute(sql.SQL("SELECT {fn}(%s, %s)").format(fn=exclusive_turns_fn), (user_id, turns))
+            row = await cursor.fetchone()
+            deleted = int(row[0]) if row else 0
+    await flag_erased_turns(connection, user_id=user_id, turn_ids=turns, schema_name=schema_name)
+    return _Marked(recorded, purged, deleted)
+
+
 async def delete_memory(
     connection: AsyncConnection,
     user_id: str,
@@ -288,13 +403,22 @@ async def delete_memory(
     replay_time: datetime | None = None,
     request_id: str | None = None,
     stored_target_ref: str | None = None,
+    erasure_markers: Sequence[ErasureMarker] | None = None,
 ) -> DeletionReceipt:
     """Delete a memory target through its entire unbounded cognitive closure in one transaction.
 
     ``request_id`` and ``stored_target_ref`` exist for one caller, the erasure-journal replay after a restore
     (``V2-D122``): the replayed request keeps its original id and digest, so a second replay finds it and does nothing.
     With ``stored_target_ref`` a blank ``target_ref`` is allowed (the restored database never held the target, so the
-    request is recorded and nothing is erased); a non-blank one must digest to ``stored_target_ref``.
+    request is recorded and nothing is erased); a non-blank one must digest to ``stored_target_ref``. Its
+    ``erasure_markers`` are the journalled markers of the request (``V2-D125``): the replay records exactly those, and
+    erases every turn they name that the restored database still holds.
+
+    * **Erasure markers (``T-46``, ``V2-D125``):** the request records, in this transaction, keyed digests of what it
+      erased besides its target: each recorded idempotency identity whose result it erased (so a resend after a restore
+      replays instead of writing it again), and each evidence turn of a physically deleted version -- for ``all``,
+      every turn of the user. A marked turn loses its queued jobs, is erased when nothing surviving cites it, and is
+      flagged against extraction (``erased_turn``) when something does.
 
     * **Unbounded closure (``V2-D09``):** traverses ``memory_derivation`` with ``WITH RECURSIVE ... UNION`` and no
       depth limit; terminates even on an injected cycle (F9).
@@ -378,6 +502,8 @@ async def delete_memory(
                     clock_tick=clock_tick,
                     replay_time=replay_time,
                     request_id=request_id,
+                    erasure_markers=erasure_markers,
+                    receipt_key=key,
                     versions=versions,
                     derivations=derivations,
                     evidence=evidence,
@@ -415,6 +541,8 @@ async def _delete_memory_once(
     clock_tick: ClockTick | None,
     replay_time: datetime | None,
     request_id: str | None,
+    erasure_markers: Sequence[ErasureMarker] | None,
+    receipt_key: bytes,
     versions: sql.Identifier,
     derivations: sql.Identifier,
     evidence: sql.Identifier,
@@ -537,8 +665,10 @@ async def _delete_memory_once(
                 # who only ever declared entities, or whose claims about one were already deleted, must be able to
                 # erase it (V2-D108). The marker is set and cleared around the one gated call.
                 orphaned = 0
+                await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '1', true)")
+                entity_candidates: list[str] = []
                 if scope in ("all", "topic"):
-                    await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '1', true)")
+                    entity_candidates = await _entity_ids(cursor, schema_name, user_id, scope, target_ref)
                     await cursor.execute(
                         sql.SQL("SELECT {fn}(%s, %s)").format(
                             fn=sql.Identifier(schema_name, "delete_orphaned_entities")
@@ -547,7 +677,21 @@ async def _delete_memory_once(
                     )
                     orphan_row = await cursor.fetchone()
                     orphaned = int(orphan_row[0]) if orphan_row else 0
-                    await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '', true)")
+                # T-46: a replay of a target the backup never held still owes what the deletion erased with it
+                marked = await _erase_marked(
+                    connection,
+                    user_id=user_id,
+                    request_id=request_id,
+                    key=receipt_key,
+                    schema_name=schema_name,
+                    given=erasure_markers,
+                    marked_turn_ids=await _all_turns(cursor, schema_name, user_id) if scope == "all" else (),
+                    erased_result_ids=await _vanished(cursor, schema_name, "entity", user_id, entity_candidates),
+                    delete_turns=delete_exclusive_sources,
+                    jobs=jobs,
+                    exclusive_turns_fn=exclusive_turns_fn,
+                )
+                await cursor.execute("SELECT pg_catalog.set_config('app.deletion_active', '', true)")
                 await cursor.execute(
                     sql.SQL(
                         "INSERT INTO {a} (id, user_id, memory_ref, event_type, event_at, details) "
@@ -566,8 +710,10 @@ async def _delete_memory_once(
                                     "deleted_versions": 0,
                                     "dependents": 0,
                                     "re_derived_versions": 0,
-                                    "purged_jobs": 0,
+                                    "purged_jobs": marked.purged_jobs,
                                     **({"deleted_entities": orphaned, "deleted_mentions": 0} if orphaned else {}),
+                                    **({"deleted_turns": marked.deleted_turns} if marked.deleted_turns else {}),
+                                    **({"erasure_markers": marked.recorded} if marked.recorded else {}),
                                 }
                             )
                         ),
@@ -580,7 +726,8 @@ async def _delete_memory_once(
                     0,
                     0,
                     0,
-                    0,
+                    marked.purged_jobs,
+                    deleted_turns=marked.deleted_turns,
                     deleted_entities=orphaned,
                     deleted_mentions=0,
                 )
@@ -654,6 +801,9 @@ async def _delete_memory_once(
                 threshold=threshold,
                 has_builder=lambda node_id: _builder_for(node_id) is not None,
             )
+
+            # T-46: for `all`, every turn of the user is marked, captured before anything is erased
+            all_turns = await _all_turns(cursor, schema_name, user_id) if scope == "all" else []
 
             # Collect turns and external exclusions BEFORE physical deletion removes memory_evidence via FK.
             turn_ids: set[str] = set()
@@ -836,6 +986,12 @@ async def _delete_memory_once(
             # entities when unreferenced; narrower deletions (`memory`, or non-entity `topic`) additionally erase
             # mention-derived (`origin = 'mention'`) entities whose last mention or subject reference was removed.
             deleted_entities = 0
+            entity_candidates = sorted(
+                {
+                    *(await _entity_ids(cursor, schema_name, user_id, scope, target_ref) if scope != "memory" else []),
+                    *(candidate_mention_entity_ids if scope != "all" and has_entity_mentions else []),
+                }
+            )
             if scope in ("all", "topic"):
                 await cursor.execute(
                     sql.SQL("SELECT {fn}(%s, %s)").format(fn=sql.Identifier(schema_name, "delete_orphaned_entities")),
@@ -852,6 +1008,28 @@ async def _delete_memory_once(
                 )
                 mention_entity_row = await cursor.fetchone()
                 deleted_entities += int(mention_entity_row[0]) if mention_entity_row else 0
+
+            # T-46 (V2-D125): record what was erased besides the target, and erase the marked turns this closure did
+            # not already reach (every turn, for `all`; on a replay, the ones the journal names).
+            marked = await _erase_marked(
+                connection,
+                user_id=user_id,
+                request_id=request_id,
+                key=receipt_key,
+                schema_name=schema_name,
+                given=erasure_markers,
+                marked_turn_ids=sorted({*exclusive_candidates, *all_turns}),
+                erased_result_ids=[
+                    *plan.to_delete,
+                    *plan.to_retire,
+                    *await _vanished(cursor, schema_name, "entity", user_id, entity_candidates),
+                ],
+                delete_turns=delete_exclusive_sources,
+                jobs=jobs,
+                exclusive_turns_fn=exclusive_turns_fn,
+            )
+            purged_jobs += marked.purged_jobs
+            deleted_turns += marked.deleted_turns
 
             # Close the narrowed privilege path (S-08, V2-D50 rule 3) before returning: the marker is transaction-
             # local, so without this reset it would stay set for the rest of a caller's enclosing transaction.
@@ -877,6 +1055,8 @@ async def _delete_memory_once(
             if deleted_entities or deleted_mentions:
                 audit_payload["deleted_entities"] = deleted_entities
                 audit_payload["deleted_mentions"] = deleted_mentions
+            if marked.recorded:
+                audit_payload["erasure_markers"] = marked.recorded
 
             await cursor.execute(
                 sql.SQL(

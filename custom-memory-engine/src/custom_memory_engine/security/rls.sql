@@ -45,6 +45,11 @@ GRANT SELECT, INSERT ON {{schema}}.verification, {{schema}}.method TO {{role}};
 GRANT SELECT, INSERT ON
   {{schema}}.artifact_provenance, {{schema}}.entity_mention, {{schema}}.verification_artifact
   TO {{role}};
+-- migration 33 (T-46, V2-D125): erasure markers and erased-turn flags are a deletion's append-only record, and the
+-- restore-reconciliation identity is appended by the journal replay and read by the worker and the host.
+GRANT SELECT, INSERT ON
+  {{schema}}.erasure_marker, {{schema}}.erased_turn, {{schema}}.restore_reconciliation
+  TO {{role}};
 
 -- @verify-rls
 -- Returns one row per user-scoped table that lacks ENABLE or FORCE ROW LEVEL SECURITY.

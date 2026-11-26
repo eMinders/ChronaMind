@@ -84,12 +84,15 @@ async def test_provisioning_rejects_unsafe_identifiers_before_touching_the_conne
 
 def test_user_tables_are_every_table_except_the_shared_catalog() -> None:
     # `clock_watermark` (migration 9) is engine-internal: the runtime role has no privilege on it and only a definer
-    # trigger writes it, so it is neither a tenant table nor the shared catalog.
-    assert set(USER_TABLES) == set(SCHEMA_SQL_TABLES) - {"predicate_schema", "clock_watermark", "method"}
+    # trigger writes it, so it is neither a tenant table nor the shared catalog. `restore_reconciliation`
+    # (migration 33) is deployment state like `method`: it has no tenant column, and every tenant reads it.
+    shared = {"predicate_schema", "clock_watermark", "method", "restore_reconciliation"}
+    assert set(USER_TABLES) == set(SCHEMA_SQL_TABLES) - shared
     # 19 through migration 18 (entity_link, E-024); migration 20 adds outcome_stats (E-027), migration 21
     # procedure_shape (E-030), migration 25 export_snapshot (E-038/F11), migrations 29-31 artifact_provenance,
-    # entity_mention and verification_artifact. A scope is still its path, never a row (V2-D65).
-    assert len(USER_TABLES) == 25
+    # entity_mention and verification_artifact, migration 33 erasure_marker and erased_turn (T-46). A scope is still
+    # its path, never a row (V2-D65).
+    assert len(USER_TABLES) == 27
 
 
 def test_rls_sql_grants_cover_every_user_table_and_only_reads_the_catalog() -> None:
@@ -115,7 +118,16 @@ def test_rls_sql_grants_equal_the_least_privilege_matrix_exactly() -> None:
         for table in match.group(2).split(","):
             parsed.setdefault(table.strip().removeprefix("{{schema}}."), set()).update(privileges)
     assert parsed == {table: set(grants) for table, grants in TABLE_GRANTS.items()}
-    # the shared catalogs: predicate_schema (read-only) and the append-only method registry (E-014)
-    assert set(TABLE_GRANTS) == set(USER_TABLES) | {"predicate_schema", "method"}
+    # the shared catalogs: predicate_schema (read-only), the append-only method registry (E-014) and the append-only
+    # restore-reconciliation identity (migration 33, T-46)
+    assert set(TABLE_GRANTS) == set(USER_TABLES) | {"predicate_schema", "method", "restore_reconciliation"}
     for append_only in ("audit_event", "deletion_request", "turn", "session", "app_user", "memory_evidence"):
         assert not {"UPDATE", "DELETE"} & TABLE_GRANTS[append_only], append_only
+
+
+def test_no_comment_in_a_provisioning_section_contains_a_statement_separator() -> None:
+    """``_statements`` splits a section on ``;``: one inside a comment turns the comment's tail into broken SQL."""
+    # the two sections `provision_runtime_role` splits; the verify-* sections are executed whole, one query each
+    for name in ("create-role", "grants"):
+        for line in _sections()[name].splitlines():
+            assert not (line.lstrip().startswith("--") and ";" in line), name

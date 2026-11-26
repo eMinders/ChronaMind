@@ -465,6 +465,14 @@ Transactional lineage deletion (`DELETION_ORDER.md`). The receipt is content-fre
 the same `deletion_epoch` returns the original receipt (v1 behaviour). *Errors:* `forbidden` (including every
 Tier B call, TB1), `validation_error`, `retryable_conflict`.
 
+The request also records what it erased besides its target — the evidence turns of the versions it deleted and the
+idempotency identities of the writes whose results it deleted — as keyed digests (`V2-D125`), which is what makes the
+deletion survive the restore of an older backup. Two consequences a caller sees: a **resend** under an idempotency key
+whose result was deleted answers with that erased result and writes nothing (before `V2-D125` it was a first write once
+a restore had removed the record), and a turn that evidenced a deleted version is never extracted again, so a
+re-extraction cannot re-derive the claim. The turn is erased when nothing surviving cites it; otherwise it stays and is
+flagged.
+
 ### 4.9 Export — Tier C only
 
 **`export(ctx, selectors: ScopeSelector[]) → ExportSnapshot`**

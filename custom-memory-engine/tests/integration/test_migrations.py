@@ -55,6 +55,9 @@ DOMAIN_TABLES = frozenset(
         "artifact_provenance",  # migration 29 (I2, V2-D110)
         "entity_mention",  # migration 30 (I8, V2-D111)
         "verification_artifact",  # migration 31 (I11, V2-D112)
+        "erasure_marker",  # migration 33 (T-46, V2-D125)
+        "erased_turn",  # migration 33 (T-46, V2-D125)
+        "restore_reconciliation",  # migration 33 (T-46, V2-D125)
     }
 )
 HISTORY_TABLE = "_cme_schema_migrations"
@@ -370,8 +373,9 @@ async def test_clean_reset_clears_domain_data_preserves_foreign_schema_and_exten
             )
             assert set(await table_oids(conn, database.schema_name)) == DOMAIN_TABLES | {HISTORY_TABLE}
             # `method` (migration 10: the v1 operators) and `predicate_schema` (migration 13: the generic predicates)
-            # are catalogs the migrations seed, not tenant data
-            for table in sorted(DOMAIN_TABLES - {"method", "predicate_schema"}):
+            # are catalogs the migrations seed, not tenant data; `restore_reconciliation` (migration 33) is deployment
+            # state the migration records for this database, and a clean reset is not a restore, so it stays
+            for table in sorted(DOMAIN_TABLES - {"method", "predicate_schema", "restore_reconciliation"}):
                 cursor = await conn.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table)))
                 assert await cursor.fetchone() == (0,), table
             cursor = await conn.execute("SELECT count(*) FROM method")

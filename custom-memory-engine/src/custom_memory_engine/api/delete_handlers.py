@@ -8,12 +8,13 @@ closure with two-phase ordering (``V2-D09``, ``V2-D50``).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import cast
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.deletion.closure import DeletionPolicyError
+from custom_memory_engine.deletion.markers import ErasureMarker
 from custom_memory_engine.deletion.rederive import ReDerivationError, SummaryBuilder
 from custom_memory_engine.engine.deletion import DeletionError, DeletionReceipt, DeletionScope, delete_memory
 from custom_memory_engine.engine.transactions import AblationMode
@@ -90,11 +91,14 @@ class DeleteHandlers:
         request_id: str,
         stored_target_ref: str,
         deletion_epoch: int,
+        erasure_markers: Sequence[ErasureMarker] = (),
     ) -> DeletionReceipt:
         """Re-apply one journalled deletion after a restore, with this handler's own configuration (``V2-D122``).
 
         Not an API operation: only :func:`custom_memory_engine.deletion.journal.replay_journal` calls it. The request
         keeps its original id, digest and epoch, so the restored database ends in the state the journal records.
+        ``erasure_markers`` are the request's journalled markers (``V2-D125``): recorded as they are, and every turn
+        they name that the restored database holds is erased with its jobs.
         """
         async with self.runtime.session(user) as connection:
             return await delete_memory(
@@ -112,6 +116,7 @@ class DeleteHandlers:
                 schema_name=self.runtime.schema_name,
                 request_id=request_id,
                 stored_target_ref=stored_target_ref,
+                erasure_markers=tuple(erasure_markers),
             )
 
 

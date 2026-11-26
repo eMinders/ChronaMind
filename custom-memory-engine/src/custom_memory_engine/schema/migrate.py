@@ -58,6 +58,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (30, "030_entity_mentions_and_erasure.sql"),
     (31, "031_verification_artifacts.sql"),
     (32, "032_visibility_sync.sql"),
+    (33, "033_erasure_markers.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -91,6 +92,9 @@ TABLES = (
     "artifact_provenance",  # migration 29 (I2, V2-D110): provenance for non-memory structural artifacts
     "entity_mention",  # migration 30 (I8, V2-D111): claim-to-entity mentions inside deletion closure
     "verification_artifact",  # migration 31 (I11, V2-D112): pinned support & held-out artifacts
+    "erasure_marker",  # migration 33 (T-46, V2-D125): what a deletion erased besides its target, as keyed digests
+    "erased_turn",  # migration 33 (T-46, V2-D125): stored turns a deletion marked, never extracted again
+    "restore_reconciliation",  # migration 33 (T-46, V2-D125): the database the erasure journal was last replayed into
 )
 FUNCTIONS = (
     "clock_now",
