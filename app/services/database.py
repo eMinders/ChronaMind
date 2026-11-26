@@ -157,6 +157,10 @@ class DatabaseService:
         so without a new epoch a message repeated afterwards would carry the identity of the pre-clear one and the
         engine would replay the already-superseded claim instead of recording the new statement.
 
+        A read-modify-write, deliberately: two clears of the *same session* at the same moment can lose one increment,
+        and the only consequence is that a message repeated after that clear replays (the behaviour this exists to
+        avoid) rather than duplicating a claim. The failure between clearing and advancing has the same direction.
+
         Args:
             session_id: The session whose history was cleared
 
@@ -170,10 +174,9 @@ class DatabaseService:
             chat_session.history_epoch += 1
             session.add(chat_session)
             await session.commit()
-            logger.info(
-                "session_history_epoch_advanced", session_id=session_id, history_epoch=chat_session.history_epoch
-            )
-            return chat_session.history_epoch
+            epoch = chat_session.history_epoch
+            logger.info("session_history_epoch_advanced", session_id=session_id, history_epoch=epoch)
+            return epoch
 
     async def get_session(self, session_id: str) -> Optional[ChatSession]:
         """Get a session by ID.

@@ -3511,7 +3511,11 @@ fails on the code before it.
     `rederive.py` carries `(id, origin_kind, source_version_id)` across the rebuild and restores it.
 14. **`I11`'s pinning status is not caller-settable.** `verification.artifact_pinning_status` admitted
     `'unpinned_pre_migration'` from any inserter, which skipped the artifact check entirely; a `BEFORE INSERT` trigger
-    refuses it, and the value that predates the migration is created by `ADD COLUMN … DEFAULT`, which fires no trigger.
+    refuses it. The value that predates the migration is created by `ADD COLUMN … DEFAULT`, which fires no trigger, so
+    upgrading a legacy database still works; the one path it refuses is a *data-only* restore of pre-migration
+    `verification` rows into an already-migrated schema, which `deploy/README.md` says to do at the dump's own version
+    (or with `pg_restore --disable-triggers`). Restorability wins over re-enforcing an invariant the product path
+    already enforces in code — but the value would otherwise be a one-token switch for skipping `I11`.
 15. **`I7` now has a behavioural alarm.** `verification_artifact_scope_read` is the one cross-user read policy the
     migration-2 pin cannot cover (it delegates two hops); it is pinned against its own expression and against its own
     `visibility` column, and the sharing test asserts that a grantee's `provenance` view of a shared row returns

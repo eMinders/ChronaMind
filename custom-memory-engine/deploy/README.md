@@ -159,7 +159,12 @@ depend on process-wide HMAC keys outside the database. Therefore:
 3. **Bootstrap `public` extensions before restoring the schema.** Schema-scoped dumps (`--schema=cme_engine`) do not
    carry `public` extensions. Before running `pg_restore`, ensure `vector`, `btree_gist`, and `pg_trgm` exist in
    `public` (`CREATE EXTENSION IF NOT EXISTS ... WITH SCHEMA public`).
-4. **Re-provision the runtime role and verify the catalog post-restore.** Roles are cluster-wide and not included in a
+4. **Re-provision the runtime role and verify the catalog post-restore.** A dump that predates migration 31 and
+   carries `verification` rows is restored *at its own version* first, then migrated (migration 31's `ADD COLUMN …
+   DEFAULT` stamps the legacy `unpinned_pre_migration` value without an INSERT, so no trigger sees it). Restoring such
+   rows as data into an already-migrated schema is refused by
+   `trg_verification_pinning_status_is_not_caller_settable` — that trigger exists because the value skips `I11`'s
+   artifact check, and `pg_restore --disable-triggers` (superuser) is the escape hatch if that path is ever needed. Roles are cluster-wide and not included in a
    schema dump. Restore a `--schema=cme_engine` dump with `pg_restore --no-owner --no-acl --exit-on-error` (omit
    `--schema=` on `pg_restore` so `CREATE SCHEMA` and `COMMENT ON SCHEMA` are restored), confirm the `cme_engine`
    schema comment carries `OWNER_MARKER`, run `security.provisioning.provision_runtime_role` to create/grant
