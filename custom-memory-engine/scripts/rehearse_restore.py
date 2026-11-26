@@ -49,6 +49,7 @@ from custom_memory_engine.deletion.journal import JournalError, export_to_file, 
 from custom_memory_engine.deletion.scanner import ScanContext, scan_deleted_key
 from custom_memory_engine.engine.deletion import target_ref_digest
 from custom_memory_engine.grounding.sources import canonical_hash
+from custom_memory_engine.queue.worker import enqueue
 from custom_memory_engine.schema.migrate import (
     _CATALOG_QUERIES,
     EXTENSIONS,
@@ -65,6 +66,7 @@ from custom_memory_engine.security import (
     verify_privileges,
     verify_runtime_role,
 )
+from custom_memory_engine.semantic.slow_lane import enqueue_slow_lane
 
 PG_DOCKER_IMAGE = (
     "pgvector/pgvector:0.8.7-pg16-bookworm@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a"
@@ -78,6 +80,10 @@ DELETE_TEXT = "Alice is allergic to shellfish"
 LATE_TEXT = "Alice adopted a greyhound named Comet"
 #: Bob's only memory; Bob then deletes everything (`scope='all'`) after the backup.
 BOB_TEXT = "Bob plays the cello in an orchestra"
+# `T-46`: a turn ingested *before* the backup whose extraction completed, and was deleted, after it
+LATE_TURN = "t-late-turn"
+LATE_TURN_TEXT = "Alice is allergic to peanuts"
+LATE_CLAIM = "The user is allergic to peanuts"
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +124,10 @@ class RehearsalReport:
     scan_leaks_before_replay: int
     scan_leaks_after_replay: int
     scan_measured_channels_after_replay: int
+    # `T-46` (`V2-D125`): a turn the backup holds, whose claim was extracted and deleted after it
+    t46_markers_exported: int
+    t46_turn_erased_by_replay: bool
+    t46_worker_cannot_re_extract: bool
 
 
 def _resolve_pg_tool_mode() -> str:
@@ -266,6 +276,46 @@ async def _leak_scan(
         leaks += len(report.leaks)
         measured += sum(1 for finding in report.findings if finding.measured)
     return leaks, measured
+
+
+@dataclass
+class _FixedExtractor:
+    """One turn, one claim: the worker loop is real, the model is a constant (``T-46``)."""
+
+    text: str
+    claim: str
+    calls: int = 0
+
+    async def extract(self, request: object) -> object:
+        from custom_memory_engine.semantic.contracts import ExtractedClaim, ExtractionResult
+
+        self.calls += 1
+        text = getattr(request, "text", "")
+        claims = (ExtractedClaim(content=self.claim, verbatim_quote=self.text),) if text == self.text else ()
+        return ExtractionResult(claims=claims, extractor_version="rehearsal/extract-v1")
+
+
+async def _extract_once(dsn: str, schema: str, role: str, extractor: object) -> str:
+    """Run one slow-lane job for alice, the way the deployed worker does."""
+    from custom_memory_engine.worker import WorkerSettings, run_once
+
+    async with await AsyncConnection.connect(dsn, autocommit=True, connect_timeout=5) as worker:
+        settings = WorkerSettings(role=role, users=("alice",), schema=schema, extractor=extractor)  # type: ignore[arg-type]
+        return await run_once(worker, "alice", settings)
+
+
+async def _claims_of(conn: AsyncConnection, schema: str, *, like: str, user: str = "alice") -> int:
+    async with conn.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute("SELECT set_config('app.user_id', %s, false)", (user,))
+        await cursor.execute(
+            sql.SQL(
+                "SELECT count(*) FROM {v} WHERE user_id = %s AND content ILIKE %s AND lifecycle <> 'retired'"
+            ).format(v=sql.Identifier(schema, "memory_version")),
+            (user, f"%{like}%"),
+        )
+        row = await cursor.fetchone()
+        await cursor.execute("RESET app.user_id")
+    return int(row[0]) if row else 0
 
 
 async def _query_facts(
@@ -431,6 +481,31 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 if DELETE_TEXT not in pre_facts:
                     raise RuntimeError("seeded_delete_target_not_queryable")
 
+                # `T-46`: the turn and its extraction job exist when the backup is taken; the claim does not yet
+                await src_conn.execute(
+                    "INSERT INTO session (id, user_id, started_at) VALUES ('s-alice', 'alice', %s) "
+                    "ON CONFLICT DO NOTHING",
+                    (T0,),
+                )
+                await src_conn.execute(
+                    "INSERT INTO turn (id, session_id, user_id, sequence_no, role, content, occurred_at) "
+                    "VALUES (%s, 's-alice', 'alice', 99, 'user', %s, %s)",
+                    (LATE_TURN, LATE_TURN_TEXT, T0),
+                )
+                await src_conn.execute("SELECT set_config('app.user_id', 'alice', false)")
+                await enqueue(
+                    src_conn,
+                    enqueue_slow_lane(
+                        job_id="job-" + LATE_TURN,
+                        user_id="alice",
+                        turn_id=LATE_TURN,
+                        extractor_version="rehearsal/extract-v1",
+                        candidate_fingerprint="e" * 32,
+                    ),
+                    schema_name=schema_name,
+                )
+                await src_conn.execute("RESET app.user_id")
+
                 pre_dump = _run_pg_dump(mode, src_dsn, schema_name)
 
                 runtime = Runtime(
@@ -446,6 +521,34 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                     raise RuntimeError("source_delete_failed")
                 # after the backup: a memory written and deleted (the restored database never holds it), and one
                 # user's `delete all`
+                # `T-46`: the extraction of the turn the backup holds runs *after* it, and the user then deletes it
+                late_extractor = _FixedExtractor(LATE_TURN_TEXT, LATE_CLAIM)
+                extracted = await _extract_once(src_dsn, schema_name, src_role, late_extractor)
+                if not extracted.startswith("done:job-" + LATE_TURN):
+                    raise RuntimeError(f"t46_extraction_failed:{extracted}")
+                if await _claims_of(src_conn, schema_name, like="peanuts") != 1:
+                    raise RuntimeError("t46_extracted_claim_missing")
+                async with src_conn.cursor(row_factory=tuple_row) as cursor:
+                    await cursor.execute("SELECT set_config('app.user_id', 'alice', false)")
+                    await cursor.execute(
+                        sql.SQL(
+                            "SELECT memory_key FROM {v} WHERE user_id = 'alice' AND content ILIKE %s "
+                            "AND lifecycle <> 'retired'"
+                        ).format(v=sql.Identifier(schema_name, "memory_version")),
+                        ("%peanuts%",),
+                    )
+                    peanut_row = await cursor.fetchone()
+                    await cursor.execute("RESET app.user_id")
+                if peanut_row is None:
+                    raise RuntimeError("t46_claim_key_missing")
+                await engine.call(
+                    _context("C", admin=True),
+                    "delete",
+                    {"scope": "memory", "target_ref": str(peanut_row[0]), "deletion_epoch": None},
+                )
+                if await _claims_of(src_conn, schema_name, like="peanuts") != 0:
+                    raise RuntimeError("t46_deletion_failed")
+
                 late_version_id = await _write_claim(src_conn, src_role, schema_name, LATE_TEXT, "reh-late")
                 late_memory_key = await _memory_key(src_conn, schema_name, late_version_id)
                 await engine.call(
@@ -472,6 +575,7 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 journal_entries = await export_to_file(
                     src_conn, journal_path, key=DELETION_KEY, schema_name=schema_name
                 )
+                t46_markers = sum(len(entry.markers) for entry in read_journal(journal_path).entries)
                 source_request_ids = sorted(entry.request_id for entry in read_journal(journal_path).entries)
 
             post_state, post_reason, post_cat_ok = await _restore_and_provision(
@@ -502,8 +606,9 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                     )
                     req_rows = await cursor.fetchall()
                 post_req_count = len(req_rows)
-                # the alice memory deletion, alice's late deletion, bob's and carol's `delete all`
-                digest_ok = post_req_count == 4 and expected_digest in {str(row[0]) for row in req_rows}
+                # the alice memory deletion, the T-46 peanut deletion, alice's late deletion, bob's and carol's
+                # `delete all`
+                digest_ok = post_req_count == 5 and expected_digest in {str(row[0]) for row in req_rows}
 
             async with await AsyncConnection.connect(pre_dsn, autocommit=True, connect_timeout=5) as pre_conn:
                 pre_resurrected = await _query_facts(pre_conn, pre_role, schema_name, "shellfish")
@@ -580,6 +685,36 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                     pre_conn, journal_path, key=DELETION_KEY, schema_name=schema_name
                 )
                 third = await replay_journal(DeleteHandlers(runtime), read_journal(journal_path))
+                # `T-46`: the backup brought the turn and its queued job back; the replay erased them, so the worker
+                # has nothing to extract -- and the claim the deletion erased does not come back
+                async with pre_conn.cursor(row_factory=tuple_row) as cursor:
+                    await cursor.execute("SELECT set_config('app.user_id', 'alice', false)")
+                    await cursor.execute(
+                        sql.SQL("SELECT count(*) FROM {t} WHERE user_id = 'alice' AND id = %s").format(
+                            t=sql.Identifier(schema_name, "turn")
+                        ),
+                        (LATE_TURN,),
+                    )
+                    turn_row = await cursor.fetchone()
+                    await cursor.execute(
+                        sql.SQL("SELECT count(*) FROM {j} WHERE user_id = 'alice' AND turn_id = %s").format(
+                            j=sql.Identifier(schema_name, "job")
+                        ),
+                        (LATE_TURN,),
+                    )
+                    job_row = await cursor.fetchone()
+                    await cursor.execute("RESET app.user_id")
+                t46_turn_erased = int(turn_row[0] if turn_row else 0) == 0
+                t46_worker_blocked = int(job_row[0] if job_row else 0) == 0
+                if not (t46_turn_erased and t46_worker_blocked):
+                    raise RuntimeError("t46_marked_turn_survived_the_replay")
+                reextracted = await _extract_once(
+                    pre_dsn, schema_name, pre_role, _FixedExtractor(LATE_TURN_TEXT, LATE_CLAIM)
+                )
+                if reextracted not in ("idle", "unreconciled") or await _claims_of(
+                    pre_conn, schema_name, like="peanuts"
+                ):
+                    raise RuntimeError(f"t46_worker_re_extracted:{reextracted}")
 
             if KEEP_TEXT not in post_kept:
                 raise RuntimeError("post_restore_kept_memory_missing")
@@ -623,6 +758,9 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 scan_leaks_before_replay=before_scan[0],
                 scan_leaks_after_replay=after_scan[0],
                 scan_measured_channels_after_replay=after_scan[1],
+                t46_markers_exported=t46_markers,
+                t46_turn_erased_by_replay=t46_turn_erased,
+                t46_worker_cannot_re_extract=t46_worker_blocked,
             )
         finally:
             journal_path.unlink(missing_ok=True)

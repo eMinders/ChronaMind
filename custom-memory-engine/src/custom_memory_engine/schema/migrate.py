@@ -58,6 +58,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (30, "030_entity_mentions_and_erasure.sql"),
     (31, "031_verification_artifacts.sql"),
     (32, "032_visibility_sync.sql"),
+    (33, "033_erasure_markers.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -91,6 +92,9 @@ TABLES = (
     "artifact_provenance",  # migration 29 (I2, V2-D110): provenance for non-memory structural artifacts
     "entity_mention",  # migration 30 (I8, V2-D111): claim-to-entity mentions inside deletion closure
     "verification_artifact",  # migration 31 (I11, V2-D112): pinned support & held-out artifacts
+    "erasure_marker",  # migration 33 (T-46, V2-D125): what a deletion erased besides its target, as keyed digests
+    "erased_turn",  # migration 33 (T-46, V2-D125): stored turns a deletion marked, never extracted again
+    "restore_reconciliation",  # migration 33 (T-46, V2-D125): the database the erasure journal was last replayed into
 )
 FUNCTIONS = (
     "clock_now",
@@ -464,6 +468,31 @@ class MigrationRunner:
             return MigrationStatus(**fields, state="pending", reason="newer_migrations_available")
         return MigrationStatus(**fields, state="applied")
 
+    async def _record_reconciliation(self, connection: AsyncConnection) -> None:
+        """Stamp a database this runner created from nothing as reconciled by its own history (`T-46`, `V2-D125`).
+
+        Only a fresh install: an *upgrade* is not stamped, because a dump taken before migration 33 is upgraded too,
+        and stamping it would silently mark a restored copy as reconciled. That case is reconciled by the journal
+        replay, a no-op on an intact database, which the documented restore and upgrade procedure runs.
+        """
+        if (await self._table_exists(connection, "restore_reconciliation")) is False:
+            return
+        table = sql.Identifier(self.config.schema_name, "restore_reconciliation")
+        async with connection.transaction():
+            await self._scope(connection)
+            await connection.execute(
+                sql.SQL(
+                    "INSERT INTO {t} (relation_oid) SELECT pg_catalog.to_regclass(%s)::oid ON CONFLICT DO NOTHING"
+                ).format(t=table),
+                (f"{self.config.schema_name}.restore_reconciliation",),
+            )
+
+    async def _table_exists(self, connection: AsyncConnection, name: str) -> bool:
+        row = await (
+            await connection.execute("SELECT pg_catalog.to_regclass(%s)", (f"{self.config.schema_name}.{name}",))
+        ).fetchone()
+        return row is not None and row[0] is not None
+
     async def _record(self, connection: AsyncConnection, version: int, filename: str, checksum: str) -> None:
         catalog = await self._catalog(connection)
         await connection.execute(
@@ -536,12 +565,16 @@ class MigrationRunner:
             status = await self._status(connection, sources)
             if status.state == "applied":
                 return MigrationResult(action="unchanged", status=status)
+            fresh = status.state == "unapplied"
             if status.state == "pending" and status.version is not None:
                 await self._apply_from(connection, sources, status.version)
-            elif status.state == "unapplied":
+            elif fresh:
                 await self._install(connection, sources)
             else:
                 raise MigrationError(status.reason or "schema_not_applicable")
+            if fresh:
+                # a schema created from nothing is reconciled by construction; an upgraded one is not (V2-D125)
+                await self._record_reconciliation(connection)
             status = await self._status(connection, sources)
             if status.state != "applied":
                 raise MigrationError("migration_verification_failed")
@@ -579,6 +612,8 @@ class MigrationRunner:
                     sql.SQL("DROP SCHEMA {} RESTRICT").format(sql.Identifier(self.config.schema_name))
                 )
             await self._install(connection, sources)
+            # a reset drops every row, so what it leaves is a schema created from nothing, like a fresh install
+            await self._record_reconciliation(connection)
             status = await self._status(connection, sources)
             if status.state != "applied":
                 raise MigrationError("migration_verification_failed")

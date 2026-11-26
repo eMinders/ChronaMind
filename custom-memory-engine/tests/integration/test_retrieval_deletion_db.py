@@ -307,7 +307,10 @@ async def test_delete_memory_removes_key_and_cascades_without_touching_other_key
             "dependents",
             "re_derived_versions",
             "purged_jobs",
+            # T-46 (V2-D125): the markers this deletion recorded are a count, like every other field
+            "erasure_markers",
         }
+        assert isinstance(details["erasure_markers"], int) and details["erasure_markers"] > 0
 
 
 async def test_delete_re_derives_a_dependent_with_a_surviving_source(database) -> None:

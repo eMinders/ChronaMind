@@ -43,6 +43,8 @@ USER_TABLES = (
     "artifact_provenance",  # migration 29 (I2, V2-D110): attribution for structural artifacts
     "entity_mention",  # migration 30 (I8, V2-D111): claim-to-entity mentions
     "verification_artifact",  # migration 31 (I11, V2-D112): pinned support and held-out artifacts
+    "erasure_marker",  # migration 33 (T-46, V2-D125): keyed digests of what a deletion erased besides its target
+    "erased_turn",  # migration 33 (T-46, V2-D125): stored turns a deletion marked
 )
 
 
@@ -87,6 +89,11 @@ TABLE_GRANTS: dict[str, frozenset[str]] = {
     "artifact_provenance": _APPEND,
     "entity_mention": _APPEND,
     "verification_artifact": _APPEND,
+    # migration 33 (T-46, V2-D125): a marker is a deletion's record, appended with it and never rewritten; a flag goes
+    # with its turn by cascade (owner-run); the reconciliation identity is appended by the replay and read by everyone
+    "erasure_marker": _APPEND,
+    "erased_turn": _APPEND,
+    "restore_reconciliation": _APPEND,
 }
 
 

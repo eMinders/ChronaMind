@@ -3546,3 +3546,71 @@ delegating token re-creates a tenant row that an operator removed, because `dele
 (T-42). `read_artifact_provenance`/`read_entity_provenance` have no caller in `src/`: the structural read model is
 tested but not yet an operation (W4+). Rate limiting stays off by default, and `THREAT_MODEL.md` §3 now says the
 default mitigation for timing inference is the concurrency bound rather than a rate bound.
+
+### V2-D125 — A deletion's whole live effect survives a restore (`T-46`)
+
+**Decision.** A deletion request records, in its own transaction, keyed digests of what it erased *besides* its target:
+the evidence turns of the versions it physically deleted (for `all`, every turn of the user), and the idempotency
+identities of the writes whose results it erased, with each result's engine-generated id. The erasure journal carries
+them (`format 2`); a replay inserts them again, erases every marked turn the restored database still holds (with its
+jobs), and from then on a client's resend under an erased idempotency key answers with the erased result instead of
+writing the claim again. A stored turn a deletion marked but could not erase is flagged (`erased_turn`) and no
+extraction ever runs on it. A database the journal has not been replayed into is refused by both the worker and the
+host (`restore_reconciliation`).
+
+**Why.** `V2-D122` journalled the *target*, and the target is not the effect. Two paths re-created the deleted memory
+from what an older backup still held, and neither is exotic: the app resends its whole history every turn, and a turn
+whose extraction completed after the backup keeps its queued job in it. Without the marker the resend is a *first*
+write in the restored database, and the worker has a turn it can read. The old guard was procedural (replay before the
+worker, non-zero exit on an unresolved entry), and it cannot be complete: `recorded_unresolved` is exactly the case
+where the backup lacks the target, which is precisely when the surviving evidence matters most.
+
+**Consequences for the design.**
+
+* **The marker is a digest, never the identity.** The journal leaves the host, so a marker is an HMAC of the identity
+  under the deployment's deletion key, bound to the user and the kind (`T-29`). A wrong key makes the replay refuse
+  before it writes anything, because the file's key check is compared first; it cannot silently produce no-ops.
+* **The flag is a plaintext id, and that is deliberate.** `erased_turn` holds a turn's own id, which `turn` already
+  holds, and goes with the turn by cascade (migration 33). The worker therefore needs no deletion key -- the key stays
+  in the host and the journal unit -- and a marked turn cannot be re-extracted by any code path.
+* **A migration never stamps itself.** The first version of this fix recorded the identity inside migration 33, and a
+  review caught what that costs: `deploy/README.md` restores a pre-33 dump *at its own version and then migrates it*, so
+  the migration ran in the restored database, stamped its own new relation, and marked a restored copy reconciled with
+  no replay at all -- the exact state the check exists to catch. Only `MigrationRunner.apply` on a schema created from
+  nothing stamps -- and `reset` does too, because it drops every row and what it leaves is a schema created from
+  nothing; an upgraded or restored database is stamped by the
+  replay, or by `replay --mark-reconciled` when an operator asserts there is no journal to replay.
+* **Reconciliation is an identity, not a timestamp.** `restore_reconciliation` records its own relation OID: a
+  `pg_restore` re-creates the table, so the row it carries names another relation and the check fails closed. A clone
+  (`CREATE DATABASE ... TEMPLATE`, which every test fixture makes) keeps relation OIDs and is a reconciled copy of a
+  reconciled database, so the check passes there; that is why the database OID is not part of the identity.
+* **A replay of an unresolved target still erases.** The request's markers are applied before the closure is walked,
+  so the one deletion whose target the backup never held is not the one that leaves the most behind.
+* **Live behaviour does not change for running jobs.** A deletion still purges only jobs that are not `running` and
+  leaves the epoch guard to fence those; a replay purges running jobs too, because a restored lease belongs to no live
+  worker and the worker refuses to run before the replay.
+
+**Evidence.** `tests/integration/test_t46_restore_erasure_db.py` (both resurrection paths, each with an in-test control
+that removes the marker and reproduces the resurrection: the worker re-extracting the claim, and the resend writing it
+again); `scripts/rehearse_restore.py` over real `pg_dump`/`pg_restore`, which seeds a turn and its job before the dump,
+extracts and deletes the claim after it, and asserts after the restore and replay that the turn and its job are gone,
+the worker finds nothing to extract, and the claim does not return (`t46_markers_exported`,
+`t46_turn_erased_by_replay`, `t46_worker_cannot_re_extract`); `tests/test_erasure_journal.py` (format 2, a format-1
+journal still readable, a malformed marker refused, the markers part of a request's identity);
+`tests/integration/test_backup_restore_db.py` runs the rehearsal in CI;
+`test_migrating_a_restored_database_does_not_mark_it_reconciled` rolls a schema back to 32 and migrates it forward, the
+way a restored dump is upgraded, and requires that it stay unreconciled until a replay or an explicit assertion.
+
+**Cost, measured.** Two statements per deletion (the marker insert and the turn bookkeeping: 3.0 ms for 50 markers,
+0.4 ms to flag a turn), one indexed lookup per extraction (the flag) and one per idempotent write (the marker probe:
+0.125 ms → 0.186 ms median at 50 000 markers and 50 000 idempotency rows). The reconciliation check costs one query per
+*claimed* job, not per idle tick: the worker claims first and puts the job back when the database is not reconciled, so
+an idle worker on a healthy database is exactly as cheap as it was. The journal grows by the digests a deletion erased,
+which is bounded by the closure it already traversed. A replay resolves an entry's `turn` digests against the user's
+stored turns (the key is only in Python), so its cost is O(requests x turns) per user, alongside the deletion closure it
+already walks for every entry; that is an offline recovery step measured in seconds, not a request path.
+
+**Limit, stated.** A data-only restore into the same relation, and a physical (PITR) restore, keep every OID and are not
+detected by `restore_reconciliation`; the procedure replays after any restore regardless. Markers are exported with the
+journal, so their recovery point is the journal's.
+

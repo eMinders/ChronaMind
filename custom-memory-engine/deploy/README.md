@@ -183,6 +183,14 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
      GRANT SELECT ON cme_engine.deletion_request TO cme_journal;`). Without `BYPASSRLS` it would read zero rows under
      forced RLS, so the export refuses (`journal_export_requires_bypassrls`);
    - `CME_DELETION_RECEIPT_KEY`: only a one-way key check is written, so a replay under another key is refused.
+     The role also reads `cme_engine.erasure_marker` (what each deletion erased besides its target, `V2-D125`), so
+     export needs `GRANT SELECT ON cme_engine.erasure_marker TO cme_journal;` as well.
+
+   **The host's login role reads `cme_engine.restore_reconciliation`.** The host and the worker refuse to serve a
+   database the journal has not been replayed into (`restore_not_reconciled`, `V2-D125`), and both check it as their own
+   login role: `GRANT SELECT ON cme_engine.restore_reconciliation TO <login role>;`. Without the grant the check fails
+   closed and the host does not start -- deliberately, because the alternative is answering with memories a later
+   deletion erased.
 
    **Ship the journal off-host** with every backup and continuously (it is small and holds no content); the database
    cannot protect a copy of its own history.
@@ -219,11 +227,42 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    systemctl start cme-erasure-journal.timer cme-worker.service   # the journal stops recording until you do this
    ```
 
+   **What the journal carries besides the target** (`V2-D125`). A target is not the whole effect of a deletion, so each
+   request also records keyed digests of the evidence turns it erased and of the writes whose results it erased (with
+   each result's id). The replay re-inserts them and then:
+   - erases every marked turn the restored database still holds, with its jobs — including for a request whose target
+     the backup never held, which is exactly the case where nothing else would;
+   - flags a marked turn that survives (turns are retained, or a later version cites it) so no extraction ever runs on
+     it again;
+   - answers a client's resend under an erased idempotency key with the erased result instead of writing the claim
+     again (the app resends its whole conversation every turn).
+
+   **Upgrading to migration 33, or restoring at all.** A migration never records the identity itself: a dump taken
+   before 33 is restored *at its own version and then migrated*, so a self-stamping migration would mark a restored copy
+   as reconciled with no replay. A fresh install -- and a `reset`, which drops every row -- is stamped by the runner,
+   because what it leaves is a schema created from nothing; everything else needs one of these, and until then the
+   worker claims nothing and the host does not start:
+
+   ```bash
+   # the normal case: replay (a no-op on an intact database, and it exits 0)
+   python scripts/erasure_journal.py replay --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+   # no journal to replay (an in-place upgrade, or the timer was never enabled): an explicit operator assertion
+   python scripts/erasure_journal.py replay --mark-reconciled --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+   ```
+
+   Both the worker and the host **refuse a database the journal has not been replayed into**
+   (`restore_not_reconciled`): `restore_reconciliation` records the identity of the database the last successful replay
+   touched, and a `pg_restore` re-creates that table, so the restored copy no longer matches its own row. The worker
+   answers `unreconciled` and claims nothing; the host refuses to start and reports not-ready. Only a replay that exits
+   `0` records the new identity — including `--accept-unresolved`, which says the missing targets really were memories
+   the backup never held.
+
    **What it does not cover.** Deletions made after the newest journal copy you still have: the recovery point is the
-   export interval plus your off-host shipping delay. A journal lost together with the database (`V2-D122`). And a
-   turn ingested before the backup whose extraction completed *after* it: the journal records the deleted target, not
-   the evidence turns the deletion also erased, so that turn can still be re-extracted once the worker runs
-   (`THREAT_MODEL.md` T-46). The replay's non-zero exit is what keeps that from happening silently.
+   export interval plus your off-host shipping delay. A journal lost together with the database (`V2-D122`). A
+   *data-only* restore into the existing relation, and a physical (PITR) restore, keep every OID, so the
+   reconciliation identity cannot see them; the procedure replays after any restore regardless. And the markers share
+   the journal's recovery point: a deletion whose journal copy was lost takes with it the record of the turns it
+   erased.
 
 Run a full local restore rehearsal at any time with:
 

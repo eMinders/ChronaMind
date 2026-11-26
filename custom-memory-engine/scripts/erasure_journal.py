@@ -18,6 +18,13 @@ to the journalled value. The script therefore exits ``1`` with ``unresolved_entr
 ``--accept-unresolved``, which says the entry really was a memory the backup never held. A missing journal file is not
 "nothing to do" either: it means the off-host copy was not restored, so replay refuses (``journal_missing``) rather
 than reporting an empty success.
+
+**Only a successful replay reconciles the database** (``V2-D125``), and a migration never does: a dump taken before
+migration 33 is restored *and migrated*, so a migration that stamped itself would mark a restored copy as reconciled.
+``replay --mark-reconciled`` is the operator's assertion for a database with no journal to replay (an in-place upgrade,
+or a deployment that never enabled the timer). Until a replay exits ``0`` here, the worker claims
+nothing (``unreconciled``) and the host refuses to start and reports not-ready (``restore_not_reconciled``): a restored
+copy still holds what later deletions erased.
 """
 
 from __future__ import annotations
@@ -29,18 +36,13 @@ import os
 from dataclasses import asdict
 from pathlib import Path
 
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, sql
 from rich.console import Console
 
 from custom_memory_engine.api.delete_handlers import DeleteHandlers
 from custom_memory_engine.api.runtime import Runtime
-from custom_memory_engine.deletion.journal import (
-    JournalError,
-    ReplayReport,
-    export_to_file,
-    read_journal,
-    replay_journal,
-)
+from custom_memory_engine.deletion.journal import JournalError, export_to_file, read_journal, replay_journal
+from custom_memory_engine.deletion.markers import record_reconciliation
 from custom_memory_engine.engine.deletion import RECEIPT_KEY_ENV
 from custom_memory_engine.scope.provenance import ProvenanceKey
 
@@ -53,6 +55,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("command", choices=("export", "replay"))
     parser.add_argument("--journal", required=True, type=Path, help="The journal file (JSON lines).")
     parser.add_argument("--json", action="store_true", help="Print the result as one JSON object.")
+    parser.add_argument(
+        "--mark-reconciled",
+        action="store_true",
+        help="For `replay` on a database with no journal to replay (an in-place upgrade, or a deployment that never "
+        "enabled the timer): record that this database is not a restored copy, and run no request. An operator "
+        "assertion, like --accept-unresolved.",
+    )
     parser.add_argument(
         "--accept-unresolved",
         action="store_true",
@@ -85,7 +94,19 @@ async def _export(journal: Path, schema: str) -> dict[str, object]:
     return {"command": "export", "entries": entries}
 
 
-async def _replay(journal: Path, schema: str) -> dict[str, object]:
+async def _mark_reconciled(schema: str) -> dict[str, object]:
+    """Record this database as reconciled without replaying anything (an upgrade with no journal to replay)."""
+    role = _required("CME_RUNTIME_ROLE")
+    async with await AsyncConnection.connect(
+        _required("CME_DATABASE_URL"), autocommit=True, connect_timeout=5
+    ) as connection:
+        async with connection.transaction():
+            await connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+            await record_reconciliation(connection, schema_name=schema)
+    return {"command": "replay", "entries": 0, "reconciled": True, "refusal": None, "marked_reconciled": True}
+
+
+async def _replay(journal: Path, schema: str, *, accept_unresolved: bool) -> dict[str, object]:
     key = _deletion_key()
     if not await asyncio.to_thread(journal.exists):
         # a rebuilt host that never received the off-host copy would otherwise "replay" zero entries and exit 0
@@ -94,30 +115,25 @@ async def _replay(journal: Path, schema: str) -> dict[str, object]:
     provenance = os.environ.get("CME_PROVENANCE_KEY", "").strip().encode("utf-8")
     # a deletion writes no provenance signature; a random key only satisfies the runtime's shape
     provenance_key = ProvenanceKey(provenance if len(provenance) >= MIN_KEY_BYTES else os.urandom(32))
-    async with await AsyncConnection.connect(_required("CME_DATABASE_URL"), connect_timeout=5) as connection:
-        runtime = Runtime(
-            connection,
-            _required("CME_RUNTIME_ROLE"),
-            schema,
-            provenance_key=provenance_key,
-            deletion_key=key,
-        )
+    role = _required("CME_RUNTIME_ROLE")
+    async with await AsyncConnection.connect(
+        _required("CME_DATABASE_URL"), autocommit=True, connect_timeout=5
+    ) as connection:
+        runtime = Runtime(connection, role, schema, provenance_key=provenance_key, deletion_key=key)
         report = await replay_journal(DeleteHandlers(runtime), loaded)
-    return {"command": "replay", "entries": len(loaded.entries), **asdict(report)}
-
-
-def report_refusal(result: dict[str, object], *, accept_unresolved: bool) -> str | None:
-    """Re-hydrate the report's rule from the JSON object the replay printed (the report itself is not rebuilt)."""
-    unresolved = result.get("recorded_unresolved")
-    divergent = result.get("divergent_users")
-    report = ReplayReport(
-        already_present=0,
-        replayed=0,
-        recorded_unresolved=unresolved if isinstance(unresolved, int) else 0,
-        users_reprovisioned=0,
-        divergent_users=tuple(divergent) if isinstance(divergent, tuple) else (),
-    )
-    return report.refusal_reason(accept_unresolved=accept_unresolved)
+        refusal = report.refusal_reason(accept_unresolved=accept_unresolved)
+        if refusal is None:
+            # only a successful replay lets the worker and the host use this database (`V2-D125`)
+            async with connection.transaction():
+                await connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+                await record_reconciliation(connection, schema_name=schema)
+    return {
+        "command": "replay",
+        "entries": len(loaded.entries),
+        **asdict(report),
+        "reconciled": refusal is None,
+        "refusal": refusal,
+    }
 
 
 async def main(argv: list[str] | None = None) -> int:
@@ -125,7 +141,12 @@ async def main(argv: list[str] | None = None) -> int:
     schema = os.environ.get("CME_SCHEMA", "").strip() or "cme_engine"
     console = Console(stderr=True)
     try:
-        result = await (_export(args.journal, schema) if args.command == "export" else _replay(args.journal, schema))
+        if args.command == "export":
+            result = await _export(args.journal, schema)
+        elif args.mark_reconciled:
+            result = await _mark_reconciled(schema)
+        else:
+            result = await _replay(args.journal, schema, accept_unresolved=args.accept_unresolved)
     except KeyError as missing:
         console.print(f"[red]{str(missing.args[0]).lower()}_required[/red]")
         return 2
@@ -141,7 +162,7 @@ async def main(argv: list[str] | None = None) -> int:
         console.print(result)
     if args.command != "replay":
         return 0
-    refusal = report_refusal(result, accept_unresolved=args.accept_unresolved)
+    refusal = result.get("refusal")
     if refusal is not None:
         console.print(f"[red]{refusal}[/red]")
         return 1

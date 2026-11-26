@@ -23,6 +23,17 @@ database*, so it does not share the backup's fate:
   predates is re-provisioned first, as the host would. The replayed request keeps its original id, digest and epoch,
   so a second replay does nothing, and the next export merges it into the original entry.
 
+**What a deletion erased besides its target** (``T-46``, ``V2-D125``). A target is not the whole effect of a
+deletion: the turns that evidenced the deleted claim, their extraction jobs, and the idempotency identities of the
+erased writes come back with an older backup too, and each of them re-creates the claim on its own (the worker
+re-extracts the turn; a client's resend of the same key writes the claim again). Format 2 therefore carries each
+request's erasure markers (:mod:`custom_memory_engine.deletion.markers`), and the replay records them and erases every
+turn they name -- including for a target the restored database never held, which is exactly the case where nothing
+else would. A format-1 journal is still read; its entries carry no markers.
+
+After a replay that leaves nothing unresolved, :func:`custom_memory_engine.deletion.markers.record_reconciliation`
+records this database's identity; until then the worker refuses to claim work (``restore_not_reconciled``).
+
 What it does not cover is stated in ``deploy/README.md``: deletions after the newest journal export (its RPO), and a
 journal lost together with the database.
 """
@@ -46,13 +57,16 @@ from psycopg import AsyncConnection, sql
 from psycopg.rows import tuple_row
 
 from custom_memory_engine.api.delete_handlers import DeleteHandlers
+from custom_memory_engine.deletion.markers import ErasureMarker, MarkerError, markers_of
 from custom_memory_engine.engine.deletion import DeletionScope, target_ref_digest
 
 logger = structlog.get_logger(__name__)
 
 #: The first line of every journal file, so a wrong file is refused before anything is replayed.
 JOURNAL_FORMAT = "cme-erasure-journal"
-JOURNAL_VERSION = 1
+JOURNAL_VERSION = 2
+#: Versions this code reads. Version 1 predates erasure markers (``V2-D125``): its entries simply carry none.
+READABLE_VERSIONS = frozenset({1, 2})
 _KEY_CHECK_MESSAGE = b"cme-erasure-journal:key-check:v1"
 
 type ReplayOutcome = Literal["already_present", "replayed", "recorded_unresolved"]
@@ -76,6 +90,8 @@ class JournalEntry:
     scope: DeletionScope
     target_ref: str
     requested_at: str
+    #: What the request erased besides its target (``V2-D125``), in a canonical order. Part of its identity.
+    markers: tuple[ErasureMarker, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -137,6 +153,7 @@ async def export_journal(connection: AsyncConnection, *, schema_name: str = "cme
             ).format(r=sql.Identifier(schema_name, "deletion_request"))
         )
         rows = await cursor.fetchall()
+    markers = await markers_of(connection, request_ids=[str(row[2]) for row in rows], schema_name=schema_name)
     return [
         JournalEntry(
             user_id=str(user_id),
@@ -145,14 +162,15 @@ async def export_journal(connection: AsyncConnection, *, schema_name: str = "cme
             scope=cast(DeletionScope, str(scope)),
             target_ref=str(target_ref),
             requested_at=cast(datetime, requested_at).astimezone(UTC).isoformat(),
+            markers=markers.get(str(request_id), ()),
         )
         for user_id, epoch, request_id, scope, target_ref, requested_at in rows
     ]
 
 
-def _identity(entry: JournalEntry) -> tuple[str, int, str, str, str]:
+def _identity(entry: JournalEntry) -> tuple[str, int, str, str, str, tuple[ErasureMarker, ...]]:
     """What makes two entries one request. Not ``requested_at``: a replay re-records the request at replay time."""
-    return entry.user_id, entry.deletion_epoch, entry.request_id, entry.scope, entry.target_ref
+    return entry.user_id, entry.deletion_epoch, entry.request_id, entry.scope, entry.target_ref, entry.markers
 
 
 def merge_journal(existing: Iterable[JournalEntry], exported: Iterable[JournalEntry]) -> list[JournalEntry]:
@@ -182,7 +200,7 @@ def read_journal(path: Path) -> Journal:
         raise JournalError("journal_header_missing")
     try:
         header = json.loads(lines[0])
-        if header.get("format") != JOURNAL_FORMAT or header.get("version") != JOURNAL_VERSION:
+        if header.get("format") != JOURNAL_FORMAT or header.get("version") not in READABLE_VERSIONS:
             raise JournalError("journal_format_unsupported")
         declared = header.get("entries")
         entries: list[JournalEntry] = []
@@ -192,17 +210,30 @@ def read_journal(path: Path) -> Journal:
             fields = json.loads(line)
             if fields.get("scope") not in ("memory", "topic", "all"):
                 raise JournalError("journal_entry_invalid")
-            entries.append(JournalEntry(**fields))
+            raw_markers = fields.pop("markers", [])
+            if not isinstance(raw_markers, list):
+                raise JournalError("journal_entry_invalid")
+            markers = tuple(sorted({ErasureMarker(*marker) for marker in raw_markers}))
+            if len(markers) != len(raw_markers):
+                raise JournalError("journal_entry_invalid")  # a duplicated marker is not something an export writes
+            entries.append(JournalEntry(**fields, markers=markers))
         # an off-host copy cut at a line boundary would otherwise load as a valid, shorter journal and the missing
         # deletions would never be replayed (`M2`, review of #259)
         if isinstance(declared, int) and declared != len(entries):
             raise JournalError("journal_truncated")
     except JournalError:
         raise
-    except (ValueError, TypeError, AttributeError):  # malformed JSON, a missing or unknown field, a non-object line
+    except (ValueError, TypeError, AttributeError, MarkerError):  # malformed JSON, a bad field or marker, a non-object
         raise JournalError("journal_entry_invalid") from None
     check = header.get("key_check")
     return Journal(tuple(merge_journal([], entries)), check if isinstance(check, str) else None)
+
+
+def _record(entry: JournalEntry) -> dict[str, object]:
+    """One entry as a JSON object; a marker is a ``[kind, digest, result_id]`` triple."""
+    record = asdict(entry)
+    record["markers"] = [[marker.kind, marker.digest, marker.result_id] for marker in entry.markers]
+    return record
 
 
 def write_journal(path: Path, entries: Sequence[JournalEntry], *, schema_name: str, key: bytes) -> None:
@@ -215,7 +246,7 @@ def write_journal(path: Path, entries: Sequence[JournalEntry], *, schema_name: s
         "entries": len(entries),
         "key_check": key_check(key),
     }
-    body = "\n".join([json.dumps(header), *(json.dumps(asdict(entry), sort_keys=True) for entry in entries)]) + "\n"
+    body = "\n".join([json.dumps(header), *(json.dumps(_record(entry), sort_keys=True) for entry in entries)]) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
@@ -370,6 +401,7 @@ async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[R
         request_id=entry.request_id,
         stored_target_ref=entry.target_ref,
         deletion_epoch=entry.deletion_epoch,
+        erasure_markers=entry.markers,
     )
     return ("replayed" if target or entry.scope == "all" else "recorded_unresolved"), provisioned
 

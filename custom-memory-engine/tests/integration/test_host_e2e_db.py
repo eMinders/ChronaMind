@@ -972,6 +972,12 @@ async def test_a_host_login_without_bypassrls_reports_the_queue_unmeasured_not_z
         await conn.execute(
             sql.SQL("GRANT SELECT ON {} TO {}").format(sql.Identifier(schema, "job"), sql.Identifier(login))
         )
+        # the host reads the restore-reconciliation identity before it serves (`T-46`), as its own login role
+        await conn.execute(
+            sql.SQL("GRANT SELECT ON {} TO {}").format(
+                sql.Identifier(schema, "restore_reconciliation"), sql.Identifier(login)
+            )
+        )
         await conn.commit()
     try:
         dsn = make_conninfo(config.database_url.get_secret_value(), user=login, password=password)

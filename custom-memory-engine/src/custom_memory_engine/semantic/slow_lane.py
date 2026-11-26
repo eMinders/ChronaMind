@@ -35,6 +35,7 @@ from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait
 
 from custom_memory_engine.clock import ClockTick, allocate_clock
 from custom_memory_engine.deletion.closure import StaleDeletionEpoch
+from custom_memory_engine.deletion.markers import TurnErased
 from custom_memory_engine.queue.contracts import Job, NewJob, QueueError, WorkerResult
 from custom_memory_engine.queue.worker import JOB_COLUMNS, MAX_ATTEMPTS, _schema, _user
 from custom_memory_engine.security.audit_guard import content_free_details
@@ -216,11 +217,19 @@ async def _record_failure(
 ) -> WorkerResult:
     """Back off, or give up. Only the exception *type* is recorded: a message can carry the turn's text.
 
-    **A stale deletion epoch is terminal at once** (``F5``, ``V2-D106``). Both failure paths fence on
+    **A stale deletion epoch is terminal at once** (``F5``, ``V2-D106``), and so is a turn a deletion marked (``T-46``,
+    ``V2-D125``): retrying either would only re-derive what was deleted. Both failure paths fence on
     ``status='running' AND attempts=%s`` so a timed-out worker cannot reset a job already claimed by another worker.
     """
     if isinstance(error, StaleDeletionEpoch):
-        return await _discard_stale(connection, user_id, table, job, error, role, schema_name)
+        details: dict[str, object] = {"epoch_start": error.epoch_start, "current_epoch": error.current_epoch}
+        return await _discard_stale(
+            connection, user_id, table, job, role, schema_name, "job_discarded_stale_deletion_epoch", details
+        )
+    if isinstance(error, TurnErased):
+        return await _discard_stale(
+            connection, user_id, table, job, role, schema_name, "job_discarded_erased_turn", {}
+        )
     terminal = job.attempts >= MAX_ATTEMPTS
     status = "dead_letter" if terminal else "queued"
     delay = timedelta(0) if terminal else timedelta(seconds=min(300, 2**job.attempts))
@@ -271,10 +280,13 @@ async def _discard_stale(
     user_id: str,
     table: sql.Identifier,
     job: Job,
-    stale: StaleDeletionEpoch,
     role: str | None,
     schema_name: str,
+    event_type: str,
+    details: dict[str, object],
 ) -> WorkerResult:
+    """Dead-letter a job whose work a committed deletion made unsafe, with a content-free audit row naming why."""
+    reason = "stale_deletion_epoch" if event_type == "job_discarded_stale_deletion_epoch" else "erased_turn"
     try:
         async for attempt in _contention_retry():
             with attempt:
@@ -293,23 +305,14 @@ async def _discard_stale(
                         await cursor.execute(
                             sql.SQL(
                                 "INSERT INTO {} (id, user_id, memory_ref, event_type, event_at, details) "
-                                "VALUES (%s, %s, %s, 'job_discarded_stale_deletion_epoch', "
-                                "pg_catalog.transaction_timestamp(), %s)"
+                                "VALUES (%s, %s, %s, %s, pg_catalog.transaction_timestamp(), %s)"
                             ).format(sql.Identifier(schema_name, "audit_event")),
                             (
                                 f"audit-{uuid4().hex}",
                                 user_id,
                                 uuid4().hex,
-                                Jsonb(
-                                    content_free_details(
-                                        {
-                                            "job_id": job.id,
-                                            "kind": job.kind,
-                                            "epoch_start": stale.epoch_start,
-                                            "current_epoch": stale.current_epoch,
-                                        }
-                                    )
-                                ),
+                                event_type,
+                                Jsonb(content_free_details({"job_id": job.id, "kind": job.kind, **details})),
                             ),
                         )
     except _LeaseLost:
@@ -319,8 +322,45 @@ async def _discard_stale(
         if _is_retryable_pg_error(retry_error):
             raise QueueError("queue_contention_conflict") from None
         raise
-    logger.warning("slow_lane_job_discarded_stale_epoch", user_id=user_id, kind=job.kind)
-    return WorkerResult(status="dead_letter", job_id=job.id, attempts=job.attempts, reason="stale_deletion_epoch")
+    logger.warning("slow_lane_job_discarded", user_id=user_id, kind=job.kind, reason=reason)
+    return WorkerResult(status="dead_letter", job_id=job.id, attempts=job.attempts, reason=reason)
+
+
+async def release_one(
+    connection: AsyncConnection,
+    user_id: str,
+    job: Job,
+    *,
+    schema_name: str = "cme_engine",
+    role: str | None = None,
+) -> bool:
+    """Return a claimed job to the queue without spending an attempt, and say whether it went back.
+
+    For the one case where a worker must not run the work it holds but has nothing to charge it with: a database the
+    erasure journal has not been replayed into (`T-46`). The job is not at fault, so no attempt is used and no audit
+    row is written; it stays queued and runs once the operator replays.
+    """
+    _user(user_id)
+    table = _schema(schema_name)
+    try:
+        async for attempt in _contention_retry():
+            with attempt:
+                async with _tenant(connection, user_id, role):
+                    async with connection.cursor(row_factory=tuple_row) as cursor:
+                        await cursor.execute(
+                            sql.SQL(
+                                "UPDATE {} SET status='queued', attempts=GREATEST(attempts - 1, 0), "
+                                "next_run_at=pg_catalog.transaction_timestamp() "
+                                "WHERE id=%s AND user_id=%s AND status='running' AND attempts=%s RETURNING id"
+                            ).format(table),
+                            (job.id, user_id, job.attempts),
+                        )
+                        return await cursor.fetchone() is not None
+    except Exception as error:
+        if _is_retryable_pg_error(error):
+            raise QueueError("queue_contention_conflict") from None
+        raise
+    return False
 
 
 async def recover_stale(
@@ -410,4 +450,5 @@ __all__ = [
     "complete_one",
     "enqueue_slow_lane",
     "recover_stale",
+    "release_one",
 ]

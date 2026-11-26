@@ -12,6 +12,7 @@ from psycopg.rows import tuple_row
 
 from custom_memory_engine.clock import ClockTick
 from custom_memory_engine.deletion.closure import current_deletion_epoch, require_current_deletion_epoch
+from custom_memory_engine.deletion.markers import TurnErased, is_reconciled, turn_is_erased
 from custom_memory_engine.engine.index_maintenance import JOB_KIND, logical_index, perform_inline, reindex_concurrently
 from custom_memory_engine.engine.ingest import TurnInput
 from custom_memory_engine.queue.contracts import Job
@@ -26,7 +27,7 @@ from custom_memory_engine.semantic.contracts import (
 )
 from custom_memory_engine.semantic.entities import EntityAdjudicator
 from custom_memory_engine.semantic.ingestor import apply_extraction
-from custom_memory_engine.semantic.slow_lane import claim_one, complete_one, recover_stale
+from custom_memory_engine.semantic.slow_lane import claim_one, complete_one, recover_stale, release_one
 
 logger = structlog.get_logger(__name__)
 
@@ -63,9 +64,16 @@ async def load_turn(connection: AsyncConnection, settings: WorkerSettings, user_
 async def _load_turn(
     connection: AsyncConnection, settings: WorkerSettings, user_id: str, turn_id: str
 ) -> tuple[TurnInput, int]:
-    """The turn and the deletion epoch it was read at, in one snapshot: the epoch the write must still be at (F5)."""
+    """The turn and the deletion epoch it was read at, in one snapshot: the epoch the write must still be at (F5).
+
+    A turn a deletion marked (``erased_turn``, ``T-46``) raises :class:`TurnErased` before any model sees it. The flag
+    is read *after* the epoch: a deletion that commits in between either is visible here, or advanced the epoch the
+    write is checked against, so no interleaving lets a marked turn be extracted and written.
+    """
     async with tenant_scope(connection, user_id, role=settings.role):
         epoch = await current_deletion_epoch(connection, user_id, schema_name=settings.schema)
+        if await turn_is_erased(connection, user_id=user_id, turn_id=turn_id, schema_name=settings.schema):
+            raise TurnErased
         async with connection.cursor(row_factory=tuple_row) as cursor:
             await cursor.execute(
                 sql.SQL(
@@ -93,10 +101,24 @@ def _turn(row: tuple[object, ...]) -> TurnInput:
 
 
 async def run_once(connection: AsyncConnection, user_id: str, settings: WorkerSettings) -> str:
-    """One claim and the work it names. Returns ``idle`` or ``<status>:<job id>``, for the log and for a test."""
+    """One claim and the work it names. Returns ``idle`` or ``<status>:<job id>``, for the log and for a test.
+
+    Nothing is *run* in a restored database the erasure journal has not been replayed into (``T-46``, ``V2-D125``): the
+    backup still holds the turns and jobs of deletions made after it, and extracting them would re-derive what was
+    deleted. A claimed job is put back without spending an attempt, and this answers ``unreconciled`` until
+    ``scripts/erasure_journal.py replay`` records this database.
+    """
     job = await claim_one(connection, user_id, schema_name=settings.schema, kinds=KINDS, role=settings.role)
     if job is None:
         return "idle"
+    # claiming is harmless; running the work is not. The check therefore costs one query per claimed job rather than
+    # one per idle tick, and an idle worker on a healthy database is as cheap as it was (`V2-D125`).
+    async with tenant_scope(connection, user_id, role=settings.role):
+        reconciled = await is_reconciled(connection, schema_name=settings.schema)
+    if not reconciled:
+        logger.warning("slow_lane_restore_not_reconciled", user_id=user_id)
+        await release_one(connection, user_id, job, schema_name=settings.schema, role=settings.role)
+        return "unreconciled"
     if job.kind == JOB_KIND:
         return await _rebuild(connection, user_id, job, settings)
     return await _extract(connection, user_id, job, settings)
@@ -238,7 +260,7 @@ async def serve(
             except Exception as error:  # noqa: BLE001 - one bad tick must not stop the worker
                 logger.warning("slow_lane_tick_failed", user_id=user, error_type=type(error).__name__)
                 continue
-            worked += outcome != "idle"
+            worked += outcome not in ("idle", "unreconciled")
         if once:
             break
         if not worked:
