@@ -326,6 +326,43 @@ async def _discard_stale(
     return WorkerResult(status="dead_letter", job_id=job.id, attempts=job.attempts, reason=reason)
 
 
+async def release_one(
+    connection: AsyncConnection,
+    user_id: str,
+    job: Job,
+    *,
+    schema_name: str = "cme_engine",
+    role: str | None = None,
+) -> bool:
+    """Return a claimed job to the queue without spending an attempt, and say whether it went back.
+
+    For the one case where a worker must not run the work it holds but has nothing to charge it with: a database the
+    erasure journal has not been replayed into (`T-46`). The job is not at fault, so no attempt is used and no audit
+    row is written; it stays queued and runs once the operator replays.
+    """
+    _user(user_id)
+    table = _schema(schema_name)
+    try:
+        async for attempt in _contention_retry():
+            with attempt:
+                async with _tenant(connection, user_id, role):
+                    async with connection.cursor(row_factory=tuple_row) as cursor:
+                        await cursor.execute(
+                            sql.SQL(
+                                "UPDATE {} SET status='queued', attempts=GREATEST(attempts - 1, 0), "
+                                "next_run_at=pg_catalog.transaction_timestamp() "
+                                "WHERE id=%s AND user_id=%s AND status='running' AND attempts=%s RETURNING id"
+                            ).format(table),
+                            (job.id, user_id, job.attempts),
+                        )
+                        return await cursor.fetchone() is not None
+    except Exception as error:
+        if _is_retryable_pg_error(error):
+            raise QueueError("queue_contention_conflict") from None
+        raise
+    return False
+
+
 async def recover_stale(
     connection: AsyncConnection,
     user_id: str,
@@ -413,4 +450,5 @@ __all__ = [
     "complete_one",
     "enqueue_slow_lane",
     "recover_stale",
+    "release_one",
 ]

@@ -3592,9 +3592,12 @@ the worker finds nothing to extract, and the claim does not return (`t46_markers
 journal still readable, a malformed marker refused, the markers part of a request's identity);
 `tests/integration/test_backup_restore_db.py` runs the rehearsal in CI.
 
-**Cost.** Two statements per deletion (the marker insert and the turn bookkeeping), one indexed lookup per extraction
-(the flag) and one per idempotent write (the marker lookup, a primary-key probe). The journal grows by the digests a
-deletion erased, which is bounded by the closure it already traversed.
+**Cost, measured.** Two statements per deletion (the marker insert and the turn bookkeeping: 3.0 ms for 50 markers,
+0.4 ms to flag a turn), one indexed lookup per extraction (the flag) and one per idempotent write (the marker probe:
+0.125 ms → 0.186 ms median at 50 000 markers and 50 000 idempotency rows). The reconciliation check costs one query per
+*claimed* job, not per idle tick: the worker claims first and puts the job back when the database is not reconciled, so
+an idle worker on a healthy database is exactly as cheap as it was. The journal grows by the digests a deletion erased,
+which is bounded by the closure it already traversed.
 
 **Limit, stated.** A data-only restore into the same relation, and a physical (PITR) restore, keep every OID and are not
 detected by `restore_reconciliation`; the procedure replays after any restore regardless. Markers are exported with the

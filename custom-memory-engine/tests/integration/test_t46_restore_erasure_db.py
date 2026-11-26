@@ -347,7 +347,11 @@ async def test_the_worker_claims_nothing_until_the_journal_is_replayed_into_the_
     await world.rows(f"DELETE FROM {world.schema}.restore_reconciliation")
     assert await run_once(world.worker, "alice", world.settings()) == "unreconciled"
     assert world.extractor.calls == 0
-    assert await world.rows(f"SELECT status FROM {world.schema}.job") == [("queued",)]
+    # the job goes back untouched: it is the database that is not ready, so no attempt is spent and nothing is audited
+    assert await world.rows(f"SELECT status, attempts FROM {world.schema}.job") == [("queued", 0)]
+    assert await world.rows(f"SELECT count(*) FROM {world.schema}.audit_event WHERE left(event_type, 4) = 'job_'") == [
+        (0,)
+    ]
     async with world.owner.transaction():
         await world.owner.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(world.role)))
         await record_reconciliation(world.owner, schema_name=world.schema)
