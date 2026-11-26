@@ -15,10 +15,12 @@ They do **not** prove a review finds bugs. Only a review that reports a planted 
 (``.github/workflows/README.md``: "Verifying the reviewer").
 """
 
+import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -708,3 +710,91 @@ def test_a_consequence_must_name_the_constraint_that_would_stop_it(standard: str
     """
     assert "A consequence is a claim about a constraint" in standard
     assert re.search(r"(?i)restrictive\s+foreign\s+key", standard)
+
+
+# --- what the job says when the review does not run ---------------------------------------------------------------
+#
+# Run 45846436962 failed on all three attempts with `subtype success ... is_error:true`, `num_turns: 1` and no cost --
+# a run that died before its first answer -- and `show_full_output` is false, so the log carried the shape of the
+# failure and not the message. The comment on `#264` then named the one line that looked like an error:
+#
+#     # ("Internal error: directory mismatch for directory .../tsconfig.json")
+#
+# which is a comment in `anthropics/claude-code-action`'s own `run:` block, echoed by the runner's `##[group]Run`, and
+# present in run 45845609418 too -- the same job, five minutes earlier, nine turns, `is_error: false`. These tests hold
+# the job to reporting the run's own error text on failure, and hold the report to the fields it may read.
+
+REPORT_SCRIPT = REPO / ".github" / "scripts" / "review_failure_report.py"
+
+
+def _load_report() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("review_failure_report", REPORT_SCRIPT)
+    assert spec is not None and spec.loader is not None, f"{REPORT_SCRIPT} is not loadable"
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_failed_review_reports_why_with_the_error_text_and_not_the_transcript() -> None:
+    """The step exists after the review, fires only when the review itself failed, and reads only safe fields."""
+    job = _job(REVIEW_WORKFLOW.read_text(encoding="utf-8"), "claude-review")
+    assert ".github/scripts/review_failure_report.py" in job, "a failed review must say why"
+    assert job.index("Run the review") < job.index(".github/scripts/review_failure_report.py"), "reported after it ran"
+    step = re.search(r"(?ms)^      - name: Say why the review failed.*?(?=^      - name: )", job)
+    assert step, "the report step must be its own step"
+    body = step.group(0)
+    assert "steps.claude-review.outcome == 'failure'" in body, "a passed review is not explained away"
+    assert "failure()" in body
+    assert "|| {" in body and "exit 0" in body, "a base branch without the script must not fail the job further"
+    assert "GITHUB_TOKEN" not in body and "secrets." not in body, "a report needs no credential"
+    # The transcript stays unpublished: `show_full_output` remains off, and the script reads a whitelist.
+    assert re.search(r"(?m)^\s+show_full_output:", body) is None
+    module = _load_report()
+    assert set(module.SAFE_FIELDS) == {"subtype", "is_error", "num_turns", "duration_ms", "total_cost_usd"}
+    for forbidden in ("messages", "content", "toolUseResult", "prompt"):
+        assert forbidden not in module.SAFE_FIELDS, forbidden
+
+
+def test_the_report_names_the_failure_and_never_quotes_the_run(tmp_path: Path) -> None:
+    """Run against a real execution-output shape: the error text survives, the transcript does not."""
+    module = _load_report()
+    transcript = "SECRET-TURN-TEXT the model said about a tenant"
+    stream = [
+        {"type": "system", "subtype": "init", "message": "Claude Code initialized", "model": "claude-sonnet-5-5"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": transcript}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "num_turns": 1,
+            "duration_ms": 377,
+            "total_cost_usd": 0,
+            "modelUsage": {},
+            "result": "Invalid API key \u00b7 Please run /login",
+        },
+    ]
+    path = tmp_path / "claude-execution-output.json"
+    path.write_text("\n".join(json.dumps(item) for item in stream), encoding="utf-8")
+    assert module.main([str(path)]) == 0
+    objects = list(module._objects(path.read_text(encoding="utf-8")))
+    message = module.report(module.result_of(objects))
+    assert "Invalid API key" in message, "the run's own message is the whole point"
+    assert transcript not in message, "the transcript is what show_full_output would publish; this is not it"
+    assert "num_turns=1" in message and "total_cost_usd=0" in message
+    assert "secrets.CLAUDE_CODE_OAUTH_TOKEN" in message, "a run with no billed turn names the credential first"
+    assert "is not the error" in message, "the next reader must not re-derive it from the tsconfig comment"
+    # An error longer than the cap is cut, and a newline inside it cannot forge a second log line.
+    long_error = "x" * (module.MAX_ERROR_CHARS + 50) + "\n::error::forged"
+    module_error = module.report({"type": "result", "num_turns": 4, "result": long_error})
+    assert "::error::forged" not in module_error
+
+
+def test_the_report_never_claims_a_cause_it_cannot_see(tmp_path: Path) -> None:
+    """No result object at all is a real outcome (the action died first): say that, and name the substitute."""
+    module = _load_report()
+    message = module.report(None)
+    assert "no result object" in message
+    assert ".claude/skills/review-pr/SKILL.md" in message, "the substitute process is named, not implied"
+    assert "secrets.CLAUDE_CODE_OAUTH_TOKEN" not in message, "no cause is invented without a billed turn to show one"
+    assert module.main([str(tmp_path / "absent.json")]) == 0

@@ -179,6 +179,28 @@ jobs:
             --disallowedTools "Edit,Write,NotebookEdit,mcp__github_file_ops,Bash(git push:*),Bash(git commit:*),Bash(git merge:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh api -X:*),Bash(gh api --method:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
 
+      - name: Say why the review failed, when it does
+        # `show_full_output` stays false: it would publish the prompt and the whole transcript. The action's execution
+        # output still holds the run's own `result` object, and `.github/scripts/review_failure_report.py` prints the
+        # six fields of it -- the error text among them -- and nothing from `messages` or `content`.
+        #
+        # Why it exists: run 45846436962 failed three times with `subtype success ... is_error:true` and no message, and
+        # the only line that looked like an error was a comment in the action's own `run:` block, echoed on every run
+        # including the green ones. A red job nobody can read gets a wrong root cause written on its issue (#264).
+        #
+        # It reports; it never decides. The job has already failed, and this step exits 0 whatever it finds.
+        if: failure() && steps.claude-review.outcome == 'failure'
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          # Base branch only, like the resolver below: a pull request never supplies the script that reads a failed
+          # run's output. Nothing here is privileged, but the rule is the same one the gate follows.
+          [ -f .github/scripts/review_failure_report.py ] || {
+            echo "::warning::no .github/scripts/review_failure_report.py on the base branch; the failure is unreported"
+            exit 0
+          }
+          python3 .github/scripts/review_failure_report.py "${RUNNER_TEMP}/claude-execution-output.json"
+
       - name: Resolve the threads this review verified
         # The reviewer decides, the job's token acts. `resolveReviewThread` needs Contents: write, which the model's
         # App-installation token does not have (measured: `viewerCanResolve: false` on #236 and #238, reported honestly
