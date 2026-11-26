@@ -3577,7 +3577,8 @@ where the backup lacks the target, which is precisely when the surviving evidenc
   review caught what that costs: `deploy/README.md` restores a pre-33 dump *at its own version and then migrates it*, so
   the migration ran in the restored database, stamped its own new relation, and marked a restored copy reconciled with
   no replay at all -- the exact state the check exists to catch. Only `MigrationRunner.apply` on a schema created from
-  nothing stamps (a fresh install is reconciled by construction); an upgraded or restored database is stamped by the
+  nothing stamps -- and `reset` does too, because it drops every row and what it leaves is a schema created from
+  nothing; an upgraded or restored database is stamped by the
   replay, or by `replay --mark-reconciled` when an operator asserts there is no journal to replay.
 * **Reconciliation is an identity, not a timestamp.** `restore_reconciliation` records its own relation OID: a
   `pg_restore` re-creates the table, so the row it carries names another relation and the check fails closed. A clone

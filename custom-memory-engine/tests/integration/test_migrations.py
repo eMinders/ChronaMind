@@ -374,7 +374,7 @@ async def test_clean_reset_clears_domain_data_preserves_foreign_schema_and_exten
             assert set(await table_oids(conn, database.schema_name)) == DOMAIN_TABLES | {HISTORY_TABLE}
             # `method` (migration 10: the v1 operators) and `predicate_schema` (migration 13: the generic predicates)
             # are catalogs the migrations seed, not tenant data; `restore_reconciliation` (migration 33) is deployment
-            # state the migration records for this database, and a clean reset is not a restore, so it stays
+            # state, and the runner stamps it again because a reset leaves a schema created from nothing
             for table in sorted(DOMAIN_TABLES - {"method", "predicate_schema", "restore_reconciliation"}):
                 cursor = await conn.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table)))
                 assert await cursor.fetchone() == (0,), table
@@ -382,6 +382,8 @@ async def test_clean_reset_clears_domain_data_preserves_foreign_schema_and_exten
             assert await cursor.fetchone() == (5,)
             cursor = await conn.execute("SELECT count(*) FROM predicate_schema")
             assert await cursor.fetchone() == (2,)
+            cursor = await conn.execute("SELECT count(*) FROM restore_reconciliation")
+            assert await cursor.fetchone() == (1,), "a reset schema is reconciled by construction"
             cursor = await conn.execute(sql.SQL("SELECT value FROM {}.sentinel").format(sql.Identifier(foreign)))
             assert await cursor.fetchall() == [("keep",)]
             cursor = await conn.execute(

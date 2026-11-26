@@ -239,8 +239,9 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
 
    **Upgrading to migration 33, or restoring at all.** A migration never records the identity itself: a dump taken
    before 33 is restored *at its own version and then migrated*, so a self-stamping migration would mark a restored copy
-   as reconciled with no replay. A fresh install is stamped by the runner; everything else needs one of these, and until
-   then the worker claims nothing and the host does not start:
+   as reconciled with no replay. A fresh install -- and a `reset`, which drops every row -- is stamped by the runner,
+   because what it leaves is a schema created from nothing; everything else needs one of these, and until then the
+   worker claims nothing and the host does not start:
 
    ```bash
    # the normal case: replay (a no-op on an intact database, and it exits 0)

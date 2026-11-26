@@ -612,6 +612,8 @@ class MigrationRunner:
                     sql.SQL("DROP SCHEMA {} RESTRICT").format(sql.Identifier(self.config.schema_name))
                 )
             await self._install(connection, sources)
+            # a reset drops every row, so what it leaves is a schema created from nothing, like a fresh install
+            await self._record_reconciliation(connection)
             status = await self._status(connection, sources)
             if status.state != "applied":
                 raise MigrationError("migration_verification_failed")
