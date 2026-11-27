@@ -4,7 +4,7 @@ Frontend scaffold for ChronaMind Studio — a Vite, React 19, TypeScript (strict
 
 ## Prerequisites
 
-- **Node.js 22 LTS** (pinned in `.nvmrc` and `package.json#engines`: `>=22 <23`).
+- **Node.js 22 LTS** (`22.22.2+` recommended for the pinned toolchain; major version pinned in `.nvmrc` and `package.json#engines`: `>=22 <23`).
 - **Backend application** listening on `http://127.0.0.1:8000`:
   - Full demo stack once APP-01 (`#277`) is merged: `uv run python scripts/demo/up.py`
   - App-only development server from the repository root (available now): `make dev` (`uv run python run.py`)
