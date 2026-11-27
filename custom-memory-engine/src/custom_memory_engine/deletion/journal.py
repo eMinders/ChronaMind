@@ -220,15 +220,17 @@ async def export_journal(connection: AsyncConnection, *, schema_name: str = "cme
 
 
 def _identity(entry: JournalEntry) -> tuple[str, int, str, str, str, tuple[ErasureMarker, ...]]:
-    """What makes two entries one request. Not ``requested_at``: a replay re-records the request at replay time."""
-    return entry.user_id, entry.deletion_epoch, entry.request_id, entry.scope, entry.target_ref, entry.markers
+    """The durable request identity. The ``all`` scope already names every turn in the restored database."""
+    markers = tuple(marker for marker in entry.markers if entry.scope != "all" or marker.kind != "turn")
+    return entry.user_id, entry.deletion_epoch, entry.request_id, entry.scope, entry.target_ref, markers
 
 
 def merge_journal(existing: Iterable[JournalEntry], exported: Iterable[JournalEntry]) -> list[JournalEntry]:
     """The union of both, by request id, keeping the first-seen (original) entry.
 
     Never drops an entry; two entries under one id that differ in identity (user, epoch, scope or target) are refused.
-    A replayed request differs only in ``requested_at`` (the replay's own time) and merges into the original.
+    A replayed request may differ in ``requested_at``. Older ``all`` entries can also carry redundant turn markers:
+    their scope reconstructs those turns during replay. Keep the first entry, including any legacy markers.
     """
     merged: dict[str, JournalEntry] = {}
     for entry in (*existing, *exported):

@@ -10,7 +10,12 @@
 -- Sections are split on the marker lines below.
 
 -- @create-role
-CREATE ROLE {{role}} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT
+DO $$
+BEGIN
+  CREATE ROLE {{role}} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END $$
 
 -- @grants
 -- Least privilege, derived from every statement the engine issues (V2-D54, finding S-03).

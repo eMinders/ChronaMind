@@ -113,8 +113,12 @@ async def run_once(connection: AsyncConnection, user_id: str, settings: WorkerSe
         return "idle"
     # claiming is harmless; running the work is not. The check therefore costs one query per claimed job rather than
     # one per idle tick, and an idle worker on a healthy database is as cheap as it was (`V2-D125`).
-    async with tenant_scope(connection, user_id, role=settings.role):
-        reconciled = await is_reconciled(connection, schema_name=settings.schema)
+    try:
+        async with tenant_scope(connection, user_id, role=settings.role):
+            reconciled = await is_reconciled(connection, schema_name=settings.schema)
+    except Exception:
+        await release_one(connection, user_id, job, schema_name=settings.schema, role=settings.role)
+        raise
     if not reconciled:
         logger.warning("slow_lane_restore_not_reconciled", user_id=user_id)
         await release_one(connection, user_id, job, schema_name=settings.schema, role=settings.role)

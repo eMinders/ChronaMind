@@ -68,7 +68,7 @@ MIN_KEY_BYTES = 32
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export or replay the ChronaMind erasure journal.")
     parser.add_argument("command", choices=("export", "replay"))
-    parser.add_argument("--journal", required=True, type=Path, help="The journal file (JSON lines).")
+    parser.add_argument("--journal", type=Path, help="The journal file (JSON lines). Required unless marking reconciliation.")
     parser.add_argument("--json", action="store_true", help="Print the result as one JSON object.")
     parser.add_argument(
         "--restored-from-backup-at",
@@ -127,7 +127,9 @@ def _deletion_key() -> bytes:
     return key
 
 
-async def _export(journal: Path, schema: str) -> dict[str, object]:
+async def _export(journal: Path | None, schema: str) -> dict[str, object]:
+    if journal is None:
+        raise MissingInput("--journal")
     key = _deletion_key()
     async with await AsyncConnection.connect(
         _required("CME_JOURNAL_DATABASE_URL"), autocommit=True, connect_timeout=5
@@ -153,18 +155,21 @@ async def _mark_reconciled(schema: str, *, restored_mode: RestoredMode) -> dict[
         "reconciled": True,
         "refusal": None,
         "marked_reconciled": True,
+        "journal_read": False,
         "restored_mode": restored_mode,
     }
 
 
 async def _replay(
-    journal: Path,
+    journal: Path | None,
     schema: str,
     *,
     accept_unresolved: bool,
     restored_from_backup_at: str | None,
     restored_mode: RestoredMode | None,
 ) -> dict[str, object]:
+    if journal is None:
+        raise MissingInput("--journal")
     key = _deletion_key()
     if not await asyncio.to_thread(journal.exists):
         # a rebuilt host that never received the off-host copy would otherwise "replay" zero entries and exit 0

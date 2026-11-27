@@ -329,6 +329,7 @@ async def _erase_marked(
     marked_turn_ids: Sequence[str],
     erased_result_ids: Sequence[str],
     delete_turns: bool,
+    record_turn_markers: bool,
     jobs: sql.Identifier,
     exclusive_turns_fn: sql.Identifier,
 ) -> _Marked:
@@ -344,7 +345,11 @@ async def _erase_marked(
     Must run inside the deletion's transaction with ``app.deletion_active`` set (``delete_exclusive_turns``).
     """
     if given is None:
-        markers = [ErasureMarker("turn", turn_digest(key, user_id, turn_id)) for turn_id in marked_turn_ids]
+        markers = (
+            [ErasureMarker("turn", turn_digest(key, user_id, turn_id)) for turn_id in marked_turn_ids]
+            if record_turn_markers
+            else []
+        )
         markers += await write_markers_for(
             connection, user_id=user_id, result_ids=erased_result_ids, key=key, schema_name=schema_name
         )
@@ -416,8 +421,9 @@ async def delete_memory(
 
     * **Erasure markers (``T-46``, ``V2-D125``):** the request records, in this transaction, keyed digests of what it
       erased besides its target: each recorded idempotency identity whose result it erased (so a resend after a restore
-      replays instead of writing it again), and each evidence turn of a physically deleted version -- for ``all``,
-      every turn of the user. A marked turn loses its queued jobs, is erased when nothing surviving cites it, and is
+      replays instead of writing it again), and each evidence turn of a physically deleted version. For ``all``,
+      the scope itself re-derives every turn of the user, so no turn marker is written. A marked turn loses its queued
+      jobs, is erased when nothing surviving cites it, and is
       flagged against extraction (``erased_turn``) when something does.
 
     * **Unbounded closure (``V2-D09``):** traverses ``memory_derivation`` with ``WITH RECURSIVE ... UNION`` and no
@@ -686,6 +692,7 @@ async def _delete_memory_once(
                     schema_name=schema_name,
                     given=erasure_markers,
                     marked_turn_ids=await _all_turns(cursor, schema_name, user_id) if scope == "all" else (),
+                    record_turn_markers=scope != "all",
                     erased_result_ids=await _vanished(cursor, schema_name, "entity", user_id, entity_candidates),
                     delete_turns=delete_exclusive_sources,
                     jobs=jobs,
@@ -1019,6 +1026,7 @@ async def _delete_memory_once(
                 schema_name=schema_name,
                 given=erasure_markers,
                 marked_turn_ids=sorted({*exclusive_candidates, *all_turns}),
+                record_turn_markers=scope != "all",
                 erased_result_ids=[
                     *plan.to_delete,
                     *plan.to_retire,

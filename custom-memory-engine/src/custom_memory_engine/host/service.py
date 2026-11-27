@@ -248,7 +248,13 @@ class HostService:
         logger.info("host_pool_opened", pool_min=settings.pool_min, pool_max=settings.pool_max)
         # T-46 (V2-D125): a restored database the erasure journal has not been replayed into still holds what later
         # deletions erased, so serving it would answer with deleted memories and let resends write them again.
-        if not await self._reconciled():
+        try:
+            reconciled = await self._reconciled()
+        except Exception:
+            await self.close()
+            logger.exception("host_restore_probe_failed")
+            raise RestoreNotReconciled from None
+        if not reconciled:
             await self.close()
             logger.error("host_restore_not_reconciled")
             raise RestoreNotReconciled

@@ -31,6 +31,7 @@ from hashlib import sha256
 from typing import Literal, LiteralString
 
 from psycopg import AsyncConnection, sql
+from psycopg.errors import InsufficientPrivilege
 from psycopg.rows import tuple_row
 
 type MarkerKind = Literal["write", "turn"]
@@ -106,23 +107,26 @@ async def record_markers(
     unique = sorted(set(markers))
     if not unique:
         return 0
-    async with connection.cursor() as cursor:
-        await cursor.execute(
-            sql.SQL(
-                "INSERT INTO {m} (request_id, user_id, kind, digest, result_id) "
-                "SELECT %s, %s, kind, digest, result_id "
-                "FROM ROWS FROM (pg_catalog.unnest(%s::text[]), pg_catalog.unnest(%s::text[]), "
-                "pg_catalog.unnest(%s::text[])) AS m(kind, digest, result_id) "
-                "ON CONFLICT DO NOTHING"
-            ).format(m=sql.Identifier(schema_name, "erasure_marker")),
-            (
-                request_id,
-                user_id,
-                [marker.kind for marker in unique],
-                [marker.digest for marker in unique],
-                [marker.result_id for marker in unique],
-            ),
-        )
+    try:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "INSERT INTO {m} (request_id, user_id, kind, digest, result_id) "
+                    "SELECT %s, %s, kind, digest, result_id "
+                    "FROM ROWS FROM (pg_catalog.unnest(%s::text[]), pg_catalog.unnest(%s::text[]), "
+                    "pg_catalog.unnest(%s::text[])) AS m(kind, digest, result_id) "
+                    "ON CONFLICT DO NOTHING"
+                ).format(m=sql.Identifier(schema_name, "erasure_marker")),
+                (
+                    request_id,
+                    user_id,
+                    [marker.kind for marker in unique],
+                    [marker.digest for marker in unique],
+                    [marker.result_id for marker in unique],
+                ),
+            )
+    except InsufficientPrivilege:
+        raise MarkerError("erasure_marker_grant_missing") from None
     return len(unique)
 
 
@@ -299,17 +303,20 @@ async def is_reconciled(connection: AsyncConnection, *, schema_name: str) -> boo
     reconciled, which every test fixture and an operator's own clone depend on.
     """
     table = sql.Identifier(schema_name, "restore_reconciliation")
-    async with connection.cursor(row_factory=tuple_row) as cursor:
-        await cursor.execute(
-            sql.SQL(
-                "SELECT EXISTS (SELECT 1 FROM {t} AS r WHERE r.relation_oid = ("
-                + _IDENTITY
-                + ") AND pg_catalog.xid(r.written_xid) = r.xmin AND r.rows_before = ("
-                "SELECT pg_catalog.count(*) FROM {t}) - 1 AND r.timeline IS NOT DISTINCT FROM " + _TIMELINE + ")"
-            ).format(t=table),
-            (f"{schema_name}.restore_reconciliation",),
-        )
-        row = await cursor.fetchone()
+    try:
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT EXISTS (SELECT 1 FROM {t} AS r WHERE r.relation_oid = ("
+                    + _IDENTITY
+                    + ") AND pg_catalog.xid(r.written_xid) = r.xmin AND r.rows_before = ("
+                    "SELECT pg_catalog.count(*) FROM {t}) - 1 AND r.timeline IS NOT DISTINCT FROM " + _TIMELINE + ")"
+                ).format(t=table),
+                (f"{schema_name}.restore_reconciliation",),
+            )
+            row = await cursor.fetchone()
+    except InsufficientPrivilege:
+        raise MarkerError("restore_reconciliation_grant_missing") from None
     return bool(row and row[0])
 
 
