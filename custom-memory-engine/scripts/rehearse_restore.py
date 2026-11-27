@@ -135,6 +135,13 @@ class RehearsalReport:
     # against one taken after the journal copy
     recovery_point_accepted_for_this_dump: bool
     recovery_point_refused_for_a_later_dump: bool
+    # #263 scenario (c), the documented residual: a journal exported *before* the deletions is accepted against a
+    # backup that also predates them, so the pair is consistently older than a deletion and nothing can report it
+    recovery_point_accepted_for_an_early_pair: bool
+    early_journal_entries: int
+    # the per-user recovery evidence the operator report carries (`journal_newest_epochs` vs `restored_newest_epochs`)
+    replay_journal_users: int
+    replay_restored_epochs_known: int
     # `T-46` (`V2-D125`): a turn the backup holds, whose claim was extracted and deleted after it
     t46_markers_exported: int
     t46_turn_erased_by_replay: bool
@@ -532,6 +539,15 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
 
                 pre_dump_started = datetime.now(UTC)
                 pre_dump = _run_pg_dump(mode, src_dsn, schema_name)
+                # #263 (c): the journal *before* any deletion of this rehearsal. Exported after the dump and before the
+                # deletions, it is a real artefact pair whose two halves both predate every deletion below -- the
+                # residual the issue says is unrecoverable. Measuring it as accepted is the point: the check cannot
+                # refuse a pair that is consistently older, and `deploy/README.md` says so.
+                early_journal_path = journal_path.with_name(f"{journal_path.stem}.early.jsonl")
+                early_entries = await export_to_file(
+                    src_conn, early_journal_path, key=DELETION_KEY, schema_name=schema_name
+                )
+                early_journal = read_journal(early_journal_path)
 
                 runtime = Runtime(
                     src_conn, src_role, schema_name, provenance_key=PROVENANCE_KEY, deletion_key=DELETION_KEY
@@ -613,6 +629,8 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 recovery_point_refused = (
                     _recovery_point_code(journal, later_dump_started) == "journal_older_than_backup"
                 )
+                # accepted although it names none of the deletions this rehearsal makes: the documented residual (c)
+                recovery_point_early_accepted = _recovery_point_code(early_journal, pre_dump_started) is None
 
             post_state, post_reason, post_cat_ok = await _restore_and_provision(
                 mode=mode,
@@ -796,12 +814,17 @@ async def rehearse_restore(source_dsn: str, *, schema_name: str = "cme_engine") 
                 scan_measured_channels_after_replay=after_scan[1],
                 recovery_point_accepted_for_this_dump=recovery_point_accepted,
                 recovery_point_refused_for_a_later_dump=recovery_point_refused,
+                recovery_point_accepted_for_an_early_pair=recovery_point_early_accepted,
+                early_journal_entries=early_entries,
+                replay_journal_users=len(first.journal_newest_epochs),
+                replay_restored_epochs_known=sum(1 for epoch in first.restored_newest_epochs.values() if epoch),
                 t46_markers_exported=t46_markers,
                 t46_turn_erased_by_replay=t46_turn_erased,
                 t46_worker_cannot_re_extract=t46_worker_blocked,
             )
         finally:
             journal_path.unlink(missing_ok=True)
+            journal_path.with_name(f"{journal_path.stem}.early.jsonl").unlink(missing_ok=True)
             for dsn, role in ((src_dsn, src_role), (post_dsn, post_role), (pre_dsn, pre_role)):
                 try:
                     await _drop_role_in_db(dsn, role)

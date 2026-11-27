@@ -3620,7 +3620,12 @@ journal, so their recovery point is the journal's.
 ### V2-D126 — Pair the backup with a journal recovery point (#263)
 
 A replay requires `--restored-from-backup-at` and refuses with `journal_older_than_backup` when the journal header's
-`exported_at` predates that recovery point. Equal timestamps are accepted. The comparison is the file's own recovery
+`exported_at` predates that recovery point. `exported_at` is the instant the export **read** the database, captured
+before its `SELECT` and not the instant the file was written: an export that took a second would otherwise claim a
+recovery point a second newer than the rows it holds, and a backup starting inside that second would be paired with a
+journal that never saw its deletions. The bound is conservative in the safe direction -- it can only refuse a pair the
+relabelled header would have accepted. Both instants in a refusal are re-formatted from the parsed values, never echoed
+from the operator's text. Equal timestamps are accepted. The comparison is the file's own recovery
 point and never a principal's newest `requested_at`: a principal who has deleted nothing since before the backup is not
 evidence of a lost deletion, and refusing on it would block a restore the pair actually covers, leaving
 `--mark-reconciled` -- which replays nothing -- as the only way through. The report includes the newest journal epoch
