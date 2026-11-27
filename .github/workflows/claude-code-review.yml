@@ -181,8 +181,9 @@ jobs:
 
       - name: Say why the review failed, when it does
         # `show_full_output` stays false: it would publish the prompt and the whole transcript. The action's execution
-        # output still holds the run's own `result` object, and `.github/scripts/review_failure_report.py` prints the
-        # six fields of it -- the error text among them -- and nothing from `messages` or `content`.
+        # output still holds the run's own `result` object, and `.github/scripts/review_failure_report.py` prints five
+        # whitelisted fields of it and its error text -- inside a `stop-commands` fence -- and nothing from `messages`
+        # or `content`.
         #
         # Why it exists: run 45846436962 failed three times with `subtype success ... is_error:true` and no message, and
         # the only line that looked like an error was a comment in the action's own `run:` block, echoed on every run

@@ -809,3 +809,32 @@ def test_the_report_never_claims_a_cause_it_cannot_see(tmp_path: Path) -> None:
     assert ".claude/skills/review-pr/SKILL.md" in message, "the substitute process is named, not implied"
     assert "secrets.CLAUDE_CODE_OAUTH_TOKEN" not in message, "no cause is invented without a billed turn to show one"
     assert module.main([str(tmp_path / "absent.json")]) == 0
+
+
+def test_the_report_fences_the_runs_own_text_so_no_workflow_command_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Collapsing line breaks stops `::cmd::`, read only at a line's start; the runner reads `##[cmd]` anywhere.
+
+    `actions/runner`'s `ActionCommand.TryParse` finds the legacy prefix with `message.IndexOf("##[")`, so a one-line
+    error text carrying `##[error]` or `##[add-mask]` would still be executed. The run's text is the model's or the
+    CLI's, so everything after the annotation is printed between `::stop-commands::<token>` and `::<token>::`.
+    """
+    module = _load_report()
+    forged = "the run failed ##[error]forged ##[add-mask]x ::warning::forged"
+    path = tmp_path / "claude-execution-output.json"
+    path.write_text(
+        json.dumps({"type": "result", "num_turns": 4, "is_error": True, "result": forged}), encoding="utf-8"
+    )
+    assert module.main([str(path)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("::error::") and "##[" not in lines[0], "the annotation carries the whitelist only"
+    stop = re.fullmatch(r"::stop-commands::([0-9a-f]{32})", lines[1])
+    assert stop, "everything after the annotation is fenced"
+    token = stop.group(1)
+    assert lines[-1] == f"::{token}::", "the fence is closed, so later steps' commands still run"
+    inside = lines[2:-1]
+    assert any("##[error]forged" in line for line in inside), "the run's own text still reaches the operator"
+    assert all(token not in line for line in inside), "the body cannot close the fence early"
+    with pytest.raises(ValueError):
+        module.fenced(f"text naming {token}", token)

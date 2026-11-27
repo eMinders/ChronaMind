@@ -81,8 +81,9 @@ run said nothing. `.github/scripts/review_failure_report.py` now prints the run'
 error text among them, capped at 300 characters, and nothing from `messages`, `content` or the prompt — and
 `.github/workflows/claude-code-review.yml` runs it only when the review step itself failed. Pinned by
 `tests/test_claude_integration.py::test_a_failed_review_reports_why_with_the_error_text_and_not_the_transcript`,
-`::test_the_report_names_the_failure_and_never_quotes_the_run` and
-`::test_the_report_never_claims_a_cause_it_cannot_see`.
+`::test_the_report_names_the_failure_and_never_quotes_the_run`,
+`::test_the_report_never_claims_a_cause_it_cannot_see` and
+`::test_the_report_fences_the_runs_own_text_so_no_workflow_command_runs`.
 
 What the step must never do, and what holds it there:
 
@@ -97,6 +98,14 @@ What the step must never do, and what holds it there:
   through `\n`, `\r`, `\r\n` and `\u2028` with the forged line **inside** the 300-character cap (beyond it, truncation
   alone would pass). Checked for teeth: reverting either fix makes
   `::test_the_report_names_the_failure_and_never_quotes_the_run` fail.
+  **That defence was incomplete, and the merge-readiness pass corrected it.** The runner reads `::cmd::` only at the
+  start of a line, but its legacy parser finds `##[cmd]` *anywhere* in one (`actions/runner`,
+  `src/Runner.Common/ActionCommand.cs::TryParse`, `message.IndexOf("##[")`, tried after `TryParseV2`), so a one-line
+  error text carrying `##[error]…` or `##[add-mask]…` would still have run. Everything after the `::error::` annotation
+  (which carries only the whitelisted fields) is now printed inside `::stop-commands::<random token>` … `::<token>::`,
+  the runner's own mechanism for untrusted text; pinned by
+  `::test_the_report_fences_the_runs_own_text_so_no_workflow_command_runs`, which fails when the fence is removed and
+  when the token guard is removed (both measured).
 - **Turn a failed review green.** The step runs only under `failure() && steps.claude-review.outcome == 'failure'`,
   so it never runs on a green review; it carries no `continue-on-error`, and a later step that exits `0` cannot change
   the conclusion of a job whose earlier step already failed. `main` returns `0` on a missing or unreadable file
@@ -143,7 +152,7 @@ the priority in brackets is the issue's own classification (`NOW` / `LATER`), wh
 | F1 | 🔴 | An in-place upgrade 32 → 33 leaves the runtime role without grants on the three new tables; `host/service.py::start` then raises `InsufficientPrivilege` instead of `restore_not_reconciled`, every deletion fails at `deletion/markers.py`'s marker insert, the documented remedy (`provision_runtime_role`) cannot re-run on an existing role (`DuplicateObject`, uncaught by `scripts/provision_role.py`), and `deploy/README.md` names the wrong role for the read, so its remedy does not work either | reachable today: an operator who follows `deploy/README.md`'s upgrade paragraph on a running deployment creates exactly this state. Nothing upstream guards it — the migration has no grant step by design (`RL-071`), and the runtime role's missing privilege is checked nowhere before the first read | filed, `#268` (P2, `NOW`) |
 | F2 | 🟡 | `scripts/erasure_journal.py replay --mark-reconciled` requires a `--journal` path it never opens, and `deploy/README.md`'s example supplies the off-host journal path in the one scenario where that file does not exist | reachable today: the command is the documented way out of F1's refuse-to-start state, and it is run by hand while the deployment is down. It succeeds, so nothing is erased wrongly; what is wrong is what the operator is told to type | filed, `#269` (P3, `NOW`) |
 | F3 | 🟡 | A `turn` marker is recorded per turn for `scope='all'`, where the scope already names them and both branches recompute them on replay; the deletion transaction writes N rows and the journal — rewritten and fsynced in full on every export — grows by N triples per `all` request, permanently | reachable today: any `scope='all'` deletion on a user with a long history, with the journal timer enabled (`deploy/README.md:175`, the normal configuration). Cost only; nothing is served or erased wrongly | filed, `#270` (P3, `LATER`) |
-| F4 | 🟡 | A failed review run published the shape of its failure and not the message, which is how `#264` came to record a comment in the action's `run:` block as the error | reachable today: every failed review run. It cannot make a review wrong, only unexplained — which it did, on this issue | fixed here: `.github/scripts/review_failure_report.py`, a step in `.github/workflows/claude-code-review.yml`, and three tests in `tests/test_claude_integration.py` |
+| F4 | 🟡 | A failed review run published the shape of its failure and not the message, which is how `#264` came to record a comment in the action's `run:` block as the error | reachable today: every failed review run. It cannot make a review wrong, only unexplained — which it did, on this issue | fixed here: `.github/scripts/review_failure_report.py`, a step in `.github/workflows/claude-code-review.yml`, and four tests in `tests/test_claude_integration.py` |
 | F5 | 🔴 | When the reconciliation check *raises* — F1's pre-33 grant state, or any error of that one query — `run_once` returns before `release_one`, so the claim's attempt is spent; three ten-minute leases later every queued extraction is `dead_letter` with no model ever called, which is the opposite of what the docstring promises and of what `test_the_worker_claims_nothing_until_the_journal_is_replayed_into_the_restored_database` asserts for the `False` answer | reachable today in F1's state (measured: three ticks, `attempts` 1 → 3, then `dead_letter`, zero extractor calls). Not a leak or a resurrection; it is queued learning lost without a retry | filed, `#304` (P2, `NOW`) |
 
 Two 🔴 findings, and they are both about the *edge* of the mechanism rather than its core: the guarantee holds for a
@@ -229,7 +238,7 @@ every read and write run as that role under `SET LOCAL ROLE` and `app.user_id`:
 
 Every row was re-measured by this record on `cme_compatibility_gw13`, in a clone database the integration fixture makes,
 not only asserted from reading. Test suites run: `tests/integration/test_t46_restore_erasure_db.py` (7 passed),
-`tests/test_claude_integration.py`, `tests/test_review_gate.py`, `tests/test_ci_workflow.py` (136 passed), `ruff check`,
+`tests/test_claude_integration.py`, `tests/test_review_gate.py`, `tests/test_ci_workflow.py` (137 passed), `ruff check`,
 `ruff format --check`, `pyright` (0 errors, with `--extra baselines` as CI's `static` job does), `actionlint` over
 `.github/` (actionlint 1.7.12, run as `uvx --from actionlint-py actionlint .github/workflows/*.yml`: 0 findings),
 `scripts/check_plan_refs.py` (0 findings) and `scripts/check_evidence.py` over this file (37 references, 0 unresolved).
@@ -239,6 +248,9 @@ The probes live in no committed file — they were run from `/tmp` against the s
 
 ## 6. Not verified
 
+- **The report's step summary is markdown.** The run's text (300 characters at most) is appended to
+  `$GITHUB_STEP_SUMMARY` as written; a workflow command cannot run there, but markdown in it renders. Accepted: the
+  summary is visible only to readers of the run, and the text is capped.
 - **The review job's own fix is not proven on a failed runner.** The step and the script are pinned by tests that read
   text and run the parser; nothing here has executed them on a failed runner. They are exercised on the next failure,
   which is also the next time this record's §1 can be checked. Two specifics of that run are unproven: that the action's

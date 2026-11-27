@@ -1,6 +1,7 @@
 """Say *why* a review run failed, without publishing the transcript or the prompt.
 
-Why this exists. Run `45846436962` (head `7c4ad14`) and every run after it failed on all three attempts with
+Why this exists. Run `45846436962` (head `7c4ad14`) failed on all three attempts, and the docs-only run `45852260361`
+after it, with
 
     Claude result reported subtype success with is_error:true (run did not complete successfully)
     Action failed with error: Claude execution failed: result is_error:true
@@ -14,9 +15,11 @@ The comment on `#264` then quoted the only line in the log that looked like an e
 before anything runs, and present in every **successful** run too (`45845609418`, nine turns, `is_error: false`). A
 failure nobody can read is how a red job gets a wrong root cause written on its issue.
 
-So on failure this prints the six fields of the run's own `result` object -- and nothing from `messages`, `content` or
-the prompt, which is what `show_full_output: true` would publish. The error text is capped, and the record stays a
-diagnosis rather than a transcript. It exits 0 whatever it finds: a report must never decide the job's conclusion, and
+So on failure this prints five whitelisted fields of the run's own `result` object and its `result` text -- and nothing
+from `messages`, `content` or the prompt, which is what `show_full_output: true` would publish. The error text is
+capped, and the record stays a diagnosis rather than a transcript. The text is the model's or the CLI's, not ours, so
+it is printed inside a `stop-commands` fence: the runner reads `::cmd::` at the start of a line *and* `##[cmd]`
+anywhere in one (`actions/runner`, `ActionCommand.TryParse`), and collapsing line breaks alone stops only the first. It exits 0 whatever it finds: a report must never decide the job's conclusion, and
 the job has already failed by the time it runs.
 """
 
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
@@ -104,6 +108,16 @@ def report(result: Mapping[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def fenced(body: str, token: str) -> str:
+    """``body`` between ``::stop-commands::<token>`` and ``::<token>::``: the runner executes no workflow command in it.
+
+    ``token`` must not occur in ``body`` (a fresh random one never does in practice; the guard makes it certain).
+    """
+    if not token or token in body:
+        raise ValueError("stop-commands token must be non-empty and absent from the body")
+    return f"::stop-commands::{token}\n{body}::{token}::\n"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Print the diagnosis of a failed run, and append it to the run's summary when the runner sets one.
 
@@ -118,13 +132,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OSError:
         objects = []
     message = report(result_of(objects))
+    # the annotation carries only the whitelisted fields; the run's own text stays below, inside the fence
     print(f"::error::{message.splitlines()[0]}")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     body = f"### The review did not run\n\n{message}\n"
     if summary:
         with open(summary, "a", encoding="utf-8") as handle:
             handle.write(body)
-    sys.stdout.write(body)
+    sys.stdout.write(fenced(body, secrets.token_hex(16)))
     return 0
 
 
