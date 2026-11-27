@@ -3,8 +3,9 @@ name: CI
 # Root application (app/, evals/): lint, format, type check and its own tests; plus actionlint over every workflow
 # file. All three jobs are required checks, so they run on every PR (no path filter: a skipped workflow never
 # reports). custom-memory-engine/ is excluded from the root Ruff config and verified by its own workflow.
-# `app-engine-boundary` drives the app's memory client against the engine's real host and PostgreSQL: the one place
-# the two projects are tested together (tests/integration/test_app_engine_boundary.py).
+# `app-engine-boundary` drives the app's memory client and the /api/v1/memory routes against the engine's real host and
+# PostgreSQL: the one place the two projects are tested together (tests/integration/test_app_engine_boundary.py and
+# tests/integration/test_memory_router_live.py).
 
 on:
   pull_request:
@@ -81,12 +82,15 @@ jobs:
           -c "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public"
           -c "CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA public"
           -c "CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public"
-      - name: pytest (app-to-engine boundary; a skip is a failure here)
-        # The module skips without the engine interpreter or the database. Both are provided above, so a skip means the
-        # job silently tested nothing: the step fails on it instead of reporting success.
+      - name: pytest (app-to-engine boundary and the memory inspector routes; a skip is a failure here)
+        # Both modules skip without the engine interpreter or the database. Both are provided above, so a skip means the
+        # job silently tested nothing: the step fails on it instead of reporting success. The second module drives the
+        # /api/v1/memory routes against the real host with both delegating tokens (Tier B agent, Tier C inspector).
         run: |
-          uv run --no-sync pytest -q -rs -m integration tests/integration/test_app_engine_boundary.py | tee /tmp/boundary.txt
-          if grep -qiE "[0-9]+ skipped" /tmp/boundary.txt; then echo "the boundary test skipped"; exit 1; fi
+          uv run --no-sync pytest -q -rs -m integration \
+            tests/integration/test_app_engine_boundary.py \
+            tests/integration/test_memory_router_live.py | tee /tmp/boundary.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/boundary.txt; then echo "a boundary test skipped"; exit 1; fi
 
   workflows:
     runs-on: ubuntu-24.04

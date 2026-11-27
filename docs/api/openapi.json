@@ -1,0 +1,2025 @@
+{
+  "components": {
+    "schemas": {
+      "AdjudicateIn": {
+        "description": "`POST /memory/{id}/adjudicate`: only the user turns a held claim into a fact (`TB4`).",
+        "properties": {
+          "decision": {
+            "enum": [
+              "confirm",
+              "deny"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "AdjudicateIn",
+        "type": "object"
+      },
+      "AdjudicateResult": {
+        "description": "The engine's content-free receipt for an adjudication.",
+        "properties": {
+          "effect": {
+            "description": "'asserted' after confirm, 'retired' after deny",
+            "title": "Effect",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "effect",
+          "recorded_at"
+        ],
+        "title": "AdjudicateResult",
+        "type": "object"
+      },
+      "Body_login_api_v1_auth_login_post": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "grant_type": {
+            "default": "password",
+            "title": "Grant Type",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "Body_login_api_v1_auth_login_post",
+        "type": "object"
+      },
+      "Body_update_session_name_api_v1_auth_session__session_id__name_patch": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "Body_update_session_name_api_v1_auth_session__session_id__name_patch",
+        "type": "object"
+      },
+      "BoundOut": {
+        "description": "The statistical bound a verified abstraction always renders with (`CHANNELS.md` R3, invariant `I14`).",
+        "properties": {
+          "confidence_lower": {
+            "title": "Confidence Lower",
+            "type": "number"
+          },
+          "coverage": {
+            "title": "Coverage",
+            "type": "number"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "method_id": {
+            "title": "Method Id",
+            "type": "string"
+          },
+          "method_version": {
+            "title": "Method Version",
+            "type": "string"
+          },
+          "opportunity_count": {
+            "title": "Opportunity Count",
+            "type": "integer"
+          },
+          "support_count": {
+            "title": "Support Count",
+            "type": "integer"
+          },
+          "verified_on": {
+            "title": "Verified On",
+            "type": "string"
+          }
+        },
+        "required": [
+          "support_count",
+          "opportunity_count",
+          "confidence_lower",
+          "coverage",
+          "method_id",
+          "method_version",
+          "verified_on",
+          "expires_at"
+        ],
+        "title": "BoundOut",
+        "type": "object"
+      },
+      "ChangeOut": {
+        "description": "One belief that differs between two instants. Ids the result does not carry are omitted.",
+        "properties": {
+          "current": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Current",
+            "type": "array"
+          },
+          "outcome": {
+            "enum": [
+              "added",
+              "removed",
+              "changed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "previous": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Previous",
+            "type": "array"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "ChangeOut",
+        "type": "object"
+      },
+      "ChangesView": {
+        "description": "`GET /memory/changes`: the engine's `change` diff between two instants.",
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeOut"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "ChangesView",
+        "type": "object"
+      },
+      "ChatRequest": {
+        "description": "Request model for chat endpoint.\n\nAttributes:\n    messages: List of messages in the conversation.",
+        "properties": {
+          "messages": {
+            "description": "List of messages in the conversation",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "minItems": 1,
+            "title": "Messages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "ChatResponse": {
+        "description": "Response model for chat endpoint.\n\nAttributes:\n    messages: List of messages in the conversation.",
+        "properties": {
+          "messages": {
+            "description": "List of messages in the conversation",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "title": "ChatResponse",
+        "type": "object"
+      },
+      "ConflictSideOut": {
+        "description": "One side of an open contradiction. A conflict shows every side and picks none.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lifecycle": {
+            "enum": [
+              "observed",
+              "asserted",
+              "inferred",
+              "contested",
+              "retired"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "lifecycle",
+          "text"
+        ],
+        "title": "ConflictSideOut",
+        "type": "object"
+      },
+      "DeletionCounts": {
+        "description": "The engine's deletion receipt, counts only: no request digest, no exclusions list, no content.",
+        "properties": {
+          "deleted_entities": {
+            "default": 0,
+            "title": "Deleted Entities",
+            "type": "integer"
+          },
+          "deleted_mentions": {
+            "default": 0,
+            "title": "Deleted Mentions",
+            "type": "integer"
+          },
+          "deleted_turns": {
+            "default": 0,
+            "title": "Deleted Turns",
+            "type": "integer"
+          },
+          "deleted_versions": {
+            "title": "Deleted Versions",
+            "type": "integer"
+          },
+          "deletion_epoch": {
+            "title": "Deletion Epoch",
+            "type": "integer"
+          },
+          "dependents": {
+            "title": "Dependents",
+            "type": "integer"
+          },
+          "rederived_dependents": {
+            "default": 0,
+            "title": "Rederived Dependents",
+            "type": "integer"
+          },
+          "retired_dependents": {
+            "default": 0,
+            "title": "Retired Dependents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deletion_epoch",
+          "deleted_versions",
+          "dependents"
+        ],
+        "title": "DeletionCounts",
+        "type": "object"
+      },
+      "EngineHealth": {
+        "description": "`GET /memory/health`: content-free, unauthenticated.",
+        "properties": {
+          "engine": {
+            "enum": [
+              "up",
+              "down",
+              "not_configured"
+            ],
+            "title": "Engine",
+            "type": "string"
+          }
+        },
+        "required": [
+          "engine"
+        ],
+        "title": "EngineHealth",
+        "type": "object"
+      },
+      "ForgetChecks": {
+        "description": "What was observed after the erasure. Each value is measured, never assumed.\n\n``None`` means the check could not be run (the engine refused or was unreachable after the erasure committed). The\nerasure itself is already final at that point, so the receipt is still returned; the UI shows the check as not\nverified rather than as passed.\n\n``chat_history_cleared`` is false when any of the user's chat sessions could not be cleared. Such a transcript\nsurvives the erasure and the agent still reads it, so the forget is **not complete**: the caller shows it as failed\nand retries ``POST /forget``, which is idempotent (a second erasure finds nothing and the clearing runs again).",
+        "properties": {
+          "chat_history_cleared": {
+            "default": false,
+            "description": "Every chat session of the user was cleared; false means a transcript survived",
+            "title": "Chat History Cleared",
+            "type": "boolean"
+          },
+          "export_artifact_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "artifact_count of an engine export over /u/<id>/",
+            "title": "Export Artifact Count"
+          },
+          "memory_list_empty": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "GET /memory/ returned no item in any section",
+            "title": "Memory List Empty"
+          },
+          "old_item_not_found": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "get() of an id listed before the erasure answered forbidden; None when there was none",
+            "title": "Old Item Not Found"
+          }
+        },
+        "title": "ForgetChecks",
+        "type": "object"
+      },
+      "ForgetIn": {
+        "description": "`POST /memory/forget`: the caller must type the word, so a stray request cannot erase a user.",
+        "properties": {
+          "confirm": {
+            "const": "DELETE",
+            "title": "Confirm",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "title": "ForgetIn",
+        "type": "object"
+      },
+      "ForgetResult": {
+        "description": "`POST /memory/forget`: the receipt, how many chat sessions were cleared or failed, and the after-checks.",
+        "properties": {
+          "checks": {
+            "$ref": "#/components/schemas/ForgetChecks"
+          },
+          "cleared_chat_sessions": {
+            "title": "Cleared Chat Sessions",
+            "type": "integer"
+          },
+          "failed_chat_sessions": {
+            "default": 0,
+            "description": "Sessions whose transcript could not be cleared; any is a forget to retry",
+            "title": "Failed Chat Sessions",
+            "type": "integer"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/DeletionCounts"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt",
+          "cleared_chat_sessions",
+          "checks"
+        ],
+        "title": "ForgetResult",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "MemoryItem": {
+        "description": "One engine artifact as the inspector shows it.",
+        "properties": {
+          "bound": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoundOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present on a bounded abstraction; never omitted when it exists"
+          },
+          "channel": {
+            "enum": [
+              "facts",
+              "hypotheses",
+              "procedures",
+              "conflicts",
+              "none"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "conflict_sides": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictSideOut"
+            },
+            "title": "Conflict Sides",
+            "type": "array"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "id": {
+            "description": "The engine's artifact id (a version id)",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "episode",
+              "claim",
+              "procedure",
+              "abstraction"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The hypothesis label, when the engine gives one",
+            "title": "Label"
+          },
+          "lifecycle": {
+            "enum": [
+              "observed",
+              "asserted",
+              "inferred",
+              "contested",
+              "retired"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceRefOut"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "support_summary": {
+            "default": "",
+            "description": "A bounded abstraction's summary; empty otherwise",
+            "title": "Support Summary",
+            "type": "string"
+          },
+          "verification": {
+            "description": "e.g. 'unverified' or 'verified'",
+            "title": "Verification",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "lifecycle",
+          "channel",
+          "content",
+          "verification"
+        ],
+        "title": "MemoryItem",
+        "type": "object"
+      },
+      "MemoryItemResponse": {
+        "description": "`GET /memory/{id}`: one item, plus the request id every endpoint response carries.",
+        "properties": {
+          "bound": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoundOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present on a bounded abstraction; never omitted when it exists"
+          },
+          "channel": {
+            "enum": [
+              "facts",
+              "hypotheses",
+              "procedures",
+              "conflicts",
+              "none"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "conflict_sides": {
+            "items": {
+              "$ref": "#/components/schemas/ConflictSideOut"
+            },
+            "title": "Conflict Sides",
+            "type": "array"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "id": {
+            "description": "The engine's artifact id (a version id)",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "episode",
+              "claim",
+              "procedure",
+              "abstraction"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The hypothesis label, when the engine gives one",
+            "title": "Label"
+          },
+          "lifecycle": {
+            "enum": [
+              "observed",
+              "asserted",
+              "inferred",
+              "contested",
+              "retired"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceRefOut"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "support_summary": {
+            "default": "",
+            "description": "A bounded abstraction's summary; empty otherwise",
+            "title": "Support Summary",
+            "type": "string"
+          },
+          "verification": {
+            "description": "e.g. 'unverified' or 'verified'",
+            "title": "Verification",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "lifecycle",
+          "channel",
+          "content",
+          "verification"
+        ],
+        "title": "MemoryItemResponse",
+        "type": "object"
+      },
+      "MemoryView": {
+        "description": "The caller's memory, by channel, with the verbatim conversation record kept apart from known facts.",
+        "properties": {
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "conversation": {
+            "description": "facts channel, kind == episode",
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Conversation",
+            "type": "array"
+          },
+          "hypotheses": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Hypotheses",
+            "type": "array"
+          },
+          "known_facts": {
+            "description": "facts channel, kind != episode",
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Known Facts",
+            "type": "array"
+          },
+          "procedures": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Procedures",
+            "type": "array"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "title": "MemoryView",
+        "type": "object"
+      },
+      "Message": {
+        "description": "Message model for chat endpoint.\n\nAttributes:\n    role: The role of the message sender (user or assistant).\n    content: The content of the message.",
+        "properties": {
+          "content": {
+            "description": "The content of the message",
+            "maxLength": 3000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "role": {
+            "description": "The role of the message sender",
+            "enum": [
+              "user",
+              "assistant",
+              "system"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "Message",
+        "type": "object"
+      },
+      "ProvenanceEdgeOut": {
+        "description": "One edge of an item's lineage, at its distance from the item.",
+        "properties": {
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRefOut"
+          }
+        },
+        "required": [
+          "depth",
+          "source"
+        ],
+        "title": "ProvenanceEdgeOut",
+        "type": "object"
+      },
+      "ProvenanceOut": {
+        "description": "`GET /memory/{id}/provenance`: a bounded lineage view.",
+        "properties": {
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "depth_limited": {
+            "description": "True when readable ancestors remain beyond the requested depth",
+            "title": "Depth Limited",
+            "type": "boolean"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/ProvenanceEdgeOut"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "depth",
+          "depth_limited"
+        ],
+        "title": "ProvenanceOut",
+        "type": "object"
+      },
+      "SearchIn": {
+        "description": "`POST /memory/search`.",
+        "properties": {
+          "text": {
+            "maxLength": 300,
+            "minLength": 2,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "SearchIn",
+        "type": "object"
+      },
+      "SessionResponse": {
+        "description": "Response model for session creation.\n\nAttributes:\n    session_id: The unique identifier for the chat session\n    name: Name of the session (defaults to empty string)\n    token: The authentication token for the session",
+        "properties": {
+          "name": {
+            "default": "",
+            "description": "Name of the session",
+            "maxLength": 100,
+            "title": "Name",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "The unique identifier for the chat session",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "token": {
+            "$ref": "#/components/schemas/Token",
+            "description": "The authentication token for the session"
+          }
+        },
+        "required": [
+          "session_id",
+          "token"
+        ],
+        "title": "SessionResponse",
+        "type": "object"
+      },
+      "SourceRefOut": {
+        "description": "One provenance reference. Never content: the engine returns references only.",
+        "properties": {
+          "derivation_type": {
+            "description": "How the item derives from the source",
+            "title": "Derivation Type",
+            "type": "string"
+          },
+          "readable": {
+            "description": "False for an opaque handle to a source the caller cannot read",
+            "title": "Readable",
+            "type": "boolean"
+          },
+          "ref": {
+            "description": "The source id (e.g. 'app://session/turn-…') or the opaque per-caller handle",
+            "title": "Ref",
+            "type": "string"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "e.g. 'external' for a turn the app recorded; None when opaque",
+            "title": "Source Type"
+          }
+        },
+        "required": [
+          "readable",
+          "derivation_type",
+          "ref"
+        ],
+        "title": "SourceRefOut",
+        "type": "object"
+      },
+      "TimelineView": {
+        "description": "`GET /memory/timeline`: what the engine believed at one instant (`audit_as_of`, belief time = target time).",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "beliefs": {
+            "description": "audit rows, kind != episode",
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Beliefs",
+            "type": "array"
+          },
+          "conversation": {
+            "description": "audit rows, kind == episode",
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "title": "Conversation",
+            "type": "array"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at"
+        ],
+        "title": "TimelineView",
+        "type": "object"
+      },
+      "Token": {
+        "description": "Token model for authentication.\n\nAttributes:\n    access_token: The JWT access token.\n    token_type: The type of token (always \"bearer\").\n    expires_at: The token expiration timestamp.",
+        "properties": {
+          "access_token": {
+            "description": "The JWT access token",
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "The token expiration timestamp",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "token_type": {
+            "default": "bearer",
+            "description": "The type of token",
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "expires_at"
+        ],
+        "title": "Token",
+        "type": "object"
+      },
+      "TokenResponse": {
+        "description": "Response model for login endpoint.\n\nAttributes:\n    access_token: The JWT access token\n    token_type: The type of token (always \"bearer\")\n    expires_at: When the token expires",
+        "properties": {
+          "access_token": {
+            "description": "The JWT access token",
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "When the token expires",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "token_type": {
+            "default": "bearer",
+            "description": "The type of token",
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "expires_at"
+        ],
+        "title": "TokenResponse",
+        "type": "object"
+      },
+      "UserCreate": {
+        "description": "Request model for user registration.\n\nAttributes:\n    email: User's email address\n    password: User's password\n    username: Optional display name",
+        "properties": {
+          "email": {
+            "description": "User's email address",
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "description": "User's password",
+            "format": "password",
+            "maxLength": 64,
+            "minLength": 8,
+            "title": "Password",
+            "type": "string",
+            "writeOnly": true
+          },
+          "username": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional display name",
+            "title": "Username"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "UserCreate",
+        "type": "object"
+      },
+      "UserResponse": {
+        "description": "Response model for user operations.\n\nAttributes:\n    id: User's ID\n    email: User's email address\n    username: Optional display name\n    token: Authentication token",
+        "properties": {
+          "email": {
+            "description": "User's email address",
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "description": "User's ID",
+            "title": "Id",
+            "type": "integer"
+          },
+          "request_id": {
+            "description": "Unique identifier for this request",
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "token": {
+            "$ref": "#/components/schemas/Token",
+            "description": "Authentication token"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional display name",
+            "title": "Username"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "token"
+        ],
+        "title": "UserResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "ChronaMind application API",
+    "version": "generated"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "description": "Root endpoint returning basic API information.",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Root"
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "description": "Login a user.\n\nArgs:\n    request: The FastAPI request object for rate limiting.\n    email: User's email\n    password: User's password\n    grant_type: Must be \"password\"\n\nReturns:\n    TokenResponse: Access token information\n\nRaises:\n    HTTPException: If credentials are invalid",
+        "operationId": "login_api_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_login_api_v1_auth_login_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "description": "Register a new user.\n\nArgs:\n    request: The FastAPI request object for rate limiting.\n    user_data: User registration data\n\nReturns:\n    UserResponse: The created user info",
+        "operationId": "register_user_api_v1_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register User",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/session": {
+      "post": {
+        "description": "Create a new chat session for the authenticated user.\n\nArgs:\n    user: The authenticated user\n\nReturns:\n    SessionResponse: The session ID, name, and access token",
+        "operationId": "create_session_api_v1_auth_session_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Session",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/session/{session_id}": {
+      "delete": {
+        "description": "Delete a session for the authenticated user.\n\nArgs:\n    session_id: The ID of the session to delete\n    current_session: The current session from auth\n\nReturns:\n    None",
+        "operationId": "delete_session_api_v1_auth_session__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Session",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/session/{session_id}/name": {
+      "patch": {
+        "description": "Update a session's name.\n\nArgs:\n    session_id: The ID of the session to update\n    name: The new name for the session\n    current_session: The current session from auth\n\nReturns:\n    SessionResponse: The updated session information",
+        "operationId": "update_session_name_api_v1_auth_session__session_id__name_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_update_session_name_api_v1_auth_session__session_id__name_patch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Session Name",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/sessions": {
+      "get": {
+        "description": "Get all session IDs for the authenticated user.\n\nArgs:\n    user: The authenticated user\n\nReturns:\n    List[SessionResponse]: List of session IDs",
+        "operationId": "get_user_sessions_api_v1_auth_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SessionResponse"
+                  },
+                  "title": "Response Get User Sessions Api V1 Auth Sessions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get User Sessions",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/chatbot/chat": {
+      "post": {
+        "description": "Process a chat request using LangGraph.\n\nArgs:\n    request: The FastAPI request object for rate limiting.\n    chat_request: The chat request containing messages.\n    session: The current session from the auth token.\n\nReturns:\n    ChatResponse: The processed chat response.\n\nRaises:\n    HTTPException: If there's an error processing the request.",
+        "operationId": "chat_api_v1_chatbot_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Chat",
+        "tags": [
+          "Chatbot"
+        ]
+      }
+    },
+    "/api/v1/chatbot/chat/stream": {
+      "post": {
+        "description": "Process a chat request using LangGraph with streaming response.\n\nArgs:\n    request: The FastAPI request object for rate limiting.\n    chat_request: The chat request containing messages.\n    session: The current session from the auth token.\n\nReturns:\n    StreamingResponse: A streaming response of the chat completion.\n\nRaises:\n    HTTPException: If there's an error processing the request.",
+        "operationId": "chat_stream_api_v1_chatbot_chat_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Chat Stream",
+        "tags": [
+          "Chatbot"
+        ]
+      }
+    },
+    "/api/v1/chatbot/messages": {
+      "delete": {
+        "description": "Clear all messages for a session.\n\nArgs:\n    request: The FastAPI request object for rate limiting.\n    session: The current session from the auth token.\n\nReturns:\n    dict: A message indicating the chat history was cleared.",
+        "operationId": "clear_chat_history_api_v1_chatbot_messages_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Clear Chat History",
+        "tags": [
+          "Chatbot"
+        ]
+      },
+      "get": {
+        "description": "Get all messages for a session.\n\nArgs:\n    request: The FastAPI request object for rate limiting.\n    session: The current session from the auth token.\n\nReturns:\n    ChatResponse: All messages in the session.\n\nRaises:\n    HTTPException: If there's an error retrieving the messages.",
+        "operationId": "get_session_messages_api_v1_chatbot_messages_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Session Messages",
+        "tags": [
+          "Chatbot"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "description": "Health check endpoint.\n\nReturns:\n    dict: Health status information.",
+        "operationId": "health_check_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health Check"
+      }
+    },
+    "/api/v1/memory/": {
+      "get": {
+        "description": "Everything the engine currently holds for the user, by channel; recorded turns in ``conversation``.",
+        "operationId": "list_memory_api_v1_memory__get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Memory",
+        "tags": [
+          "Memory"
+        ]
+      }
+    },
+    "/api/v1/memory/changes": {
+      "get": {
+        "description": "What changed between ``start`` and ``end`` (the engine's ``change`` diff, ``V2-D81``).",
+        "operationId": "memory_changes_api_v1_memory_changes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "title": "End",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Memory Changes",
+        "tags": [
+          "Memory"
+        ]
+      }
+    },
+    "/api/v1/memory/forget": {
+      "post": {
+        "description": "Erase everything the engine holds for the user, clear their chat histories, and report what was observed.\n\nOrder matters. The engine erasure runs first and is final once it answers; only then are the app's transcripts\ncleared, because the agent re-reads a session's whole history every turn and would otherwise keep answering from\nit. If the erasure fails, nothing is cleared. The after-checks run last and report observations, never assumptions.\n\nA transcript that cannot be cleared is counted in ``failed_chat_sessions`` and turns ``chat_history_cleared``\nfalse: the forget is then incomplete, and the caller is told so rather than told \"forgotten\". Calling this route\nagain is safe and retries the clearing (the second erasure finds nothing to delete).",
+        "operationId": "forget_me_api_v1_memory_forget_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgetIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgetResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Forget Me",
+        "tags": [
+          "Memory"
+        ]
+      }
+    },
+    "/api/v1/memory/health": {
+      "get": {
+        "description": "Whether the memory engine answers. Content-free and unauthenticated, for the interface's status indicator.",
+        "operationId": "memory_health_api_v1_memory_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineHealth"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Memory Health",
+        "tags": [
+          "Memory"
+        ]
+      }
+    },
+    "/api/v1/memory/search": {
+      "post": {
+        "description": "The user's memory ranked against a text (hybrid recall in the engine), by channel.",
+        "operationId": "search_memory_api_v1_memory_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Memory",
+        "tags": [
+          "Memory"
+        ]
+      }
+    },
+    "/api/v1/memory/timeline": {
+      "get": {
+        "description": "What the engine believed at instant ``at`` (``audit_as_of``; no text, the mode refuses one: ``V2-D86``).",
+        "operationId": "memory_timeline_api_v1_memory_timeline_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "at",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "title": "At",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Memory Timeline",
+        "tags": [
+          "Memory"
+        ]
+      }
+    },
+    "/api/v1/memory/{artifact_id}": {
+      "get": {
+        "description": "One item. An id that does not exist and an id of another user both answer 404 ``forbidden``.",
+        "operationId": "get_memory_api_v1_memory__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryItemResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Memory",
+        "tags": [
+          "Memory"
+        ]
+      }
+    },
+    "/api/v1/memory/{artifact_id}/adjudicate": {
+      "post": {
+        "description": "Confirm (becomes ``asserted``) or deny (becomes ``retired``) a ``contested`` claim. Nothing else promotes one.",
+        "operationId": "adjudicate_memory_api_v1_memory__artifact_id__adjudicate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdjudicateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdjudicateResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adjudicate Memory",
+        "tags": [
+          "Memory"
+        ]
+      }
+    },
+    "/api/v1/memory/{artifact_id}/provenance": {
+      "get": {
+        "description": "Where an item came from: provenance references to ``depth`` hops. References only, never source content.",
+        "operationId": "memory_provenance_api_v1_memory__artifact_id__provenance_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 8,
+              "minimum": 1,
+              "title": "Depth",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvenanceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Memory Provenance",
+        "tags": [
+          "Memory"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Health check endpoint with environment-specific information.\n\nReturns:\n    JSONResponse: Health status payload, with HTTP 503 when the\n    database is unreachable so load balancers can drop the instance.",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health Check"
+      }
+    }
+  }
+}

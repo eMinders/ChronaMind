@@ -153,10 +153,31 @@ This is a production-ready AI agent application built with:
 - Use LangChain's `CallbackHandler` from Langfuse for tracing all LLM calls
 - All LLM operations must have Langfuse tracing enabled
 
-### Memory (mem0ai)
-- Use `AsyncMemory` for semantic memory storage
-- Store memories per user_id for personalized experiences
-- Use async methods: `add()`, `get()`, `search()`, `delete()`
+### Memory (the ChronaMind engine, over HTTP)
+
+Long-term memory is the engine in `custom-memory-engine/`, reached only over `POST {MEMORY_ENGINE_URL}/v1/call`
+(`app/services/memory_engine.py`, `V2-D93`). The `mem0ai` client is retired: never import or extend it. The full
+reference is [`docs/memory.md`](docs/memory.md).
+
+**Two engine tokens, two clients, never swapped.** Both are delegating tokens on the engine host, which take their tier
+from the token and act for the end user named as `principal` (`V2-D120`, threat `T-42`).
+
+| Setting | Tier | Client | Used by |
+| --- | --- | --- | --- |
+| `MEMORY_ENGINE_TOKEN` | B | `memory_engine` | the agent only: `search()` before a reply, `add()` after it |
+| `MEMORY_ENGINE_USER_TOKEN` | C | `memory_inspector` | the `/api/v1/memory/*` routes only (`app/api/v1/memory.py`) |
+
+- Tier C can `delete`, `adjudicate`, `export` and run `audit_as_of` for **every** end user, which Tier B cannot. Never give
+  the agent path the Tier C token, and never add an agent or tool call that uses `memory_inspector`. A test
+  (`tests/test_memory_inspector_client.py`) fails if the agent's client sends the inspector token.
+- The `principal` is always `str(user.id)` from the authenticated user (`get_current_user`), never a value taken from the
+  request. No request field may name a principal or a tier.
+- An empty `MEMORY_ENGINE_USER_TOKEN` disables the inspector routes (HTTP 503 `inspector_not_configured`). The agent's
+  memory is unaffected.
+- Real token values live only in the gitignored `.env*` files and in the engine host's `CME_HOST_TOKENS`.
+  `.env.example` carries the key with an empty value. Never commit a real one.
+- A new or changed inspector route or response model needs `uv run python scripts/export_openapi.py`; CI fails while
+  `docs/api/openapi.json` is stale.
 
 ## Authentication & Security
 

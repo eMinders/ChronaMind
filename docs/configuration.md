@@ -41,9 +41,15 @@ cp .env.example .env.development
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `MEMORY_ENGINE_URL` | *(empty)* | Base URL of the ChronaMind engine host, e.g. `http://127.0.0.1:8100`. Empty means no long-term memory |
+| `MEMORY_ENGINE_TOKEN` | *(empty)* | **Secret.** The agent's delegating token on the engine host (Tier B) |
+| `MEMORY_ENGINE_USER_TOKEN` | *(empty)* | **Secret.** The memory inspector's delegating token (Tier C), used only by `/api/v1/memory/*`. Empty disables those routes (503); the agent is unaffected. Never give it to the agent path |
 | `LONG_TERM_MEMORY_COLLECTION_NAME` | `longterm_memory` | pgvector collection name |
 | `MEMORY_SLOT_CLASSIFIER` | `llm` | `llm` recognises single-valued facts with a language model; anything else disables it |
 | `MEMORY_SLOT_CLASSIFIER_MODEL` | *(empty)* | The one model the classifier may use; empty means `DEFAULT_LLM_MODEL` |
+
+Both engine tokens must also be registered on the engine host in `CME_HOST_TOKENS`, each with `"delegate": true` and its
+tier (`B` for `MEMORY_ENGINE_TOKEN`, `C` for `MEMORY_ENGINE_USER_TOKEN`). See [Memory](memory.md#configuration).
 
 ---
 
@@ -107,6 +113,7 @@ When `VALKEY_HOST` is set, the app uses Valkey/Redis for memory search caching a
 | `RATE_LIMIT_MESSAGES` | `50 per minute` | GET/DELETE /messages |
 | `RATE_LIMIT_LOGIN` | `20 per minute` | POST /auth/login |
 | `RATE_LIMIT_REGISTER` | `10 per hour` | POST /auth/register |
+| `RATE_LIMIT_MEMORY` | `60 per minute` | Every `/api/v1/memory/*` route |
 
 When Valkey is configured, rate limiting is shared across all app instances. Without it, limits are per-process.
 
