@@ -271,6 +271,21 @@ class ResultStore:
         if not handles:
             del self._principals[principal]
 
+    def _largest_surplus(self) -> tuple[str, OrderedDict[str, None]] | None:
+        """The principal holding the most surplus handles; ties go to the least recently used.
+
+        Admission reissues the *largest* surplus, not the oldest holder's: the caller that has most to spare is the one
+        that gives, so a principal holding two entries is not stripped while a neighbour holds five (`V2-D127`).
+        Iteration
+        is in ``OrderedDict`` order, which is least-recently-used first, and the strict ``>`` keeps the earliest holder
+        of an equal surplus, so the choice is deterministic.
+        """
+        best: tuple[str, OrderedDict[str, None]] | None = None
+        for principal, handles in self._principals.items():
+            if len(handles) > 1 and (best is None or len(handles) > len(best[1])):
+                best = (principal, handles)
+        return best
+
     def _make_room(self, active_principal: str) -> None:
         while len(self._entries) > self._capacity:
             active_handles = self._principals[active_principal]
@@ -278,10 +293,7 @@ class ResultStore:
                 old_handle, _ = active_handles.popitem(last=False)
                 del self._entries[old_handle]
                 continue
-            surplus = next(
-                ((principal, handles) for principal, handles in self._principals.items() if len(handles) > 1),
-                None,
-            )
+            surplus = self._largest_surplus()
             if surplus is not None:
                 _, handles = surplus
                 old_handle, _ = handles.popitem(last=False)

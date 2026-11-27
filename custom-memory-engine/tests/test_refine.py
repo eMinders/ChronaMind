@@ -194,6 +194,31 @@ def test_admission_reissues_a_surplus_slot_before_evicting_a_principal_and_keeps
     assert len(store) == 3
 
 
+def test_admission_reclaims_from_the_largest_surplus_not_the_oldest_holder() -> None:
+    """`V2-D127` promises the *largest* surplus gives first; two donors of unequal size tell the two rules apart.
+
+    Resident counts go from ``(old=2, big=4)`` to ``(2, 3, 1)`` when a third principal is admitted at capacity six.
+    Reclaiming from the oldest holder instead would give ``(1, 4, 1)``.
+    """
+    store = ResultStore(capacity=6)
+    old = [
+        store.issue(principal="old", budgets=BUDGETS, read_set=alice("/u/old/"), intent=INTENT, candidates=(str(n),))
+        for n in range(2)
+    ]
+    big = [
+        store.issue(principal="big", budgets=BUDGETS, read_set=alice("/u/big/"), intent=INTENT, candidates=(str(n),))
+        for n in range(4)
+    ]
+
+    store.issue(principal="new", budgets=BUDGETS, read_set=alice("/u/new/"), intent=INTENT, candidates=("n",))
+
+    resident = {principal: len(handles) for principal, handles in store._principals.items()}
+    assert resident == {"old": 2, "big": 3, "new": 1}
+    assert all(store.resolve("old", handle) is not None for handle in old), "the smaller surplus is untouched"
+    assert store.resolve("big", big[0]) is None, "the largest surplus gives its oldest entry"
+    assert len(store) == 6
+
+
 def test_an_evicted_handle_still_resolves_as_unknown() -> None:
     store = ResultStore(capacity=1)
     first = store.issue(

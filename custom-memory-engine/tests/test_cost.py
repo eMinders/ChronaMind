@@ -336,6 +336,21 @@ def test_a_new_principals_admission_trims_a_surplus_count_and_keeps_one_record_e
     assert len(store) == 3
 
 
+def test_admission_takes_a_record_from_the_largest_surplus_not_the_oldest_holder() -> None:
+    """Same rule as the result store: ``(old=2, big=4)`` admits a third principal as ``(2, 3, 1)`` (`V2-D127`)."""
+    store = CostStore(capacity=6, clock=lambda: T0)
+    for _ in range(2):
+        store.record("old", _sample_query_cost(latencies=dict.fromkeys(STAGES, 7.0)))
+    for _ in range(4):
+        store.record("big", _sample_query_cost(latencies=dict.fromkeys(STAGES, 11.0)))
+
+    store.record("new", _sample_query_cost(latencies=dict.fromkeys(STAGES, 5.0)))
+
+    assert (store.report("old").query_count, store.report("big").query_count) == (2, 3)
+    assert store.report("new").query_count == 1
+    assert len(store) == 6
+
+
 def test_cost_store_isolates_principals_filters_windows_and_evicts_by_capacity_and_retention() -> None:
     current = [T0]
     store = CostStore(retention=timedelta(minutes=10), capacity=3, clock=lambda: current[0])

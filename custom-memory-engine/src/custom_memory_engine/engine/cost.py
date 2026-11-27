@@ -540,16 +540,26 @@ class CostStore:
             if not self._records[principal]:
                 del self._records[principal]
 
+    def _largest_surplus(self) -> tuple[str, list[_RecordedCost]] | None:
+        """The principal holding the most surplus records; ties go to the least recently used (`V2-D127`).
+
+        Admission reissues the largest surplus so the caller with most to spare is the one that gives, not whichever
+        holder happens to be oldest. Iteration is least-recently-used first and ``>`` is strict, so an equal surplus
+        resolves to the earlier holder deterministically.
+        """
+        best: tuple[str, list[_RecordedCost]] | None = None
+        for principal, records in self._records.items():
+            if len(records) > 1 and (best is None or len(records) > len(best[1])):
+                best = (principal, records)
+        return best
+
     def _make_room(self, active_principal: str) -> None:
         while len(self) > self._capacity:
             active_records = self._records[active_principal]
             if len(active_records) > 1:
                 del active_records[0]
                 continue
-            surplus = next(
-                ((principal, records) for principal, records in self._records.items() if len(records) > 1),
-                None,
-            )
+            surplus = self._largest_surplus()
             if surplus is not None:
                 _, records = surplus
                 del records[0]

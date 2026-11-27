@@ -379,6 +379,24 @@ async def test_unknown_foreign_and_expired_handles_are_one_indistinguishable_ans
         assert shaped.code == "forbidden"
 
 
+async def test_an_evicted_handle_is_the_same_answer_as_an_unknown_one(database) -> None:  # noqa: F811
+    """#261 §7: eviction by capacity is a fourth way to miss, and it must be indistinguishable from the other three."""
+    async with world(database) as (_conn, engine, _schema):
+        engine.results = ResultStore(capacity=1)
+        runtime = engine.resolver.runtime  # type: ignore[attr-defined]
+        register_ingest_handlers(engine, runtime, CODING_PROFILE)
+        register_read_handlers(engine, runtime)
+        await seed(engine, REPO_A, "a1", "observed event one")
+        alice = reader("alice", REPO_A)
+        evicted = await answer(engine, alice)
+        await answer(engine, alice)  # capacity one: the newer answer evicts the first handle
+
+        never = {"result_id": "res_" + "0" * 32, "instruction": "mention observed"}
+        unknown = await forbidden(engine, alice, "refine", never)
+        gone = await forbidden(engine, alice, "refine", refine_args(evicted, "mention observed"))
+        assert (gone.code, gone.detail) == (unknown.code, unknown.detail) == ("forbidden", None)
+
+
 async def test_a_refine_chain_is_bounded(database) -> None:  # noqa: F811
     """Criterion 9: the depth lives in the handle, so an endless chain costs a fixed number of statements."""
     async with world(database) as (_conn, engine, _schema):
