@@ -141,7 +141,7 @@ def teardown(*, state_dir: Path = STATE, env_file: Path = ENV_FILE, wipe: bool =
         if port > 0:
             stopped_ports.append(port)
 
-    still_open = _wait_ports_closed(stopped_ports)
+    still_open = _wait_ports_closed(sorted({*stopped_ports, *(port for _, port in STACK_PORTS)}))
     if pids_file.exists():
         pids_file.unlink()
 

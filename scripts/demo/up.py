@@ -41,8 +41,8 @@ ENGINE_PYTHON = ENGINE / (".venv/Scripts/python.exe" if os.name == "nt" else ".v
 STATE = HERE / ".state"
 ENV_FILE = HERE / ".env.demo"
 PIDS_FILE = STATE / "pids.json"
-COMPOSE_FILE = STATE / "compose.yaml"
 COMPOSE_PROJECT = "chronamind-demo"
+STARTUP_BUDGET_SECONDS = 180.0
 
 SCHEMA = "cme_demo"
 ROLE = "cme_demo_rt"
@@ -84,74 +84,56 @@ sys.argv = ["scripts/run_host.py"]
 runpy.run_path("scripts/run_host.py", run_name="__main__")
 """.strip()
 
-#: Runs inside the app subprocess: reads ``.env.demo`` from disk (never argv), keeps demo
-#: overrides authoritative even when ``.env.development`` exists (``app/core/config.py`` calls
-#: ``load_dotenv(..., override=True)``), and sets the Selector event loop on Windows.
-_APP_LAUNCHER = """
-import asyncio, os, sys
-from pathlib import Path
-import dotenv, uvicorn
-
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-env_path = Path(sys.argv[1])
-override_keys = set(sys.argv[2].split(","))
-demo_vars = {
-    k: v
-    for line in env_path.read_text(encoding="utf-8").splitlines()
-    if "=" in line and not line.lstrip().startswith("#")
-    for k, v in (line.split("=", 1),)
-    if k in override_keys
-}
-demo_vars["LOG_DIR"] = sys.argv[3]
-demo_vars["PROFILING_DIR"] = sys.argv[4]
-_orig_load_dotenv = dotenv.load_dotenv
-
-def _demo_load_dotenv(*args, **kwargs):
-    result = _orig_load_dotenv(*args, **kwargs)
-    os.environ.update(demo_vars)
-    return result
-
-dotenv.load_dotenv = _demo_load_dotenv
-os.environ.update(demo_vars)
-
-uvicorn.run(
-    "app.main:app",
-    host=sys.argv[5],
-    port=int(sys.argv[6]),
-    loop="asyncio",
-)
-""".strip()
-
-#: Runs Alembic migrations against the demo app database while keeping ``.env.demo`` authoritative.
-_ALEMBIC_LAUNCHER = """
+#: Shared bootstrap for app-side subprocesses (uvicorn and Alembic): reads ``.env.demo`` from disk
+#: (never argv) and wraps ``dotenv.load_dotenv`` so demo overrides stay authoritative even when
+#: ``.env.development`` exists (``app/core/config.py`` calls ``load_dotenv(..., override=True)``).
+_DEMO_ENV_BOOTSTRAP = """
 import os, sys
 from pathlib import Path
 import dotenv
-from alembic.config import main as alembic_main
 
-env_path = Path(sys.argv[1])
-override_keys = set(sys.argv[2].split(","))
-demo_vars = {
+_env_path = Path(sys.argv[1])
+_override_keys = set(sys.argv[2].split(","))
+_demo_vars = {
     k: v
-    for line in env_path.read_text(encoding="utf-8").splitlines()
+    for line in _env_path.read_text(encoding="utf-8").splitlines()
     if "=" in line and not line.lstrip().startswith("#")
     for k, v in (line.split("=", 1),)
-    if k in override_keys
+    if k in _override_keys
 }
-demo_vars["LOG_DIR"] = sys.argv[3]
+_demo_vars["LOG_DIR"] = sys.argv[3]
 _orig_load_dotenv = dotenv.load_dotenv
 
 def _demo_load_dotenv(*args, **kwargs):
     result = _orig_load_dotenv(*args, **kwargs)
-    os.environ.update(demo_vars)
+    os.environ.update(_demo_vars)
     return result
 
 dotenv.load_dotenv = _demo_load_dotenv
-os.environ.update(demo_vars)
+os.environ.update(_demo_vars)
+""".strip()
+
+_APP_LAUNCHER = (
+    _DEMO_ENV_BOOTSTRAP
+    + "\n"
+    + """
+import asyncio, uvicorn
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+_demo_vars["PROFILING_DIR"] = sys.argv[4]
+os.environ["PROFILING_DIR"] = sys.argv[4]
+uvicorn.run("app.main:app", host=sys.argv[5], port=int(sys.argv[6]), loop="asyncio")
+""".strip()
+)
+
+_ALEMBIC_LAUNCHER = (
+    _DEMO_ENV_BOOTSTRAP
+    + "\n"
+    + """
+from alembic.config import main as alembic_main
 alembic_main(argv=["upgrade", "head"])
 """.strip()
+)
 
 
 def _loopback_opener() -> urllib.request.OpenerDirector:
@@ -620,9 +602,19 @@ def _save_pids(pids: Mapping[str, Mapping[str, int]], pids_file: Path = PIDS_FIL
     pids_file.write_text(json.dumps(pids, indent=2) + "\n", encoding="utf-8")
 
 
+def _remaining_budget(deadline: float, cap: float) -> float:
+    """Return remaining seconds until ``deadline`` (capped at ``cap``), raising if expired."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError(f"startup exceeded the {int(STARTUP_BUDGET_SECONDS)}s budget")
+    return min(remaining, cap)
+
+
 def main() -> int:
     """Start databases, migrate schemas, boot the engine host and app, and wait until healthy."""
+    deadline = time.monotonic() + STARTUP_BUDGET_SECONDS
     started_pids: list[int] = []
+    tracked_pids: dict[str, dict[str, int]] = {}
     try:
         _check_prerequisites()
         STATE.mkdir(parents=True, exist_ok=True)
@@ -673,30 +665,48 @@ def main() -> int:
         print("Running app database migrations...")
         prepare_app_db(app_env, STATE, ENV_FILE)
 
-        print("Starting engine host on 127.0.0.1:8100...")
+        print(f"Starting engine host on {ENGINE_HOST}:{ENGINE_PORT}...")
         host_log = STATE / "engine_host.log"
         host_proc = _spawn_detached(_host_command(), cwd=ENGINE, env=engine_env, log_file=host_log)
         started_pids.append(host_proc.pid)
-        _wait_for_health(host_health_url, host_proc, host_log, name="engine host", timeout=60.0)
+        tracked_pids["engine_host"] = {"pid": host_proc.pid, "port": ENGINE_PORT}
+        _save_pids(tracked_pids, PIDS_FILE)
+        _wait_for_health(
+            host_health_url,
+            host_proc,
+            host_log,
+            name="engine host",
+            timeout=_remaining_budget(deadline, 60.0),
+        )
 
-        print("Starting app on 127.0.0.1:8000...")
+        print(f"Starting app on {APP_HOST}:{APP_PORT}...")
         app_log = STATE / "app.log"
         app_proc = _spawn_detached(_app_command(ENV_FILE, STATE), cwd=ROOT, env=app_env, log_file=app_log)
         started_pids.append(app_proc.pid)
-        _wait_for_health(app_health_url, app_proc, app_log, name="app", timeout=90.0)
-
-        _save_pids(
-            {
-                "engine_host": {"pid": host_proc.pid, "port": ENGINE_PORT},
-                "app": {"pid": app_proc.pid, "port": APP_PORT},
-            },
-            PIDS_FILE,
+        tracked_pids["app"] = {"pid": app_proc.pid, "port": APP_PORT}
+        _save_pids(tracked_pids, PIDS_FILE)
+        _wait_for_health(
+            app_health_url,
+            app_proc,
+            app_log,
+            name="app",
+            timeout=_remaining_budget(deadline, 90.0),
         )
+
         print(f"all healthy: app {app_health_url} (200), host {host_health_url} (200)")
         return 0
+    except KeyboardInterrupt:
+        for pid in reversed(started_pids):
+            _stop_pid(pid)
+        if started_pids and PIDS_FILE.exists():
+            PIDS_FILE.unlink()
+        print("demo stack startup interrupted", file=sys.stderr)
+        return 130
     except Exception as error:  # noqa: BLE001 - clean CLI failure with rollback of spawned processes
         for pid in reversed(started_pids):
             _stop_pid(pid)
+        if started_pids and PIDS_FILE.exists():
+            PIDS_FILE.unlink()
         print(f"demo stack startup failed: {error}", file=sys.stderr)
         return 1
 

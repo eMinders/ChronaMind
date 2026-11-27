@@ -359,3 +359,77 @@ def test_prepare_engine_skips_provision_role_when_role_already_exists(
     monkeypatch.setattr(up, "engine_role_exists", lambda dsn, role: True)
     up.prepare_engine({"RL_DATABASE_URL": "postgresql://u:p@127.0.0.1:5441/cme_demo"}, tmp_path)
     assert ran == ["engine schema migrate"]
+
+
+def test_check_main_uses_tier_b_agent_token_never_tier_c_inspector_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    up = load_demo_module("up")
+    check = load_demo_module("check")
+    env_file = tmp_path / ".env.demo"
+    values = up.demo_secrets(env_file)
+    seen: dict[str, str] = {}
+
+    def fake_run_check(*, app_url: str, engine_url: str, engine_token: str) -> bool:
+        seen["app_url"] = app_url
+        seen["engine_url"] = engine_url
+        seen["engine_token"] = engine_token
+        return True
+
+    monkeypatch.setattr(check, "ENV_FILE", env_file)
+    monkeypatch.setattr(check, "run_check", fake_run_check)
+
+    assert check.main() == 0
+    assert seen["engine_token"] == values["MEMORY_ENGINE_TOKEN"]
+    assert seen["engine_token"] != values["MEMORY_ENGINE_USER_TOKEN"]
+
+
+def test_up_rolls_back_and_clears_pids_on_keyboard_interrupt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    up = load_demo_module("up")
+    state_dir = tmp_path / ".state"
+    env_file = tmp_path / ".env.demo"
+    pids_file = state_dir / "pids.json"
+    up.demo_secrets(env_file)
+
+    monkeypatch.setattr(up, "STATE", state_dir)
+    monkeypatch.setattr(up, "ENV_FILE", env_file)
+    monkeypatch.setattr(up, "PIDS_FILE", pids_file)
+    monkeypatch.setattr(up, "_check_prerequisites", lambda: None)
+    monkeypatch.setattr(up, "_port_listening", lambda host, port: False)
+    monkeypatch.setattr(up, "start_databases", lambda s, e: None)
+    monkeypatch.setattr(up, "prepare_engine", lambda env, s: None)
+    monkeypatch.setattr(up, "prepare_app_db", lambda env, s, e: None)
+
+    class FakeProc:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    monkeypatch.setattr(up, "_spawn_detached", lambda *a, **kw: FakeProc(8101))
+
+    def interrupt_wait(*a: object, **kw: object) -> None:
+        del a, kw
+        assert pids_file.exists(), "PID must be recorded immediately after spawn"
+        raise KeyboardInterrupt
+
+    stopped: list[int] = []
+    monkeypatch.setattr(up, "_wait_for_health", interrupt_wait)
+    monkeypatch.setattr(up, "_stop_pid", lambda pid: stopped.append(pid))
+
+    rc = up.main()
+
+    assert rc == 130
+    assert stopped == [8101]
+    assert not pids_file.exists()
+
+
+def test_down_fails_when_stack_port_still_listening_without_pid_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    down = load_demo_module("down")
+    monkeypatch.setattr(down, "run_docker_down", lambda **kw: None)
+    monkeypatch.setattr(down, "port_listening", lambda host, port: port == 8100)
+    monkeypatch.setattr(down, "_wait_ports_closed", lambda ports, timeout=10.0: [8100])
+
+    rc = down.teardown(state_dir=tmp_path / ".state", env_file=tmp_path / ".env.demo", wipe=False)
+
+    assert rc == 1

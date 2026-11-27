@@ -254,7 +254,8 @@ def main() -> int:
         return 1
     values = parse_env_file(ENV_FILE)
     engine_url = values.get("MEMORY_ENGINE_URL", "")
-    engine_token = values.get("MEMORY_ENGINE_USER_TOKEN") or values.get("MEMORY_ENGINE_TOKEN", "")
+    # Use the Tier B agent token only; Tier C (`MEMORY_ENGINE_USER_TOKEN`) is reserved for `/api/v1/memory/*`.
+    engine_token = values.get("MEMORY_ENGINE_TOKEN", "")
     if not engine_url or not engine_token:
         print("FAIL: missing engine settings in scripts/demo/.env.demo. Re-run `up.py`.", file=sys.stderr)
         return 1
