@@ -14,6 +14,8 @@ live database had. The worker, the deletion and the API run for real.
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -493,7 +495,6 @@ async def test_a_replay_erases_the_marked_turn_even_when_its_target_is_not_in_th
 async def test_migrating_a_restored_database_does_not_mark_it_reconciled(
     database,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The trap the first version of this fix had: a restored pre-33 dump is *migrated*, so a migration that stamped
     itself would mark a restored copy as reconciled and let the worker and the host run on it with no replay.
@@ -501,7 +502,6 @@ async def test_migrating_a_restored_database_does_not_mark_it_reconciled(
     Rolled back to 32 and migrated forward again, which is exactly what restoring such a dump and then upgrading does.
     """
     from custom_memory_engine.schema import migrate
-    from scripts.erasure_journal import main
     from tests.integration.rollbacks import rollback_sql
 
     config, schema = database
@@ -533,8 +533,18 @@ async def test_migrating_a_restored_database_does_not_mark_it_reconciled(
         monkeypatch.setenv("CME_DATABASE_URL", config.database_url.get_secret_value())
         monkeypatch.setenv("CME_SCHEMA", schema)
         monkeypatch.delenv("CME_DELETION_RECEIPT_KEY", raising=False)
-        assert await main(["replay", "--mark-reconciled", "--restored-mode", "in-place"]) == 0
-        assert "No journal was read." in capsys.readouterr().err
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "scripts/erasure_journal.py",
+            "replay",
+            "--mark-reconciled",
+            "--restored-mode",
+            "in-place",
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await process.communicate()
+        assert process.returncode == 0, stderr.decode()
+        assert b"No journal was read." in stderr
         assert await (
             await conn.execute(cast(Any, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
         ).fetchall() == [(1,)]
