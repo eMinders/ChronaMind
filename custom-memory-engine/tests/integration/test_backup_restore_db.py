@@ -55,6 +55,12 @@ def test_backup_and_restore_rehearsal_passes_against_real_postgres() -> None:
     assert report["journal_wrong_key_refused"] is True
     assert report["journal_unstamped_refused"] is True
     assert report["journal_truncated_refused"] is True
+    # #263 (V2-D126): the pairing rule is measured on the real artefacts, not only on a hand-built journal. The journal
+    # above is exported after the pre-deletion dump this restore uses, so the pair is accepted and the replay the rest
+    # of this test asserts is a replay of a pair the check allows; a dump actually taken after that export is refused
+    # (`journal_older_than_backup`), which is the refusal an operator sees when shipping lags the timer.
+    assert report["recovery_point_accepted_for_this_dump"] is True
+    assert report["recovery_point_refused_for_a_later_dump"] is True
     # replayed into the restored database: the resolved memory deletion and bob's and carol's `delete all` erase
     # again, the two memories the backup never held (alice's late claim and the T-46 peanut claim) are recorded with
     # nothing to erase, and carol (whom the backup predates) is re-provisioned so her epochs are taken. The T-46 turn
