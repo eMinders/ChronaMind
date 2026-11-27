@@ -458,12 +458,16 @@ def test_the_restore_modes_are_the_ones_the_identity_records() -> None:
         assert f"'{mode}'" in migration, mode
 
 
-def test_a_mark_reconciled_run_accepts_a_mode_and_reaches_the_database(tmp_path: Path) -> None:
-    """The upgrade path takes a mode too: `--mark-reconciled --restored-mode in-place` is what the procedure says."""
-    journal = tmp_path / "journal.jsonl"
-    write_journal(journal, [entry()], schema_name="cme_engine", key=KEY)
+@pytest.mark.parametrize("command", ["export", "replay"])
+def test_export_and_replay_require_a_journal_path(command: str) -> None:
+    result = _cli(command)
+    assert result.returncode == 2
+    assert "--journal is required" in result.stderr
 
-    result = _cli("replay", "--mark-reconciled", "--restored-mode", "in-place", "--journal", str(journal))
+
+def test_a_mark_reconciled_run_accepts_a_mode_and_reaches_the_database() -> None:
+    """The in-place operator assertion needs no journal file."""
+    result = _cli("replay", "--mark-reconciled", "--restored-mode", "in-place")
 
     assert "restored_mode_required" not in result.stderr
     assert "OperationalError" in result.stderr  # the mode was accepted; the run stopped at the connection

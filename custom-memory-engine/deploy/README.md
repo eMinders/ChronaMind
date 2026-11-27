@@ -266,8 +266,8 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    ```bash
    # the normal case: replay (a no-op on an intact database, and it exits 0); --restored-mode names the restore
    python scripts/erasure_journal.py replay --restored-from-backup-at <backup-start-iso8601> --restored-mode logical --journal /var/lib/chronamind-journal/erasure-journal.jsonl
-   # no journal to replay (an in-place upgrade, or the timer was never enabled): an explicit operator assertion
-   python scripts/erasure_journal.py replay --mark-reconciled --restored-mode in-place --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+   # In-place upgrade with no journal to replay. This assertion needs no journal file or CME_DELETION_RECEIPT_KEY.
+   python scripts/erasure_journal.py replay --mark-reconciled --restored-mode in-place
    ```
 
    `--restored-mode` is required (`restored_mode_required`, exit `2`), on both commands: the reconciliation records

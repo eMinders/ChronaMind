@@ -68,7 +68,7 @@ MIN_KEY_BYTES = 32
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export or replay the ChronaMind erasure journal.")
     parser.add_argument("command", choices=("export", "replay"))
-    parser.add_argument("--journal", type=Path, help="The journal file (JSON lines). Required unless marking reconciliation.")
+    parser.add_argument("--journal", type=Path, help="The JSON lines file to export or replay.")
     parser.add_argument("--json", action="store_true", help="Print the result as one JSON object.")
     parser.add_argument(
         "--restored-from-backup-at",
@@ -96,7 +96,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Succeed even when journalled targets were absent from the restored database (the backup never held "
         "them). Without it any unresolved entry exits 1, because a wrong deletion key looks identical.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.journal is None and (args.command == "export" or not args.mark_reconciled):
+        parser.error("--journal is required for export and journal replay")
+    return args
 
 
 class MissingInput(Exception):
@@ -127,9 +130,7 @@ def _deletion_key() -> bytes:
     return key
 
 
-async def _export(journal: Path | None, schema: str) -> dict[str, object]:
-    if journal is None:
-        raise MissingInput("--journal")
+async def _export(journal: Path, schema: str) -> dict[str, object]:
     key = _deletion_key()
     async with await AsyncConnection.connect(
         _required("CME_JOURNAL_DATABASE_URL"), autocommit=True, connect_timeout=5
@@ -161,15 +162,13 @@ async def _mark_reconciled(schema: str, *, restored_mode: RestoredMode) -> dict[
 
 
 async def _replay(
-    journal: Path | None,
+    journal: Path,
     schema: str,
     *,
     accept_unresolved: bool,
     restored_from_backup_at: str | None,
     restored_mode: RestoredMode | None,
 ) -> dict[str, object]:
-    if journal is None:
-        raise MissingInput("--journal")
     key = _deletion_key()
     if not await asyncio.to_thread(journal.exists):
         # a rebuilt host that never received the off-host copy would otherwise "replay" zero entries and exit 0
@@ -245,6 +244,8 @@ async def main(argv: list[str] | None = None) -> int:
         return 1
     if args.json:
         print(json.dumps(result, sort_keys=True))
+    elif result.get("marked_reconciled"):
+        console.print(f"Reconciliation recorded ({args.restored_mode}). No journal was read.")
     else:
         console.print(result)
     if args.command != "replay":

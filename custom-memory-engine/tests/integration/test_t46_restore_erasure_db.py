@@ -383,13 +383,18 @@ async def test_a_replay_erases_the_marked_turn_even_when_its_target_is_not_in_th
     assert await world.markers("del-t46") == [("turn", turn_digest(KEY, "alice", "t-peanut"), "")]
 
 
-async def test_migrating_a_restored_database_does_not_mark_it_reconciled(database) -> None:  # noqa: F811
+async def test_migrating_a_restored_database_does_not_mark_it_reconciled(
+    database,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """The trap the first version of this fix had: a restored pre-33 dump is *migrated*, so a migration that stamped
     itself would mark a restored copy as reconciled and let the worker and the host run on it with no replay.
 
     Rolled back to 32 and migrated forward again, which is exactly what restoring such a dump and then upgrading does.
     """
     from custom_memory_engine.schema import migrate
+    from scripts.erasure_journal import main
     from tests.integration.rollbacks import rollback_sql
 
     config, schema = database
@@ -415,7 +420,14 @@ async def test_migrating_a_restored_database_does_not_mark_it_reconciled(databas
     )
     # and the explicit assertion records it, so an upgrade with no journal to replay is not stuck
     async with await AsyncConnection.connect(config.database_url.get_secret_value(), autocommit=True) as conn:
-        await record_reconciliation(conn, schema_name=schema, by="operator-assertion", restored_mode="in-place")
+        login = await (await conn.execute("SELECT current_user")).fetchone()
+        assert login is not None
+        monkeypatch.setenv("CME_RUNTIME_ROLE", str(login[0]))
+        monkeypatch.setenv("CME_DATABASE_URL", config.database_url.get_secret_value())
+        monkeypatch.setenv("CME_SCHEMA", schema)
+        monkeypatch.delenv("CME_DELETION_RECEIPT_KEY", raising=False)
+        assert await main(["replay", "--mark-reconciled", "--restored-mode", "in-place"]) == 0
+        assert "No journal was read." in capsys.readouterr().err
         assert await (
             await conn.execute(cast(Any, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
         ).fetchall() == [(1,)]
