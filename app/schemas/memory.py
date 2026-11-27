@@ -20,16 +20,34 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.base import BaseResponse
+
+#: Every response model below is *serialised* with all of its fields, defaults included, so its JSON schema marks them
+#: all required. Without this, a field with a default (`known_facts`, `sources`, …) is optional in `docs/api/openapi.json`
+#: and the web interface's generated types would read `known_facts?: MemoryItem[]`, a shape the API never sends.
+_RESPONSE_SCHEMA = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+class _Out(BaseModel):
+    """A nested response shape: every field is always present in the JSON the API sends."""
+
+    model_config = _RESPONSE_SCHEMA
+
+
+class _OutResponse(BaseResponse):
+    """A top-level response: every field (including ``request_id``) is always present."""
+
+    model_config = _RESPONSE_SCHEMA
+
 
 Channel = Literal["facts", "hypotheses", "procedures", "conflicts", "none"]
 Kind = Literal["episode", "claim", "procedure", "abstraction"]
 Lifecycle = Literal["observed", "asserted", "inferred", "contested", "retired"]
 
 
-class SourceRefOut(BaseModel):
+class SourceRefOut(_Out):
     """One provenance reference. Never content: the engine returns references only."""
 
     readable: bool = Field(..., description="False for an opaque handle to a source the caller cannot read")
@@ -40,7 +58,7 @@ class SourceRefOut(BaseModel):
     ref: str = Field(..., description="The source id (e.g. 'app://session/turn-…') or the opaque per-caller handle")
 
 
-class BoundOut(BaseModel):
+class BoundOut(_Out):
     """The statistical bound a verified abstraction always renders with (`CHANNELS.md` R3, invariant `I14`)."""
 
     support_count: int
@@ -53,7 +71,7 @@ class BoundOut(BaseModel):
     expires_at: datetime
 
 
-class ConflictSideOut(BaseModel):
+class ConflictSideOut(_Out):
     """One side of an open contradiction. A conflict shows every side and picks none."""
 
     id: str
@@ -61,7 +79,7 @@ class ConflictSideOut(BaseModel):
     text: str
 
 
-class MemoryItem(BaseModel):
+class MemoryItem(_Out):
     """One engine artifact as the inspector shows it."""
 
     id: str = Field(..., description="The engine's artifact id (a version id)")
@@ -79,11 +97,11 @@ class MemoryItem(BaseModel):
     sources: list[SourceRefOut] = Field(default_factory=list)
 
 
-class MemoryItemResponse(BaseResponse, MemoryItem):
+class MemoryItemResponse(_OutResponse, MemoryItem):
     """`GET /memory/{id}`: one item, plus the request id every endpoint response carries."""
 
 
-class MemoryView(BaseResponse):
+class MemoryView(_OutResponse):
     """The caller's memory, by channel, with the verbatim conversation record kept apart from known facts."""
 
     known_facts: list[MemoryItem] = Field(default_factory=list, description="facts channel, kind != episode")
@@ -107,14 +125,14 @@ class SearchIn(BaseModel):
     text: str = Field(..., min_length=2, max_length=300)
 
 
-class ProvenanceEdgeOut(BaseModel):
+class ProvenanceEdgeOut(_Out):
     """One edge of an item's lineage, at its distance from the item."""
 
     depth: int
     source: SourceRefOut
 
 
-class ProvenanceOut(BaseResponse):
+class ProvenanceOut(_OutResponse):
     """`GET /memory/{id}/provenance`: a bounded lineage view."""
 
     id: str
@@ -123,7 +141,7 @@ class ProvenanceOut(BaseResponse):
     edges: list[ProvenanceEdgeOut] = Field(default_factory=list)
 
 
-class TimelineView(BaseResponse):
+class TimelineView(_OutResponse):
     """`GET /memory/timeline`: what the engine believed at one instant (`audit_as_of`, belief time = target time)."""
 
     at: datetime
@@ -131,7 +149,7 @@ class TimelineView(BaseResponse):
     conversation: list[MemoryItem] = Field(default_factory=list, description="audit rows, kind == episode")
 
 
-class ChangeOut(BaseModel):
+class ChangeOut(_Out):
     """One belief that differs between two instants. Ids the result does not carry are omitted."""
 
     outcome: Literal["added", "removed", "changed"]
@@ -139,7 +157,7 @@ class ChangeOut(BaseModel):
     current: list[MemoryItem] = Field(default_factory=list)
 
 
-class ChangesView(BaseResponse):
+class ChangesView(_OutResponse):
     """`GET /memory/changes`: the engine's `change` diff between two instants."""
 
     start: datetime
@@ -154,7 +172,7 @@ class AdjudicateIn(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
-class AdjudicateResult(BaseResponse):
+class AdjudicateResult(_OutResponse):
     """The engine's content-free receipt for an adjudication."""
 
     id: str
@@ -168,7 +186,7 @@ class ForgetIn(BaseModel):
     confirm: Literal["DELETE"]
 
 
-class DeletionCounts(BaseModel):
+class DeletionCounts(_Out):
     """The engine's deletion receipt, counts only: no request digest, no exclusions list, no content."""
 
     deletion_epoch: int
@@ -181,7 +199,7 @@ class DeletionCounts(BaseModel):
     deleted_mentions: int = 0
 
 
-class ForgetChecks(BaseModel):
+class ForgetChecks(_Out):
     """What was observed after the erasure. Each value is measured, never assumed.
 
     ``None`` means the check could not be run (the engine refused or was unreachable after the erasure committed). The
@@ -206,7 +224,7 @@ class ForgetChecks(BaseModel):
     )
 
 
-class ForgetResult(BaseResponse):
+class ForgetResult(_OutResponse):
     """`POST /memory/forget`: the receipt, how many chat sessions were cleared or failed, and the after-checks."""
 
     receipt: DeletionCounts
@@ -217,7 +235,7 @@ class ForgetResult(BaseResponse):
     checks: ForgetChecks
 
 
-class EngineHealth(BaseModel):
+class EngineHealth(_Out):
     """`GET /memory/health`: content-free, unauthenticated."""
 
     engine: Literal["up", "down", "not_configured"]
