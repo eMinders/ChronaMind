@@ -55,7 +55,13 @@ import httpx
 
 from app.core.config import settings
 from app.core.logging import logger
-from app.services.memory_slots import MULTI, SlotClassification, SlotClassifier, configured_classifier
+from app.services.memory_slots import (
+    MULTI,
+    NullSlotClassifier,
+    SlotClassification,
+    SlotClassifier,
+    configured_classifier,
+)
 
 #: The four channels the engine returns, and how each is rendered into prompt context. A hypothesis is never rendered
 #: as a fact, and a conflict is never rendered as a fact either: that separation is the engine's product guarantee.
@@ -84,6 +90,22 @@ def canonical_hash(text: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+class EngineCallError(Exception):
+    """An engine refusal, or an unreachable host, raised by :meth:`MemoryEngineClient.call`.
+
+    ``code`` is the engine's static error code (``validation_error``, ``forbidden``, ``precondition_failed``,
+    ``resource_limit``, ``retryable_conflict``, ``internal_error``) or ``engine_unavailable`` when no answer arrived.
+    ``detail`` is the host's static sub-code, if it sent one. ``status`` is the HTTP status, ``0`` when there was none.
+    """
+
+    def __init__(self, code: str, detail: str | None, status: int) -> None:
+        """Carry the code, the optional sub-code and the HTTP status."""
+        super().__init__(code)
+        self.code = code
+        self.detail = detail
+        self.status = status
+
+
 class MemoryEngineClient:
     """The app's memory client: the engine's public operations over HTTP, acting for one end user per call."""
 
@@ -92,15 +114,22 @@ class MemoryEngineClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         slot_classifier: SlotClassifier | None = None,
+        token_setting: str = "MEMORY_ENGINE_TOKEN",
+        read_timeout: float = 5.0,
     ) -> None:
         """Build the client.
 
         ``transport`` exists so a test can drive the wire contract without a server; ``slot_classifier`` so a test can
         supply recorded classifications. The default classifier is the one the settings select (``V2-D121``).
+        ``token_setting`` names the setting that holds this client's bearer token: the agent's client uses the Tier B
+        ``MEMORY_ENGINE_TOKEN``, the inspector the Tier C ``MEMORY_ENGINE_USER_TOKEN``. The tier is never sent; the
+        host derives it from the token (``T-34``).
         """
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
         self._slot_classifier = slot_classifier if slot_classifier is not None else configured_classifier()
+        self._token_setting = token_setting
+        self._read_timeout = read_timeout
 
     # -- configuration -----------------------------------------------------------------------------------------
 
@@ -111,12 +140,11 @@ class MemoryEngineClient:
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:
+            token = getattr(settings, self._token_setting, "")
             self._client = httpx.AsyncClient(
                 base_url=settings.MEMORY_ENGINE_URL.rstrip("/"),
-                timeout=httpx.Timeout(5.0, connect=2.0),
-                headers={"Authorization": f"Bearer {settings.MEMORY_ENGINE_TOKEN}"}
-                if getattr(settings, "MEMORY_ENGINE_TOKEN", "")
-                else {},
+                timeout=httpx.Timeout(self._read_timeout, connect=2.0),
+                headers={"Authorization": f"Bearer {token}"} if token else {},
                 transport=self._transport,
             )
         return self._client
@@ -237,6 +265,45 @@ class MemoryEngineClient:
         except Exception as error:  # noqa: BLE001 - see `search`
             logger.exception("failed_to_update_long_term_memory", user_id=user_id, error=str(error))
 
+    async def health(self) -> bool:
+        """Whether the host answers its content-free ``/healthz`` with 200. Never raises."""
+        try:
+            response = await self._http().get("/healthz")
+        except httpx.HTTPError:
+            return False
+        return response.status_code == 200
+
+    async def call(self, user_id: str, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """One operation acting for ``user_id``, with every refusal raised as :class:`EngineCallError`.
+
+        Unlike :meth:`search` and :meth:`add`, which swallow failures because memory is an enhancement on the agent's
+        path, the inspector routes must show the user what the engine answered, so nothing is swallowed here.
+        """
+        envelope = {"operation": operation, "principal": user_id, "arguments": arguments}
+        try:
+            response = await self._http().post("/v1/call", json=envelope)
+        except httpx.HTTPError:
+            raise EngineCallError("engine_unavailable", None, 0) from None
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise EngineCallError("internal_error", None, response.status_code)
+        if response.status_code != 200:
+            error = body.get("error")
+            error = error if isinstance(error, dict) else {}
+            detail = error.get("detail")
+            raise EngineCallError(
+                str(error.get("code") or "internal_error"),
+                detail if isinstance(detail, str) else None,
+                response.status_code,
+            )
+        result = body.get("result")
+        if not isinstance(result, dict):
+            raise EngineCallError("internal_error", "response_without_result", response.status_code)
+        return result
+
     async def _post(self, user_id: str, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """One engine call acting for ``user_id``; returns the ``result`` object, raising on any refusal."""
         response = await self._http().post(
@@ -327,3 +394,11 @@ def _render(result: dict[str, Any]) -> str:
 
 
 memory_engine = MemoryEngineClient()
+
+#: The memory inspector's client (`app/api/v1/memory.py`): the Tier C delegating token, a longer read timeout (a
+#: `delete` walks the whole provenance closure), and no slot classifier, because it never writes a turn.
+memory_inspector = MemoryEngineClient(
+    slot_classifier=NullSlotClassifier(),
+    token_setting="MEMORY_ENGINE_USER_TOKEN",
+    read_timeout=15.0,
+)

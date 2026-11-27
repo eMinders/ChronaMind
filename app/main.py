@@ -36,7 +36,10 @@ from app.core.observability import (
     langfuse_init,
 )
 from app.services.database import database_service
-from app.services.memory_engine import memory_engine
+from app.services.memory_engine import (
+    memory_engine,
+    memory_inspector,
+)
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -80,6 +83,7 @@ async def lifespan(app: FastAPI):
 
     # Cleanup on shutdown
     await memory_engine.aclose()
+    await memory_inspector.aclose()
     await cache_service.close()
     if agent._connection_pool:
         await agent._connection_pool.close()

@@ -173,6 +173,11 @@ class Settings:
         # must not silently fall back to a store that cannot supersede, cannot erase and cannot separate channels.
         self.MEMORY_ENGINE_URL = os.getenv("MEMORY_ENGINE_URL", "")
         self.MEMORY_ENGINE_TOKEN = os.getenv("MEMORY_ENGINE_TOKEN", "")
+        # The memory inspector's token (`app/api/v1/memory.py`): a *Tier C* delegating token on the engine host, used
+        # only by the `/api/v1/memory/*` routes, always acting as the signed-in user (`V2-D120`, `T-42`). Tier C is what
+        # `adjudicate`, `delete`, `export` and `audit_as_of` require. The agent never uses it: it keeps the Tier B
+        # `MEMORY_ENGINE_TOKEN` above. Empty disables the inspector routes (503), not the agent's memory.
+        self.MEMORY_ENGINE_USER_TOKEN = os.getenv("MEMORY_ENGINE_USER_TOKEN", "")
         # The semantic slot classifier (`app/services/memory_slots.py`, `V2-D121`): `llm` (default) asks a language model
         # whether the newest user message states the speaker's current residence, employer or name, in any language;
         # `off` records every claim as multi-valued. An empty model name uses the default model.
@@ -226,6 +231,7 @@ class Settings:
             "login": ["20 per minute"],
             "root": ["10 per minute"],
             "health": ["20 per minute"],
+            "memory": ["60 per minute"],
         }
 
         # Update rate limit endpoints from environment variables
