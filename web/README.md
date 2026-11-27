@@ -6,8 +6,8 @@ Frontend scaffold for ChronaMind Studio — a Vite, React 19, TypeScript (strict
 
 - **Node.js 22 LTS** (pinned in `.nvmrc` and `package.json#engines`: `>=22 <23`).
 - **Backend application** listening on `http://127.0.0.1:8000`:
-  - Full demo stack (APP-01): `uv run python scripts/demo/up.py`
-  - Or app-only development server from the repository root: `make dev` (`uv run python run.py`)
+  - Full demo stack once APP-01 (`#277`) is merged: `uv run python scripts/demo/up.py`
+  - App-only development server from the repository root (available now): `make dev` (`uv run python run.py`)
 
 ## Install
 
@@ -53,12 +53,17 @@ Individual commands:
 
 ## Directory Layout
 
-- `src/api/` — Generated OpenAPI schema types and HTTP client
-- `src/auth/` — Authentication context and route guards
-- `src/components/` — Shared UI components and shadcn/ui primitives
-- `src/features/` — Feature modules
-- `src/pages/` — Top-level route views
-- `src/content/` — Static copy and evidence content
-- `src/mocks/` — Mock data and handlers for recorded demo mode
-- `src/lib/` — Shared helpers (`cn` class-name utility)
+Scaffolded directories (initially empty `.gitkeep` placeholders populated by follow-up tickets):
+
+- `src/api/` — Reserved for generated OpenAPI schema types and HTTP client (WEB-02)
+- `src/auth/` — Reserved for authentication context and route guards (WEB-03)
+- `src/components/` — Reserved for shared UI components and shadcn/ui primitives (WEB-04)
+- `src/features/` — Reserved for feature modules
+- `src/pages/` — Reserved for top-level route views
+- `src/content/` — Reserved for static copy and evidence content
+- `src/mocks/` — Reserved for mock data and handlers for recorded demo mode
+
+Active scaffold directories:
+
+- `src/lib/` — Shared helpers (`cn` class-name utility for shadcn/ui)
 - `src/test/` — Vitest setup
