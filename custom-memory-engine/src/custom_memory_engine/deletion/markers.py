@@ -36,6 +36,17 @@ from psycopg.rows import tuple_row
 type MarkerKind = Literal["write", "turn"]
 
 MARKER_KINDS: tuple[MarkerKind, ...] = ("write", "turn")
+
+#: What a reconciliation row records about *how* the database was reconciled (`T-49`, `V2-D128`). A fresh install and
+#: an operator's assertion reconcile nothing; a replay is told what kind of restore it is reconciling after.
+type ReconciledBy = Literal["fresh-install", "operator-assertion", "replay"]
+
+#: The restore kinds a replay can be told about (`scripts/erasure_journal.py --restored-mode`). `in-place` is the
+#: upgrade that restored nothing; the other three are the paths `deploy/README.md`'s restore procedure names.
+type RestoredMode = Literal["logical", "data-only", "physical", "in-place"]
+
+RESTORED_MODES: tuple[RestoredMode, ...] = ("logical", "data-only", "physical", "in-place")
+
 _DOMAIN = "cme-erasure-marker-v1"
 
 
@@ -249,6 +260,19 @@ async def markers_of(
 
 _IDENTITY: LiteralString = "pg_catalog.to_regclass(%s)::oid"
 
+#: The cluster's timeline, from the WAL segment name of the current write position: recovery to a point in time ends on
+#: a new timeline, so it separates a PITR from a live database whose data the restore put back byte for byte. Read this
+#: way rather than through `pg_control_checkpoint()`, whose `timeline_id` reports the checkpoint record's timeline and
+#: can lag a promotion until the next checkpoint. `NULL` in recovery, where there is no write position to name.
+_TIMELINE: LiteralString = (
+    "CASE WHEN pg_catalog.pg_is_in_recovery() THEN NULL ELSE "
+    "('x' || pg_catalog.substr(pg_catalog.pg_walfile_name(pg_catalog.pg_current_wal_lsn()), 1, 8))"
+    "::pg_catalog.bit(32)::bigint END"
+)
+
+#: Serializes identity appends, so the row a replay writes can count every row a later probe will see.
+_APPEND_LOCK: LiteralString = "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(%s, 0))"
+
 
 class TurnErased(MarkerError):
     """A deletion marked this turn: extracting it would re-derive what the user deleted (``erased_turn``)."""
@@ -265,37 +289,75 @@ class RestoreNotReconciled(MarkerError):
 
 
 async def is_reconciled(connection: AsyncConnection, *, schema_name: str) -> bool:
-    """Whether the erasure journal was replayed into *this* database (``restore_reconciliation``, migration 33).
+    """Whether the erasure journal was replayed into the database this row describes (``restore_reconciliation``).
 
-    ``pg_restore`` recreates the table, so the row it carries names another relation: one primary-key probe tells a
-    live database (or a clone of one, which keeps the relation OID) from a restored copy no replay has reconciled yet.
+    One statement, four facts about the last identity row: it names this relation (a logical ``pg_restore`` recreates
+    the table and moves the OID), it came from the transaction it records (a data-only ``COPY`` gives every restored
+    row the restoring transaction's ``xmin``), it is the last row this table holds (``rows_before`` is the count it saw
+    when it was written), and its cluster timeline is the current one (recovery to a point in time promotes to a new
+    timeline). A template clone keeps all four -- it copies the data blocks -- so a clone of a reconciled database is
+    reconciled, which every test fixture and an operator's own clone depend on.
     """
     table = sql.Identifier(schema_name, "restore_reconciliation")
     async with connection.cursor(row_factory=tuple_row) as cursor:
         await cursor.execute(
-            sql.SQL("SELECT EXISTS (SELECT 1 FROM {t} WHERE relation_oid = (" + _IDENTITY + "))").format(t=table),
+            sql.SQL(
+                "SELECT EXISTS (SELECT 1 FROM {t} AS r WHERE r.relation_oid = ("
+                + _IDENTITY
+                + ") AND pg_catalog.xid(r.written_xid) = r.xmin AND r.rows_before = ("
+                "SELECT pg_catalog.count(*) FROM {t}) - 1 AND r.timeline IS NOT DISTINCT FROM " + _TIMELINE + ")"
+            ).format(t=table),
             (f"{schema_name}.restore_reconciliation",),
         )
         row = await cursor.fetchone()
     return bool(row and row[0])
 
 
-async def record_reconciliation(connection: AsyncConnection, *, schema_name: str) -> None:
-    """Record that the journal has been replayed into this database (idempotent)."""
+async def record_reconciliation(
+    connection: AsyncConnection,
+    *,
+    schema_name: str,
+    by: ReconciledBy,
+    restored_mode: RestoredMode | None = None,
+) -> None:
+    """Append this database's identity: the journal is reconciled with it, by ``by``, after the given restore.
+
+    Must run in a **top-level** transaction: the row records the transaction that inserted it and the probe compares
+    that with the row's own ``xmin``, which is a savepoint's transaction inside a subtransaction. The append verifies
+    itself and raises ``restore_identity_not_recorded`` rather than leaving an identity no probe will accept.
+    """
+    if by == "fresh-install":
+        if restored_mode is not None:
+            raise MarkerError("restore_mode_for_a_fresh_install")
+    elif restored_mode not in RESTORED_MODES:
+        raise MarkerError("restore_mode_required")
     table = sql.Identifier(schema_name, "restore_reconciliation")
     async with connection.cursor() as cursor:
+        await cursor.execute(_APPEND_LOCK, (f"cme:restore_reconciliation:{schema_name}",))
         await cursor.execute(
-            sql.SQL("INSERT INTO {t} (relation_oid) SELECT " + _IDENTITY + " ON CONFLICT DO NOTHING").format(t=table),
-            (f"{schema_name}.restore_reconciliation",),
+            sql.SQL(
+                "INSERT INTO {t} (relation_oid, written_xid, rows_before, timeline, reconciled_by, restored_mode) "
+                "SELECT "
+                + _IDENTITY
+                + ", pg_catalog.pg_current_xact_id(), (SELECT pg_catalog.count(*) FROM {t}), "
+                + _TIMELINE
+                + ", %s, %s"
+            ).format(t=table),
+            (f"{schema_name}.restore_reconciliation", by, restored_mode),
         )
+    if not await is_reconciled(connection, schema_name=schema_name):
+        raise MarkerError("restore_identity_not_recorded")
 
 
 __all__ = [
     "MARKER_KINDS",
+    "RESTORED_MODES",
     "ErasureMarker",
     "MarkerError",
     "MarkerKind",
+    "ReconciledBy",
     "RestoreNotReconciled",
+    "RestoredMode",
     "TurnErased",
     "flag_erased_turns",
     "is_reconciled",

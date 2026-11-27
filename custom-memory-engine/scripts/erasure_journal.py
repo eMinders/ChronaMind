@@ -49,7 +49,12 @@ from custom_memory_engine.deletion.journal import (
     read_journal,
     replay_journal,
 )
-from custom_memory_engine.deletion.markers import record_reconciliation
+from custom_memory_engine.deletion.markers import (
+    RESTORED_MODES,
+    RestoredMode,
+    is_reconciled,
+    record_reconciliation,
+)
 from custom_memory_engine.engine.deletion import RECEIPT_KEY_ENV
 from custom_memory_engine.scope.provenance import ProvenanceKey
 
@@ -65,6 +70,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--restored-from-backup-at",
         help="The backup recovery point as an aware ISO-8601 timestamp. Required for replay.",
+    )
+    parser.add_argument(
+        "--restored-mode",
+        choices=RESTORED_MODES,
+        help="For `replay`: what kind of restore this database is, as the operator restored it -- `logical` (a "
+        "`pg_restore` of a schema dump), `data-only` (a row-level load into an existing schema), `physical` (a base "
+        "backup or a restore to a point in time) or `in-place` (no restore: an upgrade). Required, and recorded with "
+        "the reconciliation: a data-only or physical restore leaves the identity looking intact, so the replay is "
+        "the only place that says which one happened.",
     )
     parser.add_argument(
         "--mark-reconciled",
@@ -105,7 +119,7 @@ async def _export(journal: Path, schema: str) -> dict[str, object]:
     return {"command": "export", "entries": entries}
 
 
-async def _mark_reconciled(schema: str) -> dict[str, object]:
+async def _mark_reconciled(schema: str, *, restored_mode: RestoredMode) -> dict[str, object]:
     """Record this database as reconciled without replaying anything (an upgrade with no journal to replay)."""
     role = _required("CME_RUNTIME_ROLE")
     async with await AsyncConnection.connect(
@@ -113,12 +127,26 @@ async def _mark_reconciled(schema: str) -> dict[str, object]:
     ) as connection:
         async with connection.transaction():
             await connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
-            await record_reconciliation(connection, schema_name=schema)
-    return {"command": "replay", "entries": 0, "reconciled": True, "refusal": None, "marked_reconciled": True}
+            await record_reconciliation(
+                connection, schema_name=schema, by="operator-assertion", restored_mode=restored_mode
+            )
+    return {
+        "command": "replay",
+        "entries": 0,
+        "reconciled": True,
+        "refusal": None,
+        "marked_reconciled": True,
+        "restored_mode": restored_mode,
+    }
 
 
 async def _replay(
-    journal: Path, schema: str, *, accept_unresolved: bool, restored_from_backup_at: str | None
+    journal: Path,
+    schema: str,
+    *,
+    accept_unresolved: bool,
+    restored_from_backup_at: str | None,
+    restored_mode: RestoredMode | None,
 ) -> dict[str, object]:
     key = _deletion_key()
     if not await asyncio.to_thread(journal.exists):
@@ -127,6 +155,10 @@ async def _replay(
     loaded = read_journal(journal)
     if restored_from_backup_at is None:
         raise JournalError("restored_from_backup_at_required")
+    if restored_mode is None:
+        # the reconciliation records which restore it follows; a restore the identity cannot see (data-only, PITR) is
+        # then acknowledged where the operator acts, not only in prose (T-49)
+        raise JournalError("restored_mode_required")
     check_recovery_point(loaded, restored_from_backup_at)
     provenance = os.environ.get("CME_PROVENANCE_KEY", "").strip().encode("utf-8")
     # a deletion writes no provenance signature; a random key only satisfies the runtime's shape
@@ -136,19 +168,26 @@ async def _replay(
         _required("CME_DATABASE_URL"), autocommit=True, connect_timeout=5
     ) as connection:
         runtime = Runtime(connection, role, schema, provenance_key=provenance_key, deletion_key=key)
+        # the gate's own verdict, before this replay touches anything: False is the identity saying this database is
+        # not a copy of what the journal was last reconciled with (T-46, T-49)
+        async with connection.transaction():
+            await connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+            detected = not await is_reconciled(connection, schema_name=schema)
         report = await replay_journal(DeleteHandlers(runtime), loaded)
         refusal = report.refusal_reason(accept_unresolved=accept_unresolved)
         if refusal is None:
             # only a successful replay lets the worker and the host use this database (`V2-D125`)
             async with connection.transaction():
                 await connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
-                await record_reconciliation(connection, schema_name=schema)
+                await record_reconciliation(connection, schema_name=schema, by="replay", restored_mode=restored_mode)
     return {
         "command": "replay",
         "entries": len(loaded.entries),
         **asdict(report),
         "reconciled": refusal is None,
         "refusal": refusal,
+        "restored_mode": restored_mode,
+        "restore_detected": detected,
     }
 
 
@@ -160,13 +199,16 @@ async def main(argv: list[str] | None = None) -> int:
         if args.command == "export":
             result = await _export(args.journal, schema)
         elif args.mark_reconciled:
-            result = await _mark_reconciled(schema)
+            if args.restored_mode is None:
+                raise JournalError("restored_mode_required")
+            result = await _mark_reconciled(schema, restored_mode=args.restored_mode)
         else:
             result = await _replay(
                 args.journal,
                 schema,
                 accept_unresolved=args.accept_unresolved,
                 restored_from_backup_at=args.restored_from_backup_at,
+                restored_mode=args.restored_mode,
             )
     except KeyError as missing:
         console.print(f"[red]{str(missing.args[0]).lower()}_required[/red]")
