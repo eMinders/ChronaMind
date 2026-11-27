@@ -312,7 +312,7 @@ def test_a_replay_without_the_backup_recovery_point_is_refused_before_connecting
 
     result = _cli("replay", "--journal", str(journal))
 
-    assert result.returncode == 1
+    assert result.returncode == 2, "a missing input is 'missing configuration' (2), not a refused journal (1)"
     assert "restored_from_backup_at_required" in result.stderr
     assert "OperationalError" not in result.stderr  # the refusal came before any connection attempt
 

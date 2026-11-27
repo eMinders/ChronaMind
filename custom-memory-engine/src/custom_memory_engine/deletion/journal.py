@@ -40,7 +40,6 @@ journal lost together with the database.
 
 from __future__ import annotations
 
-import dataclasses
 import fcntl
 import hmac
 import json
@@ -48,7 +47,7 @@ import os
 import tempfile
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -163,9 +162,9 @@ class ReplayReport:
     #: requests and epochs are recorded and their next deletion continues after them.
     users_reprovisioned: int
     #: The newest journal epoch per user, compared with the restored database before replay writes it.
-    journal_newest_epochs: dict[str, int] = dataclasses.field(default_factory=dict)
+    journal_newest_epochs: dict[str, int] = field(default_factory=dict)
     #: The newest completed deletion epoch per user in the restored database before replay.
-    restored_newest_epochs: dict[str, int | None] = dataclasses.field(default_factory=dict)
+    restored_newest_epochs: dict[str, int | None] = field(default_factory=dict)
     #: Users whose restored history contradicts the journal. Their entries were skipped and every other user was still
     #: replayed: a conflict in one tenant must not leave the rest of the deployment unerased. The run is not a success.
     divergent_users: tuple[str, ...] = ()
