@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from typing import LiteralString, cast
 
 import pytest
 from psycopg import AsyncConnection
@@ -112,8 +113,11 @@ class Witnesses:
 
 async def _witnesses(connection: AsyncConnection, schema: str) -> Witnesses:
     """The probe of ``deletion.markers.is_reconciled``, split into its four witnesses (a test-only diagnostic)."""
+    # test-only SQL with the per-test schema interpolated; there are no values to parameterize
     cursor = await connection.execute(
-        f"""
+        cast(
+            LiteralString,
+            f"""
         SELECT
           EXISTS (SELECT 1 FROM {schema}.restore_reconciliation r
                   WHERE r.relation_oid = to_regclass('{schema}.restore_reconciliation')::oid),
@@ -123,7 +127,8 @@ async def _witnesses(connection: AsyncConnection, schema: str) -> Witnesses:
           EXISTS (SELECT 1 FROM {schema}.restore_reconciliation r WHERE r.timeline IS NOT DISTINCT FROM
                   CASE WHEN pg_is_in_recovery() THEN NULL ELSE
                   ('x' || substr(pg_walfile_name(pg_current_wal_lsn()), 1, 8))::bit(32)::bigint END)
-        """
+        """,
+        )
     )
     row = await cursor.fetchone()
     assert row is not None
@@ -159,11 +164,15 @@ async def test_a_data_only_load_of_an_older_backup_is_refused_although_the_relat
         before = await _witnesses(conn, schema)
     dump = _data_only_dump(dsn, schema)
     async with connect((config, schema)) as conn:
-        await conn.execute(f"DELETE FROM {schema}.restore_reconciliation")  # the probe must be live first
+        await conn.execute(
+            cast(LiteralString, f"DELETE FROM {schema}.restore_reconciliation")
+        )  # the probe must be live first
         assert await is_reconciled(conn, schema_name=schema) is False
     _data_only_load(dsn, dump)
     async with connect((config, schema)) as conn:
-        counted = await (await conn.execute(f"SELECT count(*) FROM {schema}.restore_reconciliation")).fetchone()
+        counted = await (
+            await conn.execute(cast(LiteralString, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
+        ).fetchone()
         assert counted == (1,), "the identity row the dump carries lands in the table it names"
         after = await _witnesses(conn, schema)
         assert after.relation_oid is before.relation_oid is True, "a data-only load keeps the relation OID"
@@ -273,10 +282,13 @@ async def test_an_identity_row_from_another_timeline_is_refused(database) -> Non
         # appended, not updated: the row has to stay self-consistent (its own `xmin`, the count it saw) or the other
         # witnesses would refuse it and this test would prove nothing about the timeline. The valid row goes, because
         # one row that satisfies every witness is enough for the probe -- which is what a restore leaves behind.
-        await conn.execute(f"DELETE FROM {schema}.restore_reconciliation")
+        await conn.execute(cast(LiteralString, f"DELETE FROM {schema}.restore_reconciliation"))
         await conn.execute(
-            f"INSERT INTO {schema}.restore_reconciliation (relation_oid, written_xid, rows_before, timeline) "
-            f"SELECT to_regclass('{schema}.restore_reconciliation')::oid, pg_current_xact_id(), 0, 0"
+            cast(
+                LiteralString,
+                f"INSERT INTO {schema}.restore_reconciliation (relation_oid, written_xid, rows_before, timeline) "
+                f"SELECT to_regclass('{schema}.restore_reconciliation')::oid, pg_current_xact_id(), 0, 0",
+            )
         )
         assert await _witnesses(conn, schema) == Witnesses(True, True, True, False)
         assert await is_reconciled(conn, schema_name=schema) is False
@@ -297,9 +309,13 @@ async def test_a_loaded_identity_row_appended_beside_the_one_here_is_refused(dat
     config, schema = database
     async with connect((config, schema)) as conn:
         await conn.execute(
-            f"INSERT INTO {schema}.restore_reconciliation (relation_oid, written_xid, rows_before, timeline) "
-            "SELECT relation_oid, pg_current_xact_id(), 0, timeline FROM "
-            f"{schema}.restore_reconciliation"  # the row an older dump carries, appended as a load appends it
+            cast(
+                LiteralString,
+                # the row an older dump carries, appended as a load appends it
+                f"INSERT INTO {schema}.restore_reconciliation (relation_oid, written_xid, rows_before, timeline) "
+                "SELECT relation_oid, pg_current_xact_id(), 0, timeline FROM "
+                f"{schema}.restore_reconciliation",
+            )
         )
         witnesses = await _witnesses(conn, schema)
         assert witnesses.rows_before is False, "two rows, and neither can claim to be the last one written"
