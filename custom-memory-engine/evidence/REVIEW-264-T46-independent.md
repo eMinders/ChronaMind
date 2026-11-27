@@ -244,6 +244,11 @@ The probes live in no committed file — they were run from `/tmp` against the s
   which is also the next time this record's §1 can be checked. Two specifics of that run are unproven: that the action's
   `claude-execution-output.json` carries the `result` object (and its `result` text) on a *failed* run — the green runs'
   output does — and that GitHub masks a secret if one ever appeared inside the run's own message text.
+- **This pull request's own automated review.** Its `claude-review` check is green but reviewed nothing: the action
+  logs `Skipping action due to workflow validation: ... The workflow file must exist and have identical content to the
+  version on the repository's default branch` (run `46025622443`), because this branch edits
+  `.github/workflows/claude-code-review.yml`. That is the action's own rule for any pull request that changes the
+  workflow, not a recurrence of §1; the report step is first exercised on a pull request opened after this one merges.
 - **The *identity* of the 2026-11-26 cause, as opposed to its class.** The shape (one turn, no cost, ~380 ms) says the
   first call to the model failed; it cannot say why, whether an operator re-issued `CLAUDE_CODE_OAUTH_TOKEN`, or whether
   the condition cleared on the provider's side. Nothing in the repository changed between the red runs and the green
