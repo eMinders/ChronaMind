@@ -8,6 +8,7 @@ is the most common way a change here is wrong.
 |---|---|---|---|
 | `custom-memory-engine/**` — the cognitive memory engine, its schema, its governance | **[`custom-memory-engine/CLAUDE.md`](custom-memory-engine/CLAUDE.md)**, then the documents it names | CPython **3.12** (`custom-memory-engine/.python-version`) | `cd custom-memory-engine && make` targets below |
 | `app/**`, `evals/**`, `alembic/**`, `docs/**` — the FastAPI + LangGraph application | **[`AGENTS.md`](AGENTS.md)** (it governs this side only) | CPython **3.14** (`.python-version`) | `make check` |
+| `web/**` — the demo interface | `web/README.md`, `tickets/EPIC-demo-interface.md` | Node **22** LTS (`web/.nvmrc`) | `cd web && npm run check` |
 | `.github/**` — workflows and Actions | [`AGENTS.md`](AGENTS.md) and [`custom-memory-engine/PLAN/CONTRIBUTING.md`](custom-memory-engine/PLAN/CONTRIBUTING.md) §1.2–1.3 | — | `make check` (runs actionlint) |
 | `REVIEW.md`, `CLAUDE.md`, `.claude/**` | this file, plus [`REVIEW.md`](REVIEW.md) | — | `make check` |
 
