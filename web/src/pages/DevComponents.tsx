@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { memoryItem, memoryView } from "@/api/samples";
 import type {
   MemoryChannel,
   MemoryItem,
@@ -41,23 +42,23 @@ const ALL_LIFECYCLES: readonly MemoryLifecycle[] = [
 ];
 
 const GALLERY_ITEMS: readonly MemoryItem[] = [
-  {
+  memoryItem({
     id: "gallery-fact-en",
     kind: "claim",
     lifecycle: "asserted",
     channel: "facts",
     content: "Lives in Paris",
     verification: "verified",
-  },
-  {
+  }),
+  memoryItem({
     id: "gallery-fact-ar",
     kind: "claim",
     lifecycle: "asserted",
     channel: "facts",
     content: "أنا ساكن في برلين",
     verification: "verified",
-  },
-  {
+  }),
+  memoryItem({
     id: "gallery-hyp-1",
     kind: "abstraction",
     lifecycle: "inferred",
@@ -66,75 +67,69 @@ const GALLERY_ITEMS: readonly MemoryItem[] = [
     content: "Prefers concise replies in morning sessions.",
     support_summary: "4 of 5 recorded morning turns requested short answers",
     verification: "unverified",
-  },
-  {
+  }),
+  memoryItem({
     id: "gallery-proc-1",
     kind: "procedure",
     lifecycle: "asserted",
     channel: "procedures",
     content: "Format meeting follow-ups as a numbered checklist.",
     verification: "verified",
-  },
-  {
+  }),
+  memoryItem({
     id: "gallery-conflict-1",
     kind: "claim",
     lifecycle: "contested",
     channel: "conflicts",
     content: "City of residence: Berlin vs Paris",
     verification: "unverified",
-  },
-  {
+  }),
+  memoryItem({
     id: "gallery-retired-1",
     kind: "claim",
     lifecycle: "retired",
     channel: "facts",
     content: "Previously lived in Berlin",
     verification: "verified",
-  },
+  }),
 ];
 
-const POPULATED_VIEW: MemoryView = {
+const POPULATED_VIEW: MemoryView = memoryView({
   known_facts: [
     GALLERY_ITEMS[0],
-    {
+    memoryItem({
       id: "gallery-fact-ar-paris",
       kind: "claim",
       lifecycle: "asserted",
       channel: "facts",
       content: "انتقلت إلى باريس",
       verification: "verified",
-    },
+    }),
   ],
   hypotheses: [],
   procedures: [GALLERY_ITEMS[3]],
   conflicts: [GALLERY_ITEMS[4]],
   conversation: [
-    {
+    memoryItem({
       id: "gallery-ep-1",
       kind: "episode",
       lifecycle: "observed",
       channel: "facts",
       content: "I live in Berlin",
       verification: "verified",
-    },
-    {
+    }),
+    memoryItem({
       id: "gallery-ep-2",
       kind: "episode",
       lifecycle: "observed",
       channel: "facts",
       content: "I moved to Paris last week",
       verification: "verified",
-    },
+    }),
   ],
-};
+});
 
-const EMPTY_VIEW: MemoryView = {
-  known_facts: [],
-  hypotheses: [],
-  procedures: [],
-  conflicts: [],
-  conversation: [],
-};
+const EMPTY_VIEW: MemoryView = memoryView();
 
 export function DevComponents() {
   const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);

@@ -7,13 +7,14 @@ import type {
   MemoryLifecycle,
   MemoryView,
 } from "@/api/types";
+import { memoryItem, memoryView } from "@/api/samples";
 import { ChannelBadge } from "./ChannelBadge";
 import { LifecycleBadge } from "./LifecycleBadge";
 import { MemoryItemRow } from "./MemoryItemRow";
 import { MemorySections } from "./MemorySections";
 
 function makeItem(overrides: Partial<MemoryItem> = {}): MemoryItem {
-  return {
+  return memoryItem({
     id: "ver-1",
     kind: "claim",
     lifecycle: "asserted",
@@ -21,17 +22,11 @@ function makeItem(overrides: Partial<MemoryItem> = {}): MemoryItem {
     content: "Lives in Paris",
     verification: "verified",
     ...overrides,
-  };
+  });
 }
 
 function emptyView(): MemoryView {
-  return {
-    known_facts: [],
-    hypotheses: [],
-    procedures: [],
-    conflicts: [],
-    conversation: [],
-  };
+  return memoryView();
 }
 
 describe("ChannelBadge", () => {
@@ -116,7 +111,7 @@ describe("MemoryItemRow", () => {
 
 describe("MemorySections", () => {
   it("renders sections in order: Known facts, Hypotheses, Procedures, Conflicts, then collapsed Conversation record", () => {
-    const view: MemoryView = {
+    const view: MemoryView = memoryView({
       known_facts: [makeItem({ id: "f-1", content: "Lives in Paris" })],
       hypotheses: [],
       procedures: [
@@ -144,7 +139,7 @@ describe("MemorySections", () => {
           content: "I moved to Paris last week",
         }),
       ],
-    };
+    });
 
     const { container } = render(
       <MemorySections view={view} onOpen={vi.fn()} />,
@@ -176,7 +171,7 @@ describe("MemorySections", () => {
   });
 
   it("filters out episode items mistakenly passed in known_facts or other non-conversation sections", () => {
-    const view: MemoryView = {
+    const view: MemoryView = memoryView({
       known_facts: [
         makeItem({ id: "fact-1", kind: "claim", content: "Lives in Paris" }),
         makeItem({
@@ -204,7 +199,7 @@ describe("MemorySections", () => {
           content: "I live in Berlin",
         }),
       ],
-    };
+    });
 
     render(<MemorySections view={view} onOpen={vi.fn()} />);
 
