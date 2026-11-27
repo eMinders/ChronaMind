@@ -32,6 +32,7 @@ per instruction — ``artifact``, ``channel``, ``mention``, ``scope`` — matche
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -197,6 +198,7 @@ class ResultStore:
         self._capacity = capacity
         self._clock = clock
         self._entries: dict[str, ResultSnapshot] = {}
+        self._principals: OrderedDict[str, OrderedDict[str, None]] = OrderedDict()
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -214,12 +216,12 @@ class ResultStore:
         """Mint a handle for one result and record what a drill-down needs. Returns the opaque id."""
         now = self._now()
         self._drop_expired(now)
-        while len(self._entries) >= self._capacity:
-            # insertion order is issue order, so eviction is deterministic: the oldest handle goes first
-            oldest = next(iter(self._entries), None)
-            if oldest is None:
-                break
-            del self._entries[oldest]
+        bucket = self._principals.setdefault(principal, OrderedDict())
+        self._principals.move_to_end(principal)
+        while len(self._principals) > self._capacity:
+            _, handles = self._principals.popitem(last=False)
+            for old_handle in handles:
+                del self._entries[old_handle]
         handle = RESULT_PREFIX + token_hex(RESULT_HEX_LENGTH // 2)
         self._entries[handle] = ResultSnapshot(
             principal=principal,
@@ -230,6 +232,8 @@ class ResultStore:
             depth=depth,
             expires_at=now + self._ttl,
         )
+        bucket[handle] = None
+        self._make_room(principal)
         return handle
 
     def resolve(self, principal: str, result_id: object) -> ResultSnapshot | None:
@@ -244,8 +248,9 @@ class ResultStore:
         if snapshot is None or snapshot.principal != principal:
             return None
         if snapshot.expired(self._now()):
-            del self._entries[result_id]  # an expired handle is gone, not merely unusable
+            self._remove(result_id, principal)  # an expired handle is gone, not merely unusable
             return None
+        self._principals.move_to_end(principal)
         return snapshot
 
     def _now(self) -> datetime:
@@ -255,8 +260,48 @@ class ResultStore:
         return now
 
     def _drop_expired(self, now: datetime) -> None:
-        for handle in [handle for handle, snapshot in self._entries.items() if snapshot.expired(now)]:
-            del self._entries[handle]
+        for handle, snapshot in list(self._entries.items()):
+            if snapshot.expired(now):
+                self._remove(handle, snapshot.principal)
+
+    def _remove(self, handle: str, principal: str) -> None:
+        del self._entries[handle]
+        handles = self._principals[principal]
+        del handles[handle]
+        if not handles:
+            del self._principals[principal]
+
+    def _largest_surplus(self) -> tuple[str, OrderedDict[str, None]] | None:
+        """The principal holding the most surplus handles; ties go to the least recently used.
+
+        Admission reissues the *largest* surplus, not the oldest holder's: the caller that has most to spare is the one
+        that gives, so a principal holding two entries is not stripped while a neighbour holds five (`V2-D127`).
+        Iteration
+        is in ``OrderedDict`` order, which is least-recently-used first, and the strict ``>`` keeps the earliest holder
+        of an equal surplus, so the choice is deterministic.
+        """
+        best: tuple[str, OrderedDict[str, None]] | None = None
+        for principal, handles in self._principals.items():
+            if len(handles) > 1 and (best is None or len(handles) > len(best[1])):
+                best = (principal, handles)
+        return best
+
+    def _make_room(self, active_principal: str) -> None:
+        while len(self._entries) > self._capacity:
+            active_handles = self._principals[active_principal]
+            if len(active_handles) > 1:
+                old_handle, _ = active_handles.popitem(last=False)
+                del self._entries[old_handle]
+                continue
+            surplus = self._largest_surplus()
+            if surplus is not None:
+                _, handles = surplus
+                old_handle, _ = handles.popitem(last=False)
+                del self._entries[old_handle]
+                continue
+            _, handles = self._principals.popitem(last=False)
+            for old_handle in handles:
+                del self._entries[old_handle]
 
 
 __all__ = [

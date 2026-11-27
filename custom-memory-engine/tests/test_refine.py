@@ -144,6 +144,90 @@ def test_the_store_is_bounded_and_evicts_the_oldest_handle_first() -> None:
     assert all(store.resolve("alice", handle) is not None for handle in handles[1:])
 
 
+def test_another_principal_burst_preserves_a_live_handle_and_total_capacity_stays_bounded() -> None:
+    store = ResultStore(capacity=3)
+    held = store.issue(
+        principal="bob", budgets=BUDGETS, read_set=alice("/u/bob/"), intent=INTENT, candidates=("held",)
+    )
+    for index in range(4):
+        store.issue(
+            principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=(str(index),)
+        )
+
+    assert store.resolve("bob", held) is not None
+    resident_by_principal = sum(len(handles) for handles in store._principals.values())
+    assert resident_by_principal == len(store)
+    assert resident_by_principal <= store._capacity
+
+
+def test_admission_reissues_a_surplus_slot_before_evicting_a_principal_and_keeps_one_entry_each() -> None:
+    """The reservation is one resident handle per principal, not every handle a principal ever held (`T-47`).
+
+    A single hard ceiling cannot admit a newcomer while another principal holds every slot: something must give.
+    The rule, pinned here: admission reissues the largest surplus (oldest entry first), so every resident principal
+    keeps at least one; after that a principal that needs capacity sheds **its own** surplus first, so an incumbent's
+    entries are not taken by a neighbour's continued bursts; only when every principal holds exactly one is the
+    least-recently-used principal evicted whole.
+    """
+    store = ResultStore(capacity=3)
+    bob = [
+        store.issue(principal="bob", budgets=BUDGETS, read_set=alice("/u/bob/"), intent=INTENT, candidates=(str(n),))
+        for n in range(3)
+    ]
+    alice_handle = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",)
+    )
+
+    assert store.resolve("bob", bob[0]) is None, "admission reissues the largest surplus, oldest entry first"
+    assert store.resolve("bob", bob[2]) is not None, "a principal keeps its newest entry, and its reservation"
+    assert store.resolve("alice", alice_handle) is not None, "the newcomer is admitted"
+    assert len(store) == 3
+
+    second = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a2",)
+    )
+
+    assert store.resolve("bob", bob[1]) is not None, "the active principal sheds its own surplus before a neighbour's"
+    assert store.resolve("bob", bob[2]) is not None
+    assert store.resolve("alice", second) is not None, "the newest handle is always the one that survives"
+    assert store.resolve("alice", alice_handle) is None, "alice's own oldest entry is what her second query costs"
+    assert len(store) == 3
+
+
+def test_admission_reclaims_from_the_largest_surplus_not_the_oldest_holder() -> None:
+    """`V2-D127` promises the *largest* surplus gives first; two donors of unequal size tell the two rules apart.
+
+    Resident counts go from ``(old=2, big=4)`` to ``(2, 3, 1)`` when a third principal is admitted at capacity six.
+    Reclaiming from the oldest holder instead would give ``(1, 4, 1)``.
+    """
+    store = ResultStore(capacity=6)
+    old = [
+        store.issue(principal="old", budgets=BUDGETS, read_set=alice("/u/old/"), intent=INTENT, candidates=(str(n),))
+        for n in range(2)
+    ]
+    big = [
+        store.issue(principal="big", budgets=BUDGETS, read_set=alice("/u/big/"), intent=INTENT, candidates=(str(n),))
+        for n in range(4)
+    ]
+
+    store.issue(principal="new", budgets=BUDGETS, read_set=alice("/u/new/"), intent=INTENT, candidates=("n",))
+
+    resident = {principal: len(handles) for principal, handles in store._principals.items()}
+    assert resident == {"old": 2, "big": 3, "new": 1}
+    assert all(store.resolve("old", handle) is not None for handle in old), "the smaller surplus is untouched"
+    assert store.resolve("big", big[0]) is None, "the largest surplus gives its oldest entry"
+    assert len(store) == 6
+
+
+def test_an_evicted_handle_still_resolves_as_unknown() -> None:
+    store = ResultStore(capacity=1)
+    first = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("first",)
+    )
+    store.issue(principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("second",))
+    assert store.resolve("alice", first) is None
+
+
 def test_issuing_while_full_drops_expired_entries_before_live_ones() -> None:
     clock = Clock()
     store = ResultStore(ttl=timedelta(minutes=1), capacity=2, clock=clock)
