@@ -55,6 +55,22 @@ def test_backup_and_restore_rehearsal_passes_against_real_postgres() -> None:
     assert report["journal_wrong_key_refused"] is True
     assert report["journal_unstamped_refused"] is True
     assert report["journal_truncated_refused"] is True
+    # #263 (V2-D126): the pairing rule is measured on the real artefacts, not only on a hand-built journal. The journal
+    # above is exported after the pre-deletion dump this restore uses, so the pair is accepted and the replay the rest
+    # of this test asserts is a replay of a pair the check allows; a dump actually taken after that export is refused
+    # (`journal_older_than_backup`), which is the refusal an operator sees when shipping lags the timer.
+    assert report["recovery_point_accepted_for_this_dump"] is True
+    assert report["recovery_point_refused_for_a_later_dump"] is True
+    # #263 scenario (c), the documented residual, measured rather than asserted in prose: a journal exported *before*
+    # this rehearsal's deletions is accepted against the pre-deletion dump, while it names none of them. Both halves of
+    # the pair predate every deletion, so no check on the pair can refuse it (`T-48`, `deploy/README.md`).
+    assert report["recovery_point_accepted_for_an_early_pair"] is True
+    assert report["early_journal_entries"] == 0
+    assert report["journal_entries"] > report["early_journal_entries"]
+    # scenario (a), reported honestly: every journalled user is in the per-user comparison, and the restored database
+    # (older than every deletion) knew none of their epochs, so none of these requests is a clean restore
+    assert report["replay_journal_users"] == 3
+    assert report["replay_restored_epochs_known"] == 0
     # replayed into the restored database: the resolved memory deletion and bob's and carol's `delete all` erase
     # again, the two memories the backup never held (alice's late claim and the T-46 peanut claim) are recorded with
     # nothing to erase, and carol (whom the backup predates) is re-provisioned so her epochs are taken. The T-46 turn

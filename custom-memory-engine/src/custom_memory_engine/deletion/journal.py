@@ -47,7 +47,7 @@ import os
 import tempfile
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -75,9 +75,10 @@ type ReplayOutcome = Literal["already_present", "replayed", "recorded_unresolved
 class JournalError(ValueError):
     """A static, content-free refusal code."""
 
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
+    def __init__(self, code: str, *, detail: str | None = None) -> None:
+        super().__init__(code if detail is None else f"{code}: {detail}")
         self.code = code
+        self.detail = detail
 
 
 @dataclass(frozen=True, order=True)
@@ -96,10 +97,11 @@ class JournalEntry:
 
 @dataclass(frozen=True)
 class Journal:
-    """A journal file: its entries and the key check of the deletion key its digests were made with."""
+    """A journal file: entries, its export recovery point and its deletion-key check."""
 
     entries: tuple[JournalEntry, ...]
     key_check: str | None
+    exported_at: str | None = None
 
 
 def key_check(key: bytes) -> str:
@@ -107,9 +109,54 @@ def key_check(key: bytes) -> str:
     return hmac.new(key, _KEY_CHECK_MESSAGE, "sha256").hexdigest()
 
 
+def _timestamp(value: str) -> datetime:
+    """Parse an aware ISO-8601 timestamp used by the recovery-point check."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must include a timezone")
+    return parsed.astimezone(UTC)
+
+
+def check_recovery_point(journal: Journal, restored_from_backup_at: str) -> None:
+    """Refuse a journal whose own recovery point predates the restored backup.
+
+    The comparison is the file's ``exported_at``: the instant the export read the database. That is the one instant the
+    pair can be compared on, because an export made after the backup's start has seen every request the backup could
+    be missing. A principal's newest ``requested_at`` is deliberately **not** compared: a principal who has deleted
+    nothing since before the backup is not evidence of a lost deletion, and refusing on it would block the restore of
+    any deployment whose deletions are sparse -- leaving ``--mark-reconciled``, which replays nothing, as the
+    operator's only way through. Those per-principal instants are reported instead
+    (:attr:`ReplayReport.journal_newest_epochs`).
+    """
+    try:
+        backup = _timestamp(restored_from_backup_at)
+    except (TypeError, ValueError, OverflowError):
+        # name which of the two inputs is unparseable. Neither value is echoed, so a malformed journal header cannot
+        # put file text on the operator's stderr
+        raise JournalError("journal_timestamp_invalid", detail="restored_from_backup_at") from None
+    if journal.exported_at is None:
+        # a journal with no recovery point cannot be paired with a backup: fail closed, never assume it is recent
+        raise JournalError(
+            "journal_older_than_backup",
+            detail=f"journal_timestamp=missing restored_from_backup_at={backup.isoformat()}",
+        )
+    try:
+        exported = _timestamp(journal.exported_at)
+    except (TypeError, ValueError, OverflowError):
+        raise JournalError("journal_timestamp_invalid", detail="journal_timestamp") from None
+    if exported < backup:
+        # both instants are re-formatted from the parsed values, never echoed from the input: `fromisoformat` accepts
+        # and discards trailing text in some fractional-second forms, so echoing the string would put file content on
+        # the operator's stderr (review of #266)
+        raise JournalError(
+            "journal_older_than_backup",
+            detail=f"journal_timestamp={exported.isoformat()} restored_from_backup_at={backup.isoformat()}",
+        )
+
+
 @dataclass(frozen=True)
 class ReplayReport:
-    """Counts only: what the replay found and did."""
+    """Counts and recovery evidence from one replay."""
 
     already_present: int
     replayed: int
@@ -117,6 +164,10 @@ class ReplayReport:
     #: Journalled users the restored database did not hold (created after the backup), re-provisioned so their
     #: requests and epochs are recorded and their next deletion continues after them.
     users_reprovisioned: int
+    #: The newest journal epoch per user, compared with the restored database before replay writes it.
+    journal_newest_epochs: dict[str, int] = field(default_factory=dict)
+    #: The newest completed deletion epoch per user in the restored database before replay.
+    restored_newest_epochs: dict[str, int | None] = field(default_factory=dict)
     #: Users whose restored history contradicts the journal. Their entries were skipped and every other user was still
     #: replayed: a conflict in one tenant must not leave the rest of the deployment unerased. The run is not a success.
     divergent_users: tuple[str, ...] = ()
@@ -226,7 +277,14 @@ def read_journal(path: Path) -> Journal:
     except (ValueError, TypeError, AttributeError, MarkerError):  # malformed JSON, a bad field or marker, a non-object
         raise JournalError("journal_entry_invalid") from None
     check = header.get("key_check")
-    return Journal(tuple(merge_journal([], entries)), check if isinstance(check, str) else None)
+    exported_at = header.get("exported_at")
+    if exported_at is not None and not isinstance(exported_at, str):
+        raise JournalError("journal_header_invalid")
+    return Journal(
+        tuple(merge_journal([], entries)),
+        check if isinstance(check, str) else None,
+        exported_at,
+    )
 
 
 def _record(entry: JournalEntry) -> dict[str, object]:
@@ -236,13 +294,26 @@ def _record(entry: JournalEntry) -> dict[str, object]:
     return record
 
 
-def write_journal(path: Path, entries: Sequence[JournalEntry], *, schema_name: str, key: bytes) -> None:
-    """Write ``entries`` atomically (a temporary file in the same directory, then a rename), mode 0600."""
+def write_journal(
+    path: Path,
+    entries: Sequence[JournalEntry],
+    *,
+    schema_name: str,
+    key: bytes,
+    exported_at: datetime | None = None,
+) -> None:
+    """Write ``entries`` atomically (a temporary file in the same directory, then a rename), mode 0600.
+
+    ``exported_at`` is the instant the entries were *read*, not the instant this file was written. An export that is
+    handed a timestamp captured before its ``SELECT`` records a conservative lower bound: a backup that starts between
+    the read and this write is then refused rather than paired with a journal that never saw its deletions (review of
+    #266). The default is "now", which is what a caller with nothing to declare has.
+    """
     header = {
         "format": JOURNAL_FORMAT,
         "version": JOURNAL_VERSION,
         "schema": schema_name,
-        "exported_at": datetime.now(UTC).isoformat(),
+        "exported_at": (exported_at or datetime.now(UTC)).isoformat(),
         "entries": len(entries),
         "key_check": key_check(key),
     }
@@ -289,6 +360,8 @@ async def export_to_file(
     ``key`` is the deployment's deletion key; only its key check is written. An existing journal made under another
     key is refused rather than mixed.
     """
+    # captured before the database is read: the bound must not be looser than the snapshot the entries came from
+    read_at = datetime.now(UTC)
     exported = await export_journal(connection, schema_name=schema_name)
     with _exclusive(path):
         existing = read_journal(path)
@@ -299,7 +372,7 @@ async def export_to_file(
         if existing.key_check is not None and not hmac.compare_digest(existing.key_check, key_check(key)):
             raise JournalError("journal_key_mismatch")
         merged = merge_journal(existing.entries, exported)
-        write_journal(path, merged, schema_name=schema_name, key=key)
+        write_journal(path, merged, schema_name=schema_name, key=key, exported_at=read_at)
     logger.info("erasure_journal_exported", entries=len(merged))
     return len(merged)
 
@@ -380,9 +453,10 @@ async def _resolve_target(handlers: DeleteHandlers, entry: JournalEntry) -> str:
     return ""
 
 
-async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[ReplayOutcome, bool]:
-    """Re-apply one journalled request unless the restored database already holds it; also: was the user created."""
+async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[ReplayOutcome, bool, int | None]:
+    """Re-apply one request and return its pre-replay newest completed database epoch."""
     restored, by_request, provisioned = await _restored_requests(handlers, entry.user_id)
+    newest_restored_epoch = max((epoch for epoch, value in restored.items() if value[0]), default=None)
     held_at = by_request.get(entry.request_id)
     if held_at is not None and held_at != entry.deletion_epoch:
         # the same request id under another epoch: two different histories, not a replay of this one
@@ -392,7 +466,7 @@ async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[R
         if present != (entry.request_id, entry.scope, entry.target_ref):
             # the restored database recorded a different (or an incomplete) deletion under this epoch
             raise JournalError("journal_diverges_from_database")
-        return "already_present", provisioned
+        return "already_present", provisioned, newest_restored_epoch
     target = await _resolve_target(handlers, entry)
     await handlers.replay(
         entry.user_id,
@@ -403,7 +477,8 @@ async def replay_entry(handlers: DeleteHandlers, entry: JournalEntry) -> tuple[R
         deletion_epoch=entry.deletion_epoch,
         erasure_markers=entry.markers,
     )
-    return ("replayed" if target or entry.scope == "all" else "recorded_unresolved"), provisioned
+    outcome = "replayed" if target or entry.scope == "all" else "recorded_unresolved"
+    return outcome, provisioned, newest_restored_epoch
 
 
 async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayReport:
@@ -419,9 +494,13 @@ async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayRe
     counts: dict[ReplayOutcome, int] = {"already_present": 0, "replayed": 0, "recorded_unresolved": 0}
     reprovisioned = 0
     divergent: set[str] = set()
+    journal_epochs: dict[str, int] = {}
+    restored_epochs: dict[str, int | None] = {}
     for entry in merge_journal([], journal.entries):
+        journal_epochs[entry.user_id] = max(journal_epochs.get(entry.user_id, 0), entry.deletion_epoch)
         try:
-            outcome, provisioned = await replay_entry(handlers, entry)
+            outcome, provisioned, restored_epoch = await replay_entry(handlers, entry)
+            restored_epochs.setdefault(entry.user_id, restored_epoch)
         except JournalError as error:
             if error.code != "journal_diverges_from_database":
                 raise
@@ -431,8 +510,30 @@ async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayRe
             continue
         counts[outcome] += 1
         reprovisioned += int(provisioned)
-    report = ReplayReport(**counts, users_reprovisioned=reprovisioned, divergent_users=tuple(sorted(divergent)))
-    logger.info("erasure_journal_replayed", **asdict(report))
+    report = ReplayReport(
+        **counts,
+        users_reprovisioned=reprovisioned,
+        journal_newest_epochs=journal_epochs,
+        restored_newest_epochs=restored_epochs,
+        divergent_users=tuple(sorted(divergent)),
+    )
+    # counts and how many principals are affected, never the per-user maps: the operator's report carries those, but a
+    # log line that names every principal and its newest epoch is tenant metadata the log did not previously hold
+    logger.info(
+        "erasure_journal_replayed",
+        users=len(journal_epochs),
+        replayed=report.replayed,
+        already_present=report.already_present,
+        recorded_unresolved=report.recorded_unresolved,
+        users_reprovisioned=report.users_reprovisioned,
+        divergent_users=len(report.divergent_users),
+        users_ahead_of_restored=sum(
+            1
+            for user, epoch in report.journal_newest_epochs.items()
+            if report.restored_newest_epochs.get(user) is None
+            or epoch > cast(int, report.restored_newest_epochs[user])
+        ),
+    )
     return report
 
 
@@ -445,6 +546,7 @@ __all__ = [
     "ReplayReport",
     "export_journal",
     "export_to_file",
+    "check_recovery_point",
     "key_check",
     "merge_journal",
     "read_journal",
