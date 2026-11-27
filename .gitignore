@@ -29,6 +29,8 @@ evals/reports/
 !.claude/NOTICE.md
 !.claude/skills/
 !.claude/skills/**
+# ...but not the bytecode caches Python writes beside a skill's scripts
+.claude/skills/**/__pycache__/
 .cursor/
 .vscode/
 .agents/
