@@ -801,11 +801,60 @@ def test_the_report_names_the_failure_and_never_quotes_the_run(tmp_path: Path) -
         )
 
 
+def test_the_report_reads_the_producers_pretty_printed_array(tmp_path: Path) -> None:
+    """The pinned action writes one pretty-printed JSON array, not JSON lines; the diagnosis must still be found."""
+    module = _load_report()
+    stream = [
+        {"type": "system", "subtype": "init", "model": "claude-sonnet-5-5"},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "num_turns": 1,
+            "duration_ms": 377,
+            "total_cost_usd": 0,
+            "result": "Credit balance is too low",
+        },
+    ]
+    path = tmp_path / "claude-execution-output.json"
+    # exactly the shape `base-action/src/execution-file.ts` writes: `JSON.stringify(messages, null, 2)`
+    path.write_text(json.dumps(stream, indent=2), encoding="utf-8")
+    objects = list(module._objects(path.read_text(encoding="utf-8")))
+    assert module.result_of(objects) is not None, "a pretty-printed array holds the result object"
+    message = module.report(module.result_of(objects))
+    assert "Credit balance is too low" in message, "the diagnosis reaches the operator"
+    assert "no result object" not in message
+
+
+def test_a_failed_run_that_billed_turns_is_not_called_a_run_that_never_started() -> None:
+    """A failure after several billed turns is a review that went wrong, not one that never happened."""
+    module = _load_report()
+    multi = module.report({"type": "result", "num_turns": 9, "duration_ms": 120000, "total_cost_usd": 0.14})
+    assert "before it reviewed anything" not in multi
+    assert "num_turns=9" in multi, "what the run is known to have done is what it reports"
+    assert "secrets.CLAUDE_CODE_OAUTH_TOKEN" not in multi, "a billed run is not a credential failure"
+
+
+def test_the_report_redacts_an_absolute_path_from_the_runs_own_text() -> None:
+    """The excerpt reaches a public step summary; an absolute path in it is replaced, never echoed."""
+    module = _load_report()
+    message = module.report(
+        {"type": "result", "num_turns": 4, "result": "cannot read /home/runner/work/repo/secret-fixture.json"}
+    )
+    assert "secret-fixture.json" not in message, "the path, and the file name inside it, are gone"
+    assert "<path>" in message
+    windows = module.report({"type": "result", "num_turns": 4, "result": r"cannot read C:\Users\runner\fixture.json"})
+    assert "fixture.json" not in windows
+
+
 def test_the_report_never_claims_a_cause_it_cannot_see(tmp_path: Path) -> None:
-    """No result object at all is a real outcome (the action died first): say that, and name the substitute."""
+    """No result object is a real outcome: say only what that means, and name the substitute."""
     module = _load_report()
     message = module.report(None)
     assert "no result object" in message
+    assert "before the model answered" in message and "after work had started" in message, (
+        "a missing result can follow a crash mid-run, so both readings are named and neither is asserted"
+    )
     assert ".claude/skills/review-pr/SKILL.md" in message, "the substitute process is named, not implied"
     assert "secrets.CLAUDE_CODE_OAUTH_TOKEN" not in message, "no cause is invented without a billed turn to show one"
     assert module.main([str(tmp_path / "absent.json")]) == 0

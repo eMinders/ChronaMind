@@ -15,9 +15,12 @@ The comment on `#264` then quoted the only line in the log that looked like an e
 before anything runs, and present in every **successful** run too (`45845609418`, nine turns, `is_error: false`). A
 failure nobody can read is how a red job gets a wrong root cause written on its issue.
 
-So on failure this prints five whitelisted fields of the run's own `result` object and its `result` text -- and nothing
-from `messages`, `content` or the prompt, which is what `show_full_output: true` would publish. The error text is
-capped, and the record stays a diagnosis rather than a transcript. The text is the model's or the CLI's, not ours, so
+So on failure this prints five whitelisted fields of the run's own `result` object and a capped excerpt of its
+`result` text -- and nothing from `messages`, `content` or the prompt, which is what `show_full_output: true` would
+publish. The record stays a diagnosis rather than a transcript. What that guarantee is, exactly: the metadata is
+whitelisted, the excerpt is capped and line-collapsed so it cannot forge a runner command, and absolute paths in it are
+replaced with `<path>`. A bare filename or an excerpt of the run's prose is *not* redacted -- it cannot be told from
+ordinary words -- so the excerpt is the run's own text, and the record says so instead of claiming more. The text is the model's or the CLI's, not ours, so
 it is printed inside a `stop-commands` fence: the runner reads `::cmd::` at the start of a line *and* `##[cmd]`
 anywhere in one (`actions/runner`, `ActionCommand.TryParse`), and collapsing line breaks alone stops only the first. It exits 0 whatever it finds: a report must never decide the job's conclusion, and
 the job has already failed by the time it runs.
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import sys
 from collections.abc import Iterator, Mapping, Sequence
@@ -42,6 +46,8 @@ RESULT_TYPE = "result"
 SAFE_FIELDS = ("subtype", "is_error", "num_turns", "duration_ms", "total_cost_usd")
 #: How much of the error text is kept. Enough to carry "Invalid API key" or "429"; not enough to carry a turn.
 MAX_ERROR_CHARS = 300
+#: An absolute path (POSIX, or Windows with a drive) of two or more segments: redacted from the run's own text.
+_PATH = re.compile(r"(?:[A-Za-z]:)?(?:[/\\][\w.@+-]+){2,}[/\\]?")
 
 #: The causes that produce `num_turns: 1` with no cost and no model usage -- a run that died before the first answer.
 #: Named here so the next reader does not repeat the investigation that produced this file.
@@ -53,7 +59,20 @@ CAUSES = (
 
 
 def _objects(text: str) -> Iterator[Mapping[str, Any]]:
-    """Every JSON object in ``text``: the file is JSON lines, but one array or one object is accepted too."""
+    """Every JSON object in ``text``.
+
+    The pinned action writes **one pretty-printed document** -- ``JSON.stringify(messages, null, 2)`` in
+    ``base-action/src/execution-file.ts`` -- so the whole file is parsed first, and only a file that is not one JSON
+    document falls back to one object per line. Reading it line by line, as this did, found no object at all in the
+    producer's real format and reported `no result` for a file that ended with the failure's own diagnosis (`#264`).
+    """
+    try:
+        document = json.loads(text)
+    except ValueError:
+        document = None
+    if isinstance(document, list | dict):
+        yield from _flatten(document)
+        return
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -81,18 +100,30 @@ def result_of(objects: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
     return None
 
 
+def _without_paths(text: str) -> str:
+    """Absolute paths replaced with ``<path>``.
+
+    The run's own text can name a file, and this script's output reaches a public pull request's step summary. A path is
+    the part worth removing mechanically; a bare filename or an excerpt of prose is not distinguishable from ordinary
+    words, so the record says plainly that the excerpt is the run's own text (`evidence/REVIEW-264-T46-independent.md`).
+    """
+    return _PATH.sub("<path>", text)
+
+
 def report(result: Mapping[str, Any] | None) -> str:
     """The one-paragraph diagnosis printed on failure, built only from the whitelisted fields."""
     if result is None:
         return (
-            "The review produced no result object: it failed before the model answered, and the action's own log is "
-            "the only remaining evidence. Review this pull request by hand and record it on the issue "
+            "The execution file carries no result object, so this run never reported how it ended: it may have failed "
+            "before the model answered, or after work had started and before the closing result was written. The "
+            "action's own log is the remaining evidence. Review this pull request by hand and record it on the issue "
             "(`.claude/skills/review-pr/SKILL.md` is the procedure)."
         )
     fields = ", ".join(f"{name}={result.get(name)!r}" for name in SAFE_FIELDS)
     # every line break, not only `\n`: the runner also ends a line at `\r`, and a line starting `::` is a workflow command
-    error = " ".join(str(result.get("result") or "").split())[:MAX_ERROR_CHARS]
-    lines = [f"The review run failed before it reviewed anything: {fields}."]
+    error = _without_paths(" ".join(str(result.get("result") or "").split())[:MAX_ERROR_CHARS])
+    # what the run is known to have done is what it reports; a failed run that billed turns reviewed something
+    lines = [f"The review run failed ({fields})."]
     if error:
         lines.append(f"The run's own last message: {error}")
     if result.get("num_turns") == 1 and not result.get("total_cost_usd"):

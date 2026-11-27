@@ -89,9 +89,15 @@ What the step must never do, and what holds it there:
 
 - **Publish the transcript, a secret or a path.** The script reads five whitelisted fields and the `result` text
   (`SAFE_FIELDS`, asserted as an exact set); it never reads `messages`, `content` or the prompt, and its fixture
-  carries a transcript string that the test asserts is absent. It prints no path and the step has no `secrets.` or
-  `GITHUB_TOKEN` in its body (asserted). `show_full_output: true` appears nowhere in the workflow file (asserted over
-  the whole file, not only this step). The `result` text is capped at `MAX_ERROR_CHARS` (300).
+  carries a transcript string that the test asserts is absent. The step has no `secrets.` or `GITHUB_TOKEN` in its
+  body (asserted), and `show_full_output: true` appears nowhere in the workflow file (asserted over the whole file, not
+  only this step). The `result` text is capped at `MAX_ERROR_CHARS` (300).
+  **What that guarantee is, exactly** — an earlier revision of this record said "prints no path", which was more than
+  the code enforced, and a review of #305 measured a fixture file name surviving into both outputs. The excerpt is the
+  run's own free text: absolute paths in it are now replaced with `<path>` (POSIX and Windows, two or more segments,
+  `_without_paths`), and a bare file name or a phrase is **not** redacted, because it cannot be told from ordinary
+  words. So the promise is: whitelisted metadata; no transcript, prompt or `messages`; a capped, line-collapsed, fenced
+  excerpt with absolute paths removed, which may still quote what the run itself chose to say.
 - **Forge a workflow command.** The error text is joined onto one line with *every* line break collapsed, not only
   `\n`: the runner also ends a line at a bare `\r`. The first version replaced `\n` alone, and this review measured
   `"x\r::error::forged"` producing a line that begins `::error::`; fixed in the same branch, and the test now forges
@@ -152,7 +158,7 @@ the priority in brackets is the issue's own classification (`NOW` / `LATER`), wh
 | F1 | 🔴 | An in-place upgrade 32 → 33 leaves the runtime role without grants on the three new tables; `host/service.py::start` then raises `InsufficientPrivilege` instead of `restore_not_reconciled`, every deletion fails at `deletion/markers.py`'s marker insert, the documented remedy (`provision_runtime_role`) cannot re-run on an existing role (`DuplicateObject`, uncaught by `scripts/provision_role.py`), and `deploy/README.md` names the wrong role for the read, so its remedy does not work either | reachable today: an operator who follows `deploy/README.md`'s upgrade paragraph on a running deployment creates exactly this state. Nothing upstream guards it — the migration has no grant step by design (`RL-071`), and the runtime role's missing privilege is checked nowhere before the first read | filed, `#268` (P2, `NOW`) |
 | F2 | 🟡 | `scripts/erasure_journal.py replay --mark-reconciled` requires a `--journal` path it never opens, and `deploy/README.md`'s example supplies the off-host journal path in the one scenario where that file does not exist | reachable today: the command is the documented way out of F1's refuse-to-start state, and it is run by hand while the deployment is down. It succeeds, so nothing is erased wrongly; what is wrong is what the operator is told to type | filed, `#269` (P3, `NOW`) |
 | F3 | 🟡 | A `turn` marker is recorded per turn for `scope='all'`, where the scope already names them and both branches recompute them on replay; the deletion transaction writes N rows and the journal — rewritten and fsynced in full on every export — grows by N triples per `all` request, permanently | reachable today: any `scope='all'` deletion on a user with a long history, with the journal timer enabled (`deploy/README.md:175`, the normal configuration). Cost only; nothing is served or erased wrongly | filed, `#270` (P3, `LATER`) |
-| F4 | 🟡 | A failed review run published the shape of its failure and not the message, which is how `#264` came to record a comment in the action's `run:` block as the error | reachable today: every failed review run. It cannot make a review wrong, only unexplained — which it did, on this issue | fixed here: `.github/scripts/review_failure_report.py`, a step in `.github/workflows/claude-code-review.yml`, and four tests in `tests/test_claude_integration.py` |
+| F4 | 🟡 | A failed review run published the shape of its failure and not the message, which is how `#264` came to record a comment in the action's `run:` block as the error. Two defects were found in the first version of the reporter by the review of #305 and fixed here: it parsed the action's execution file line by line, while `base-action/src/execution-file.ts` writes one pretty-printed JSON array (`JSON.stringify(messages, null, 2)`), so it reported `no result object` for a file whose last element was the failure's own diagnosis; and it described any run without a result as one that failed `before it reviewed anything`, which is wrong for a crash mid-run and for a failed run that billed several turns. It now reads one JSON document first (JSON lines stays the fallback), and the wording says only what the file shows. | reachable today: every failed review run. It cannot make a review wrong, only unexplained — which it did, on this issue | fixed here: `.github/scripts/review_failure_report.py`, a step in `.github/workflows/claude-code-review.yml`, and four tests in `tests/test_claude_integration.py` |
 | F5 | 🔴 | When the reconciliation check *raises* — F1's pre-33 grant state, or any error of that one query — `run_once` returns before `release_one`, so the claim's attempt is spent; three ten-minute leases later every queued extraction is `dead_letter` with no model ever called, which is the opposite of what the docstring promises and of what `test_the_worker_claims_nothing_until_the_journal_is_replayed_into_the_restored_database` asserts for the `False` answer | reachable today in F1's state (measured: three ticks, `attempts` 1 → 3, then `dead_letter`, zero extractor calls). Not a leak or a resurrection; it is queued learning lost without a retry | filed, `#304` (P2, `NOW`) |
 
 Two 🔴 findings, and they are both about the *edge* of the mechanism rather than its core: the guarantee holds for a
@@ -238,10 +244,10 @@ every read and write run as that role under `SET LOCAL ROLE` and `app.user_id`:
 
 Every row was re-measured by this record on `cme_compatibility_gw13`, in a clone database the integration fixture makes,
 not only asserted from reading. Test suites run: `tests/integration/test_t46_restore_erasure_db.py` (7 passed),
-`tests/test_claude_integration.py`, `tests/test_review_gate.py`, `tests/test_ci_workflow.py` (137 passed), `ruff check`,
+`tests/test_claude_integration.py`, `tests/test_review_gate.py`, `tests/test_ci_workflow.py` (140 passed), `ruff check`,
 `ruff format --check`, `pyright` (0 errors, with `--extra baselines` as CI's `static` job does), `actionlint` over
 `.github/` (actionlint 1.7.12, run as `uvx --from actionlint-py actionlint .github/workflows/*.yml`: 0 findings),
-`scripts/check_plan_refs.py` (0 findings) and `scripts/check_evidence.py` over this file (37 references, 0 unresolved).
+`scripts/check_plan_refs.py` (0 findings) and `scripts/check_evidence.py` over this file (38 references, 0 unresolved).
 
 The probes live in no committed file — they were run from `/tmp` against the same fixtures the integration tests use
 (`tests/integration/schema.py::engine_database`), which is why they are quoted here rather than cited as a path.
