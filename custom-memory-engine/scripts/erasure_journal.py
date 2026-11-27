@@ -10,7 +10,9 @@
             --journal /var/lib/chronamind-journal/erasure-journal.jsonl
 
 ``CME_SCHEMA`` selects the engine schema (default ``cme_engine``). Exit codes: ``0`` success, ``1`` runtime error, a
-refused journal, an unresolved entry, an incomplete key or a divergent user, ``2`` missing configuration. Output is
+refused journal, an unresolved entry, an incomplete key or a divergent user, ``2`` missing configuration -- an unset
+``CME_*`` variable, or a ``replay`` without ``--restored-from-backup-at``, which is the input the check cannot run
+without. Output is
 content-free counts; ``--json`` prints them as one JSON object.
 
 **A replay is only a success when nothing is unresolved.** An entry whose target the restored database does not hold
@@ -96,6 +98,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+class MissingInput(Exception):
+    """A required input the run cannot proceed without (a CLI flag), reported like a missing variable: exit ``2``."""
+
+    def __init__(self, flag: str) -> None:
+        super().__init__(flag)
+        self.flag = flag
+
+
+def _missing_name(missing: KeyError | MissingInput) -> str:
+    """``CME_FOO``/``--foo`` as the static ``cme_foo_required``/``foo_required`` token the docstring promises."""
+    raw = missing.flag if isinstance(missing, MissingInput) else str(missing.args[0])
+    return raw.strip("-").replace("-", "_").lower()  # a flag and a variable both become one static-code token
+
+
 def _required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -154,11 +170,13 @@ async def _replay(
         raise JournalError("journal_missing")
     loaded = read_journal(journal)
     if restored_from_backup_at is None:
-        raise JournalError("restored_from_backup_at_required")
+        # a missing input, not a refused journal: the same class as an unset CME_* variable, so the same exit status
+        raise MissingInput("--restored-from-backup-at")
     if restored_mode is None:
-        # the reconciliation records which restore it follows; a restore the identity cannot see (data-only, PITR) is
-        # then acknowledged where the operator acts, not only in prose (T-49)
-        raise JournalError("restored_mode_required")
+        # the acknowledgement, and the same class of missing input: the reconciliation records which restore it
+        # follows, so a restore the identity cannot see (data-only, PITR) is stated where the operator acts rather
+        # than only in prose (T-49)
+        raise MissingInput("--restored-mode")
     check_recovery_point(loaded, restored_from_backup_at)
     provenance = os.environ.get("CME_PROVENANCE_KEY", "").strip().encode("utf-8")
     # a deletion writes no provenance signature; a random key only satisfies the runtime's shape
@@ -200,7 +218,7 @@ async def main(argv: list[str] | None = None) -> int:
             result = await _export(args.journal, schema)
         elif args.mark_reconciled:
             if args.restored_mode is None:
-                raise JournalError("restored_mode_required")
+                raise MissingInput("--restored-mode")
             result = await _mark_reconciled(schema, restored_mode=args.restored_mode)
         else:
             result = await _replay(
@@ -210,8 +228,8 @@ async def main(argv: list[str] | None = None) -> int:
                 restored_from_backup_at=args.restored_from_backup_at,
                 restored_mode=args.restored_mode,
             )
-    except KeyError as missing:
-        console.print(f"[red]{str(missing.args[0]).lower()}_required[/red]")
+    except (KeyError, MissingInput) as missing:
+        console.print(f"[red]{_missing_name(missing)}_required[/red]")
         return 2
     except JournalError as error:
         console.print(f"[red]{error}[/red]")

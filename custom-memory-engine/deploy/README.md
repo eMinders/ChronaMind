@@ -222,9 +222,18 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    (`divergent_users_remain`), and a missing journal file is `journal_missing` rather than a success with zero entries.
    The refusal names only the journal and backup timestamps. The JSON report includes `recorded_unresolved`,
    `journal_newest_epochs`, and `restored_newest_epochs` so requests re-applied against a database that never held
-   their targets are not presented as a clean restore. Do not start the worker on a non-zero exit: an unresolved entry is indistinguishable
-   from a wrong deletion key, and it is also the one case where a turn the backup still holds could re-derive the
-   deleted claim. `--accept-unresolved` says, per run, that those targets really were memories the backup never held.
+   their targets are not presented as a clean restore. Do not start the worker on a non-zero exit: an unresolved entry
+   is indistinguishable from a wrong deletion key, and it is also the one case where a turn the backup still holds
+   could re-derive the deleted claim. `--accept-unresolved` says, per run, that those targets really were memories the
+   backup never held.
+
+   **What to do when it refuses with `journal_older_than_backup`.** Put back the *newest* off-host copy you hold --
+   one whose `exported_at` is at or after the backup's start -- and replay that copy: the refusal means your copy was
+   made before the backup, so the journal cannot hold the deletions made after the backup begins, and those are exactly
+   the ones a restore brings back. `--accept-unresolved` does not clear it, because the check runs before any entry is
+   considered. If no copy that new survives, that window cannot be recovered from either artefact, and the only
+   remaining path is `--mark-reconciled`, which replays nothing: reach for it only as an explicit, recorded acceptance
+   that those deletions are lost (`T-48`), never as a routine step.
 
    Then `scripts/run_maintenance.py --once` so retention (`expire`, `purge_working`) catches up, and only then:
 

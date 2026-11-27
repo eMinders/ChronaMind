@@ -98,16 +98,50 @@ def test_a_journal_older_than_the_restored_backup_is_refused_and_equal_is_accept
     check_recovery_point(loaded, "2026-11-26T00:00:00+00:00")
 
 
-def test_a_recovery_point_refusal_control_fails_when_the_older_journal_guard_is_removed(tmp_path: Path) -> None:
+def test_the_recovery_point_is_compared_as_an_instant_whatever_the_offset(tmp_path: Path) -> None:
+    """`+02:00` and `Z` name the same instant, one microsecond decides the refusal, and a naive value is refused.
+
+    The test above uses UTC on both sides, so a comparison of the text would pass it too. This one fails unless the
+    two values are parsed as instants, which is what lets an operator quote the backup's start in their own zone.
+    """
     path = tmp_path / "journal.jsonl"
     write_journal(path, [entry()], schema_name="cme_engine", key=KEY)
     lines = path.read_text().splitlines()
-    header = json.loads(lines[0])
-    header["exported_at"] = "2026-11-20T00:00:00+00:00"
+    header = json.loads(lines[0]) | {"exported_at": "2026-11-26T02:00:00+02:00"}  # the instant of 00:00:00Z
     path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n")
+    loaded = read_journal(path)
+
+    check_recovery_point(loaded, "2026-11-26T00:00:00Z")
     with pytest.raises(JournalError) as refused:
-        check_recovery_point(read_journal(path), "2026-11-27T00:00:00+00:00")
+        check_recovery_point(loaded, "2026-11-26T00:00:00.000001+00:00")
     assert refused.value.code == "journal_older_than_backup"
+
+    with pytest.raises(JournalError) as invalid:
+        check_recovery_point(loaded, "2026-11-26T00:00:00")  # naive: refused, never assumed to be UTC
+    assert invalid.value.code == "journal_timestamp_invalid"
+    assert "restored_from_backup_at" in str(invalid.value)  # the operator is told which of the two inputs is wrong
+
+
+def test_a_malformed_journal_timestamp_is_named_and_never_echoed(tmp_path: Path) -> None:
+    """The refusal says which timestamp is unparseable and still prints no text taken from the file."""
+    with pytest.raises(JournalError) as invalid:
+        check_recovery_point(Journal((), None, "yesterday"), "2026-11-26T00:00:00+00:00")
+    assert invalid.value.code == "journal_timestamp_invalid"
+    assert "journal_timestamp" in str(invalid.value)
+    assert "yesterday" not in str(invalid.value)
+
+
+def test_a_journal_header_whose_exported_at_is_not_a_string_is_refused(tmp_path: Path) -> None:
+    """A number or an object where the export wrote a timestamp is refused at read time, not compared as text."""
+    path = tmp_path / "journal.jsonl"
+    write_journal(path, [entry()], schema_name="cme_engine", key=KEY)
+    lines = path.read_text().splitlines()
+    header = json.loads(lines[0]) | {"exported_at": 1764115200}
+    path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n")
+
+    with pytest.raises(JournalError) as refused:
+        read_journal(path)
+    assert refused.value.code == "journal_header_invalid"
 
 
 def test_a_principal_who_has_not_deleted_since_before_the_backup_does_not_refuse_the_restore(
@@ -227,36 +261,94 @@ def test_a_journal_with_entries_but_no_key_check_is_never_stamped_with_the_curre
     # `tests/integration/test_backup_restore_db.py`
 
 
+def _cli(*arguments: str, **environment: str) -> subprocess.CompletedProcess[str]:
+    """Run ``scripts/erasure_journal.py`` as the operator does: a test may not import ``scripts/`` (`test_boundaries`).
+
+    Both DSNs point at an address nothing listens on, so a connection attempt fails loudly with ``OperationalError``.
+    A refusal that names a static code therefore proves the refusal came first, before the replay connected or wrote.
+    """
+    settings = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        "CME_DELETION_RECEIPT_KEY": "k" * 32,
+        "CME_DATABASE_URL": "postgresql://unused@127.0.0.1:1/unused",
+        "CME_JOURNAL_DATABASE_URL": "postgresql://unused@127.0.0.1:1/unused",
+        "CME_RUNTIME_ROLE": "unused",
+    }
+    return subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[1] / "scripts" / "erasure_journal.py"),
+            *arguments,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env={**settings, **environment},
+    )
+
+
 def test_a_missing_journal_is_not_an_empty_success(tmp_path: Path) -> None:
     """A rebuilt host without the off-host copy must fail, not report zero entries and exit 0 (`M1`).
 
     Run as a subprocess: a test may not import `scripts/` (`test_boundaries.py`), and the script must be exercised as
     the operator runs it anyway.
     """
-    environment = {
-        "PATH": os.environ.get("PATH", ""),
-        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
-        "CME_DELETION_RECEIPT_KEY": "k" * 32,
-        "CME_DATABASE_URL": "postgresql://unused/unused",
-        "CME_RUNTIME_ROLE": "unused",
-    }
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(Path(__file__).resolve().parents[1] / "scripts" / "erasure_journal.py"),
-            "replay",
-            "--journal",
-            str(tmp_path / "absent.jsonl"),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-        env=environment,
-    )
+    result = _cli("replay", "--journal", str(tmp_path / "absent.jsonl"))
     assert result.returncode == 1
     assert "journal_missing" in result.stderr
     assert "unused" not in result.stderr  # never the DSN or the role
+
+
+def test_a_replay_without_the_backup_recovery_point_is_refused_before_connecting(tmp_path: Path) -> None:
+    """#263: the recovery point is not skippable by omission -- replay exits 1 and names a static code.
+
+    The unit tests below pin `check_recovery_point` itself; this pins the operator's path to it. Without the flag the
+    check would never run, which is exactly the "skip by accident" the acceptance criteria name.
+    """
+    journal = tmp_path / "journal.jsonl"
+    write_journal(journal, [entry()], schema_name="cme_engine", key=KEY)
+
+    result = _cli("replay", "--journal", str(journal))
+
+    assert result.returncode == 2, "a missing input is 'missing configuration' (2), not a refused journal (1)"
+    assert "restored_from_backup_at_required" in result.stderr
+    assert "OperationalError" not in result.stderr  # the refusal came before any connection attempt
+
+
+def test_a_journal_older_than_the_backup_refuses_the_replay_before_connecting(tmp_path: Path) -> None:
+    """#263: static code, non-zero exit, both timestamps, and never the key check, a user id, a target or the DSN."""
+    journal = tmp_path / "journal.jsonl"
+    write_journal(journal, [entry()], schema_name="cme_engine", key=KEY)
+    lines = journal.read_text().splitlines()
+    header = json.loads(lines[0]) | {"exported_at": "2026-11-26T00:00:00+00:00"}
+    journal.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n")
+
+    result = _cli("replay", "--restored-from-backup-at", "2026-11-27T00:00:00+00:00", "--journal", str(journal))
+
+    assert result.returncode == 1
+    assert "journal_older_than_backup" in result.stderr
+    assert "journal_timestamp=2026-11-26T00:00:00+00:00" in result.stderr
+    assert "restored_from_backup_at=2026-11-27T00:00:00+00:00" in result.stderr
+    # the refusal happens before the replay connects, which `deploy/README.md` states as a property of the procedure
+    assert "OperationalError" not in result.stderr
+    assert "alice" not in result.stderr  # never a user id
+    assert "hmac-sha256" not in result.stderr  # never a target digest
+    assert "127.0.0.1" not in result.stderr and "unused" not in result.stderr  # never the DSN or the role
+
+
+def test_mark_reconciled_and_export_do_not_need_the_backup_recovery_point(tmp_path: Path) -> None:
+    """The new required replay input must not close the two paths that have no recovery point to compare."""
+    journal = tmp_path / "journal.jsonl"
+    write_journal(journal, [entry()], schema_name="cme_engine", key=KEY)
+
+    marked = _cli("replay", "--mark-reconciled", "--journal", str(journal))
+    exported = _cli("export", "--journal", str(journal))
+
+    for result in (marked, exported):
+        assert "restored_from_backup_at_required" not in result.stderr
+        assert "OperationalError" in result.stderr  # reached the connection: the flag was never demanded
 
 
 def test_a_replay_is_a_failure_when_anything_is_unresolved_or_divergent() -> None:
