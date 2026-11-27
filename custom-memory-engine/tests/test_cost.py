@@ -242,6 +242,51 @@ def test_another_principal_burst_preserves_costs_and_the_global_ceiling() -> Non
     assert resident_by_principal <= store._capacity
 
 
+def test_a_cost_report_states_the_process_scope_it_actually_covers() -> None:
+    """§3 of #261: the report says what it covers, and it is a constant the caller cannot influence."""
+    store = CostStore(capacity=3, clock=lambda: T0)
+    store.record("bob", _sample_query_cost(latencies=dict.fromkeys(STAGES, 11.0)))
+
+    report = store.report("bob")
+    assert report.report_scope == "process"
+    assert report.to_dict()["report_scope"] == "process"
+    # a defaulted constant: constructing a report without it cannot change what it claims
+    assert (
+        CostReport(
+            principal="bob",
+            window_start=T0,
+            window_end=T0,
+            query_count=0,
+            total_latency_ms=0.0,
+            tokens_considered=0,
+            tokens_rendered=0,
+            charged_calls=0,
+            input_tokens=0,
+            output_tokens=0,
+            embedding_tokens=0,
+            cost_usd=Decimal(0),
+            stages=(),
+        ).report_scope
+        == "process"
+    )
+
+
+def test_a_cost_report_counts_as_principal_use_and_never_creates_a_principal() -> None:
+    """A report refreshes the principal's LRU position (`T-47`); it must not make the store grow."""
+    store = CostStore(capacity=2, clock=lambda: T0)
+    store.record("alice", _sample_query_cost(latencies=dict.fromkeys(STAGES, 7.0)))
+    store.record("bob", _sample_query_cost(latencies=dict.fromkeys(STAGES, 11.0)))
+    store.report("alice")  # alice is now the most recently used principal
+
+    store.record("carol", _sample_query_cost(latencies=dict.fromkeys(STAGES, 5.0)))
+
+    assert store.report("alice").query_count == 1, "reporting is use: alice must survive carol's arrival"
+    assert store.report("bob").query_count == 0, "bob was the idle principal and is evicted"
+    store.report("nobody")
+    assert "nobody" not in store._records, "a report for an unknown principal never creates a bucket"
+    assert len(store) <= store._capacity
+
+
 def test_cost_store_isolates_principals_filters_windows_and_evicts_by_capacity_and_retention() -> None:
     current = [T0]
     store = CostStore(retention=timedelta(minutes=10), capacity=3, clock=lambda: current[0])

@@ -326,6 +326,10 @@ class CostReport:
 
     Contains only latency, candidate counts, context token counts and charged usage for the authenticated caller's
     own queries in ``[window_start, window_end]``. Never exposes another principal's counts or any memory content.
+
+    ``report_scope`` says what the numbers cover: the records live in this process (``V2-D83``, ``T-47``), so a report
+    describes this process's recent queries, not a ledger. A restart, a second replica or a second worker starts a new,
+    empty one. It is a constant, never an input: no caller can enlarge the scope it is told about.
     """
 
     principal: str
@@ -341,6 +345,9 @@ class CostReport:
     embedding_tokens: int
     cost_usd: Decimal
     stages: tuple[StageAggregate, ...]
+    #: What the counts cover. Always ``"process"``: the store is process-local (``V2-D83``), so this is a constant
+    #: statement about the report's scope and never a caller-controlled value.
+    report_scope: Literal["process"] = "process"
 
     def stage(self, name: str) -> StageAggregate:
         for entry in self.stages:
@@ -362,6 +369,7 @@ class CostReport:
             "output_tokens": self.output_tokens,
             "embedding_tokens": self.embedding_tokens,
             "cost_usd": str(self.cost_usd),
+            "report_scope": self.report_scope,
             "stages": [entry.to_dict() for entry in self.stages],
         }
 
@@ -473,6 +481,10 @@ class CostStore:
         """Aggregate ``principal``'s own recorded queries within ``window`` into an immutable :class:`CostReport`."""
         now = self._now()
         self._drop_expired(now)
+        if self._records.get(principal):
+            # a principal reading its own report is in use, so it is not the idle one evicted next (`T-47`). A report
+            # never creates a bucket: reading cannot make the store grow.
+            self._records.move_to_end(principal)
         window_start, window_end = parse_window(window, now=now, default_retention=self._retention)
         matched = [
             entry.cost for entry in self._records.get(principal, []) if window_start <= entry.recorded_at <= window_end
