@@ -41,7 +41,7 @@ from tests.slot_fakes import current, recorded_classifier
 
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE_DIRECTORY = ROOT / "custom-memory-engine"
-ENGINE_PYTHON = ENGINE_DIRECTORY / ".venv" / "bin" / "python"
+ENGINE_PYTHON = ENGINE_DIRECTORY / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 DATABASE_URL = os.environ.get("CME_TEST_DATABASE_URL", "")
 
 pytestmark = [
@@ -103,6 +103,26 @@ def _run_engine(arguments: list[str], environment: dict[str, str]) -> None:
         pytest.fail(f"engine command {arguments[:2]} failed: {completed.stderr.strip()[-2000:]}")
 
 
+#: Windows only: psycopg's async pool refuses the Proactor event loop uvicorn picks there, so the host is started on a
+#: selector loop instead. The script, its environment and its configuration are the same; Linux and CI run it directly.
+_WINDOWS_HOST_SHIM = """
+import asyncio, runpy, sys, uvicorn
+def run(app, **options):
+    server = uvicorn.Server(uvicorn.Config(app, loop="none", **options))
+    asyncio.run(server.serve(), loop_factory=asyncio.SelectorEventLoop)
+uvicorn.run = run
+sys.argv = ["scripts/run_host.py"]
+runpy.run_path("scripts/run_host.py", run_name="__main__")
+"""
+
+
+def _host_command() -> list[str]:
+    """The engine host's command line: ``scripts/run_host.py`` under the engine's interpreter."""
+    if os.name == "nt":
+        return [str(ENGINE_PYTHON), "-c", _WINDOWS_HOST_SHIM]
+    return [str(ENGINE_PYTHON), "scripts/run_host.py"]
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -151,7 +171,7 @@ def engine_host(tmp_path_factory: pytest.TempPathFactory) -> Iterator[EngineHost
         _run_engine(["scripts/provision_role.py", "--schema", schema, "--role", role], owner)
         with log.open("wb") as output:
             host = subprocess.Popen(
-                [str(ENGINE_PYTHON), "scripts/run_host.py"],
+                _host_command(),
                 cwd=ENGINE_DIRECTORY,
                 env=_engine_environment(
                     CME_DATABASE_URL=DATABASE_URL,
