@@ -36,6 +36,8 @@ Canonical PostgreSQL DDL for the twelve tables in `TECHNICAL_SPECIFICATION.md` Â
 | `030_entity_mentions_and_erasure.sql` | Migration 30 (`I8`, `V2-D111`): `entity.origin`, `entity_mention`, and memory-scope erasure of unreferenced mention entities |
 | `031_verification_artifacts.sql` | Migration 31 (`I11`, `V2-D112`): `verification_artifact` pinning table, `artifact_pinning_status`, and deferred commit check |
 | `032_visibility_sync.sql` | Migration 32 (`I7`, `V2-D113`): a child artifact row's readability delegates to its parent's -- seven `*_scope_read` policies on `memory_evidence`, `memory_derivation`, `memory_embedding`, `abstraction_stats`, `verification`, `outcome_stats` and `procedure_shape`; the text of `scope.access.rls_parent_read` |
+| `033_erasure_markers.sql` | Migration 33 (`T-46`, `V2-D125`): `erasure_marker`, `erased_turn` and `restore_reconciliation` -- what a deletion erased besides its target, and the identity of the database the journal was last replayed into |
+| `034_restore_identity_witness.sql` | Migration 34 (`T-49`, `V2-D128`): the reconciliation identity gains the witnesses a restore that keeps the relation cannot fake -- the row's own `xmin`, the row count it saw, the cluster timeline -- plus `reconciled_by`/`restored_mode`; the primary key goes so a restored copy can land its own row |
 | `bitemporal_on_full.sql` | The 43 reduced-schema assertions from `validation/bitemporal_checks.sql`, replayed against this `memory_version` table |
 | `init_extensions.sql` | `vector` + `btree_gist` + `pg_trgm` bootstrap for disposable databases |
 

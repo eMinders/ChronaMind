@@ -18,6 +18,8 @@ from psycopg.conninfo import conninfo_to_dict
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 from rich.console import Console
 
+from custom_memory_engine.deletion.markers import record_reconciliation
+
 SCHEMA_SQL = Path(__file__).with_name("001_full_schema.sql")
 #: Extensions the engine needs, created in ``public`` before the managed schema exists. Every one of them is a
 #: dependency of a shipped migration (``vector``/``btree_gist`` of 1, ``pg_trgm`` of 23), and none of them belongs to
@@ -59,6 +61,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (31, "031_verification_artifacts.sql"),
     (32, "032_visibility_sync.sql"),
     (33, "033_erasure_markers.sql"),
+    (34, "034_restore_identity_witness.sql"),
 )
 VERSION = MIGRATIONS[-1][0]
 OWNER_MARKER = "chronamind:RL-041:v1"
@@ -474,18 +477,15 @@ class MigrationRunner:
         Only a fresh install: an *upgrade* is not stamped, because a dump taken before migration 33 is upgraded too,
         and stamping it would silently mark a restored copy as reconciled. That case is reconciled by the journal
         replay, a no-op on an intact database, which the documented restore and upgrade procedure runs.
+
+        The insert runs in the caller's transaction, not a savepoint of its own: the row records the transaction that
+        wrote it and the probe compares that with the row's ``xmin``, which is a savepoint's transaction inside a
+        subtransaction (`T-49`).
         """
         if (await self._table_exists(connection, "restore_reconciliation")) is False:
             return
-        table = sql.Identifier(self.config.schema_name, "restore_reconciliation")
-        async with connection.transaction():
-            await self._scope(connection)
-            await connection.execute(
-                sql.SQL(
-                    "INSERT INTO {t} (relation_oid) SELECT pg_catalog.to_regclass(%s)::oid ON CONFLICT DO NOTHING"
-                ).format(t=table),
-                (f"{self.config.schema_name}.restore_reconciliation",),
-            )
+        await self._scope(connection)
+        await record_reconciliation(connection, schema_name=self.config.schema_name, by="fresh-install")
 
     async def _table_exists(self, connection: AsyncConnection, name: str) -> bool:
         row = await (
