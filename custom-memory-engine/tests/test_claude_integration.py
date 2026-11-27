@@ -15,10 +15,12 @@ They do **not** prove a review finds bugs. Only a review that reports a planted 
 (``.github/workflows/README.md``: "Verifying the reviewer").
 """
 
+import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -708,3 +710,193 @@ def test_a_consequence_must_name_the_constraint_that_would_stop_it(standard: str
     """
     assert "A consequence is a claim about a constraint" in standard
     assert re.search(r"(?i)restrictive\s+foreign\s+key", standard)
+
+
+# --- what the job says when the review does not run ---------------------------------------------------------------
+#
+# Run 45846436962 failed on all three attempts with `subtype success ... is_error:true`, `num_turns: 1` and no cost --
+# a run that died before its first answer -- and `show_full_output` is false, so the log carried the shape of the
+# failure and not the message. The comment on `#264` then named the one line that looked like an error:
+#
+#     # ("Internal error: directory mismatch for directory .../tsconfig.json")
+#
+# which is a comment in `anthropics/claude-code-action`'s own `run:` block, echoed by the runner's `##[group]Run`, and
+# present in run 45845609418 too -- the same job, five minutes earlier, nine turns, `is_error: false`. These tests hold
+# the job to reporting the run's own error text on failure, and hold the report to the fields it may read.
+
+REPORT_SCRIPT = REPO / ".github" / "scripts" / "review_failure_report.py"
+
+
+def _load_report() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("review_failure_report", REPORT_SCRIPT)
+    assert spec is not None and spec.loader is not None, f"{REPORT_SCRIPT} is not loadable"
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_failed_review_reports_why_with_the_error_text_and_not_the_transcript() -> None:
+    """The step exists after the review, fires only when the review itself failed, and reads only safe fields."""
+    job = _job(REVIEW_WORKFLOW.read_text(encoding="utf-8"), "claude-review")
+    assert ".github/scripts/review_failure_report.py" in job, "a failed review must say why"
+    assert job.index("Run the review") < job.index(".github/scripts/review_failure_report.py"), "reported after it ran"
+    step = re.search(r"(?ms)^      - name: Say why the review failed.*?(?=^      - name: )", job)
+    assert step, "the report step must be its own step"
+    body = step.group(0)
+    assert "steps.claude-review.outcome == 'failure'" in body, "a passed review is not explained away"
+    assert "failure()" in body
+    assert "|| {" in body and "exit 0" in body, "a base branch without the script must not fail the job further"
+    assert "GITHUB_TOKEN" not in body and "secrets." not in body, "a report needs no credential"
+    # The transcript stays unpublished: nothing in this workflow turns `show_full_output` on, and the script reads a
+    # whitelist. Checked over the whole file, not just this step: the review step is where the setting would go.
+    assert "show_full_output: true" not in REVIEW_WORKFLOW.read_text(encoding="utf-8")
+    assert re.search(r"(?m)^\s+show_full_output:", body) is None
+    module = _load_report()
+    assert set(module.SAFE_FIELDS) == {"subtype", "is_error", "num_turns", "duration_ms", "total_cost_usd"}
+    for forbidden in ("messages", "content", "toolUseResult", "prompt"):
+        assert forbidden not in module.SAFE_FIELDS, forbidden
+
+
+def test_the_report_names_the_failure_and_never_quotes_the_run(tmp_path: Path) -> None:
+    """Run against a real execution-output shape: the error text survives, the transcript does not."""
+    module = _load_report()
+    transcript = "SECRET-TURN-TEXT the model said about a tenant"
+    stream = [
+        {"type": "system", "subtype": "init", "message": "Claude Code initialized", "model": "claude-sonnet-5-5"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": transcript}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "num_turns": 1,
+            "duration_ms": 377,
+            "total_cost_usd": 0,
+            "modelUsage": {},
+            "result": "Invalid API key \u00b7 Please run /login",
+        },
+    ]
+    path = tmp_path / "claude-execution-output.json"
+    path.write_text("\n".join(json.dumps(item) for item in stream), encoding="utf-8")
+    assert module.main([str(path)]) == 0
+    objects = list(module._objects(path.read_text(encoding="utf-8")))
+    message = module.report(module.result_of(objects))
+    assert "Invalid API key" in message, "the run's own message is the whole point"
+    assert transcript not in message, "the transcript is what show_full_output would publish; this is not it"
+    assert "num_turns=1" in message and "total_cost_usd=0" in message
+    assert "secrets.CLAUDE_CODE_OAUTH_TOKEN" in message, "a run with no billed turn names the credential first"
+    assert "is not the error" in message, "the next reader must not re-derive it from the tsconfig comment"
+    # An error longer than the cap is cut ...
+    long_error = "x" * (module.MAX_ERROR_CHARS + 50)
+    assert long_error not in module.report({"type": "result", "num_turns": 4, "result": long_error})
+    # ... and a newline inside it cannot forge a second log line. The forged line sits *inside* the cap on purpose:
+    # beyond it, truncation alone would satisfy the assertion and prove nothing about the newline handling.
+    # Every line break, not only `\n`: the runner's reader also ends a line at a bare `\r`.
+    for separator in ("\n", "\r", "\r\n", "\u2028"):
+        forged = f"the run failed{separator}::error::forged"
+        message = module.report({"type": "result", "num_turns": 4, "result": forged})
+        assert "the run failed" in message, "the text before the newline still reaches the operator"
+        assert not any(line.startswith("::error::") for line in message.splitlines()), (
+            f"a line break ({separator!r}) in the run's own text must not forge a workflow command"
+        )
+
+
+def test_the_report_reads_the_producers_pretty_printed_array(tmp_path: Path) -> None:
+    """The pinned action writes one pretty-printed JSON array, not JSON lines; the diagnosis must still be found."""
+    module = _load_report()
+    stream = [
+        {"type": "system", "subtype": "init", "model": "claude-sonnet-5-5"},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "num_turns": 1,
+            "duration_ms": 377,
+            "total_cost_usd": 0,
+            "result": "Credit balance is too low",
+        },
+    ]
+    path = tmp_path / "claude-execution-output.json"
+    # exactly the shape `base-action/src/execution-file.ts` writes: `JSON.stringify(messages, null, 2)`
+    path.write_text(json.dumps(stream, indent=2), encoding="utf-8")
+    objects = list(module._objects(path.read_text(encoding="utf-8")))
+    assert module.result_of(objects) is not None, "a pretty-printed array holds the result object"
+    message = module.report(module.result_of(objects))
+    assert "Credit balance is too low" in message, "the diagnosis reaches the operator"
+    assert "no result object" not in message
+
+
+def test_a_failed_run_that_billed_turns_is_not_called_a_run_that_never_started() -> None:
+    """A failure after several billed turns is a review that went wrong, not one that never happened."""
+    module = _load_report()
+    multi = module.report({"type": "result", "num_turns": 9, "duration_ms": 120000, "total_cost_usd": 0.14})
+    assert "before it reviewed anything" not in multi
+    assert "num_turns=9" in multi, "what the run is known to have done is what it reports"
+    assert "secrets.CLAUDE_CODE_OAUTH_TOKEN" not in multi, "a billed run is not a credential failure"
+
+
+def test_the_report_redacts_an_absolute_path_from_the_runs_own_text() -> None:
+    """The excerpt reaches a public step summary; an absolute path in it is replaced, never echoed."""
+    module = _load_report()
+    message = module.report(
+        {"type": "result", "num_turns": 4, "result": "cannot read /home/runner/work/repo/secret-fixture.json"}
+    )
+    assert "secret-fixture.json" not in message, "the path, and the file name inside it, are gone"
+    assert "<path>" in message
+    windows = module.report({"type": "result", "num_turns": 4, "result": r"cannot read C:\Users\runner\fixture.json"})
+    assert "fixture.json" not in windows
+
+
+def test_path_redaction_keeps_urls_and_prose_intact_and_catches_a_one_segment_path() -> None:
+    """Re-review of #305: the first scrubber turned `https://host/v1.2` into `https:/<path>` and let `/etc` through."""
+    module = _load_report()
+    scrub = module._without_paths
+    assert scrub("see https://example.com/path/v1.2") == "see https://example.com/path/v1.2", "a URL is left whole"
+    assert scrub("missing /etc") == "missing <path>", "a one-segment absolute path is still a path"
+    assert scrub("at /etc, then") == "at <path>, then", "punctuation after a path survives"
+    assert scrub("(/tmp/x.json)") == "(<path>)"
+    assert scrub("file:///home/runner/secret.json") == "file://<path>", "a file: URL is a local path"
+    for prose in ("version 1.2/3.4 and a/b ratio", "rate 50/min", "and/or"):
+        assert scrub(prose) == prose, "a slash between words is not a path"
+
+
+def test_the_report_never_claims_a_cause_it_cannot_see(tmp_path: Path) -> None:
+    """No result object is a real outcome: say only what that means, and name the substitute."""
+    module = _load_report()
+    message = module.report(None)
+    assert "no result object" in message
+    assert "before the model answered" in message and "after work had started" in message, (
+        "a missing result can follow a crash mid-run, so both readings are named and neither is asserted"
+    )
+    assert ".claude/skills/review-pr/SKILL.md" in message, "the substitute process is named, not implied"
+    assert "secrets.CLAUDE_CODE_OAUTH_TOKEN" not in message, "no cause is invented without a billed turn to show one"
+    assert module.main([str(tmp_path / "absent.json")]) == 0
+
+
+def test_the_report_fences_the_runs_own_text_so_no_workflow_command_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Collapsing line breaks stops `::cmd::`, read only at a line's start; the runner reads `##[cmd]` anywhere.
+
+    `actions/runner`'s `ActionCommand.TryParse` finds the legacy prefix with `message.IndexOf("##[")`, so a one-line
+    error text carrying `##[error]` or `##[add-mask]` would still be executed. The run's text is the model's or the
+    CLI's, so everything after the annotation is printed between `::stop-commands::<token>` and `::<token>::`.
+    """
+    module = _load_report()
+    forged = "the run failed ##[error]forged ##[add-mask]x ::warning::forged"
+    path = tmp_path / "claude-execution-output.json"
+    path.write_text(
+        json.dumps({"type": "result", "num_turns": 4, "is_error": True, "result": forged}), encoding="utf-8"
+    )
+    assert module.main([str(path)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("::error::") and "##[" not in lines[0], "the annotation carries the whitelist only"
+    stop = re.fullmatch(r"::stop-commands::([0-9a-f]{32})", lines[1])
+    assert stop, "everything after the annotation is fenced"
+    token = stop.group(1)
+    assert lines[-1] == f"::{token}::", "the fence is closed, so later steps' commands still run"
+    inside = lines[2:-1]
+    assert any("##[error]forged" in line for line in inside), "the run's own text still reaches the operator"
+    assert all(token not in line for line in inside), "the body cannot close the fence early"
+    with pytest.raises(ValueError):
+        module.fenced(f"text naming {token}", token)
