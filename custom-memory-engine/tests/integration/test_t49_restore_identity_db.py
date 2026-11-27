@@ -31,7 +31,9 @@ from custom_memory_engine.deletion.markers import (
     record_reconciliation,
     turn_digest,
 )
+from custom_memory_engine.schema import migrate
 from custom_memory_engine.worker import run_once
+from tests.integration.rollbacks import rollback_sql
 from tests.integration.test_migration_m1 import connect, database  # noqa: F401  (fixture)
 from tests.integration.test_t46_restore_erasure_db import World, world  # noqa: F401  (fixture)
 
@@ -374,3 +376,31 @@ async def test_a_second_replay_appends_a_row_and_the_database_stays_reconciled(d
             await conn.execute(cast(LiteralString, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
         ).fetchone()
         assert counted == (3,), "the template's row and one per replay"
+
+
+async def test_the_rollback_reproduces_version_33_and_an_upgrade_is_not_stamped(database) -> None:  # noqa: F811
+    """The rollback drops exactly what migration 34 added, and re-applying it leaves the database unreconciled.
+
+    ``_cme_schema_migrations`` records one catalog hash per version, taken when that version was applied, so the
+    rollback is exact iff the hash it leaves behind is the one version 33 wrote. The identity rows go with the columns:
+    version-33 code accepts *any* row for the relation, and a row carrying witnesses it cannot read is not evidence it
+    may serve on. Re-applying is an **upgrade**, which 34 does not stamp -- a dump taken before migration 34 is
+    migrated too -- so the replay records the identity, as it does for any restore.
+    """
+    config, schema = database
+    runner = migrate.MigrationRunner(migrate.MigrationConfig(database_url=config.database_url, schema_name=schema))
+    async with connect((config, schema)) as conn:
+        cursor = await conn.execute("SELECT catalog_sha256 FROM _cme_schema_migrations WHERE version = 33")
+        row = await cursor.fetchone()
+        assert row is not None
+        recorded = row[0]
+        await conn.execute(cast(LiteralString, rollback_sql(from_version=34, to_version=33)), prepare=False)
+        assert await runner._catalog(conn) == recorded, "version 33's catalog, exactly"
+        counted = await (
+            await conn.execute(cast(LiteralString, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
+        ).fetchone()
+        assert counted == (0,), "the rollback empties the table: version 33 cannot read the witnesses"
+    assert (await runner.status()).version == 33
+    assert (await runner.apply()).action == "applied"
+    async with connect((config, schema)) as conn:
+        assert await is_reconciled(conn, schema_name=schema) is False, "an upgrade is not stamped; the replay is"

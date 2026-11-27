@@ -3714,7 +3714,9 @@ all four witnesses; a real `pg_dump --data-only`/`pg_restore --data-only` keeps 
 documented procedure driven with a data-only backup ends with the worker answering `unreconciled`, the replay erasing
 the restored turn and recording `restored_mode='data-only'`, and a control half where recording the identity without a
 replay lets the worker re-derive the deleted claim; the timeline and count witnesses; the
-relation-OID control and a second replay (the identity is an append log); and
+relation-OID control and a second replay (the identity is an append log); the rollback, which reproduces version
+33's recorded catalog hash exactly and leaves an upgrade unstamped
+(`test_the_rollback_reproduces_version_33_and_an_upgrade_is_not_stamped`); and
 `test_migrating_a_restored_database_does_not_mark_it_reconciled` (from `V2-D125`) still holds through the new rollback. Every witness has a control: removing any one of the four clauses from `is_reconciled` fails a test in this file. The full `-m integration` suite (1565 passed, 9 skipped) was run on this branch, which is what proves a clone of the migrated template stays reconciled for every fixture, not only the four here.
 `tests/test_erasure_journal.py` pins the required flag and that the modes the CLI accepts are the ones the column's
 `CHECK` allows. `tests/integration/test_t46_restore_erasure_db.py` is unchanged apart from passing the mode it restores.

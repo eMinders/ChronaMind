@@ -9,7 +9,7 @@
 --
 -- That DELETE must see every row, and `restore_reconciliation` is `FORCE ROW LEVEL SECURITY` with read and append
 -- policies only: an ordinary owner (this rollback runs as the migration owner) deletes nothing and the rollback would
--- leave rows it was written to remove. Such a role is refused first (`V2-D123`), as rollbacks 25 and 33's are.
+-- leave rows it was written to remove. Such a role is refused first (`V2-D123`), as the guarded rollbacks (25, 31) do.
 DO $bypass$
 BEGIN
   IF NOT (SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user) THEN
