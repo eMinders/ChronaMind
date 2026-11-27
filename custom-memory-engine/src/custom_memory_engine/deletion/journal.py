@@ -132,7 +132,9 @@ def check_recovery_point(journal: Journal, restored_from_backup_at: str) -> None
     try:
         backup = _timestamp(restored_from_backup_at)
     except (TypeError, ValueError):
-        raise JournalError("journal_timestamp_invalid") from None
+        # name which of the two inputs is unparseable. Neither value is echoed, so a malformed journal header cannot
+        # put file text on the operator's stderr
+        raise JournalError("journal_timestamp_invalid", detail="restored_from_backup_at") from None
     if journal.exported_at is None:
         # a journal with no recovery point cannot be paired with a backup: fail closed, never assume it is recent
         raise JournalError(
@@ -142,7 +144,7 @@ def check_recovery_point(journal: Journal, restored_from_backup_at: str) -> None
     try:
         exported = _timestamp(journal.exported_at)
     except (TypeError, ValueError):
-        raise JournalError("journal_timestamp_invalid") from None
+        raise JournalError("journal_timestamp_invalid", detail="journal_timestamp") from None
     if exported < backup:
         raise JournalError(
             "journal_older_than_backup",
