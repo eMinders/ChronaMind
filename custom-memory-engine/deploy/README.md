@@ -195,7 +195,7 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    **Ship the journal off-host** with every backup and continuously (it is small and holds no content); the database
    cannot protect a copy of its own history.
 
-   **Restore procedure.** Every step matters; four of them used to be implicit. Pair every backup with a journal copy whose `exported_at` is at least the backup's start time. The shipped timer runs every 5 minutes, and the deployment's off-host shipping target is 5 minutes, so the stated exposure window is **10 minutes**. A longer shipping delay extends that window and must be corrected before restoring.
+   **Restore procedure.** Every step matters; four of them used to be implicit. Pair every backup with a journal copy whose `exported_at` is at least the backup's start time -- that header is the instant the export *read* the database, not when it wrote the file, so it is a lower bound on what the copy contains. The shipped timer runs every 5 minutes, and the deployment's off-host shipping target is 5 minutes, so the stated exposure window is **10 minutes**. A longer shipping delay extends that window and must be corrected before restoring.
 
    ```bash
    # 1. stop the host and the worker, and ALWAYS stop the timer: with `Persistent=true` it fires at boot and would

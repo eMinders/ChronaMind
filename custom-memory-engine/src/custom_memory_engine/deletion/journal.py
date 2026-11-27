@@ -130,7 +130,7 @@ def check_recovery_point(journal: Journal, restored_from_backup_at: str) -> None
     """
     try:
         backup = _timestamp(restored_from_backup_at)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         # name which of the two inputs is unparseable. Neither value is echoed, so a malformed journal header cannot
         # put file text on the operator's stderr
         raise JournalError("journal_timestamp_invalid", detail="restored_from_backup_at") from None
@@ -138,16 +138,19 @@ def check_recovery_point(journal: Journal, restored_from_backup_at: str) -> None
         # a journal with no recovery point cannot be paired with a backup: fail closed, never assume it is recent
         raise JournalError(
             "journal_older_than_backup",
-            detail=f"journal_timestamp=missing restored_from_backup_at={restored_from_backup_at}",
+            detail=f"journal_timestamp=missing restored_from_backup_at={backup.isoformat()}",
         )
     try:
         exported = _timestamp(journal.exported_at)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise JournalError("journal_timestamp_invalid", detail="journal_timestamp") from None
     if exported < backup:
+        # both instants are re-formatted from the parsed values, never echoed from the input: `fromisoformat` accepts
+        # and discards trailing text in some fractional-second forms, so echoing the string would put file content on
+        # the operator's stderr (review of #266)
         raise JournalError(
             "journal_older_than_backup",
-            detail=f"journal_timestamp={journal.exported_at} restored_from_backup_at={restored_from_backup_at}",
+            detail=f"journal_timestamp={exported.isoformat()} restored_from_backup_at={backup.isoformat()}",
         )
 
 
@@ -291,13 +294,26 @@ def _record(entry: JournalEntry) -> dict[str, object]:
     return record
 
 
-def write_journal(path: Path, entries: Sequence[JournalEntry], *, schema_name: str, key: bytes) -> None:
-    """Write ``entries`` atomically (a temporary file in the same directory, then a rename), mode 0600."""
+def write_journal(
+    path: Path,
+    entries: Sequence[JournalEntry],
+    *,
+    schema_name: str,
+    key: bytes,
+    exported_at: datetime | None = None,
+) -> None:
+    """Write ``entries`` atomically (a temporary file in the same directory, then a rename), mode 0600.
+
+    ``exported_at`` is the instant the entries were *read*, not the instant this file was written. An export that is
+    handed a timestamp captured before its ``SELECT`` records a conservative lower bound: a backup that starts between
+    the read and this write is then refused rather than paired with a journal that never saw its deletions (review of
+    #266). The default is "now", which is what a caller with nothing to declare has.
+    """
     header = {
         "format": JOURNAL_FORMAT,
         "version": JOURNAL_VERSION,
         "schema": schema_name,
-        "exported_at": datetime.now(UTC).isoformat(),
+        "exported_at": (exported_at or datetime.now(UTC)).isoformat(),
         "entries": len(entries),
         "key_check": key_check(key),
     }
@@ -344,6 +360,8 @@ async def export_to_file(
     ``key`` is the deployment's deletion key; only its key check is written. An existing journal made under another
     key is refused rather than mixed.
     """
+    # captured before the database is read: the bound must not be looser than the snapshot the entries came from
+    read_at = datetime.now(UTC)
     exported = await export_journal(connection, schema_name=schema_name)
     with _exclusive(path):
         existing = read_journal(path)
@@ -354,7 +372,7 @@ async def export_to_file(
         if existing.key_check is not None and not hmac.compare_digest(existing.key_check, key_check(key)):
             raise JournalError("journal_key_mismatch")
         merged = merge_journal(existing.entries, exported)
-        write_journal(path, merged, schema_name=schema_name, key=key)
+        write_journal(path, merged, schema_name=schema_name, key=key, exported_at=read_at)
     logger.info("erasure_journal_exported", entries=len(merged))
     return len(merged)
 
@@ -499,7 +517,23 @@ async def replay_journal(handlers: DeleteHandlers, journal: Journal) -> ReplayRe
         restored_newest_epochs=restored_epochs,
         divergent_users=tuple(sorted(divergent)),
     )
-    logger.info("erasure_journal_replayed", **asdict(report))
+    # counts and how many principals are affected, never the per-user maps: the operator's report carries those, but a
+    # log line that names every principal and its newest epoch is tenant metadata the log did not previously hold
+    logger.info(
+        "erasure_journal_replayed",
+        users=len(journal_epochs),
+        replayed=report.replayed,
+        already_present=report.already_present,
+        recorded_unresolved=report.recorded_unresolved,
+        users_reprovisioned=report.users_reprovisioned,
+        divergent_users=len(report.divergent_users),
+        users_ahead_of_restored=sum(
+            1
+            for user, epoch in report.journal_newest_epochs.items()
+            if report.restored_newest_epochs.get(user) is None
+            or epoch > cast(int, report.restored_newest_epochs[user])
+        ),
+    )
     return report
 
 

@@ -13,10 +13,12 @@ import stat
 import subprocess
 import sys
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+import custom_memory_engine.deletion.journal as journal_module
 from custom_memory_engine.deletion.journal import (
     JOURNAL_FORMAT,
     Journal,
@@ -129,6 +131,72 @@ def test_a_malformed_journal_timestamp_is_named_and_never_echoed(tmp_path: Path)
     assert invalid.value.code == "journal_timestamp_invalid"
     assert "journal_timestamp" in str(invalid.value)
     assert "yesterday" not in str(invalid.value)
+
+
+def test_a_refusal_names_the_instants_it_parsed_never_the_text_it_was_given() -> None:
+    """Both timestamps are re-formatted from the parsed values. `fromisoformat` accepts and normalises inputs such as a
+    seventh fractional digit or a comma separator, so echoing the input would print text the instant does not contain.
+    """
+    journal = Journal((), None, "2026-11-20T00:00:00,5+00:00")
+    with pytest.raises(JournalError) as refused:
+        check_recovery_point(journal, "2026-11-26T00:00:00.1234567+00:00")
+    message = str(refused.value)
+    assert refused.value.code == "journal_older_than_backup"
+    assert "journal_timestamp=2026-11-20T00:00:00.500000+00:00" in message
+    assert "restored_from_backup_at=2026-11-26T00:00:00.123456+00:00" in message
+    assert ",5" not in message and "1234567" not in message, "the caller's own text is never echoed"
+
+
+def test_a_timestamp_that_cannot_be_normalised_to_utc_is_invalid_not_a_crash() -> None:
+    """A timestamp that parses but overflows when converted to UTC is an invalid input, not a traceback."""
+    with pytest.raises(JournalError) as backup_side:
+        check_recovery_point(Journal((), None, "2026-11-26T00:00:00+00:00"), "0001-01-01T00:00:00+01:00")
+    assert (backup_side.value.code, backup_side.value.detail) == (
+        "journal_timestamp_invalid",
+        "restored_from_backup_at",
+    )
+    with pytest.raises(JournalError) as journal_side:
+        check_recovery_point(Journal((), None, "0001-01-01T00:00:00+01:00"), "2026-11-26T00:00:00+00:00")
+    assert (journal_side.value.code, journal_side.value.detail) == ("journal_timestamp_invalid", "journal_timestamp")
+
+
+def test_the_journal_records_when_it_read_the_database_not_when_it_wrote_the_file(tmp_path: Path) -> None:
+    """A backup that starts between the export's read and its write must be refused, not paired (review of #266).
+
+    `write_journal` is handed the instant captured *before* the `SELECT`; a header stamped at write time would claim
+    the file saw a database state it never read.
+    """
+    path = tmp_path / "journal.jsonl"
+    read_at = datetime(2026, 11, 26, 0, 0, 0, tzinfo=UTC)
+    write_journal(path, [entry()], schema_name="cme_engine", key=KEY, exported_at=read_at)
+    loaded = read_journal(path)
+    assert loaded.exported_at == read_at.isoformat(), "the header is the read instant, not the write instant"
+    backup_started_during_the_export = "2026-11-26T00:00:01+00:00"
+    with pytest.raises(JournalError) as refused:
+        check_recovery_point(loaded, backup_started_during_the_export)
+    assert refused.value.code == "journal_older_than_backup"
+
+
+async def test_an_export_stamps_the_instant_before_it_read_not_after_it_wrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real path: `export_to_file`'s header is no later than the moment its read began (review of #266).
+
+    The read is replaced by one that records when it ran; the header must not be later than that, so a backup that
+    started during the read can never be paired with this file.
+    """
+    started: list[datetime] = []
+
+    async def reading(_connection: object, *, schema_name: str) -> list[JournalEntry]:
+        started.append(datetime.now(UTC))
+        return [entry()]
+
+    monkeypatch.setattr(journal_module, "export_journal", reading)
+    path = tmp_path / "journal.jsonl"
+    await journal_module.export_to_file(object(), path, key=KEY)  # type: ignore[arg-type]
+
+    stamped = datetime.fromisoformat(read_journal(path).exported_at or "")
+    assert stamped <= started[0], "the recovery point is a lower bound on the read, never the write time"
 
 
 def test_a_journal_header_whose_exported_at_is_not_a_string_is_refused(tmp_path: Path) -> None:
