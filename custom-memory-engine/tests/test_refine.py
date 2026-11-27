@@ -160,6 +160,40 @@ def test_another_principal_burst_preserves_a_live_handle_and_total_capacity_stay
     assert resident_by_principal <= store._capacity
 
 
+def test_admission_reissues_a_surplus_slot_before_evicting_a_principal_and_keeps_one_entry_each() -> None:
+    """The reservation is one resident handle per principal, not every handle a principal ever held (`T-47`).
+
+    A single hard ceiling cannot admit a newcomer while another principal holds every slot: something must give.
+    The rule, pinned here: admission reissues the largest surplus (oldest entry first), so every resident principal
+    keeps at least one; after that a principal that needs capacity sheds **its own** surplus first, so an incumbent's
+    entries are not taken by a neighbour's continued bursts; only when every principal holds exactly one is the
+    least-recently-used principal evicted whole.
+    """
+    store = ResultStore(capacity=3)
+    bob = [
+        store.issue(principal="bob", budgets=BUDGETS, read_set=alice("/u/bob/"), intent=INTENT, candidates=(str(n),))
+        for n in range(3)
+    ]
+    alice_handle = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a1",)
+    )
+
+    assert store.resolve("bob", bob[0]) is None, "admission reissues the largest surplus, oldest entry first"
+    assert store.resolve("bob", bob[2]) is not None, "a principal keeps its newest entry, and its reservation"
+    assert store.resolve("alice", alice_handle) is not None, "the newcomer is admitted"
+    assert len(store) == 3
+
+    second = store.issue(
+        principal="alice", budgets=BUDGETS, read_set=alice("/u/alice/"), intent=INTENT, candidates=("a2",)
+    )
+
+    assert store.resolve("bob", bob[1]) is not None, "the active principal sheds its own surplus before a neighbour's"
+    assert store.resolve("bob", bob[2]) is not None
+    assert store.resolve("alice", second) is not None, "the newest handle is always the one that survives"
+    assert store.resolve("alice", alice_handle) is None, "alice's own oldest entry is what her second query costs"
+    assert len(store) == 3
+
+
 def test_an_evicted_handle_still_resolves_as_unknown() -> None:
     store = ResultStore(capacity=1)
     first = store.issue(

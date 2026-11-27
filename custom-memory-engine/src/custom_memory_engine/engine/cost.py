@@ -30,7 +30,7 @@ import math
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from time import perf_counter
@@ -347,7 +347,7 @@ class CostReport:
     stages: tuple[StageAggregate, ...]
     #: What the counts cover. Always ``"process"``: the store is process-local (``V2-D83``), so this is a constant
     #: statement about the report's scope and never a caller-controlled value.
-    report_scope: Literal["process"] = "process"
+    report_scope: Literal["process"] = field(default="process", init=False)
 
     def stage(self, name: str) -> StageAggregate:
         for entry in self.stages:
@@ -481,11 +481,12 @@ class CostStore:
         """Aggregate ``principal``'s own recorded queries within ``window`` into an immutable :class:`CostReport`."""
         now = self._now()
         self._drop_expired(now)
-        if self._records.get(principal):
-            # a principal reading its own report is in use, so it is not the idle one evicted next (`T-47`). A report
-            # never creates a bucket: reading cannot make the store grow.
-            self._records.move_to_end(principal)
         window_start, window_end = parse_window(window, now=now, default_retention=self._retention)
+        if self._records.get(principal):
+            # a principal reading its own report is in use, so it is not the idle one evicted next (`T-47`). It happens
+            # only once the window is validated: a rejected request must not change another caller's retention. A
+            # report never creates a bucket, so reading cannot make the store grow.
+            self._records.move_to_end(principal)
         matched = [
             entry.cost for entry in self._records.get(principal, []) if window_start <= entry.recorded_at <= window_end
         ]

@@ -251,7 +251,24 @@ def test_a_cost_report_states_the_process_scope_it_actually_covers() -> None:
     assert report.report_scope == "process"
     assert report.to_dict()["report_scope"] == "process"
     # a defaulted constant: constructing a report without it cannot change what it claims
-    assert (
+    made = CostReport(
+        principal="bob",
+        window_start=T0,
+        window_end=T0,
+        query_count=0,
+        total_latency_ms=0.0,
+        tokens_considered=0,
+        tokens_rendered=0,
+        charged_calls=0,
+        input_tokens=0,
+        output_tokens=0,
+        embedding_tokens=0,
+        cost_usd=Decimal(0),
+        stages=(),
+    )
+    assert made.report_scope == "process"
+    # ... and it is not a constructor argument, so no code path can make a report claim another scope
+    with pytest.raises(TypeError):
         CostReport(
             principal="bob",
             window_start=T0,
@@ -266,9 +283,8 @@ def test_a_cost_report_states_the_process_scope_it_actually_covers() -> None:
             embedding_tokens=0,
             cost_usd=Decimal(0),
             stages=(),
-        ).report_scope
-        == "process"
-    )
+            report_scope="another_process",  # type: ignore[call-arg]
+        )
 
 
 def test_a_cost_report_counts_as_principal_use_and_never_creates_a_principal() -> None:
@@ -285,6 +301,39 @@ def test_a_cost_report_counts_as_principal_use_and_never_creates_a_principal() -
     store.report("nobody")
     assert "nobody" not in store._records, "a report for an unknown principal never creates a bucket"
     assert len(store) <= store._capacity
+
+
+def test_a_rejected_cost_report_does_not_count_as_use() -> None:
+    """A request answered `validation_error` must not change which other principal is evicted next."""
+    store = CostStore(capacity=2, clock=lambda: T0)
+    store.record("alice", _sample_query_cost(latencies=dict.fromkeys(STAGES, 7.0)))
+    store.record("bob", _sample_query_cost(latencies=dict.fromkeys(STAGES, 11.0)))
+    with pytest.raises(CostError):
+        store.report("alice", window="not-a-window")
+
+    store.record("carol", _sample_query_cost(latencies=dict.fromkeys(STAGES, 5.0)))
+
+    assert store.report("bob").query_count == 1, "alice's rejected read must not make bob the idle principal"
+    assert store.report("alice").query_count == 0, "alice stayed least recently used, so she is the one evicted"
+
+
+def test_a_new_principals_admission_trims_a_surplus_count_and_keeps_one_record_each() -> None:
+    """Same admission rule as the result store: one reserved record per principal, then own surplus first (`T-47`)."""
+    store = CostStore(capacity=3, clock=lambda: T0)
+    for _ in range(3):
+        store.record("bob", _sample_query_cost(latencies=dict.fromkeys(STAGES, 11.0)))
+
+    store.record("alice", _sample_query_cost(latencies=dict.fromkeys(STAGES, 7.0)))
+
+    assert store.report("bob").query_count == 2, "the newcomer takes one of bob's surplus records, not his reservation"
+    assert store.report("alice").query_count == 1
+    assert len(store) == 3
+
+    store.record("alice", _sample_query_cost(latencies=dict.fromkeys(STAGES, 7.0)))
+
+    assert store.report("bob").query_count == 2, "alice's own surplus, not bob's records, is what her burst costs"
+    assert store.report("alice").query_count == 1
+    assert len(store) == 3
 
 
 def test_cost_store_isolates_principals_filters_windows_and_evicts_by_capacity_and_retention() -> None:
