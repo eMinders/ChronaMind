@@ -94,9 +94,10 @@ What the step must never do, and what holds it there:
   only this step). The `result` text is capped at `MAX_ERROR_CHARS` (300).
   **What that guarantee is, exactly** — an earlier revision of this record said "prints no path", which was more than
   the code enforced, and a review of #305 measured a fixture file name surviving into both outputs. The excerpt is the
-  run's own free text: absolute paths in it are now replaced with `<path>` (POSIX and Windows, two or more segments,
-  `_without_paths`), and a bare file name or a phrase is **not** redacted, because it cannot be told from ordinary
-  words. So the promise is: whitelisted metadata; no transcript, prompt or `messages`; a capped, line-collapsed, fenced
+  run's own free text: absolute paths in it are now replaced with `<path>` (`_without_paths`: POSIX paths down to a
+  single segment, Windows drive paths, and the location inside a `file:` URL), a token that carries any other URL
+  scheme is left whole so the address is not corrupted, and a bare file name or a phrase is **not** redacted, because
+  it cannot be told from ordinary words. So the promise is: whitelisted metadata; no transcript, prompt or `messages`; a capped, line-collapsed, fenced
   excerpt with absolute paths removed, which may still quote what the run itself chose to say.
 - **Forge a workflow command.** The error text is joined onto one line with *every* line break collapsed, not only
   `\n`: the runner also ends a line at a bare `\r`. The first version replaced `\n` alone, and this review measured

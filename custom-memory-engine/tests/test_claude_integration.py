@@ -847,6 +847,19 @@ def test_the_report_redacts_an_absolute_path_from_the_runs_own_text() -> None:
     assert "fixture.json" not in windows
 
 
+def test_path_redaction_keeps_urls_and_prose_intact_and_catches_a_one_segment_path() -> None:
+    """Re-review of #305: the first scrubber turned `https://host/v1.2` into `https:/<path>` and let `/etc` through."""
+    module = _load_report()
+    scrub = module._without_paths
+    assert scrub("see https://example.com/path/v1.2") == "see https://example.com/path/v1.2", "a URL is left whole"
+    assert scrub("missing /etc") == "missing <path>", "a one-segment absolute path is still a path"
+    assert scrub("at /etc, then") == "at <path>, then", "punctuation after a path survives"
+    assert scrub("(/tmp/x.json)") == "(<path>)"
+    assert scrub("file:///home/runner/secret.json") == "file://<path>", "a file: URL is a local path"
+    for prose in ("version 1.2/3.4 and a/b ratio", "rate 50/min", "and/or"):
+        assert scrub(prose) == prose, "a slash between words is not a path"
+
+
 def test_the_report_never_claims_a_cause_it_cannot_see(tmp_path: Path) -> None:
     """No result object is a real outcome: say only what that means, and name the substitute."""
     module = _load_report()

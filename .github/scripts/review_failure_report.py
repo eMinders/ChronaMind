@@ -46,8 +46,12 @@ RESULT_TYPE = "result"
 SAFE_FIELDS = ("subtype", "is_error", "num_turns", "duration_ms", "total_cost_usd")
 #: How much of the error text is kept. Enough to carry "Invalid API key" or "429"; not enough to carry a turn.
 MAX_ERROR_CHARS = 300
-#: An absolute path (POSIX, or Windows with a drive) of two or more segments: redacted from the run's own text.
-_PATH = re.compile(r"(?:[A-Za-z]:)?(?:[/\\][\w.@+-]+){2,}[/\\]?")
+#: An absolute POSIX path of one or more segments, or a Windows drive path. Applied per whitespace-separated token, so
+#: it cannot reach across words; a token carrying a URL scheme is left alone entirely (see ``_without_paths``).
+_POSIX_PATH = re.compile(r"(?<![\w:])(?:/[\w.@+-]+)+")
+_WINDOWS_PATH = re.compile(r"[A-Za-z]:\\(?:[\w.@+-]+\\)*[\w.@+-]+")
+#: A token that is a URL, not a bare path: redacting inside it corrupts the address and protects nothing extra.
+_URL_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 
 #: The causes that produce `num_turns: 1` with no cost and no model usage -- a run that died before the first answer.
 #: Named here so the next reader does not repeat the investigation that produced this file.
@@ -101,13 +105,26 @@ def result_of(objects: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
 
 
 def _without_paths(text: str) -> str:
-    """Absolute paths replaced with ``<path>``.
+    """Absolute paths replaced with ``<path>``, token by token.
 
-    The run's own text can name a file, and this script's output reaches a public pull request's step summary. A path is
-    the part worth removing mechanically; a bare filename or an excerpt of prose is not distinguishable from ordinary
-    words, so the record says plainly that the excerpt is the run's own text (`evidence/REVIEW-264-T46-independent.md`).
+    The run's own text can name a file, and this script's output reaches a public pull request's step summary. Two
+    things a single pattern got wrong (re-review of #305): it redacted *inside* a URL -- `https://example.com/v1.2`
+    became `https:/<path>` -- and it required two segments, so `/etc` survived. A token that carries a URL scheme is
+    therefore left whole, and a one-segment absolute path counts. A bare filename or an excerpt of prose is still not
+    redacted: it cannot be told from ordinary words, and the record says so rather than claiming more
+    (`evidence/REVIEW-264-T46-independent.md`).
     """
-    return _PATH.sub("<path>", text)
+    tokens = []
+    for token in text.split(" "):
+        if token.lower().startswith("file://"):
+            # a `file:` URL *is* a local path: keep the scheme so the reader sees what it was, drop the location
+            tokens.append("file://<path>")
+            continue
+        if _URL_SCHEME.search(token):
+            tokens.append(token)
+            continue
+        tokens.append(_WINDOWS_PATH.sub("<path>", _POSIX_PATH.sub("<path>", token)))
+    return " ".join(tokens)
 
 
 def report(result: Mapping[str, Any] | None) -> str:
