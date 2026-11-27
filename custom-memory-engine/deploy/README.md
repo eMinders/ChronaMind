@@ -21,6 +21,10 @@ The host answers reads and fast writes; the worker does the slow writes (model e
 maintenance periodically expires stale abstractions, purges working episodes, and enqueues index rebuilds. None
 imports the others — they coordinate exclusively through PostgreSQL.
 
+`ResultStore` and `CostStore` are process-local memory in each host process. Their per-principal buckets and global
+ceilings reset when that process restarts, and a second host replica has its own handles and cost window. A `cost`
+report therefore covers only the recent query and refine activity that survived in the responding process.
+
 ## What each environment variable means
 
 | variable | who needs it | what it does |
