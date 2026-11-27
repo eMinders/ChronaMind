@@ -748,7 +748,9 @@ def test_a_failed_review_reports_why_with_the_error_text_and_not_the_transcript(
     assert "failure()" in body
     assert "|| {" in body and "exit 0" in body, "a base branch without the script must not fail the job further"
     assert "GITHUB_TOKEN" not in body and "secrets." not in body, "a report needs no credential"
-    # The transcript stays unpublished: `show_full_output` remains off, and the script reads a whitelist.
+    # The transcript stays unpublished: nothing in this workflow turns `show_full_output` on, and the script reads a
+    # whitelist. Checked over the whole file, not just this step: the review step is where the setting would go.
+    assert "show_full_output: true" not in REVIEW_WORKFLOW.read_text(encoding="utf-8")
     assert re.search(r"(?m)^\s+show_full_output:", body) is None
     module = _load_report()
     assert set(module.SAFE_FIELDS) == {"subtype", "is_error", "num_turns", "duration_ms", "total_cost_usd"}
@@ -784,10 +786,17 @@ def test_the_report_names_the_failure_and_never_quotes_the_run(tmp_path: Path) -
     assert "num_turns=1" in message and "total_cost_usd=0" in message
     assert "secrets.CLAUDE_CODE_OAUTH_TOKEN" in message, "a run with no billed turn names the credential first"
     assert "is not the error" in message, "the next reader must not re-derive it from the tsconfig comment"
-    # An error longer than the cap is cut, and a newline inside it cannot forge a second log line.
-    long_error = "x" * (module.MAX_ERROR_CHARS + 50) + "\n::error::forged"
-    module_error = module.report({"type": "result", "num_turns": 4, "result": long_error})
-    assert "::error::forged" not in module_error
+    # An error longer than the cap is cut ...
+    long_error = "x" * (module.MAX_ERROR_CHARS + 50)
+    assert long_error not in module.report({"type": "result", "num_turns": 4, "result": long_error})
+    # ... and a newline inside it cannot forge a second log line. The forged line sits *inside* the cap on purpose:
+    # beyond it, truncation alone would satisfy the assertion and prove nothing about the newline handling.
+    forged = "the run failed\n::error::forged"
+    message = module.report({"type": "result", "num_turns": 4, "result": forged})
+    assert "the run failed" in message, "the text before the newline still reaches the operator"
+    assert not any(line.startswith("::error::") for line in message.splitlines()), (
+        "a newline in the run's own text must not forge a workflow command"
+    )
 
 
 def test_the_report_never_claims_a_cause_it_cannot_see(tmp_path: Path) -> None:
