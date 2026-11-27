@@ -11,11 +11,12 @@ erased, and two of those things re-create the deleted memory on their own --
   writes it again.
 
 So every deletion records, per request and in its own transaction, keyed digests of both: ``turn`` for each evidence
-turn of a physically deleted version (for ``all``, every turn the user has), and ``write`` for each recorded
+turn of a physically deleted version under ``memory`` or ``topic``, and ``write`` under every scope for each recorded
 idempotency identity whose result it erased, with that result's engine-generated id. The journal exports them; a replay
 inserts them again, uses the ``turn`` digests to find the turns the restored database still holds and erases them with
 their jobs, and from then on :func:`replayed_write` answers a resend with the erased result -- exactly what the live
-database answered, because there the ``api_idempotency`` row had survived the deletion.
+database answered, because there the ``api_idempotency`` row had survived the deletion. An ``all`` request enumerates
+the user's stored turns during deletion and replay, so its journal entry needs only write markers.
 
 Digests, never plaintext, for the reason ``deletion_request.target_ref`` is one (``T-29``): the journal leaves the
 host. They are keyed with the deployment's deletion key and bound to the user and the marker's kind, so two tenants or

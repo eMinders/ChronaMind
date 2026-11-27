@@ -516,7 +516,7 @@ journal (`V2-D122`), and the hardening that three independent reviews then produ
 1. **#258 `move`** stays open: no consumer, sharing covers `I7` with a single deletion surface, and a copy doubles it
    (`V2-D113`).
 2. **T-46 is closed** (`V2-D125`, migration 33). A deletion records what it erased besides its target — the evidence
-   turns and the write identities — and the journal carries them, so a restore plus a replay cannot re-derive a deleted
+   turns (`all` derives these from the restored database) and the write identities — so a restore plus a replay cannot re-derive a deleted
    claim from a turn the backup still holds, and a client's resend under an erased key answers with the erased result.
    The worker and the host refuse a database the journal has not been replayed into. Measured over real
    `pg_dump`/`pg_restore` by `scripts/rehearse_restore.py` (`t46_*` in its report). Three limitations it did not close

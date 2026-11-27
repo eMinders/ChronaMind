@@ -248,13 +248,18 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    ```
 
    **What the journal carries besides the target** (`V2-D125`). A target is not the whole effect of a deletion, so each
-   request also records keyed digests of the evidence turns it erased and of the writes whose results it erased (with
-   each result's id). The replay re-inserts them and then:
-   - erases every marked turn the restored database still holds, with its jobs — including for a request whose target
+   request records the writes whose results it erased as keyed digests with their result ids. `memory` and `topic`
+   also record keyed digests of their evidence turns. An `all` replay takes every turn of the user directly from the
+   restored database, including turns with queued jobs. Older format-2 files work as they are. The next export keeps
+   the first-seen entry when the database omits all its legacy `all` turn markers and every write still matches.
+
+   Replay applies the following rules.
+
+   - Erase every selected turn the restored database still holds, with its jobs — including for a request whose target
      the backup never held, which is exactly the case where nothing else would;
-   - flags a marked turn that survives (turns are retained, or a later version cites it) so no extraction ever runs on
+   - Flag a selected turn that survives (turns are retained, or a later version cites it) so no extraction ever runs on
      it again;
-   - answers a client's resend under an erased idempotency key with the erased result instead of writing the claim
+   - Answer a client's resend under an erased idempotency key with the erased result instead of writing the claim
      again (the app resends its whole conversation every turn).
 
    **Upgrading to migration 33, or restoring at all.** A migration never records the identity itself: a dump taken

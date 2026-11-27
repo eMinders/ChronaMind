@@ -97,8 +97,8 @@ class DeleteHandlers:
 
         Not an API operation: only :func:`custom_memory_engine.deletion.journal.replay_journal` calls it. The request
         keeps its original id, digest and epoch, so the restored database ends in the state the journal records.
-        ``erasure_markers`` are the request's journalled markers (``V2-D125``): recorded as they are, and every turn
-        they name that the restored database holds is erased with its jobs.
+        Replay records the write markers and erases the journalled turns with their jobs. For ``all``, the scope
+        selects every restored turn of the user, including turns absent from a legacy entry (``V2-D125``).
         """
         async with self.runtime.session(user) as connection:
             return await delete_memory(
