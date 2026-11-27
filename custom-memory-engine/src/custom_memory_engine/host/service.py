@@ -29,7 +29,7 @@ from custom_memory_engine.api.entry import CallerContext, Credential, Engine, En
 from custom_memory_engine.api.refine import ResultStore
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.api.wiring import wire_engine
-from custom_memory_engine.deletion.markers import RestoreNotReconciled, is_reconciled
+from custom_memory_engine.deletion.markers import MarkerError, RestoreNotReconciled, is_reconciled
 from custom_memory_engine.engine.cost import CostStore
 from custom_memory_engine.engine.deletion import RECEIPT_KEY_ENV
 from custom_memory_engine.engine.hybrid import JUDGE_RELEVANCE_FLOOR, RecallError, RelevanceJudge, slot_for_dimension
@@ -244,20 +244,16 @@ class HostService:
             # default would leak the previous caller's identity into the next request on the same connection.
             configure=self._configure,
         )
-        await self._pool.open(wait=True, timeout=10.0)
-        logger.info("host_pool_opened", pool_min=settings.pool_min, pool_max=settings.pool_max)
-        # T-46 (V2-D125): a restored database the erasure journal has not been replayed into still holds what later
-        # deletions erased, so serving it would answer with deleted memories and let resends write them again.
         try:
-            reconciled = await self._reconciled()
-        except Exception:
+            await self._pool.open(wait=True, timeout=10.0)
+            logger.info("host_pool_opened", pool_min=settings.pool_min, pool_max=settings.pool_max)
+            if not await self._reconciled():
+                raise RestoreNotReconciled
+        except BaseException as error:
             await self.close()
-            logger.exception("host_restore_probe_failed")
-            raise RestoreNotReconciled from None
-        if not reconciled:
-            await self.close()
-            logger.error("host_restore_not_reconciled")
-            raise RestoreNotReconciled
+            if isinstance(error, MarkerError):
+                logger.error("host_restore_probe_failed", code=error.code)
+            raise
 
     async def _reconciled(self) -> bool:
         """Whether the erasure journal was replayed into this database (read under the runtime role)."""

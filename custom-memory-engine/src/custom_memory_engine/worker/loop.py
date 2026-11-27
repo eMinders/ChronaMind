@@ -12,7 +12,7 @@ from psycopg.rows import tuple_row
 
 from custom_memory_engine.clock import ClockTick
 from custom_memory_engine.deletion.closure import current_deletion_epoch, require_current_deletion_epoch
-from custom_memory_engine.deletion.markers import TurnErased, is_reconciled, turn_is_erased
+from custom_memory_engine.deletion.markers import RestoreNotReconciled, TurnErased, turn_is_erased
 from custom_memory_engine.engine.index_maintenance import JOB_KIND, logical_index, perform_inline, reindex_concurrently
 from custom_memory_engine.engine.ingest import TurnInput
 from custom_memory_engine.queue.contracts import Job
@@ -27,7 +27,7 @@ from custom_memory_engine.semantic.contracts import (
 )
 from custom_memory_engine.semantic.entities import EntityAdjudicator
 from custom_memory_engine.semantic.ingestor import apply_extraction
-from custom_memory_engine.semantic.slow_lane import claim_one, complete_one, recover_stale, release_one
+from custom_memory_engine.semantic.slow_lane import claim_one, complete_one, recover_stale
 
 logger = structlog.get_logger(__name__)
 
@@ -108,21 +108,15 @@ async def run_once(connection: AsyncConnection, user_id: str, settings: WorkerSe
     deleted. A claimed job is put back without spending an attempt, and this answers ``unreconciled`` until
     ``scripts/erasure_journal.py replay`` records this database.
     """
-    job = await claim_one(connection, user_id, schema_name=settings.schema, kinds=KINDS, role=settings.role)
+    try:
+        job = await claim_one(
+            connection, user_id, schema_name=settings.schema, kinds=KINDS, role=settings.role, require_reconciled=True
+        )
+    except RestoreNotReconciled:
+        logger.warning("slow_lane_restore_not_reconciled", user_id=user_id)
+        return "unreconciled"
     if job is None:
         return "idle"
-    # claiming is harmless; running the work is not. The check therefore costs one query per claimed job rather than
-    # one per idle tick, and an idle worker on a healthy database is as cheap as it was (`V2-D125`).
-    try:
-        async with tenant_scope(connection, user_id, role=settings.role):
-            reconciled = await is_reconciled(connection, schema_name=settings.schema)
-    except Exception:
-        await release_one(connection, user_id, job, schema_name=settings.schema, role=settings.role)
-        raise
-    if not reconciled:
-        logger.warning("slow_lane_restore_not_reconciled", user_id=user_id)
-        await release_one(connection, user_id, job, schema_name=settings.schema, role=settings.role)
-        return "unreconciled"
     if job.kind == JOB_KIND:
         return await _rebuild(connection, user_id, job, settings)
     return await _extract(connection, user_id, job, settings)

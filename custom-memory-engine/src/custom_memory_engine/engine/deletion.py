@@ -47,6 +47,7 @@ from custom_memory_engine.deletion.markers import (
     ErasureMarker,
     flag_erased_turns,
     record_markers,
+    require_erasure_grants,
     resolve_turns,
     turn_digest,
     write_markers_for,
@@ -465,6 +466,7 @@ async def delete_memory(
     stored_target_ref = stored_target_ref if stored_target_ref is not None else computed_target_ref
 
     await _verify_user_context(connection, user_id)
+    await require_erasure_grants(connection, schema_name=schema_name)
 
     versions = sql.Identifier(schema_name, "memory_version")
     derivations = sql.Identifier(schema_name, "memory_derivation")

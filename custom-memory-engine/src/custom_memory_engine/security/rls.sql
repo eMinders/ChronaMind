@@ -13,7 +13,7 @@
 DO $$
 BEGIN
   CREATE ROLE {{role}} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
-EXCEPTION WHEN duplicate_object THEN
+EXCEPTION WHEN duplicate_object OR unique_violation THEN
   NULL;
 END $$
 
@@ -70,6 +70,6 @@ ORDER BY c.relname
 
 -- @verify-role
 -- Returns the role's dangerous attributes; every column must be false.
-SELECT r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolreplication, r.rolcanlogin
+SELECT r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolreplication, r.rolcanlogin, r.rolinherit
 FROM pg_catalog.pg_roles AS r
 WHERE r.rolname = %(role)s

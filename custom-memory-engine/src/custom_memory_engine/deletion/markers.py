@@ -108,26 +108,23 @@ async def record_markers(
     unique = sorted(set(markers))
     if not unique:
         return 0
-    try:
-        async with connection.cursor() as cursor:
-            await cursor.execute(
-                sql.SQL(
-                    "INSERT INTO {m} (request_id, user_id, kind, digest, result_id) "
-                    "SELECT %s, %s, kind, digest, result_id "
-                    "FROM ROWS FROM (pg_catalog.unnest(%s::text[]), pg_catalog.unnest(%s::text[]), "
-                    "pg_catalog.unnest(%s::text[])) AS m(kind, digest, result_id) "
-                    "ON CONFLICT DO NOTHING"
-                ).format(m=sql.Identifier(schema_name, "erasure_marker")),
-                (
-                    request_id,
-                    user_id,
-                    [marker.kind for marker in unique],
-                    [marker.digest for marker in unique],
-                    [marker.result_id for marker in unique],
-                ),
-            )
-    except InsufficientPrivilege:
-        raise MarkerError("erasure_marker_grant_missing") from None
+    async with connection.cursor() as cursor:
+        await cursor.execute(
+            sql.SQL(
+                "INSERT INTO {m} (request_id, user_id, kind, digest, result_id) "
+                "SELECT %s, %s, kind, digest, result_id "
+                "FROM ROWS FROM (pg_catalog.unnest(%s::text[]), pg_catalog.unnest(%s::text[]), "
+                "pg_catalog.unnest(%s::text[])) AS m(kind, digest, result_id) "
+                "ON CONFLICT DO NOTHING"
+            ).format(m=sql.Identifier(schema_name, "erasure_marker")),
+            (
+                request_id,
+                user_id,
+                [marker.kind for marker in unique],
+                [marker.digest for marker in unique],
+                [marker.result_id for marker in unique],
+            ),
+        )
     return len(unique)
 
 
@@ -279,6 +276,30 @@ _TIMELINE: LiteralString = (
 _APPEND_LOCK: LiteralString = "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(%s, 0))"
 
 
+# PostgreSQL treats a comma-separated privilege list as *any* privilege. Require both on every relation.
+_ERASURE_GRANTS: LiteralString = (
+    "SELECT count(*) = 3 AND pg_catalog.bool_and(pg_catalog.has_table_privilege(c.oid, 'SELECT') "
+    "AND pg_catalog.has_table_privilege(c.oid, 'INSERT')) "
+    "FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = %s AND c.relname IN ('erasure_marker', 'erased_turn', 'restore_reconciliation')"
+)
+
+
+class ErasureGrantMissing(MarkerError):
+    """The current role lacks migration 33's required table grants."""
+
+    def __init__(self) -> None:
+        super().__init__("erasure_runtime_grant_missing")
+
+
+async def require_erasure_grants(connection: AsyncConnection, *, schema_name: str) -> None:
+    """Refuse a deletion before any writes, even when its target would need no markers."""
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(_ERASURE_GRANTS, (schema_name,))
+        if await cursor.fetchone() != (True,):
+            raise ErasureGrantMissing
+
+
 class TurnErased(MarkerError):
     """A deletion marked this turn: extracting it would re-derive what the user deleted (``erased_turn``)."""
 
@@ -311,14 +332,21 @@ async def is_reconciled(connection: AsyncConnection, *, schema_name: str) -> boo
                     "SELECT EXISTS (SELECT 1 FROM {t} AS r WHERE r.relation_oid = ("
                     + _IDENTITY
                     + ") AND pg_catalog.xid(r.written_xid) = r.xmin AND r.rows_before = ("
-                    "SELECT pg_catalog.count(*) FROM {t}) - 1 AND r.timeline IS NOT DISTINCT FROM " + _TIMELINE + ")"
+                    "SELECT pg_catalog.count(*) FROM {t}) - 1 AND r.timeline IS NOT DISTINCT FROM "
+                    + _TIMELINE
+                    + "), ("
+                    + _ERASURE_GRANTS
+                    + ")"
                 ).format(t=table),
-                (f"{schema_name}.restore_reconciliation",),
+                (f"{schema_name}.restore_reconciliation", schema_name),
             )
             row = await cursor.fetchone()
     except InsufficientPrivilege:
-        raise MarkerError("restore_reconciliation_grant_missing") from None
-    return bool(row and row[0])
+        # PostgreSQL checks SELECT on the identity table before it evaluates the catalog expression.
+        raise ErasureGrantMissing from None
+    if row is None or not row[1]:
+        raise ErasureGrantMissing
+    return bool(row[0])
 
 
 async def record_reconciliation(
@@ -360,6 +388,7 @@ async def record_reconciliation(
 __all__ = [
     "MARKER_KINDS",
     "RESTORED_MODES",
+    "ErasureGrantMissing",
     "ErasureMarker",
     "MarkerError",
     "MarkerKind",
@@ -373,6 +402,7 @@ __all__ = [
     "record_markers",
     "record_reconciliation",
     "replayed_write",
+    "require_erasure_grants",
     "resolve_turns",
     "turn_digest",
     "turn_is_erased",
