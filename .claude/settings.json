@@ -36,7 +36,6 @@
       "Read(./.env.*)",
       "Read(./custom-memory-engine/.env)",
       "Read(./custom-memory-engine/.env.*)",
-      "Bash(git push:*)",
       "Bash(git reset --hard:*)",
       "Bash(git clean:*)",
       "Bash(gh pr merge:*)",
