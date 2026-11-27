@@ -3627,3 +3627,78 @@ evidence of a lost deletion, and refusing on it would block a restore the pair a
 and newest completed deletion epoch present before replay for each user, so requests applied to a database that never
 held their targets remain visible as unresolved recovery work.
 
+
+### V2-D128 — The reconciliation identity sees a restore that keeps the relation (#262, `T-49`)
+
+Migration 33 identified the database the erasure journal was last replayed into by one fact: the relation OID of
+`restore_reconciliation`. That sees a logical `pg_restore`, which re-creates the table, and it is blind to the two
+restores that keep it — a **data-only** load into the existing relation, and a **physical (PITR)** restore that brings
+the catalogs and the data back together. On both, the gate passed with no replay and `T-46`'s two resurrection paths
+ran: the worker re-extracted a turn the backup still held, and a client's resend wrote a deleted claim again.
+
+Migration 34 makes the identity the row's own insertion as well as its relation. A new identity row is accepted only
+when four facts hold at once:
+
+| witness | what it is | the restore it refuses |
+|---|---|---|
+| relation OID | the table's OID now (as in 33) | a logical `pg_restore` (the table is re-created) |
+| `written_xid` = `xmin` | the row records the transaction that wrote it and is compared with its own `xmin` | **a data-only load**: a `COPY` gives every loaded row the restoring transaction's id |
+| `rows_before` | how many other rows the table held when the row was written | a load that appends its row beside the one already here |
+| `timeline` | the cluster timeline at write, from `pg_walfile_name(pg_current_wal_lsn())` | **a PITR**: recovery to a point in time ends on a new timeline, and a cluster still in recovery reports `NULL` |
+
+All four survive `CREATE DATABASE … TEMPLATE`, which copies the data blocks — the clone's rows keep their `xmin`, their
+count and their timeline — so a clone of a reconciled database is still reconciled. That property is not negotiable:
+every integration test clones a migrated template, and an operator's own clone must keep working.
+
+**Measured** (real PostgreSQL 16.15): after `DELETE FROM restore_reconciliation` (the probe is live, `is_reconciled`
+→ `False`), `pg_dump --data-only --schema=cme_engine` + `pg_restore --data-only` back into the same database returns
+the identity row with the relation OID **unchanged** (`37246537`), the row count still self-consistent, the timeline
+still current — and `xmin` = `7315479` against a recorded `written_xid` = `7315474`. The witness that refuses a
+data-only load is the row's own transaction, not the OID. The same probe is the assertion in
+`test_a_data_only_load_of_an_older_backup_is_refused_although_the_relation_is_unchanged`.
+
+**Why not the alternatives the issue lists.** *`pg_control_checkpoint().checkpoint_lsn` / `pg_current_wal_lsn()`
+compared with what the cluster reports now*: neither is a value a data-only dump carries, so neither can be the
+*source* of an identity row at all — and a LSN moves on every write, so a live database would fail its own check. The
+timeline is the part of the WAL position that a data-only load cannot move and a PITR necessarily does.
+`pg_control_checkpoint()`'s `timeline_id` reports the checkpoint record's timeline and can lag a promotion until the
+next checkpoint, so the timeline is read from the write position's segment name instead. *A per-database row regenerated
+by a schema-only restore*: a schema-only restore does not run migrations or any other code, so it cannot regenerate a
+value; only a data-only load's own mechanics can be relied on. *An out-of-band term in `journal.env`*: it is the same
+class as the operator's acknowledgement and adds a second secret to protect, with no property the row does not already
+carry. *The cluster's system identifier*: `pg_control_system()` is not executable by the runtime role, and the system
+identifier is identical for a clone, which must stay reconciled. *A `statement_timestamp()`-based witness*: a restore
+legitimately rolls the clock of its rows back, so the row's timestamp proves nothing.
+
+**The operator's acknowledgement.** `scripts/erasure_journal.py replay` now requires `--restored-mode`
+(`logical|data-only|physical|in-place`), the same class of missing input as `--restored-from-backup-at`: exit `2` with
+`restored_mode_required` before any connection. The reconciliation records it with `reconciled_by`
+(`fresh-install|operator-assertion|replay`), so how a database came to be served is auditable rather than inferred, and
+a restore the witnesses cannot see — a data-only load that omits `restore_reconciliation`, a PITR into a
+checksum-identical state — is a recorded statement the operator made at the point of restore. `--mark-reconciled`
+requires it too: the upgrade path says `in-place`.
+
+**The primary key goes with it.** A replay appends, and a restored copy must be able to land its own row beside the one
+the database holds, because that appended row is what the next probe rejects; a primary key on `relation_oid` would
+refuse the load with a duplicate key and the copy would keep the older row. The table is a short append-only log read
+by a scan of a handful of rows, and appends are serialized with an advisory lock so the count a row records is exact.
+The rollback empties the table and restores the version-33 primary key: a row this version wrote is only meaningful
+with its witnesses, and handing one to version 33 would mark a database reconciled that this version deliberately
+refuses.
+
+**Limit, stated.** A data-only dump that omits `restore_reconciliation` changes nothing the identity can read, and the
+restore procedure's replay remains the only control for it; `restore_reconciliation` is deployment state, so a
+table-scoped dump of tenant data is exactly that case. **PITR was not measured end to end**: this environment has one
+shared PostgreSQL instance and no base backup, so the promotion that writes a new timeline could not be performed. What
+is measured is the predicate: an identity row recorded on another timeline is refused
+(`test_an_identity_row_from_another_timeline_is_refused`), and the timeline expression is read from the live cluster's
+write position, which a data-only load cannot carry.
+
+**Evidence.** `tests/integration/test_t49_restore_identity_db.py`: a clone of the migrated template is reconciled with
+all four witnesses; a real `pg_dump --data-only`/`pg_restore --data-only` keeps the OID and is refused by `xmin`; the
+documented procedure driven with a data-only backup ends with the worker answering `unreconciled`, the replay erasing
+the restored turn and recording `restored_mode='data-only'`, and a control half where recording the identity without a
+replay lets the worker re-derive the deleted claim; the timeline and count witnesses; and
+`test_migrating_a_restored_database_does_not_mark_it_reconciled` (from `V2-D125`) still holds through the new rollback.
+`tests/test_erasure_journal.py` pins the required flag and that the modes the CLI accepts are the ones the column's
+`CHECK` allows. `tests/integration/test_t46_restore_erasure_db.py` is unchanged apart from passing the mode it restores.

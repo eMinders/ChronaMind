@@ -354,9 +354,7 @@ async def test_the_worker_claims_nothing_until_the_journal_is_replayed_into_the_
     ]
     async with world.owner.transaction():
         await world.owner.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(world.role)))
-        await record_reconciliation(
-            world.owner, schema_name=world.schema, by="replay", restored_mode="logical"
-        )
+        await record_reconciliation(world.owner, schema_name=world.schema, by="replay", restored_mode="logical")
     assert (await run_once(world.worker, "alice", world.settings())).startswith("done:job-t-peanut")
     assert world.extractor.calls == 1
 
@@ -417,9 +415,7 @@ async def test_migrating_a_restored_database_does_not_mark_it_reconciled(databas
     )
     # and the explicit assertion records it, so an upgrade with no journal to replay is not stuck
     async with await AsyncConnection.connect(config.database_url.get_secret_value(), autocommit=True) as conn:
-        await record_reconciliation(
-            conn, schema_name=schema, by="operator-assertion", restored_mode="in-place"
-        )
+        await record_reconciliation(conn, schema_name=schema, by="operator-assertion", restored_mode="in-place")
         assert await (
             await conn.execute(cast(Any, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
         ).fetchall() == [(1,)]
