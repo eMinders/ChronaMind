@@ -325,7 +325,15 @@ def test_a_journal_older_than_the_backup_refuses_the_replay_before_connecting(tm
     header = json.loads(lines[0]) | {"exported_at": "2026-11-26T00:00:00+00:00"}
     journal.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n")
 
-    result = _cli("replay", "--restored-from-backup-at", "2026-11-27T00:00:00+00:00", "--journal", str(journal))
+    result = _cli(
+        "replay",
+        "--restored-from-backup-at",
+        "2026-11-27T00:00:00+00:00",
+        "--restored-mode",
+        "logical",
+        "--journal",
+        str(journal),
+    )
 
     assert result.returncode == 1
     assert "journal_older_than_backup" in result.stderr
@@ -343,12 +351,52 @@ def test_mark_reconciled_and_export_do_not_need_the_backup_recovery_point(tmp_pa
     journal = tmp_path / "journal.jsonl"
     write_journal(journal, [entry()], schema_name="cme_engine", key=KEY)
 
-    marked = _cli("replay", "--mark-reconciled", "--journal", str(journal))
+    marked = _cli("replay", "--mark-reconciled", "--restored-mode", "in-place", "--journal", str(journal))
     exported = _cli("export", "--journal", str(journal))
 
     for result in (marked, exported):
         assert "restored_from_backup_at_required" not in result.stderr
         assert "OperationalError" in result.stderr  # reached the connection: the flag was never demanded
+
+
+def test_a_replay_without_the_restore_mode_is_refused_before_connecting(tmp_path: Path) -> None:
+    """#262: which restore this database is, is an input the replay cannot infer, so it is not skippable by omission.
+
+    Recording it with the reconciliation is the acknowledgement a restore the identity cannot see (a data-only load, a
+    PITR) needs where the operator acts (`T-49`), and the same class of missing input as the recovery point: exit 2, a
+    static token, and no connection attempt.
+    """
+    journal = tmp_path / "journal.jsonl"
+    write_journal(journal, [entry()], schema_name="cme_engine", key=KEY)
+
+    result = _cli("replay", "--restored-from-backup-at", "2026-11-27T00:00:00+00:00", "--journal", str(journal))
+    marked = _cli("replay", "--mark-reconciled", "--journal", str(journal))
+
+    for refused in (result, marked):
+        assert refused.returncode == 2
+        assert "restored_mode_required" in refused.stderr
+        assert "OperationalError" not in refused.stderr  # refused before any connection attempt
+
+
+def test_the_restore_modes_are_the_ones_the_identity_records() -> None:
+    """One spelling per restore path: the CLI's choices and the column's CHECK constraint must be the same set."""
+    from custom_memory_engine.deletion.markers import RESTORED_MODES
+
+    assert RESTORED_MODES == ("logical", "data-only", "physical", "in-place")
+    migration = (Path(__file__).resolve().parents[1] / "src/custom_memory_engine/schema/034_restore_identity_witness.sql").read_text()
+    for mode in RESTORED_MODES:
+        assert f"'{mode}'" in migration, mode
+
+
+def test_a_mark_reconciled_run_accepts_a_mode_and_reaches_the_database(tmp_path: Path) -> None:
+    """The upgrade path takes a mode too: `--mark-reconciled --restored-mode in-place` is what the procedure says."""
+    journal = tmp_path / "journal.jsonl"
+    write_journal(journal, [entry()], schema_name="cme_engine", key=KEY)
+
+    result = _cli("replay", "--mark-reconciled", "--restored-mode", "in-place", "--journal", str(journal))
+
+    assert "restored_mode_required" not in result.stderr
+    assert "OperationalError" in result.stderr  # the mode was accepted; the run stopped at the connection
 
 
 def test_a_replay_is_a_failure_when_anything_is_unresolved_or_divergent() -> None:
