@@ -426,10 +426,37 @@ def test_down_fails_when_stack_port_still_listening_without_pid_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     down = load_demo_module("down")
+    state_dir = tmp_path / ".state"
+    state_dir.mkdir()
+    env_file = tmp_path / ".env.demo"
+    env_file.write_text("KEY=val\n", encoding="utf-8")
     monkeypatch.setattr(down, "run_docker_down", lambda **kw: None)
     monkeypatch.setattr(down, "port_listening", lambda host, port: port == 8100)
     monkeypatch.setattr(down, "_wait_ports_closed", lambda ports, timeout=10.0: [8100])
 
-    rc = down.teardown(state_dir=tmp_path / ".state", env_file=tmp_path / ".env.demo", wipe=False)
+    rc = down.teardown(state_dir=state_dir, env_file=env_file, wipe=True)
 
     assert rc == 1
+    assert not env_file.exists()
+    assert not state_dir.exists()
+
+
+def test_wait_for_health_backs_off_on_http_non_200_to_avoid_health_rate_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    up = load_demo_module("up")
+    statuses = iter([0, 503, 200])
+    sleeps: list[float] = []
+
+    class AliveProc:
+        returncode = None
+
+        def poll(self) -> None:
+            return None
+
+    monkeypatch.setattr(up, "_probe_http_status", lambda url, timeout=2.0: next(statuses))
+    monkeypatch.setattr(up.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    up._wait_for_health("http://127.0.0.1:8000/health", AliveProc(), tmp_path / "app.log", name="app", timeout=30.0)
+
+    assert sleeps == [0.25, 3.0, 0.1]

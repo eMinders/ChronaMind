@@ -297,14 +297,21 @@ volumes:
 """
 
 
-def _check_http_ok(url: str, timeout: float = 2.0) -> bool:
-    """Return True iff ``GET url`` responds with HTTP 200."""
+def _probe_http_status(url: str, timeout: float = 2.0) -> int:
+    """Return the HTTP status code from ``GET url``, or ``0`` on connection/transport errors."""
     request = urllib.request.Request(url, method="GET")
     try:
         with _loopback_opener().open(request, timeout=timeout) as response:
-            return response.status == 200
+            return int(response.status)
+    except urllib.error.HTTPError as error:
+        return int(error.code)
     except urllib.error.URLError, TimeoutError, OSError:
-        return False
+        return 0
+
+
+def _check_http_ok(url: str, timeout: float = 2.0) -> bool:
+    """Return True iff ``GET url`` responds with HTTP 200."""
+    return _probe_http_status(url, timeout=timeout) == 200
 
 
 def _port_listening(host: str, port: int) -> bool:
@@ -570,18 +577,24 @@ def _wait_for_health(
     name: str,
     timeout: float = 90.0,
 ) -> None:
-    """Poll ``url`` until it answers HTTP 200 or ``process`` exits."""
+    """Poll ``url`` until it answers HTTP 200 or ``process`` exits.
+
+    Connection-refused probes retry every 0.25s (the server is still binding and does not hit rate
+    limits); once HTTP responds non-200 (e.g. 503), back off to 3.0s so ``/health`` (20/min) is
+    never tripped into 429.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise RuntimeError(f"{name} exited early (code {process.returncode}); see {log_file}")
-        if _check_http_ok(url, timeout=2.0):
+        status = _probe_http_status(url, timeout=2.0)
+        if status == 200:
             # Confirm the spawned process itself is still alive (guards against an unrelated listener).
             time.sleep(0.1)
             if process.poll() is not None:
                 raise RuntimeError(f"{name} exited early (code {process.returncode}); see {log_file}")
             return
-        time.sleep(0.25)
+        time.sleep(0.25 if status == 0 else 3.0)
     raise RuntimeError(f"{name} did not become healthy within {int(timeout)}s; see {log_file}")
 
 

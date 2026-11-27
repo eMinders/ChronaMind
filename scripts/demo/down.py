@@ -147,15 +147,17 @@ def teardown(*, state_dir: Path = STATE, env_file: Path = ENV_FILE, wipe: bool =
 
     run_docker_down(compose_file=state_dir / "compose.yaml", env_file=env_file, wipe=wipe)
 
-    if still_open:
-        print(f"demo stack teardown incomplete: port(s) still listening: {still_open}", file=sys.stderr)
-        return 1
-
     if wipe:
         if env_file.exists():
             env_file.unlink()
         if state_dir.exists():
             shutil.rmtree(state_dir)
+
+    if still_open:
+        print(f"demo stack teardown incomplete: port(s) still listening: {still_open}", file=sys.stderr)
+        return 1
+
+    if wipe:
         print("demo stack stopped and wiped (volumes, .env.demo, and .state removed)")
     else:
         print("demo stack stopped (volumes and .env.demo preserved)")
