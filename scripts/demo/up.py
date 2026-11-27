@@ -95,11 +95,11 @@ import dotenv
 _env_path = Path(sys.argv[1])
 _override_keys = set(sys.argv[2].split(","))
 _demo_vars = {
-    k: v
+    k.strip(): v
     for line in _env_path.read_text(encoding="utf-8").splitlines()
     if "=" in line and not line.lstrip().startswith("#")
     for k, v in (line.split("=", 1),)
-    if k in _override_keys
+    if k.strip() in _override_keys
 }
 _demo_vars["LOG_DIR"] = sys.argv[3]
 _orig_load_dotenv = dotenv.load_dotenv
@@ -342,9 +342,28 @@ def _pid_alive(pid: int) -> bool:
         return True
 
 
-def _stop_pid(pid: int, timeout: float = 15.0) -> None:
+_EXPECTED_CMD_MARKER: dict[str, str] = {
+    "engine_host": "run_host.py",
+    "app": "app.main:app",
+}
+
+
+def _pid_matches_service(pid: int, service: str | None) -> bool:
+    """Guard against PID reuse on POSIX by checking the live command line when readable."""
+    if service is None or os.name == "nt":
+        return True
+    marker = _EXPECTED_CMD_MARKER.get(service)
+    if not marker:
+        return True
+    result = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True, check=False)
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    return marker in result.stdout
+
+
+def _stop_pid(pid: int, *, service: str | None = None, timeout: float = 15.0) -> None:
     """Terminate a process (and its process group/tree) and wait until it exits."""
-    if not _pid_alive(pid):
+    if not _pid_alive(pid) or not _pid_matches_service(pid, service):
         return
     if os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
@@ -418,7 +437,7 @@ def _run_logged(
     env: Mapping[str, str],
     log_file: Path,
     step: str,
-    timeout: int = 180,
+    timeout: float = 180.0,
 ) -> None:
     """Run a command capturing all output into ``log_file`` so no secrets or DSNs reach stdout/stderr."""
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -450,7 +469,7 @@ def _check_prerequisites() -> None:
         raise RuntimeError("Docker daemon is not reachable. Start Docker and retry.")
 
 
-def start_databases(state_dir: Path = STATE, env_file: Path = ENV_FILE) -> None:
+def start_databases(state_dir: Path = STATE, env_file: Path = ENV_FILE, *, timeout: float = 180.0) -> None:
     """Start the demo engine and app PostgreSQL containers and wait until both are healthy."""
     state_dir.mkdir(parents=True, exist_ok=True)
     compose_path = state_dir / "compose.yaml"
@@ -473,7 +492,7 @@ def start_databases(state_dir: Path = STATE, env_file: Path = ENV_FILE) -> None:
         env=os.environ,
         log_file=state_dir / "docker-up.log",
         step="docker compose up",
-        timeout=180,
+        timeout=timeout,
     )
 
 
@@ -484,7 +503,7 @@ def engine_role_exists(database_url: str, role: str) -> bool:
         return row is not None
 
 
-def prepare_engine(environment: Mapping[str, str], state_dir: Path = STATE) -> None:
+def prepare_engine(environment: Mapping[str, str], state_dir: Path = STATE, *, timeout: float = 120.0) -> None:
     """Migrate the demo schema and provision its runtime role using the engine's interpreter."""
     _run_logged(
         [str(ENGINE_PYTHON), "-m", "custom_memory_engine.schema.migrate", "apply", "--schema", SCHEMA],
@@ -492,7 +511,7 @@ def prepare_engine(environment: Mapping[str, str], state_dir: Path = STATE) -> N
         env=environment,
         log_file=state_dir / "engine-schema-migrate.log",
         step="engine schema migrate",
-        timeout=120,
+        timeout=timeout,
     )
     if not engine_role_exists(environment["RL_DATABASE_URL"], ROLE):
         _run_logged(
@@ -501,11 +520,17 @@ def prepare_engine(environment: Mapping[str, str], state_dir: Path = STATE) -> N
             env=environment,
             log_file=state_dir / "engine-role-provision.log",
             step="engine role provision",
-            timeout=120,
+            timeout=timeout,
         )
 
 
-def prepare_app_db(environment: Mapping[str, str], state_dir: Path = STATE, env_file: Path = ENV_FILE) -> None:
+def prepare_app_db(
+    environment: Mapping[str, str],
+    state_dir: Path = STATE,
+    env_file: Path = ENV_FILE,
+    *,
+    timeout: float = 120.0,
+) -> None:
     """Run Alembic migrations against the demo app database."""
     _run_logged(
         [
@@ -520,7 +545,7 @@ def prepare_app_db(environment: Mapping[str, str], state_dir: Path = STATE, env_
         env=environment,
         log_file=state_dir / "alembic.log",
         step="alembic upgrade head",
-        timeout=120,
+        timeout=timeout,
     )
 
 
@@ -649,10 +674,10 @@ def main() -> int:
             return 0
 
         # Clean up any stale tracked processes before starting fresh ones.
-        for entry in existing_pids.values():
+        for service, entry in existing_pids.items():
             pid = int(entry.get("pid", 0))
             if _pid_alive(pid):
-                _stop_pid(pid)
+                _stop_pid(pid, service=service)
 
         for label, host, port in (("engine host", ENGINE_HOST, ENGINE_PORT), ("app", APP_HOST, APP_PORT)):
             if _port_listening(host, port):
@@ -661,11 +686,11 @@ def main() -> int:
                 )
 
         print("Starting demo databases...")
-        start_databases(STATE, ENV_FILE)
+        start_databases(STATE, ENV_FILE, timeout=_remaining_budget(deadline, 180.0))
 
         engine_env = engine_environment(engine_database_url(values), values)
         print("Preparing engine schema and runtime role...")
-        prepare_engine(engine_env, STATE)
+        prepare_engine(engine_env, STATE, timeout=_remaining_budget(deadline, 120.0))
 
         app_env = app_environment(values, state_dir=STATE)
         if sys.platform == "win32":
@@ -676,7 +701,7 @@ def main() -> int:
                 app_env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(shim), existing_pypath]))
 
         print("Running app database migrations...")
-        prepare_app_db(app_env, STATE, ENV_FILE)
+        prepare_app_db(app_env, STATE, ENV_FILE, timeout=_remaining_budget(deadline, 120.0))
 
         print(f"Starting engine host on {ENGINE_HOST}:{ENGINE_PORT}...")
         host_log = STATE / "engine_host.log"
@@ -708,18 +733,14 @@ def main() -> int:
 
         print(f"all healthy: app {app_health_url} (200), host {host_health_url} (200)")
         return 0
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, Exception) as error:
         for pid in reversed(started_pids):
             _stop_pid(pid)
         if started_pids and PIDS_FILE.exists():
             PIDS_FILE.unlink()
-        print("demo stack startup interrupted", file=sys.stderr)
-        return 130
-    except Exception as error:  # noqa: BLE001 - clean CLI failure with rollback of spawned processes
-        for pid in reversed(started_pids):
-            _stop_pid(pid)
-        if started_pids and PIDS_FILE.exists():
-            PIDS_FILE.unlink()
+        if isinstance(error, KeyboardInterrupt):
+            print("demo stack startup interrupted", file=sys.stderr)
+            return 130
         print(f"demo stack startup failed: {error}", file=sys.stderr)
         return 1
 

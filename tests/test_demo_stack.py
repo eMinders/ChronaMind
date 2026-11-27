@@ -131,7 +131,7 @@ def test_down_preserves_env_file_and_volumes_without_wipe(tmp_path: Path, monkey
 
     stopped: list[int] = []
     docker_calls: list[list[str]] = []
-    monkeypatch.setattr(down, "stop_pid", lambda pid: stopped.append(pid))
+    monkeypatch.setattr(down, "stop_pid", lambda pid, **kw: stopped.append(pid))
     monkeypatch.setattr(down, "run_docker_down", lambda **kw: docker_calls.append(["-v"] if kw["wipe"] else []))
     monkeypatch.setattr(down, "port_listening", lambda host, port: False)
 
@@ -157,7 +157,7 @@ def test_down_with_wipe_removes_volumes_env_file_and_state(tmp_path: Path, monke
     (state_dir / "compose.yaml").write_text(up.render_compose(), encoding="utf-8")
 
     docker_calls: list[bool] = []
-    monkeypatch.setattr(down, "stop_pid", lambda pid: None)
+    monkeypatch.setattr(down, "stop_pid", lambda pid, **kw: None)
     monkeypatch.setattr(down, "run_docker_down", lambda **kw: docker_calls.append(bool(kw["wipe"])))
     monkeypatch.setattr(down, "port_listening", lambda host, port: False)
 
@@ -297,9 +297,9 @@ def test_up_rolls_back_started_processes_and_prints_no_secrets_on_failure(
     monkeypatch.setattr(up, "PIDS_FILE", state_dir / "pids.json")
     monkeypatch.setattr(up, "_check_prerequisites", lambda: None)
     monkeypatch.setattr(up, "_port_listening", lambda host, port: False)
-    monkeypatch.setattr(up, "start_databases", lambda s, e: None)
-    monkeypatch.setattr(up, "prepare_engine", lambda env, s: None)
-    monkeypatch.setattr(up, "prepare_app_db", lambda env, s, e: None)
+    monkeypatch.setattr(up, "start_databases", lambda s, e, **kw: None)
+    monkeypatch.setattr(up, "prepare_engine", lambda env, s, **kw: None)
+    monkeypatch.setattr(up, "prepare_app_db", lambda env, s, e, **kw: None)
 
     class FakeProc:
         def __init__(self, pid: int) -> None:
@@ -396,9 +396,9 @@ def test_up_rolls_back_and_clears_pids_on_keyboard_interrupt(tmp_path: Path, mon
     monkeypatch.setattr(up, "PIDS_FILE", pids_file)
     monkeypatch.setattr(up, "_check_prerequisites", lambda: None)
     monkeypatch.setattr(up, "_port_listening", lambda host, port: False)
-    monkeypatch.setattr(up, "start_databases", lambda s, e: None)
-    monkeypatch.setattr(up, "prepare_engine", lambda env, s: None)
-    monkeypatch.setattr(up, "prepare_app_db", lambda env, s, e: None)
+    monkeypatch.setattr(up, "start_databases", lambda s, e, **kw: None)
+    monkeypatch.setattr(up, "prepare_engine", lambda env, s, **kw: None)
+    monkeypatch.setattr(up, "prepare_app_db", lambda env, s, e, **kw: None)
 
     class FakeProc:
         def __init__(self, pid: int) -> None:
@@ -460,3 +460,15 @@ def test_wait_for_health_backs_off_on_http_non_200_to_avoid_health_rate_limit(
     up._wait_for_health("http://127.0.0.1:8000/health", AliveProc(), tmp_path / "app.log", name="app", timeout=30.0)
 
     assert sleeps == [0.25, 3.0, 0.1]
+
+
+def test_stop_pid_skips_signaling_when_pid_belongs_to_unrelated_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    down = load_demo_module("down")
+    signaled: list[int] = []
+    monkeypatch.setattr(down, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(down, "_pid_matches_service", lambda pid, service: False)
+    monkeypatch.setattr(down.os, "killpg", lambda pid, sig: signaled.append(pid), raising=False)
+
+    down.stop_pid(99999, service="app")
+
+    assert signaled == []

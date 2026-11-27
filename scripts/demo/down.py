@@ -55,9 +55,28 @@ def _pid_alive(pid: int) -> bool:
         return True
 
 
-def stop_pid(pid: int, timeout: float = 15.0) -> None:
+_EXPECTED_CMD_MARKER: dict[str, str] = {
+    "engine_host": "run_host.py",
+    "app": "app.main:app",
+}
+
+
+def _pid_matches_service(pid: int, service: str | None) -> bool:
+    """Guard against PID reuse on POSIX by checking the live command line when readable."""
+    if service is None or os.name == "nt":
+        return True
+    marker = _EXPECTED_CMD_MARKER.get(service)
+    if not marker:
+        return True
+    result = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True, check=False)
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    return marker in result.stdout
+
+
+def stop_pid(pid: int, *, service: str | None = None, timeout: float = 15.0) -> None:
     """Terminate a process (and its process group/tree) and wait until it exits."""
-    if not _pid_alive(pid):
+    if not _pid_alive(pid) or not _pid_matches_service(pid, service):
         return
     if os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
@@ -137,7 +156,7 @@ def teardown(*, state_dir: Path = STATE, env_file: Path = ENV_FILE, wipe: bool =
         pid = int(entry.get("pid", 0))
         port = int(entry.get("port", 0))
         if pid > 0:
-            stop_pid(pid)
+            stop_pid(pid, service=name)
         if port > 0:
             stopped_ports.append(port)
 
@@ -175,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return teardown(state_dir=STATE, env_file=ENV_FILE, wipe=args.wipe)
-    except Exception as error:  # noqa: BLE001 - clean CLI error reporting
+    except Exception as error:
         print(f"demo stack teardown failed: {error}", file=sys.stderr)
         return 1
 
