@@ -383,7 +383,9 @@ def test_the_restore_modes_are_the_ones_the_identity_records() -> None:
     from custom_memory_engine.deletion.markers import RESTORED_MODES
 
     assert RESTORED_MODES == ("logical", "data-only", "physical", "in-place")
-    migration = (Path(__file__).resolve().parents[1] / "src/custom_memory_engine/schema/034_restore_identity_witness.sql").read_text()
+    migration = (
+        Path(__file__).resolve().parents[1] / "src/custom_memory_engine/schema/034_restore_identity_witness.sql"
+    ).read_text()
     for mode in RESTORED_MODES:
         assert f"'{mode}'" in migration, mode
 
