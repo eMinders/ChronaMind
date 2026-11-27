@@ -489,3 +489,60 @@ def test_down_wipe_preserves_env_file_when_docker_is_missing(tmp_path: Path, mon
 
     assert env_file.exists()
     assert state_dir.exists()
+
+
+def test_app_launcher_runs_uvicorn_on_explicit_selector_event_loop() -> None:
+    up = load_demo_module("up")
+
+    assert "uvicorn.Server(" in up._APP_LAUNCHER
+    assert 'loop="none"' in up._APP_LAUNCHER
+    assert "loop_factory=asyncio.SelectorEventLoop" in up._APP_LAUNCHER
+    assert "uvicorn.run(" not in up._APP_LAUNCHER
+
+
+def test_compose_calls_override_inherited_shell_postgres_vars_with_demo_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    up = load_demo_module("up")
+    down = load_demo_module("down")
+    state_dir = tmp_path / ".state"
+    env_file = tmp_path / ".env.demo"
+    values = up.demo_secrets(env_file)
+
+    monkeypatch.setenv("POSTGRES_PORT", "5434")
+    monkeypatch.setenv("POSTGRES_USER", "shell_user")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "shell_pw")  # pragma: allowlist secret
+    monkeypatch.setenv("POSTGRES_DB", "shell_db")
+
+    up_captured: dict[str, str] = {}
+
+    def fake_run_logged(command: list[str], *, env: dict[str, str], **kw: object) -> None:
+        del command, kw
+        up_captured.update(env)
+
+    monkeypatch.setattr(up, "_run_logged", fake_run_logged)
+    up.start_databases(state_dir=state_dir, env_file=env_file)
+
+    assert up_captured["POSTGRES_PORT"] == values["POSTGRES_PORT"]
+    assert up_captured["POSTGRES_USER"] == values["POSTGRES_USER"]
+    assert up_captured["POSTGRES_PASSWORD"] == values["POSTGRES_PASSWORD"]
+    assert up_captured["POSTGRES_DB"] == values["POSTGRES_DB"]
+
+    down_captured: dict[str, str] = {}
+
+    class Completed:
+        returncode = 0
+
+    def fake_subprocess_run(command: list[str], *, env: dict[str, str], **kw: object) -> Completed:
+        del command, kw
+        down_captured.update(env)
+        return Completed()
+
+    monkeypatch.setattr(down.shutil, "which", lambda cmd: "/usr/bin/docker")
+    monkeypatch.setattr(down.subprocess, "run", fake_subprocess_run)
+    down.run_docker_down(compose_file=state_dir / "compose.yaml", env_file=env_file, wipe=False)
+
+    assert down_captured["POSTGRES_PORT"] == values["POSTGRES_PORT"]
+    assert down_captured["POSTGRES_USER"] == values["POSTGRES_USER"]
+    assert down_captured["POSTGRES_PASSWORD"] == values["POSTGRES_PASSWORD"]
+    assert down_captured["POSTGRES_DB"] == values["POSTGRES_DB"]

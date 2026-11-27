@@ -249,6 +249,9 @@ def run_check(
 
 def main() -> int:
     """CLI entrypoint for checking the live demo stack."""
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="replace")
     if not ENV_FILE.exists():
         print("FAIL: demo stack is not configured. Run `uv run python scripts/demo/up.py` first.", file=sys.stderr)
         return 1

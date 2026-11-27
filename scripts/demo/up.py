@@ -118,11 +118,10 @@ _APP_LAUNCHER = (
     + "\n"
     + """
 import asyncio, uvicorn
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 _demo_vars["PROFILING_DIR"] = sys.argv[4]
 os.environ["PROFILING_DIR"] = sys.argv[4]
-uvicorn.run("app.main:app", host=sys.argv[5], port=int(sys.argv[6]), loop="asyncio")
+_server = uvicorn.Server(uvicorn.Config("app.main:app", host=sys.argv[5], port=int(sys.argv[6]), loop="none"))
+asyncio.run(_server.serve(), loop_factory=asyncio.SelectorEventLoop)
 """.strip()
 )
 
@@ -469,6 +468,13 @@ def _check_prerequisites() -> None:
         raise RuntimeError("Docker daemon is not reachable. Start Docker and retry.")
 
 
+def compose_environment(env_file: Path, *, base_env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Build the Docker Compose environment so ``.env.demo`` overrides inherited shell variables."""
+    source = os.environ if base_env is None else base_env
+    overrides = parse_env_file(env_file) if env_file.exists() else {}
+    return {**source, **overrides}
+
+
 def start_databases(state_dir: Path = STATE, env_file: Path = ENV_FILE, *, timeout: float = 180.0) -> None:
     """Start the demo engine and app PostgreSQL containers and wait until both are healthy."""
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -489,7 +495,7 @@ def start_databases(state_dir: Path = STATE, env_file: Path = ENV_FILE, *, timeo
             "--wait",
         ],
         cwd=ROOT,
-        env=os.environ,
+        env=compose_environment(env_file),
         log_file=state_dir / "docker-up.log",
         step="docker compose up",
         timeout=timeout,
@@ -513,6 +519,8 @@ def prepare_engine(environment: Mapping[str, str], state_dir: Path = STATE, *, t
         step="engine schema migrate",
         timeout=timeout,
     )
+    # `provision_role.py` runs `CREATE ROLE` without `IF NOT EXISTS` and raises `DuplicateObject`
+    # when the role already exists on a reused volume; use `down.py --wipe` to rebuild grants.
     if not engine_role_exists(environment["RL_DATABASE_URL"], ROLE):
         _run_logged(
             [str(ENGINE_PYTHON), "scripts/provision_role.py", "--schema", SCHEMA, "--role", ROLE],

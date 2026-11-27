@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 os.environ.pop("SSLKEYLOGFILE", None)
@@ -101,6 +102,25 @@ def stop_pid(pid: int, *, service: str | None = None, timeout: float = 15.0) -> 
             os.kill(pid, signal.SIGKILL)
 
 
+def _parse_env_file(env_file: Path) -> dict[str, str]:
+    """Read simple ``KEY=VALUE`` pairs from ``env_file``."""
+    values: dict[str, str] = {}
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value
+    return values
+
+
+def compose_environment(env_file: Path, *, base_env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Build the Docker Compose environment so ``.env.demo`` overrides inherited shell variables."""
+    source = os.environ if base_env is None else base_env
+    overrides = _parse_env_file(env_file) if env_file.exists() else {}
+    return {**source, **overrides}
+
+
 def run_docker_down(*, compose_file: Path, env_file: Path, wipe: bool) -> None:
     """Stop the demo Docker Compose containers, removing volumes when ``wipe`` is True."""
     docker_bin = shutil.which("docker")
@@ -118,7 +138,13 @@ def run_docker_down(*, compose_file: Path, env_file: Path, wipe: bool) -> None:
     command.append("down")
     if wipe:
         command.append("-v")
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        command,
+        env=compose_environment(env_file),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if completed.returncode != 0:
         raise RuntimeError(f"docker compose down failed (exit {completed.returncode})")
 
