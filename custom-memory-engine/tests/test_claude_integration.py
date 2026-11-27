@@ -791,12 +791,14 @@ def test_the_report_names_the_failure_and_never_quotes_the_run(tmp_path: Path) -
     assert long_error not in module.report({"type": "result", "num_turns": 4, "result": long_error})
     # ... and a newline inside it cannot forge a second log line. The forged line sits *inside* the cap on purpose:
     # beyond it, truncation alone would satisfy the assertion and prove nothing about the newline handling.
-    forged = "the run failed\n::error::forged"
-    message = module.report({"type": "result", "num_turns": 4, "result": forged})
-    assert "the run failed" in message, "the text before the newline still reaches the operator"
-    assert not any(line.startswith("::error::") for line in message.splitlines()), (
-        "a newline in the run's own text must not forge a workflow command"
-    )
+    # Every line break, not only `\n`: the runner's reader also ends a line at a bare `\r`.
+    for separator in ("\n", "\r", "\r\n", "\u2028"):
+        forged = f"the run failed{separator}::error::forged"
+        message = module.report({"type": "result", "num_turns": 4, "result": forged})
+        assert "the run failed" in message, "the text before the newline still reaches the operator"
+        assert not any(line.startswith("::error::") for line in message.splitlines()), (
+            f"a line break ({separator!r}) in the run's own text must not forge a workflow command"
+        )
 
 
 def test_the_report_never_claims_a_cause_it_cannot_see(tmp_path: Path) -> None:

@@ -86,7 +86,8 @@ def report(result: Mapping[str, Any] | None) -> str:
             "(`.claude/skills/review-pr/SKILL.md` is the procedure)."
         )
     fields = ", ".join(f"{name}={result.get(name)!r}" for name in SAFE_FIELDS)
-    error = str(result.get("result") or "").strip().replace("\n", " ")[:MAX_ERROR_CHARS]
+    # every line break, not only `\n`: the runner also ends a line at `\r`, and a line starting `::` is a workflow command
+    error = " ".join(str(result.get("result") or "").split())[:MAX_ERROR_CHARS]
     lines = [f"The review run failed before it reviewed anything: {fields}."]
     if error:
         lines.append(f"The run's own last message: {error}")
