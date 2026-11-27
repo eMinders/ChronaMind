@@ -3615,7 +3615,7 @@ detected by `restore_reconciliation`; the procedure replays after any restore re
 journal, so their recovery point is the journal's.
 
 
-### V2-D126 — Per-principal capacity for process-local read stores (`T-47`, #261)
+### V2-D127 — Per-principal capacity for process-local read stores (`T-47`, #261)
 
 **Decision.** `ResultStore` and `CostStore` keep principal-specific ordered buckets while retaining one global capacity ceiling. A principal's burst evicts its own oldest surplus entries first. When every principal has one resident entry, the least-recently-used principal is evicted as a unit. Lookup and report semantics remain principal-scoped, and expired entries are still removed on the existing read and write paths.
 

@@ -523,7 +523,7 @@ journal (`V2-D122`), and the hardening that three independent reviews then produ
    are tracked as their own issues rather than left in prose: **#262** (a data-only or PITR restore keeps every OID, so
    the reconciliation check cannot see it), **#263** (the markers inherit the journal's recovery point, and no check
    compares that point with the backup being restored), and **#264** (the final commit's independent review did not run
-   — a tooling failure, not a finding). The availability-only `T-47` is closed by **#261** / `V2-D126`. `#258` stays open above.
+   — a tooling failure, not a finding). The availability-only `T-47` is closed by **#261** / `V2-D127`. `#258` stays open above.
 3. **The statistical instruments that W4 owns were started early, and only as far as `I11`/`I15` needed them.**
    `SD-001`, `SD-002` and `SD-008` have drafts with their level separation, required evidence, dependence gating and a
    grid pin to the engine's own admission predicate (`V2-D114`, `V2-D124`). `C-012` and gate `G4` are **not** started:
