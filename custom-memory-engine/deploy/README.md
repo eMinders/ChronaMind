@@ -228,12 +228,12 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    backup never held.
 
    **What to do when it refuses with `journal_older_than_backup`.** Put back the *newest* off-host copy you hold --
-   one whose `exported_at` is at or after the backup's start -- and replay that copy: the refusal means deletions made
-   between your copy and the backup are recorded in neither artefact. `--accept-unresolved` does not clear it, because
-   the check runs before any entry is considered. If no copy that new survives, the rows those deletions erased are in
-   the backup and nothing records them: the only remaining path is `--mark-reconciled`, which replays nothing, so use
-   it as an explicit, recorded acceptance that the deletions made between the two recovery points are lost (`T-48`)
-   -- never as a routine step.
+   one whose `exported_at` is at or after the backup's start -- and replay that copy: the refusal means your copy was
+   made before the backup, so the journal cannot hold the deletions made after the backup begins, and those are exactly
+   the ones a restore brings back. `--accept-unresolved` does not clear it, because the check runs before any entry is
+   considered. If no copy that new survives, that window cannot be recovered from either artefact, and the only
+   remaining path is `--mark-reconciled`, which replays nothing: reach for it only as an explicit, recorded acceptance
+   that those deletions are lost (`T-48`), never as a routine step.
 
    Then `scripts/run_maintenance.py --once` so retention (`expire`, `purge_working`) catches up, and only then:
 
