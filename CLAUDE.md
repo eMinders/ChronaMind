@@ -58,6 +58,10 @@ is shaped.
   checksum-bound; a correction is a new migration or an additive note in `schema/README.md`.
 - **Never commit a secret.** `.env*` files are gitignored and hold real passwords. `.claude/settings.json` denies reading
   them.
+- **The app holds two engine tokens; never swap them.** `MEMORY_ENGINE_TOKEN` (Tier B) is the agent's.
+  `MEMORY_ENGINE_USER_TOKEN` (Tier C, which can erase and export for every user) is used only by the
+  `/api/v1/memory/*` routes. Both are secrets in `.env*`, and `.env.example` keeps them empty. See
+  [`AGENTS.md`](AGENTS.md), "Memory", and [`docs/memory.md`](docs/memory.md).
 - **Commits**: `type(scope): summary`, in the repository's existing style — `feat(e037): … (Refs #207)`,
   `fix(w3): … (#229)`. Reference an issue with `Refs #N`; never `closes`/`fixes` (the issue is closed by hand once its
   criteria are verified).
