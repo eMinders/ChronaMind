@@ -105,6 +105,10 @@ def run_docker_down(*, compose_file: Path, env_file: Path, wipe: bool) -> None:
     """Stop the demo Docker Compose containers, removing volumes when ``wipe`` is True."""
     docker_bin = shutil.which("docker")
     if not docker_bin:
+        if wipe:
+            raise RuntimeError(
+                "Docker CLI not found on PATH; refusing to delete .env.demo while database volumes cannot be removed."
+            )
         return
     command = [docker_bin, "compose", "-p", COMPOSE_PROJECT]
     if compose_file.exists():

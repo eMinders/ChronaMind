@@ -472,3 +472,20 @@ def test_stop_pid_skips_signaling_when_pid_belongs_to_unrelated_process(monkeypa
     down.stop_pid(99999, service="app")
 
     assert signaled == []
+
+
+def test_down_wipe_preserves_env_file_when_docker_is_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    up = load_demo_module("up")
+    down = load_demo_module("down")
+    state_dir = tmp_path / ".state"
+    state_dir.mkdir()
+    env_file = tmp_path / ".env.demo"
+    up.demo_secrets(env_file)
+    monkeypatch.setattr(down.shutil, "which", lambda cmd: None)
+    monkeypatch.setattr(down, "port_listening", lambda host, port: False)
+
+    with pytest.raises(RuntimeError, match="Docker CLI not found"):
+        down.teardown(state_dir=state_dir, env_file=env_file, wipe=True)
+
+    assert env_file.exists()
+    assert state_dir.exists()
