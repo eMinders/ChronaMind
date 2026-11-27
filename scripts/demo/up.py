@@ -348,12 +348,32 @@ _EXPECTED_CMD_MARKER: dict[str, str] = {
 
 
 def _pid_matches_service(pid: int, service: str | None) -> bool:
-    """Guard against PID reuse on POSIX by checking the live command line when readable."""
-    if service is None or os.name == "nt":
+    """Guard against PID reuse by checking the live command line when readable."""
+    if service is None:
         return True
     marker = _EXPECTED_CMD_MARKER.get(service)
     if not marker:
         return True
+    if os.name == "nt":
+        ps_bin = shutil.which("powershell") or shutil.which("pwsh")
+        if not ps_bin:
+            return True
+        result = subprocess.run(
+            [
+                ps_bin,
+                "-NoProfile",
+                "-Command",
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5.0,
+        )
+        if result.returncode != 0:
+            return True
+        cmdline = result.stdout.strip()
+        return bool(cmdline) and marker in cmdline
     result = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True, check=False)
     if result.returncode != 0 or not result.stdout.strip():
         return False
@@ -387,19 +407,27 @@ def _stop_pid(pid: int, *, service: str | None = None, timeout: float = 15.0) ->
             os.kill(pid, signal.SIGKILL)
 
 
-def _seed_windows_tiktoken_cache(state_dir: Path) -> Path:
+def _seed_windows_tiktoken_cache(state_dir: Path) -> Path | None:
     """Best-effort curl download of tiktoken encoding for Windows behind TLS-inspecting proxies."""
     cache_dir = state_dir / "tiktoken_cache"
     target = cache_dir / hashlib.sha1(TIKTOKEN_URL.encode("utf-8")).hexdigest()
     if target.exists() and target.stat().st_size > 0:
         return cache_dir
-    cache_dir.mkdir(parents=True, exist_ok=True)
     curl_bin = shutil.which("curl")
-    if curl_bin:
-        subprocess.run(
-            [curl_bin, "-sS", "-m", "90", "-o", str(target), TIKTOKEN_URL], capture_output=True, check=False
-        )
-    return cache_dir
+    if not curl_bin:
+        return None
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tmp_target = target.with_suffix(".tmp")
+    result = subprocess.run(
+        [curl_bin, "-fsSL", "-m", "90", "-o", str(tmp_target), TIKTOKEN_URL],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0 and tmp_target.exists() and tmp_target.stat().st_size > 0:
+        tmp_target.replace(target)
+        return cache_dir
+    tmp_target.unlink(missing_ok=True)
+    return None
 
 
 def _build_windows_ca_shim(state_dir: Path) -> Path | None:
@@ -702,7 +730,9 @@ def main() -> int:
 
         app_env = app_environment(values, state_dir=STATE)
         if sys.platform == "win32":
-            app_env["TIKTOKEN_CACHE_DIR"] = str(_seed_windows_tiktoken_cache(STATE))
+            tiktoken_cache = _seed_windows_tiktoken_cache(STATE)
+            if tiktoken_cache is not None:
+                app_env["TIKTOKEN_CACHE_DIR"] = str(tiktoken_cache)
             shim = _build_windows_ca_shim(STATE)
             if shim is not None:
                 existing_pypath = app_env.get("PYTHONPATH", "")

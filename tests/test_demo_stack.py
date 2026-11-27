@@ -546,3 +546,53 @@ def test_compose_calls_override_inherited_shell_postgres_vars_with_demo_env(
     assert down_captured["POSTGRES_USER"] == values["POSTGRES_USER"]
     assert down_captured["POSTGRES_PASSWORD"] == values["POSTGRES_PASSWORD"]
     assert down_captured["POSTGRES_DB"] == values["POSTGRES_DB"]
+
+
+def test_seed_windows_tiktoken_cache_returns_none_and_cleans_up_on_curl_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    up = load_demo_module("up")
+
+    class Failed:
+        returncode = 22
+
+    def fake_run(command: list[str], **kw: object) -> Failed:
+        del kw
+        out_idx = command.index("-o") + 1
+        Path(command[out_idx]).write_bytes(b"")
+        return Failed()
+
+    monkeypatch.setattr(up.shutil, "which", lambda cmd: "/usr/bin/curl" if cmd == "curl" else None)
+    monkeypatch.setattr(up.subprocess, "run", fake_run)
+
+    result = up._seed_windows_tiktoken_cache(tmp_path)
+
+    assert result is None
+    cache_dir = tmp_path / "tiktoken_cache"
+    assert list(cache_dir.iterdir()) == []
+
+
+def test_pid_matches_service_checks_windows_command_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    down = load_demo_module("down")
+
+    class Completed:
+        def __init__(self, stdout: str, returncode: int = 0) -> None:
+            self.stdout = stdout
+            self.returncode = returncode
+
+    monkeypatch.setattr(down.os, "name", "nt")
+    monkeypatch.setattr(down.shutil, "which", lambda cmd: "powershell.exe" if cmd == "powershell" else None)
+
+    monkeypatch.setattr(
+        down.subprocess,
+        "run",
+        lambda *args, **kw: Completed("python.exe -c \"... uvicorn.Config('app.main:app', ...)\"\n"),
+    )
+    assert down._pid_matches_service(4242, "app") is True
+
+    monkeypatch.setattr(
+        down.subprocess,
+        "run",
+        lambda *args, **kw: Completed("notepad.exe C:\\notes.txt\n"),
+    )
+    assert down._pid_matches_service(4242, "app") is False

@@ -63,12 +63,32 @@ _EXPECTED_CMD_MARKER: dict[str, str] = {
 
 
 def _pid_matches_service(pid: int, service: str | None) -> bool:
-    """Guard against PID reuse on POSIX by checking the live command line when readable."""
-    if service is None or os.name == "nt":
+    """Guard against PID reuse by checking the live command line when readable."""
+    if service is None:
         return True
     marker = _EXPECTED_CMD_MARKER.get(service)
     if not marker:
         return True
+    if os.name == "nt":
+        ps_bin = shutil.which("powershell") or shutil.which("pwsh")
+        if not ps_bin:
+            return True
+        result = subprocess.run(
+            [
+                ps_bin,
+                "-NoProfile",
+                "-Command",
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5.0,
+        )
+        if result.returncode != 0:
+            return True
+        cmdline = result.stdout.strip()
+        return bool(cmdline) and marker in cmdline
     result = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True, check=False)
     if result.returncode != 0 or not result.stdout.strip():
         return False
