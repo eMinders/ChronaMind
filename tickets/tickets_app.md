@@ -539,7 +539,7 @@ make check
 
 Add `POST /api/v1/memory/{artifact_id}/adjudicate` and `POST /api/v1/memory/forget`. Adjudicate lets the user confirm
 or deny a `contested` claim. Forget erases everything the engine holds for the user with `delete` scope `all`, clears
-every chat session of that user in the app, and returns counts plus three observed after-checks.
+every chat session of that user in the app, and returns counts plus four observed after-checks.
 
 ### Background and Current State
 
@@ -683,7 +683,7 @@ seeded user carries journey J5 and is the fallback when the LLM is unavailable.
   `GET /api/v1/memory/<id>` returns it with lifecycle `contested` (it is not listed; see Needs confirmation).
 - Running `seed.py` twice in a row yields the same section counts.
 - `reset.py` followed by `seed.py` yields the same counts as a first seed.
-- `reset.py` prints the deletion counts and the three after-checks returned by `/forget`.
+- `reset.py` prints the deletion counts and the four after-checks returned by `/forget`.
 - The password comes from `DEMO_SEED_PASSWORD`. When that is unset, the password is generated and printed once, on the
   run that registers the user.
 - No token, key or database URL is printed.
@@ -960,7 +960,7 @@ session, and commit the result as `docs/demo/checkpoint-b.md`. Phase 3 starts on
 - The report records the commit SHA, the operating system and the total duration.
 - J1–J5 and the Arabic pair are each PASS, with a screenshot under `docs/demo/checkpoint-b/`.
 - The full run takes under 10 minutes.
-- J4's three after-checks are all observed true, and the report shows the receipt counts.
+- J4's four after-checks are all observed true, and the report shows the receipt counts.
 - J5's conflict moves from Conflicts to Known facts after Confirm.
 - Each FAIL becomes a linked bug issue. After the fix, the full run repeats, not only the failed step.
 - `npm run check` and `make check` pass on the tested commit.
@@ -1111,6 +1111,8 @@ Implementation notes from the same bundle, which extend the tickets above:
 - `MemoryItem` also carries `bound` (`I14`: an abstraction never renders without it) and `conflict_sides`.
 - `GET /{id}` answers `MemoryItemResponse` (the item plus `request_id`).
 - `ForgetChecks` values are nullable: `null` means "could not be checked after the erasure committed", never "passed".
+- Forget also reports `failed_chat_sessions` and the check `chat_history_cleared` (review finding on #307). A
+  transcript that could not be cleared makes the forget incomplete; calling `POST /forget` again retries it.
 - An engine answer outside the contract is HTTP 502 `engine_response_invalid`.
 
 ## Needs confirmation

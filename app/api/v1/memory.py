@@ -231,6 +231,10 @@ async def forget_me(request: Request, body: ForgetIn, user: User = Depends(get_c
     Order matters. The engine erasure runs first and is final once it answers; only then are the app's transcripts
     cleared, because the agent re-reads a session's whole history every turn and would otherwise keep answering from
     it. If the erasure fails, nothing is cleared. The after-checks run last and report observations, never assumptions.
+
+    A transcript that cannot be cleared is counted in ``failed_chat_sessions`` and turns ``chat_history_cleared``
+    false: the forget is then incomplete, and the caller is told so rather than told "forgotten". Calling this route
+    again is safe and retries the clearing (the second erasure finds nothing to delete).
     """
     del body  # its only job is the typed confirmation word, which validation already checked
     before = await engine(user, "query", _current_state(user))
@@ -250,16 +254,22 @@ async def forget_me(request: Request, body: ForgetIn, user: User = Depends(get_c
     except EngineCallError as error:
         _http_error(error, "delete")
 
-    cleared = 0
-    for chat_session in await database_service.get_user_sessions(user.id):
+    cleared = failed = 0
+    try:
+        chat_sessions = await database_service.get_user_sessions(user.id)
+    except Exception:  # noqa: BLE001 - the erasure already committed; an unknown session list is a failed clear
+        logger.exception("forget_chat_sessions_unlisted")
+        chat_sessions, failed = [], 1
+    for chat_session in chat_sessions:
         try:
             await agent.clear_chat_history(chat_session.id)
             await database_service.advance_history_epoch(chat_session.id)
             cleared += 1
-        except Exception:  # noqa: BLE001 - the erasure already committed; report the real count, never hide it
-            logger.exception("forget_chat_session_clear_failed", cleared=cleared)
+        except Exception:  # noqa: BLE001 - the erasure already committed; count the failure and report it
+            failed += 1
+            logger.exception("forget_chat_session_clear_failed", cleared=cleared, failed=failed)
 
-    checks = ForgetChecks()
+    checks = ForgetChecks(chat_history_cleared=failed == 0)
     try:
         checks.memory_list_empty = view_from_query(await _call(user, "query", _current_state(user))).is_empty()
     except EngineCallError, EngineShapeError:
@@ -284,10 +294,11 @@ async def forget_me(request: Request, body: ForgetIn, user: User = Depends(get_c
         "memory_forget_completed",
         deleted_versions=counts.deleted_versions,
         cleared_chat_sessions=cleared,
+        failed_chat_sessions=failed,
         memory_list_empty=checks.memory_list_empty,
         export_artifact_count=checks.export_artifact_count,
     )
-    return ForgetResult(receipt=counts, cleared_chat_sessions=cleared, checks=checks)
+    return ForgetResult(receipt=counts, cleared_chat_sessions=cleared, failed_chat_sessions=failed, checks=checks)
 
 
 # -- routes on one artifact ----------------------------------------------------------------------------------------

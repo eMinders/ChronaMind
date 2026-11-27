@@ -359,8 +359,14 @@
         "type": "object"
       },
       "ForgetChecks": {
-        "description": "What was observed after the erasure. Each value is measured, never assumed.\n\n``None`` means the check could not be run (the engine refused or was unreachable after the erasure committed). The\nerasure itself is already final at that point, so the receipt is still returned; the UI shows the check as not\nverified rather than as passed.",
+        "description": "What was observed after the erasure. Each value is measured, never assumed.\n\n``None`` means the check could not be run (the engine refused or was unreachable after the erasure committed). The\nerasure itself is already final at that point, so the receipt is still returned; the UI shows the check as not\nverified rather than as passed.\n\n``chat_history_cleared`` is false when any of the user's chat sessions could not be cleared. Such a transcript\nsurvives the erasure and the agent still reads it, so the forget is **not complete**: the caller shows it as failed\nand retries ``POST /forget``, which is idempotent (a second erasure finds nothing and the clearing runs again).",
         "properties": {
+          "chat_history_cleared": {
+            "default": false,
+            "description": "Every chat session of the user was cleared; false means a transcript survived",
+            "title": "Chat History Cleared",
+            "type": "boolean"
+          },
           "export_artifact_count": {
             "anyOf": [
               {
@@ -417,13 +423,19 @@
         "type": "object"
       },
       "ForgetResult": {
-        "description": "`POST /memory/forget`: the receipt, how many chat sessions were cleared, and the after-checks.",
+        "description": "`POST /memory/forget`: the receipt, how many chat sessions were cleared or failed, and the after-checks.",
         "properties": {
           "checks": {
             "$ref": "#/components/schemas/ForgetChecks"
           },
           "cleared_chat_sessions": {
             "title": "Cleared Chat Sessions",
+            "type": "integer"
+          },
+          "failed_chat_sessions": {
+            "default": 0,
+            "description": "Sessions whose transcript could not be cleared; any is a forget to retry",
+            "title": "Failed Chat Sessions",
             "type": "integer"
           },
           "receipt": {
@@ -1663,7 +1675,7 @@
     },
     "/api/v1/memory/forget": {
       "post": {
-        "description": "Erase everything the engine holds for the user, clear their chat histories, and report what was observed.\n\nOrder matters. The engine erasure runs first and is final once it answers; only then are the app's transcripts\ncleared, because the agent re-reads a session's whole history every turn and would otherwise keep answering from\nit. If the erasure fails, nothing is cleared. The after-checks run last and report observations, never assumptions.",
+        "description": "Erase everything the engine holds for the user, clear their chat histories, and report what was observed.\n\nOrder matters. The engine erasure runs first and is final once it answers; only then are the app's transcripts\ncleared, because the agent re-reads a session's whole history every turn and would otherwise keep answering from\nit. If the erasure fails, nothing is cleared. The after-checks run last and report observations, never assumptions.\n\nA transcript that cannot be cleared is counted in ``failed_chat_sessions`` and turns ``chat_history_cleared``\nfalse: the forget is then incomplete, and the caller is told so rather than told \"forgotten\". Calling this route\nagain is safe and retries the clearing (the second erasure finds nothing to delete).",
         "operationId": "forget_me_api_v1_memory_forget_post",
         "requestBody": {
           "content": {

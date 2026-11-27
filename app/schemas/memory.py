@@ -187,8 +187,15 @@ class ForgetChecks(BaseModel):
     ``None`` means the check could not be run (the engine refused or was unreachable after the erasure committed). The
     erasure itself is already final at that point, so the receipt is still returned; the UI shows the check as not
     verified rather than as passed.
+
+    ``chat_history_cleared`` is false when any of the user's chat sessions could not be cleared. Such a transcript
+    survives the erasure and the agent still reads it, so the forget is **not complete**: the caller shows it as failed
+    and retries ``POST /forget``, which is idempotent (a second erasure finds nothing and the clearing runs again).
     """
 
+    chat_history_cleared: bool = Field(
+        default=False, description="Every chat session of the user was cleared; false means a transcript survived"
+    )
     memory_list_empty: bool | None = Field(default=None, description="GET /memory/ returned no item in any section")
     export_artifact_count: int | None = Field(
         default=None, description="artifact_count of an engine export over /u/<id>/"
@@ -200,10 +207,13 @@ class ForgetChecks(BaseModel):
 
 
 class ForgetResult(BaseResponse):
-    """`POST /memory/forget`: the receipt, how many chat sessions were cleared, and the after-checks."""
+    """`POST /memory/forget`: the receipt, how many chat sessions were cleared or failed, and the after-checks."""
 
     receipt: DeletionCounts
     cleared_chat_sessions: int
+    failed_chat_sessions: int = Field(
+        default=0, description="Sessions whose transcript could not be cleared; any is a forget to retry"
+    )
     checks: ForgetChecks
 
 

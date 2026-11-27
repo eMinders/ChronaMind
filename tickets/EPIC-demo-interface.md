@@ -130,8 +130,8 @@ No changes. `git diff main -- custom-memory-engine/` is empty for every PR in th
   15 seconds of the reply, with both sentences listed under Conversation record.
 - The detail drawer shows kind, lifecycle, channel and provenance references, and shows no timestamp or quote field.
 - Time Travel shows Berlin as believed at the instant of the Paris message and Paris as believed now.
-- Forget shows the deletion counts and three observed after-checks: memory list empty, export count 0, a prior id
-  not found.
+- Forget shows the deletion counts and four observed after-checks: chat history cleared, memory list empty, export
+  count 0, a prior id not found. A failed check is shown as failed, never as "forgotten".
 - The seeded user's contested claim moves to Known facts after Confirm.
 - The Playwright demo spec passes three consecutive runs against the live stack, and the mock-mode spec passes in CI.
 

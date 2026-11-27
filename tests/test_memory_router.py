@@ -117,13 +117,19 @@ class FakeChatStore:
     cleared: list[str] = field(default_factory=list)
     advanced: list[str] = field(default_factory=list)
     log: list[str] | None = None
+    failing: set[str] = field(default_factory=set)
+    unlisted: bool = False
 
     async def get_user_sessions(self, user_id: int) -> list[Any]:
         """The sessions of ``user_id`` only."""
+        if self.unlisted:
+            raise RuntimeError("session table unavailable")
         return [type("ChatSession", (), {"id": session_id})() for session_id in self.sessions.get(user_id, [])]
 
     async def clear_chat_history(self, session_id: str) -> None:
-        """Record a cleared transcript."""
+        """Record a cleared transcript, or fail for a session in ``failing``."""
+        if session_id in self.failing:
+            raise RuntimeError("checkpointer unavailable")
         self.cleared.append(session_id)
         if self.log is not None:
             self.log.append(f"clear:{session_id}")
@@ -388,8 +394,13 @@ def test_forget_erases_first_then_clears_only_this_users_sessions_then_checks(cl
     assert engine.calls[1]["arguments"] == {"scope": "all"}
     assert chats.cleared == ["s-1", "s-2"] and chats.advanced == ["s-1", "s-2"]  # never "s-other"
     body = response.json()
-    assert body["cleared_chat_sessions"] == 2
-    assert body["checks"] == {"memory_list_empty": True, "export_artifact_count": 0, "old_item_not_found": True}
+    assert (body["cleared_chat_sessions"], body["failed_chat_sessions"]) == (2, 0)
+    assert body["checks"] == {
+        "chat_history_cleared": True,
+        "memory_list_empty": True,
+        "export_artifact_count": 0,
+        "old_item_not_found": True,
+    }
     assert body["receipt"]["deleted_versions"] == 3
     assert "engine-request-digest" not in response.text
 
@@ -422,6 +433,7 @@ def test_a_check_that_cannot_run_is_reported_as_unverified_not_as_passed(client,
 
     assert response.status_code == 200  # the erasure committed: the receipt is still the answer
     assert response.json()["checks"] == {
+        "chat_history_cleared": True,
         "memory_list_empty": None,
         "export_artifact_count": None,
         "old_item_not_found": None,
@@ -432,4 +444,45 @@ def test_an_item_still_readable_after_forget_is_reported_as_a_failed_check(clien
     engine.answers = {"query": [MEMORY, MEMORY], "delete": [RECEIPT], "export": [{"artifact_count": 2}],
                       "get": [PARIS]}  # fmt: skip
     checks = client.post("/api/v1/memory/forget", json={"confirm": "DELETE"}).json()["checks"]
-    assert checks == {"memory_list_empty": False, "export_artifact_count": 2, "old_item_not_found": False}
+    assert checks == {
+        "chat_history_cleared": True,
+        "memory_list_empty": False,
+        "export_artifact_count": 2,
+        "old_item_not_found": False,
+    }
+
+
+FORGET_OK = {
+    "query": [MEMORY, {}],
+    "delete": [RECEIPT],
+    "export": [{"artifact_count": 0}],
+    "get": [(403, "forbidden")],
+}
+
+
+def test_a_transcript_that_cannot_be_cleared_makes_the_forget_incomplete(client, engine, chats) -> None:  # type: ignore[no-untyped-def]
+    """Review finding on #307: a swallowed clear let Forget report success while a transcript survived."""
+    engine.answers = {key: list(value) for key, value in FORGET_OK.items()}
+    chats.failing = {"s-2"}
+    body = client.post("/api/v1/memory/forget", json={"confirm": "DELETE"}).json()
+
+    assert (body["cleared_chat_sessions"], body["failed_chat_sessions"]) == (1, 1)
+    assert body["checks"]["chat_history_cleared"] is False
+    assert chats.cleared == ["s-1"] and chats.advanced == ["s-1"]
+
+    # Forget is idempotent: once the checkpointer recovers, calling it again finishes the clearing.
+    engine.calls.clear()
+    engine.answers = {key: list(value) for key, value in FORGET_OK.items()}
+    chats.failing = set()
+    retry = client.post("/api/v1/memory/forget", json={"confirm": "DELETE"}).json()
+    assert retry["failed_chat_sessions"] == 0 and retry["checks"]["chat_history_cleared"] is True
+    assert "s-2" in chats.cleared
+
+
+def test_an_unreadable_session_list_is_a_failed_clear_not_a_success(client, engine, chats) -> None:  # type: ignore[no-untyped-def]
+    engine.answers = {key: list(value) for key, value in FORGET_OK.items()}
+    chats.unlisted = True
+    body = client.post("/api/v1/memory/forget", json={"confirm": "DELETE"}).json()
+
+    assert body["failed_chat_sessions"] == 1
+    assert body["checks"]["chat_history_cleared"] is False

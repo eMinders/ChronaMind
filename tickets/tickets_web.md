@@ -1008,7 +1008,7 @@ cd web && npm run check
 ### Objective
 
 Add `/forget`. It shows what will be erased, requires the user to type DELETE, calls `POST /api/v1/memory/forget`,
-and renders the content-free receipt and the three observed after-checks. It then starts a new chat session, so the
+and renders the content-free receipt and the four observed after-checks. It then starts a new chat session, so the
 user can ask again and see that the assistant has no memory left.
 
 ### Background and Current State
@@ -1019,7 +1019,9 @@ user can ask again and see that the assistant has no memory left.
   - `receipt`: `deletion_epoch`, `deleted_versions`, `dependents`, `retired_dependents`, `deleted_turns`,
     `deleted_entities`, `deleted_mentions`;
   - `cleared_chat_sessions`;
-  - `checks`: `memory_list_empty`, `export_artifact_count`, `old_item_not_found` (`bool | null`).
+  - `failed_chat_sessions`;
+  - `checks`: `chat_history_cleared`, `memory_list_empty`, `export_artifact_count`, `old_item_not_found`
+    (`bool | null`).
 - `newChatSession()` comes from WEB-03.
 
 ### Acceptance Criteria
@@ -1032,6 +1034,9 @@ user can ask again and see that the assistant has no memory left.
 - A check that is false renders as failed, in red, with its actual value. No check is hidden or rewritten (unit test
   with a failing check).
 - `old_item_not_found: null` hides that row.
+- When `chat_history_cleared` is false (`failed_chat_sessions` above 0), the page says "Not complete: a chat history
+  could not be cleared" and offers "Try again", which calls `POST /forget` again. "Forgotten" is never shown in that
+  state (unit test).
 - After success, `newChatSession()` runs, every `["memory"]` query is invalidated, and the button "Ask the assistant
   again" opens `/chat`.
 - Live: in the new session, after "Where do I live?", the memory panel stays empty for the full 15-second poll.

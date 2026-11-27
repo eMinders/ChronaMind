@@ -365,7 +365,12 @@ async def test_forget_erases_everything_and_every_after_check_holds(routes) -> N
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["receipt"]["deleted_versions"] > 0
-    assert body["checks"] == {"memory_list_empty": True, "export_artifact_count": 0, "old_item_not_found": True}
+    assert body["checks"] == {
+        "chat_history_cleared": True,
+        "memory_list_empty": True,
+        "export_artifact_count": 0,
+        "old_item_not_found": True,
+    }
 
     agent_client = MemoryEngineClient(slot_classifier=NullSlotClassifier())
     try:

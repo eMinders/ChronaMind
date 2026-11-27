@@ -134,11 +134,14 @@ erasure, every chat session of the user is cleared and its history epoch advance
 session's whole transcript every turn and would otherwise keep answering from it. The response then reports:
 
 - the engine's receipt as counts only;
-- the number of chat sessions cleared;
-- three observed checks: the list is empty, the export counts 0 items, and an id listed before the erasure now answers
-  `forbidden`.
+- the number of chat sessions cleared, and the number that could not be cleared;
+- four observed checks: every chat history was cleared, the list is empty, the export counts 0 items, and an id listed
+  before the erasure now answers `forbidden`.
 
-A check that could not run is `null`, never `true`. Deleting a single memory is not offered: `delete` scope `memory`
+A check that could not run is `null`, never `true`. If any transcript could not be cleared, `failed_chat_sessions` is
+above 0 and `chat_history_cleared` is false. The forget is then **incomplete**, because the agent still reads that
+transcript, and the caller must say so. `POST /forget` is idempotent: calling it again finds nothing left to erase and
+retries the clearing. Deleting a single memory is not offered: `delete` scope `memory`
 takes a `memory_key` that no API response exposes.
 
 **Held claims.** A claim the gate holds (for example `assertion_mode: hedged`) is `contested`, and `get` returns it in
