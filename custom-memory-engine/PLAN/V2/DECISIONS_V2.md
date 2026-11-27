@@ -3540,7 +3540,11 @@ fails on the code before it.
 19. **`x-request-id` is unique and is logged**, and transport refusals answer the contract's `validation_error` with a
     static `detail` instead of six undefined codes.
 
-**Known and deliberately not done.** The restore reconciliation cannot see a data-only or PITR restore (**#262**), and a deletion older than both the backup and the journal copy is lost without a report (**#263**); both are stated in `deploy/README.md` and tracked, not fixed.
+**Known and deliberately not done.** The restore reconciliation cannot see a data-only or PITR restore, because both
+keep the relation that is its identity (**#262**); it is stated in `deploy/README.md` and tracked, not fixed. Two
+neighbours of that gap are no longer in this list: a backup is restorable only with a journal at least as new
+(`V2-D126`, **#263**), and the drill-down stores hold capacity per principal instead of evicting across them
+(`V2-D127`, **#261**).
 A
 delegating token re-creates a tenant row that an operator removed, because `delete` erases memory, never tenancy
 (T-42). `read_artifact_provenance`/`read_entity_provenance` have no caller in `src/`: the structural read model is
@@ -3614,6 +3618,20 @@ already walks for every entry; that is an offline recovery step measured in seco
 detected by `restore_reconciliation`; the procedure replays after any restore regardless. Markers are exported with the
 journal, so their recovery point is the journal's.
 
+### V2-D126 — Pair the backup with a journal recovery point (#263)
+
+A replay requires `--restored-from-backup-at` and refuses with `journal_older_than_backup` when the journal header's
+`exported_at` predates that recovery point. `exported_at` is the instant the export **read** the database, captured
+before its `SELECT` and not the instant the file was written: an export that took a second would otherwise claim a
+recovery point a second newer than the rows it holds, and a backup starting inside that second would be paired with a
+journal that never saw its deletions. The bound is conservative in the safe direction -- it can only refuse a pair the
+relabelled header would have accepted. Both instants in a refusal are re-formatted from the parsed values, never echoed
+from the operator's text. Equal timestamps are accepted. The comparison is the file's own recovery
+point and never a principal's newest `requested_at`: a principal who has deleted nothing since before the backup is not
+evidence of a lost deletion, and refusing on it would block a restore the pair actually covers, leaving
+`--mark-reconciled` -- which replays nothing -- as the only way through. The report includes the newest journal epoch
+and newest completed deletion epoch present before replay for each user, so requests applied to a database that never
+held their targets remain visible as unresolved recovery work.
 
 ### V2-D127 — Per-principal capacity for process-local read stores (`T-47`, #261)
 
