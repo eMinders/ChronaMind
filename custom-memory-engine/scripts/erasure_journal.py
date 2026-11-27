@@ -4,16 +4,17 @@
     CME_JOURNAL_DATABASE_URL=... CME_DELETION_RECEIPT_KEY=... \
         python scripts/erasure_journal.py export --journal /var/lib/chronamind-journal/erasure-journal.jsonl
 
-    # after pg_restore and role re-provisioning, before the host serves traffic (the restricted runtime role)
+    # after pg_restore and role re-provisioning, before the host serves traffic (the restricted runtime role);
+    # `--restored-mode` names the restore that was done (logical|data-only|physical|in-place, `T-49`)
     CME_DATABASE_URL=... CME_RUNTIME_ROLE=... CME_DELETION_RECEIPT_KEY=... \
         python scripts/erasure_journal.py replay --restored-from-backup-at <backup-start-iso8601> \
-            --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+            --restored-mode logical --journal /var/lib/chronamind-journal/erasure-journal.jsonl
 
 ``CME_SCHEMA`` selects the engine schema (default ``cme_engine``). Exit codes: ``0`` success, ``1`` runtime error, a
 refused journal, an unresolved entry, an incomplete key or a divergent user, ``2`` missing configuration -- an unset
-``CME_*`` variable, or a ``replay`` without ``--restored-from-backup-at``, which is the input the check cannot run
-without. Output is
-content-free counts; ``--json`` prints them as one JSON object.
+``CME_*`` variable, or a ``replay`` without the two inputs it cannot infer, ``--restored-from-backup-at`` (what the
+journal is paired with) and ``--restored-mode`` (which restore this database is, recorded with the reconciliation).
+Output is content-free counts; ``--json`` prints them as one JSON object.
 
 **A replay is only a success when nothing is unresolved.** An entry whose target the restored database does not hold
 is recorded with nothing erased, and that is exactly what a *wrong deletion key* also looks like: no candidate digests
@@ -51,7 +52,12 @@ from custom_memory_engine.deletion.journal import (
     read_journal,
     replay_journal,
 )
-from custom_memory_engine.deletion.markers import record_reconciliation
+from custom_memory_engine.deletion.markers import (
+    RESTORED_MODES,
+    RestoredMode,
+    is_reconciled,
+    record_reconciliation,
+)
 from custom_memory_engine.engine.deletion import RECEIPT_KEY_ENV
 from custom_memory_engine.scope.provenance import ProvenanceKey
 
@@ -67,6 +73,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--restored-from-backup-at",
         help="The backup recovery point as an aware ISO-8601 timestamp. Required for replay.",
+    )
+    parser.add_argument(
+        "--restored-mode",
+        choices=RESTORED_MODES,
+        help="For `replay`: what kind of restore this database is, as the operator restored it -- `logical` (a "
+        "`pg_restore` of a schema dump), `data-only` (a row-level load into an existing schema), `physical` (a base "
+        "backup or a restore to a point in time) or `in-place` (no restore: an upgrade). Required, and recorded with "
+        "the reconciliation: a data-only or physical restore leaves the identity looking intact, so the replay is "
+        "the only place that says which one happened.",
     )
     parser.add_argument(
         "--mark-reconciled",
@@ -121,7 +136,7 @@ async def _export(journal: Path, schema: str) -> dict[str, object]:
     return {"command": "export", "entries": entries}
 
 
-async def _mark_reconciled(schema: str) -> dict[str, object]:
+async def _mark_reconciled(schema: str, *, restored_mode: RestoredMode) -> dict[str, object]:
     """Record this database as reconciled without replaying anything (an upgrade with no journal to replay)."""
     role = _required("CME_RUNTIME_ROLE")
     async with await AsyncConnection.connect(
@@ -129,12 +144,26 @@ async def _mark_reconciled(schema: str) -> dict[str, object]:
     ) as connection:
         async with connection.transaction():
             await connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
-            await record_reconciliation(connection, schema_name=schema)
-    return {"command": "replay", "entries": 0, "reconciled": True, "refusal": None, "marked_reconciled": True}
+            await record_reconciliation(
+                connection, schema_name=schema, by="operator-assertion", restored_mode=restored_mode
+            )
+    return {
+        "command": "replay",
+        "entries": 0,
+        "reconciled": True,
+        "refusal": None,
+        "marked_reconciled": True,
+        "restored_mode": restored_mode,
+    }
 
 
 async def _replay(
-    journal: Path, schema: str, *, accept_unresolved: bool, restored_from_backup_at: str | None
+    journal: Path,
+    schema: str,
+    *,
+    accept_unresolved: bool,
+    restored_from_backup_at: str | None,
+    restored_mode: RestoredMode | None,
 ) -> dict[str, object]:
     key = _deletion_key()
     if not await asyncio.to_thread(journal.exists):
@@ -144,6 +173,11 @@ async def _replay(
     if restored_from_backup_at is None:
         # a missing input, not a refused journal: the same class as an unset CME_* variable, so the same exit status
         raise MissingInput("--restored-from-backup-at")
+    if restored_mode is None:
+        # the acknowledgement, and the same class of missing input: the reconciliation records which restore it
+        # follows, so a restore the identity cannot see (data-only, PITR) is stated where the operator acts rather
+        # than only in prose (T-49)
+        raise MissingInput("--restored-mode")
     check_recovery_point(loaded, restored_from_backup_at)
     provenance = os.environ.get("CME_PROVENANCE_KEY", "").strip().encode("utf-8")
     # a deletion writes no provenance signature; a random key only satisfies the runtime's shape
@@ -153,19 +187,26 @@ async def _replay(
         _required("CME_DATABASE_URL"), autocommit=True, connect_timeout=5
     ) as connection:
         runtime = Runtime(connection, role, schema, provenance_key=provenance_key, deletion_key=key)
+        # the gate's own verdict, before this replay touches anything: False is the identity saying this database is
+        # not a copy of what the journal was last reconciled with (T-46, T-49)
+        async with connection.transaction():
+            await connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+            detected = not await is_reconciled(connection, schema_name=schema)
         report = await replay_journal(DeleteHandlers(runtime), loaded)
         refusal = report.refusal_reason(accept_unresolved=accept_unresolved)
         if refusal is None:
             # only a successful replay lets the worker and the host use this database (`V2-D125`)
             async with connection.transaction():
                 await connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
-                await record_reconciliation(connection, schema_name=schema)
+                await record_reconciliation(connection, schema_name=schema, by="replay", restored_mode=restored_mode)
     return {
         "command": "replay",
         "entries": len(loaded.entries),
         **asdict(report),
         "reconciled": refusal is None,
         "refusal": refusal,
+        "restored_mode": restored_mode,
+        "restore_detected": detected,
     }
 
 
@@ -177,13 +218,16 @@ async def main(argv: list[str] | None = None) -> int:
         if args.command == "export":
             result = await _export(args.journal, schema)
         elif args.mark_reconciled:
-            result = await _mark_reconciled(schema)
+            if args.restored_mode is None:
+                raise MissingInput("--restored-mode")
+            result = await _mark_reconciled(schema, restored_mode=args.restored_mode)
         else:
             result = await _replay(
                 args.journal,
                 schema,
                 accept_unresolved=args.accept_unresolved,
                 restored_from_backup_at=args.restored_from_backup_at,
+                restored_mode=args.restored_mode,
             )
     except (KeyError, MissingInput) as missing:
         console.print(f"[red]{_missing_name(missing)}_required[/red]")

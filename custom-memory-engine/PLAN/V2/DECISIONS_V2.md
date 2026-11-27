@@ -3540,10 +3540,11 @@ fails on the code before it.
 19. **`x-request-id` is unique and is logged**, and transport refusals answer the contract's `validation_error` with a
     static `detail` instead of six undefined codes.
 
-**Known and deliberately not done.** `ResultStore`/`CostStore` evict oldest-first *across* principals, so one caller
-can degrade another's drill-down handles (confidentiality holds; only availability; `THREAT_MODEL.md` T-47, **#261**).
-The restore reconciliation cannot see a data-only or PITR restore (**#262**), and a deletion older than both the backup
-and the journal copy is lost without a report (**#263**); both are stated in `deploy/README.md` and tracked, not fixed.
+**Known and deliberately not done.** Three restore gaps that were listed here are closed: a data-only or PITR restore
+is now visible to reconciliation through four witnesses (`V2-D128`, **#262**), a backup is restorable only with a
+journal at least as new (`V2-D126`, **#263**), and the drill-down stores hold capacity per principal instead of evicting
+across them (`V2-D127`, **#261**). What remains of the first is stated in `THREAT_MODEL.md` T-49: a data-only dump
+that omits `restore_reconciliation` itself, and PITR measured by predicate rather than by a performed promotion.
 A
 delegating token re-creates a tenant row that an operator removed, because `delete` erases memory, never tenancy
 (T-42). `read_artifact_provenance`/`read_entity_provenance` have no caller in `src/`: the structural read model is
@@ -3632,3 +3633,98 @@ evidence of a lost deletion, and refusing on it would block a restore the pair a
 and newest completed deletion epoch present before replay for each user, so requests applied to a database that never
 held their targets remain visible as unresolved recovery work.
 
+### V2-D127 — Per-principal capacity for process-local read stores (`T-47`, #261)
+
+**Decision.** `ResultStore` and `CostStore` keep principal-specific ordered buckets while retaining one global capacity ceiling. **The reservation is one resident entry per principal, not every entry a principal has ever held.** Capacity is reclaimed in this order: a principal that needs room sheds its *own* surplus first (oldest entry); when only an incumbent holds surplus, admission of a newcomer reissues the largest surplus, so a principal's first query can cost another principal its oldest surplus entry while leaving that principal its reservation; only when every resident principal holds exactly one entry is the least-recently-used principal evicted whole. Lookup and report semantics remain principal-scoped, and expired entries are still removed on the existing read and write paths. Resolving a handle and reading a *validated* `cost` report both count as use of that principal and refresh its position; a rejected report does not, because a request answered `validation_error` must not change which other principal is evicted next, and a report never creates a bucket, so reading cannot make the store grow. `CostReport` carries a non-constructible `report_scope: "process"` so the numbers say what they cover (`API_V2.md` §4.11).
+
+**Why.** A flat global LRU lets one caller's sustained query volume remove another caller's live drill-down handle and cost history. Principal buckets preserve availability across callers while the global ceiling prevents the number of principals from multiplying memory without bound. The stores remain process-local under `V2-D83` because result snapshots are answer-context material and cost rows are read-path telemetry, not durable memory or a ledger.
+
+**Evidence.** `tests/integration/test_refine_db.py::test_a_principal_burst_preserves_another_principals_handle_and_cost_window` drives two principals through one wired engine with capacity three. `tests/test_refine.py::test_another_principal_burst_preserves_a_live_handle_and_total_capacity_stays_bounded` and `tests/test_cost.py::test_another_principal_burst_preserves_costs_and_the_global_ceiling` assert the isolated burst and ceiling. `tests/test_refine.py::test_an_evicted_handle_still_resolves_as_unknown` preserves the T-11 indistinguishability property. `tests/test_refine.py::test_admission_reissues_a_surplus_slot_before_evicting_a_principal_and_keeps_one_entry_each` and `tests/test_cost.py::test_a_new_principals_admission_trims_a_surplus_count_and_keeps_one_record_each` pin the reclamation order, including the admission exception that the burst tests do not reach, and `tests/test_refine.py::test_admission_reclaims_from_the_largest_surplus_not_the_oldest_holder` and `tests/test_cost.py::test_admission_takes_a_record_from_the_largest_surplus_not_the_oldest_holder` pin that the donor is the *largest* surplus (resident counts `(2, 4)` admit a third principal as `(2, 3, 1)`, never `(1, 4, 1)`). `tests/integration/test_refine_db.py::test_an_evicted_handle_is_the_same_answer_as_an_unknown_one` drives a capacity eviction through `Engine.call` and asserts the same `forbidden` as a handle that never existed. `tests/test_cost.py::test_a_cost_report_states_the_process_scope_it_actually_covers` pins the additive field, its constancy and its unconstructibility, `tests/test_cost.py::test_a_cost_report_counts_as_principal_use_and_never_creates_a_principal` pins the report-as-use and no-growth rules, and `tests/test_cost.py::test_a_rejected_cost_report_does_not_count_as_use` pins that a `validation_error` does not reorder eviction. `deploy/README.md` documents the per-process scope and reset behavior.
+
+### V2-D128 — The reconciliation identity sees a restore that keeps the relation (#262, `T-49`)
+
+Migration 33 identified the database the erasure journal was last replayed into by one fact: the relation OID of
+`restore_reconciliation`. That sees a logical `pg_restore`, which re-creates the table, and it is blind to the two
+restores that keep it — a **data-only** load into the existing relation, and a **physical (PITR)** restore that brings
+the catalogs and the data back together. On both, the gate passed with no replay and `T-46`'s two resurrection paths
+ran: the worker re-extracted a turn the backup still held, and a client's resend wrote a deleted claim again.
+
+Migration 34 makes the identity the row's own insertion as well as its relation. A new identity row is accepted only
+when four facts hold at once:
+
+| witness | what it is | the restore it refuses |
+|---|---|---|
+| relation OID | the table's OID now (as in 33) | a logical `pg_restore` (the table is re-created) |
+| `written_xid` = `xmin` | the row records the transaction that wrote it and is compared with its own `xmin` | **a data-only load**: a `COPY` gives every loaded row the restoring transaction's id |
+| `rows_before` | how many other rows the table held when the row was written | a load that appends its row beside the one already here |
+| `timeline` | the cluster timeline at write, from `pg_walfile_name(pg_current_wal_lsn())` | **a PITR**: recovery to a point in time ends on a new timeline, and a cluster still in recovery reports `NULL` |
+
+All four survive `CREATE DATABASE … TEMPLATE`, which copies the data blocks — the clone's rows keep their `xmin`, their
+count and their timeline — so a clone of a reconciled database is still reconciled. That property is not negotiable:
+every integration test clones a migrated template, and an operator's own clone must keep working.
+
+**Measured** (real PostgreSQL 16.15): after `DELETE FROM restore_reconciliation` (the probe is live, `is_reconciled`
+→ `False`), `pg_dump --data-only --schema=cme_engine` + `pg_restore --data-only` back into the same database returns
+the identity row with the relation OID **unchanged** (`37246537`), the row count still self-consistent, the timeline
+still current — and `xmin` = `7315479` against a recorded `written_xid` = `7315474`. The witness that refuses a
+data-only load is the row's own transaction, not the OID. The same probe is the assertion in
+`test_a_data_only_load_of_an_older_backup_is_refused_although_the_relation_is_unchanged`.
+
+**Why not the alternatives the issue lists.** *`pg_control_checkpoint().checkpoint_lsn` / `pg_current_wal_lsn()`
+compared with what the cluster reports now*: neither is a value a data-only dump carries, so neither can be the
+*source* of an identity row at all — and a LSN moves on every write, so a live database would fail its own check. The
+timeline is the part of the WAL position that a data-only load cannot move and a PITR necessarily does.
+`pg_control_checkpoint()`'s `timeline_id` reports the checkpoint record's timeline and can lag a promotion until the
+next checkpoint, so the timeline is read from the write position's segment name instead. *A per-database row regenerated
+by a schema-only restore*: a schema-only restore does not run migrations or any other code, so it cannot regenerate a
+value; only a data-only load's own mechanics can be relied on. *An out-of-band term in `journal.env`*: it is the same
+class as the operator's acknowledgement and adds a second secret to protect, with no property the row does not already
+carry. *The cluster's system identifier*: `pg_control_system()` is not executable by the runtime role, and the system
+identifier is identical for a clone, which must stay reconciled. *A `statement_timestamp()`-based witness*: a restore
+legitimately rolls the clock of its rows back, so the row's timestamp proves nothing.
+
+**The operator's acknowledgement.** `scripts/erasure_journal.py replay` now requires `--restored-mode`
+(`logical|data-only|physical|in-place`), the same class of missing input as `--restored-from-backup-at`: exit `2` with
+`restored_mode_required` before any connection. The reconciliation records it with `reconciled_by`
+(`fresh-install|operator-assertion|replay`), so how a database came to be served is auditable rather than inferred, and
+a restore the witnesses cannot see — a data-only load that omits `restore_reconciliation`, a PITR into a
+checksum-identical state — is a recorded statement the operator made at the point of restore. `--mark-reconciled`
+requires it too: the upgrade path says `in-place`.
+
+**The primary key goes with it.** A replay appends, and a restored copy must be able to land its own row beside the one
+the database holds, because that appended row is what the next probe rejects; a primary key on `relation_oid` would
+refuse the load with a duplicate key and the copy would keep the older row. The table is a short append-only log read
+by a scan of a handful of rows, and appends are serialized with an advisory lock so the count a row records is exact.
+The rollback empties the table and restores the version-33 primary key: a row this version wrote is only meaningful
+with its witnesses, and handing one to version 33 would mark a database reconciled that this version deliberately
+refuses.
+
+**Two limits, stated.** *A data-only dump that omits `restore_reconciliation`* changes nothing the identity can read,
+and the restore procedure's replay remains the only control for it; `restore_reconciliation` is deployment state, so a
+table-scoped dump of tenant data is exactly that case. *PITR is closed by predicate only.* This environment has one
+shared PostgreSQL instance and no base backup, so the promotion that writes a new timeline was not performed end to
+end; what is measured is the predicate — an identity row recorded on another timeline is refused
+(`test_an_identity_row_from_another_timeline_is_refused`) — and the timeline is read from the live cluster's write
+position, which a data-only load cannot carry.
+
+**The relation OID is defence in depth.** Of the four witnesses, three are refused by a restore path measured here: a
+`COPY` breaks `written_xid` (data-only), an appended row breaks `rows_before`, a promotion breaks `timeline`. The OID
+is not: a logical `pg_restore` re-creates the table, and the `COPY` that fills it fails `written_xid` in the same
+statement, so disabling the OID clause leaves every restore scenario caught by another witness and the rest of the
+suite green. It is kept because it costs nothing and names, by itself, the one thing a forged or transplanted row
+cannot fake — and it has a control that fails when the clause is removed
+(`test_an_identity_row_that_names_another_relation_is_refused`, a row self-consistent on the other three witnesses and
+naming no live relation). What that control proves is that the clause is load-bearing in the probe, not that a restore
+path depends on it.
+
+**Evidence.** `tests/integration/test_t49_restore_identity_db.py`: a clone of the migrated template is reconciled with
+all four witnesses; a real `pg_dump --data-only`/`pg_restore --data-only` keeps the OID and is refused by `xmin`; the
+documented procedure driven with a data-only backup ends with the worker answering `unreconciled`, the replay erasing
+the restored turn and recording `restored_mode='data-only'`, and a control half where recording the identity without a
+replay lets the worker re-derive the deleted claim; the timeline and count witnesses; the
+relation-OID control and a second replay (the identity is an append log); the rollback, which reproduces version
+33's recorded catalog hash exactly and leaves an upgrade unstamped
+(`test_the_rollback_reproduces_version_33_and_an_upgrade_is_not_stamped`); and
+`test_migrating_a_restored_database_does_not_mark_it_reconciled` (from `V2-D125`) still holds through the new rollback. Every witness has a control: removing any one of the four clauses from `is_reconciled` fails a test in this file. The full `-m integration` suite (1565 passed, 9 skipped) was run on this branch, which is what proves a clone of the migrated template stays reconciled for every fixture, not only the four here.
+`tests/test_erasure_journal.py` pins the required flag and that the modes the CLI accepts are the ones the column's
+`CHECK` allows. `tests/integration/test_t46_restore_erasure_db.py` is unchanged apart from passing the mode it restores.

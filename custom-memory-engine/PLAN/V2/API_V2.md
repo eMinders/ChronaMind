@@ -515,6 +515,9 @@ One content-free `visibility_changed` audit row (artifact kind and new value, ne
 (`tokens_considered`, `tokens_rendered`) and charged usage (`charged_calls`, `input_tokens`, `output_tokens`,
 `embedding_tokens`, `cost_usd`, all zero when zero charged calls occurred) for the caller's own retrieval activity
 within `window` (`None` for the retained window, positive seconds, `timedelta`, or `{start, end}` aware instants).
+Its `report_scope` is always `"process"`: the records are process-local (`V2-D83`), so a report covers this
+process's recent queries, not a ledger, and a restart or a second replica starts an empty one (`T-47`, #261). The
+field is additive and constant; no other field changed.
 Neither returns another scope's content or counts. *Errors:* `forbidden`, `validation_error` (`window_invalid`).
 
 ## 5. Gaps found in review, and how each was closed (`V2-D46`)

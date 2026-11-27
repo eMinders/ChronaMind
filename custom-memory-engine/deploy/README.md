@@ -21,6 +21,10 @@ The host answers reads and fast writes; the worker does the slow writes (model e
 maintenance periodically expires stale abstractions, purges working episodes, and enqueues index rebuilds. None
 imports the others — they coordinate exclusively through PostgreSQL.
 
+`ResultStore` and `CostStore` are process-local memory in each host process. Their per-principal buckets and global
+ceilings reset when that process restarts, and a second host replica has its own handles and cost window. A `cost`
+report therefore covers only the recent query and refine activity that survived in the responding process.
+
 ## What each environment variable means
 
 | variable | who needs it | what it does |
@@ -208,10 +212,12 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    #    and a replay refuses a file whose count does not match (`journal_truncated`)
    install -o root -g root -m 0600 /path/to/off-host/erasure-journal.jsonl /var/lib/chronamind-journal/
    head -1 /var/lib/chronamind-journal/erasure-journal.jsonl
-   # 5. replay before ANY worker runs; the timestamp is the backup's start/recovery point
+   # 5. replay before ANY worker runs; the timestamp is the backup's start/recovery point and the mode is the
+   #    restore you actually did -- logical (a pg_restore of a schema dump), data-only (a row-level load into the
+   #    existing schema), physical (a base backup, or a restore to a point in time) or in-place (no restore)
    CME_DATABASE_URL=... CME_RUNTIME_ROLE=... CME_DELETION_RECEIPT_KEY=... \
        python scripts/erasure_journal.py replay \
-       --restored-from-backup-at 2026-11-26T00:00:00+00:00 \
+       --restored-from-backup-at 2026-11-26T00:00:00+00:00 --restored-mode logical \
        --journal /var/lib/chronamind-journal/erasure-journal.jsonl
    ```
 
@@ -258,11 +264,15 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    worker claims nothing and the host does not start:
 
    ```bash
-   # the normal case: replay (a no-op on an intact database, and it exits 0)
-   python scripts/erasure_journal.py replay --restored-from-backup-at <backup-start-iso8601> --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+   # the normal case: replay (a no-op on an intact database, and it exits 0); --restored-mode names the restore
+   python scripts/erasure_journal.py replay --restored-from-backup-at <backup-start-iso8601> --restored-mode logical --journal /var/lib/chronamind-journal/erasure-journal.jsonl
    # no journal to replay (an in-place upgrade, or the timer was never enabled): an explicit operator assertion
-   python scripts/erasure_journal.py replay --mark-reconciled --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+   python scripts/erasure_journal.py replay --mark-reconciled --restored-mode in-place --journal /var/lib/chronamind-journal/erasure-journal.jsonl
    ```
+
+   `--restored-mode` is required (`restored_mode_required`, exit `2`), on both commands: the reconciliation records
+   which restore it follows (`restored_mode`, with `reconciled_by`), so a database can be audited for *how* it came to
+   be served. `T-49`.
 
    Both the worker and the host **refuse a database the journal has not been replayed into**
    (`restore_not_reconciled`): `restore_reconciliation` records the identity of the database the last successful replay
@@ -271,14 +281,23 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    `0` records the new identity — including `--accept-unresolved`, which says the missing targets really were memories
    the backup never held.
 
+   **A restore that keeps the relation is still refused** (`T-49`, `V2-D128`). The identity is no longer the relation
+   OID alone: migration 34 also records the transaction the identity row itself came from, the number of other rows the
+   table held when it was written, and the cluster timeline. A **data-only** load is refused because a `COPY` gives
+   every loaded row the restoring transaction's id, not the one the row records; a **physical (PITR)** restore is
+   refused because recovery to a point in time ends on a new timeline (and a cluster still in recovery reports none).
+   A clone of a reconciled database stays reconciled, because `CREATE DATABASE ... TEMPLATE` copies those rows as they
+   are. Measured on real PostgreSQL for the data-only path
+   (`tests/integration/test_t49_restore_identity_db.py`); the PITR promotion itself is stated in `V2-D128` as
+   unmeasured here, with the predicate it turns on asserted.
+
    **What it does not cover.** A deletion made after both the backup and the newest journal copy is outside the pair's
    recovery point and cannot be reconstructed. The pairing check catches a journal older than the backup, while two
    artefacts that are both older than a deletion have no surviving timestamp for the deletion. A journal lost together
-   with the database (`V2-D122`). A
-   *data-only* restore into the existing relation, and a physical (PITR) restore, keep every OID, so the
-   reconciliation identity cannot see them; the procedure replays after any restore regardless. And the markers share
-   the journal's recovery point: a deletion whose journal copy was lost takes with it the record of the turns it
-   erased.
+   with the database (`V2-D122`). A *data-only* dump that omits `restore_reconciliation` itself changes nothing the
+   identity reads, so it is caught by nothing but this procedure: replay after **any** restore regardless, and say
+   which restore it was with `--restored-mode`, which the reconciliation records. And the markers share the journal's
+   recovery point: a deletion whose journal copy was lost takes with it the record of the turns it erased.
 
 Run a full local restore rehearsal at any time with:
 
@@ -302,5 +321,6 @@ uv run --env-file .env python scripts/rehearse_restore.py --source-dsn "$CME_TES
 
 - **No load balancer config, TLS, or auth proxy.** The host binds `127.0.0.1` by default and authenticates bearer
   tokens itself; putting it behind TLS is the deployment's job.
-- **No automatic replay on restore.** `scripts/erasure_journal.py replay` is a step of the restore procedure above; nothing
-  detects a restore by itself.
+- **No automatic replay on restore.** `scripts/erasure_journal.py replay` is a step of the restore procedure above; what
+  the database does by itself is *refuse* a copy it can tell is not the one the journal was replayed into (`T-46`,
+  `T-49`), and the operator's replay is what makes it usable again.

@@ -27,9 +27,10 @@ billing tokens. :class:`QueryCost` enforces that ``charged_calls == 0`` requires
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from time import perf_counter
@@ -325,6 +326,10 @@ class CostReport:
 
     Contains only latency, candidate counts, context token counts and charged usage for the authenticated caller's
     own queries in ``[window_start, window_end]``. Never exposes another principal's counts or any memory content.
+
+    ``report_scope`` says what the numbers cover: the records live in this process (``V2-D83``, ``T-47``), so a report
+    describes this process's recent queries, not a ledger. A restart, a second replica or a second worker starts a new,
+    empty one. It is a constant, never an input: no caller can enlarge the scope it is told about.
     """
 
     principal: str
@@ -340,6 +345,9 @@ class CostReport:
     embedding_tokens: int
     cost_usd: Decimal
     stages: tuple[StageAggregate, ...]
+    #: What the counts cover. Always ``"process"``: the store is process-local (``V2-D83``), so this is a constant
+    #: statement about the report's scope and never a caller-controlled value.
+    report_scope: Literal["process"] = field(default="process", init=False)
 
     def stage(self, name: str) -> StageAggregate:
         for entry in self.stages:
@@ -361,6 +369,7 @@ class CostReport:
             "output_tokens": self.output_tokens,
             "embedding_tokens": self.embedding_tokens,
             "cost_usd": str(self.cost_usd),
+            "report_scope": self.report_scope,
             "stages": [entry.to_dict() for entry in self.stages],
         }
 
@@ -452,28 +461,34 @@ class CostStore:
         self._retention = retention
         self._capacity = capacity
         self._clock = clock
-        self._records: list[_RecordedCost] = []
+        self._records: OrderedDict[str, list[_RecordedCost]] = OrderedDict()
 
     def __len__(self) -> int:
-        return len(self._records)
+        return sum(len(records) for records in self._records.values())
 
     def record(self, principal: str, cost: QueryCost) -> None:
         """Append one immutable :class:`QueryCost` for ``principal``, evicting expired and overflow entries."""
         now = self._now()
         self._drop_expired(now)
-        self._records.append(_RecordedCost(principal=principal, recorded_at=now, cost=cost))
-        if len(self._records) > self._capacity:
-            del self._records[: len(self._records) - self._capacity]
+        records = self._records.setdefault(principal, [])
+        self._records.move_to_end(principal)
+        while len(self._records) > self._capacity:
+            self._records.popitem(last=False)
+        records.append(_RecordedCost(principal=principal, recorded_at=now, cost=cost))
+        self._make_room(principal)
 
     def report(self, principal: str, *, window: object = None) -> CostReport:
         """Aggregate ``principal``'s own recorded queries within ``window`` into an immutable :class:`CostReport`."""
         now = self._now()
         self._drop_expired(now)
         window_start, window_end = parse_window(window, now=now, default_retention=self._retention)
+        if self._records.get(principal):
+            # a principal reading its own report is in use, so it is not the idle one evicted next (`T-47`). It happens
+            # only once the window is validated: a rejected request must not change another caller's retention. A
+            # report never creates a bucket, so reading cannot make the store grow.
+            self._records.move_to_end(principal)
         matched = [
-            entry.cost
-            for entry in self._records
-            if entry.principal == principal and window_start <= entry.recorded_at <= window_end
+            entry.cost for entry in self._records.get(principal, []) if window_start <= entry.recorded_at <= window_end
         ]
         stage_aggregates: list[StageAggregate] = []
         for stage_name in STAGES:
@@ -520,7 +535,36 @@ class CostStore:
 
     def _drop_expired(self, now: datetime) -> None:
         cutoff = now - self._retention
-        self._records = [entry for entry in self._records if entry.recorded_at >= cutoff]
+        for principal, records in list(self._records.items()):
+            self._records[principal] = [entry for entry in records if entry.recorded_at >= cutoff]
+            if not self._records[principal]:
+                del self._records[principal]
+
+    def _largest_surplus(self) -> tuple[str, list[_RecordedCost]] | None:
+        """The principal holding the most surplus records; ties go to the least recently used (`V2-D127`).
+
+        Admission reissues the largest surplus so the caller with most to spare is the one that gives, not whichever
+        holder happens to be oldest. Iteration is least-recently-used first and ``>`` is strict, so an equal surplus
+        resolves to the earlier holder deterministically.
+        """
+        best: tuple[str, list[_RecordedCost]] | None = None
+        for principal, records in self._records.items():
+            if len(records) > 1 and (best is None or len(records) > len(best[1])):
+                best = (principal, records)
+        return best
+
+    def _make_room(self, active_principal: str) -> None:
+        while len(self) > self._capacity:
+            active_records = self._records[active_principal]
+            if len(active_records) > 1:
+                del active_records[0]
+                continue
+            surplus = self._largest_surplus()
+            if surplus is not None:
+                _, records = surplus
+                del records[0]
+                continue
+            self._records.popitem(last=False)
 
 
 __all__ = [
