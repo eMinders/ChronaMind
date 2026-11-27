@@ -3691,19 +3691,30 @@ The rollback empties the table and restores the version-33 primary key: a row th
 with its witnesses, and handing one to version 33 would mark a database reconciled that this version deliberately
 refuses.
 
-**Limit, stated.** A data-only dump that omits `restore_reconciliation` changes nothing the identity can read, and the
-restore procedure's replay remains the only control for it; `restore_reconciliation` is deployment state, so a
-table-scoped dump of tenant data is exactly that case. **PITR was not measured end to end**: this environment has one
-shared PostgreSQL instance and no base backup, so the promotion that writes a new timeline could not be performed. What
-is measured is the predicate: an identity row recorded on another timeline is refused
-(`test_an_identity_row_from_another_timeline_is_refused`), and the timeline expression is read from the live cluster's
-write position, which a data-only load cannot carry.
+**Two limits, stated.** *A data-only dump that omits `restore_reconciliation`* changes nothing the identity can read,
+and the restore procedure's replay remains the only control for it; `restore_reconciliation` is deployment state, so a
+table-scoped dump of tenant data is exactly that case. *PITR is closed by predicate only.* This environment has one
+shared PostgreSQL instance and no base backup, so the promotion that writes a new timeline was not performed end to
+end; what is measured is the predicate — an identity row recorded on another timeline is refused
+(`test_an_identity_row_from_another_timeline_is_refused`) — and the timeline is read from the live cluster's write
+position, which a data-only load cannot carry.
+
+**The relation OID is defence in depth.** Of the four witnesses, three are refused by a restore path measured here: a
+`COPY` breaks `written_xid` (data-only), an appended row breaks `rows_before`, a promotion breaks `timeline`. The OID
+is not: a logical `pg_restore` re-creates the table, and the `COPY` that fills it fails `written_xid` in the same
+statement, so disabling the OID clause leaves every restore scenario caught by another witness and the rest of the
+suite green. It is kept because it costs nothing and names, by itself, the one thing a forged or transplanted row
+cannot fake — and it has a control that fails when the clause is removed
+(`test_an_identity_row_that_names_another_relation_is_refused`, a row self-consistent on the other three witnesses and
+naming no live relation). What that control proves is that the clause is load-bearing in the probe, not that a restore
+path depends on it.
 
 **Evidence.** `tests/integration/test_t49_restore_identity_db.py`: a clone of the migrated template is reconciled with
 all four witnesses; a real `pg_dump --data-only`/`pg_restore --data-only` keeps the OID and is refused by `xmin`; the
 documented procedure driven with a data-only backup ends with the worker answering `unreconciled`, the replay erasing
 the restored turn and recording `restored_mode='data-only'`, and a control half where recording the identity without a
-replay lets the worker re-derive the deleted claim; the timeline and count witnesses; and
-`test_migrating_a_restored_database_does_not_mark_it_reconciled` (from `V2-D125`) still holds through the new rollback.
+replay lets the worker re-derive the deleted claim; the timeline and count witnesses; the
+relation-OID control and a second replay (the identity is an append log); and
+`test_migrating_a_restored_database_does_not_mark_it_reconciled` (from `V2-D125`) still holds through the new rollback. Every witness has a control: removing any one of the four clauses from `is_reconciled` fails a test in this file. The full `-m integration` suite (1565 passed, 9 skipped) was run on this branch, which is what proves a clone of the migrated template stays reconciled for every fixture, not only the four here.
 `tests/test_erasure_journal.py` pins the required flag and that the modes the CLI accepts are the ones the column's
 `CHECK` allows. `tests/integration/test_t46_restore_erasure_db.py` is unchanged apart from passing the mode it restores.

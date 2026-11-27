@@ -101,6 +101,13 @@ def _data_only_load(dsn: str, dump: bytes) -> subprocess.CompletedProcess[bytes]
     )
 
 
+#: The cluster timeline, spelled as ``deletion.markers._TIMELINE`` reads it, for tests that write an identity row.
+CURRENT_TIMELINE = (
+    "CASE WHEN pg_is_in_recovery() THEN NULL ELSE "
+    "('x' || substr(pg_walfile_name(pg_current_wal_lsn()), 1, 8))::bit(32)::bigint END"
+)
+
+
 @dataclass(frozen=True)
 class Witnesses:
     """Which of the four facts an identity row carries still holds for this database."""
@@ -124,9 +131,8 @@ async def _witnesses(connection: AsyncConnection, schema: str) -> Witnesses:
           EXISTS (SELECT 1 FROM {schema}.restore_reconciliation r WHERE xid(r.written_xid) = r.xmin),
           EXISTS (SELECT 1 FROM {schema}.restore_reconciliation r
                   WHERE r.rows_before = (SELECT count(*) FROM {schema}.restore_reconciliation) - 1),
-          EXISTS (SELECT 1 FROM {schema}.restore_reconciliation r WHERE r.timeline IS NOT DISTINCT FROM
-                  CASE WHEN pg_is_in_recovery() THEN NULL ELSE
-                  ('x' || substr(pg_walfile_name(pg_current_wal_lsn()), 1, 8))::bit(32)::bigint END)
+          EXISTS (SELECT 1 FROM {schema}.restore_reconciliation r
+                  WHERE r.timeline IS NOT DISTINCT FROM {CURRENT_TIMELINE})
         """,
         )
     )
@@ -320,3 +326,51 @@ async def test_a_loaded_identity_row_appended_beside_the_one_here_is_refused(dat
         witnesses = await _witnesses(conn, schema)
         assert witnesses.rows_before is False, "two rows, and neither can claim to be the last one written"
         assert await is_reconciled(conn, schema_name=schema) is False
+
+
+async def test_an_identity_row_that_names_another_relation_is_refused(database) -> None:  # noqa: F811
+    """Witness 1 on its own: the row has to name *this* relation, and this is the control that says so.
+
+    No restore path is refused by this clause alone -- a logical ``pg_restore`` re-creates the table, and the ``COPY``
+    that fills it fails ``written_xid`` at the same moment -- so the OID is **defence in depth**. What it is worth is
+    still measurable: the row below is what a load would leave if its ``xmin`` were not evidence, written directly and
+    self-consistent on the other three witnesses (its own transaction, the count it saw, this cluster's timeline), and
+    it names no live relation. Removing the clause from the probe makes this test accept a row it must refuse
+    (`T-49`, `V2-D128`).
+    """
+    config, schema = database
+    async with connect((config, schema)) as conn:
+        assert await _witnesses(conn, schema) == Witnesses(True, True, True, True)
+        await conn.execute(cast(LiteralString, f"DELETE FROM {schema}.restore_reconciliation"))
+        await conn.execute(
+            cast(
+                LiteralString,
+                f"INSERT INTO {schema}.restore_reconciliation "
+                f"(relation_oid, written_xid, rows_before, timeline, reconciled_by, restored_mode) "
+                f"SELECT 0, pg_current_xact_id(), 0, {CURRENT_TIMELINE}, 'replay', 'data-only'",
+            )
+        )
+        assert await _witnesses(conn, schema) == Witnesses(False, True, True, True), "the other three hold"
+        assert await is_reconciled(conn, schema_name=schema) is False, "and the relation OID refuses it"
+
+
+async def test_a_second_replay_appends_a_row_and_the_database_stays_reconciled(database) -> None:  # noqa: F811
+    """A reconciled database keeps working: a replay appends, and the newest row is the one the probe reads.
+
+    Migration 34 dropped the primary key so a restored copy can land its row beside the live one, which makes the
+    identity a short log: every replay adds a row. Each row records the count it saw, so only the newest satisfies
+    ``rows_before`` -- which is why the probe asks whether *any* row satisfies all four witnesses, and why a replay
+    after a replay has to work. Appends take an advisory lock (`deletion/markers.py`), so two replays cannot both
+    record the same count and leave neither row current (measured: two concurrent replays leave exactly one).
+    """
+    config, schema = database
+    async with connect((config, schema)) as conn:
+        assert await is_reconciled(conn, schema_name=schema) is True
+        await record_reconciliation(conn, schema_name=schema, by="replay", restored_mode="logical")
+        assert await is_reconciled(conn, schema_name=schema) is True
+        await record_reconciliation(conn, schema_name=schema, by="replay", restored_mode="physical")
+        assert await is_reconciled(conn, schema_name=schema) is True
+        counted = await (
+            await conn.execute(cast(LiteralString, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
+        ).fetchone()
+        assert counted == (3,), "the template's row and one per replay"

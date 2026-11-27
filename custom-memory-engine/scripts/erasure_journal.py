@@ -4,16 +4,17 @@
     CME_JOURNAL_DATABASE_URL=... CME_DELETION_RECEIPT_KEY=... \
         python scripts/erasure_journal.py export --journal /var/lib/chronamind-journal/erasure-journal.jsonl
 
-    # after pg_restore and role re-provisioning, before the host serves traffic (the restricted runtime role)
+    # after pg_restore and role re-provisioning, before the host serves traffic (the restricted runtime role);
+    # `--restored-mode` names the restore that was done (logical|data-only|physical|in-place, `T-49`)
     CME_DATABASE_URL=... CME_RUNTIME_ROLE=... CME_DELETION_RECEIPT_KEY=... \
         python scripts/erasure_journal.py replay --restored-from-backup-at <backup-start-iso8601> \
-            --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+            --restored-mode logical --journal /var/lib/chronamind-journal/erasure-journal.jsonl
 
 ``CME_SCHEMA`` selects the engine schema (default ``cme_engine``). Exit codes: ``0`` success, ``1`` runtime error, a
 refused journal, an unresolved entry, an incomplete key or a divergent user, ``2`` missing configuration -- an unset
-``CME_*`` variable, or a ``replay`` without ``--restored-from-backup-at``, which is the input the check cannot run
-without. Output is
-content-free counts; ``--json`` prints them as one JSON object.
+``CME_*`` variable, or a ``replay`` without the two inputs it cannot infer, ``--restored-from-backup-at`` (what the
+journal is paired with) and ``--restored-mode`` (which restore this database is, recorded with the reconciliation).
+Output is content-free counts; ``--json`` prints them as one JSON object.
 
 **A replay is only a success when nothing is unresolved.** An entry whose target the restored database does not hold
 is recorded with nothing erased, and that is exactly what a *wrong deletion key* also looks like: no candidate digests
