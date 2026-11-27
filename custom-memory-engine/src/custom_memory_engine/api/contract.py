@@ -175,6 +175,9 @@ OPERATIONS: tuple[Operation, ...] = (
         ("namespace_owner_only",)),
     _op("set_visibility", "Scope", "C", ("artifact_id", "visibility"), "Receipt", ("precondition_failed",),
         ("namespace_owner_only",)),
+    _op("move", "Scope", "C", ("artifact_id", "target_scope", "idempotency_key"), "ArtifactId",
+        ("precondition_failed", "resource_limit", "retryable_conflict"), ("namespace_owner_only", "targets_readable"),
+        transitions=frozenset({("asserted", "retired"), ("observed", "retired"), ("inferred", "retired")})),
     _op("stats", "Observe", "BC", ("artifact_id",), "Stats", conditions=("targets_readable",)),
     _op("cost", "Observe", "BC", ("window",), "CostReport"),
 )  # fmt: skip

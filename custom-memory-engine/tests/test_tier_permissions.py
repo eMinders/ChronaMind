@@ -115,6 +115,7 @@ def test_tb9_tier_b_has_no_maintain_export_or_scope_operation() -> None:
         "grant_access",
         "revoke_access",
         "set_visibility",
+        "move",
     ):
         with pytest.raises(ContractError):
             authorize(name, "B", admin=True)

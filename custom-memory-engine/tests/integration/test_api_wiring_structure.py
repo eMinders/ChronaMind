@@ -42,6 +42,7 @@ WIRED = {
     "grant_access",
     "revoke_access",
     "set_visibility",
+    "move",
 }
 
 

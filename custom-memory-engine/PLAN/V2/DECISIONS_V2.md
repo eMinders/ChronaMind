@@ -3193,7 +3193,7 @@ append-only verification records outlive deleted artifacts (IDs are opaque and c
    deletion surface. A `move` would add a second copy of the content (two deletion surfaces until the old one is
    retired), a new Tier C write path with its own provenance rows, and an idempotency key spanning two scopes — risk
    with no caller. It becomes needed when a client writes sub-scopes and must re-file memories between them, or a
-   product needs to hand a memory to another namespace rather than share it; #258 holds the design and stays open.
+   product needs to hand a memory to another namespace rather than share it; #258 holds the design and stays open. `V2-D129` subsequently implements owner-only re-filing.
 
 Tests: `tests/integration/test_visibility_sharing_db.py`, `tests/integration/test_migration_m2.py::test_the_read_policy_is_the_library_expression_on_every_scoped_table`.
 
@@ -3740,3 +3740,21 @@ relation-OID control and a second replay (the identity is an append log); the ro
 `test_migrating_a_restored_database_does_not_mark_it_reconciled` (from `V2-D125`) still holds through the new rollback. Every witness has a control: removing any one of the four clauses from `is_reconciled` fails a test in this file. The full `-m integration` suite (1565 passed, 9 skipped) was run on this branch, which is what proves a clone of the migrated template stays reconciled for every fixture, not only the four here.
 `tests/test_erasure_journal.py` pins the required flag and that the modes the CLI accepts are the ones the column's
 `CHECK` allows. `tests/integration/test_t46_restore_erasure_db.py` is unchanged apart from passing the mode it restores.
+
+### V2-D129 — Re-file a memory version within its owner's namespace (#258)
+
+The Tier C `move` operation implements §5 rule 5 and supersedes the deferral in `V2-D113` item 5.
+The server can re-cite a turn, span, hash or derivation exactly. Public provenance reveals only ids.
+
+One caller-scoped transaction takes the idempotency lock and allocates one belief-clock tick. The successor
+keeps the memory key, event time, observation, authorship, content, lifecycle, method and citations. It starts
+private in the destination. A Tier C decision records continuation of an asserted version. A private, attributed
+`supersedes` edge points from successor to predecessor. The predecessor's recorded range closes at the same tick
+and archival branch S retains its history. A retry returns the successor id. Memory-key deletion selects both
+versions, and deletion of a derivation source visits each through its own lineage edge (`T-50`).
+
+A move requires a current, active version and a different canonical scope in the same owner's namespace.
+Scope-local entity subjects and abstraction ledgers (including scope-specific probes and verification) cannot
+be transplanted faithfully. The operation refuses them, a contradiction whose history belongs to the old endpoint,
+a destination dissent blocking the inference, and a conflicting single-valued destination belief. Other historical
+links stay attached to the versions they describe. Sharing continues to use visibility and grants.

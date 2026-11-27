@@ -266,6 +266,11 @@ async def _scope_writable(
 async def _namespace_owner_only(
     engine: Engine, ctx: CallerContext, op: Operation, args: dict[str, object], state: dict[str, object]
 ) -> None:
+    if "target_scope" in op.inputs:
+        destination = args.get("target_scope")
+        if not isinstance(destination, str):
+            raise _fail(op, "validation_error", "target_scope_required")
+        _require_owned_scope(ctx, op, destination)
     target = args.get("scope", args.get("parent"))
     if target is None and "grant_id" in args:
         info = (await engine.resolve_targets(ctx, [str(args["grant_id"])], state)).get(str(args["grant_id"]))
@@ -282,6 +287,10 @@ async def _namespace_owner_only(
         target = info.scope_path
     if target is None:
         raise _fail(op, "validation_error", "scope_required")
+    _require_owned_scope(ctx, op, target)
+
+
+def _require_owned_scope(ctx: CallerContext, op: Operation, target: object) -> None:
     # A malformed target is a grammar fault, not an authorisation decision: `API_V2.md` 4.10 separates
     # `validation_error` (the grammar of section 6) from `forbidden` (outside the caller's namespace). Answering
     # `forbidden` for an unparseable path would tell a caller its input was well formed.
