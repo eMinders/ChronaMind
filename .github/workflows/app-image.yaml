@@ -1,21 +1,22 @@
 name: App image
 
-# Builds the root application image and imports the app inside it, whenever something that goes into the image
+# Builds the API workspace image and imports the app inside it, whenever something that goes into the image
 # changes. Not a required check (so the path filter is safe): it catches a broken Dockerfile, lock or entrypoint
 # before deploy.yaml is ever dispatched.
 
 on:
   pull_request:
     paths: &image-paths
-      - Dockerfile
+      - apps/api/Dockerfile
+      - apps/api/.dockerignore
       - .dockerignore
-      - .python-version
-      - pyproject.toml
-      - uv.lock
-      - app/**
-      - alembic/**
-      - alembic.ini
-      - scripts/docker-entrypoint.sh
+      - apps/api/.python-version
+      - apps/api/pyproject.toml
+      - apps/api/uv.lock
+      - apps/api/app/**
+      - apps/api/alembic/**
+      - apps/api/alembic.ini
+      - apps/api/scripts/docker-entrypoint.sh
       - .github/workflows/app-image.yaml
   push:
     branches: [main]
@@ -38,7 +39,7 @@ jobs:
         with:
           persist-credentials: false
       - name: docker build
-        run: docker build --tag chronamind-app:ci .
+        run: docker build --tag chronamind-app:ci -f apps/api/Dockerfile apps/api
       - name: Import the app inside the image (no services)
         run: >-
           docker run --rm --entrypoint python -e APP_ENV=test -e JWT_SECRET_KEY="$(openssl rand -hex 32)"

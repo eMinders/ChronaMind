@@ -1,24 +1,11 @@
-"""Application entrypoint runner for local development."""
+"""Compatibility entrypoint for local API development."""
 
-import asyncio
+import os
 import sys
+from pathlib import Path
+import runpy
 
-import uvicorn
-
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-
-def main() -> None:
-    """Run the FastAPI application with Uvicorn."""
-    uvicorn.run(
-        "app.main:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True,
-        loop="asyncio",
-    )
-
-
-if __name__ == "__main__":
-    main()
+API_DIR = Path(__file__).parent / "apps" / "api"
+os.chdir(API_DIR)
+sys.path.insert(0, str(API_DIR))
+runpy.run_path(str(API_DIR / "run.py"), run_name="__main__")

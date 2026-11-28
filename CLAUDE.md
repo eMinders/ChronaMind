@@ -6,26 +6,26 @@ is the most common way a change here is wrong.
 
 | You are changing | Read | Interpreter | Verify with |
 |---|---|---|---|
-| `custom-memory-engine/**` — the cognitive memory engine, its schema, its governance | **[`custom-memory-engine/CLAUDE.md`](custom-memory-engine/CLAUDE.md)**, then the documents it names | CPython **3.12** (`custom-memory-engine/.python-version`) | `cd custom-memory-engine && make` targets below |
-| `app/**`, `evals/**`, `alembic/**`, `docs/**` — the FastAPI + LangGraph application | **[`AGENTS.md`](AGENTS.md)** (it governs this side only) | CPython **3.14** (`.python-version`) | `make check` |
-| `web/**` — the demo interface | `web/README.md`, `tickets/EPIC-demo-interface.md` | Node **22** LTS (`web/.nvmrc`) | `cd web && npm run check` |
-| `.github/**` — workflows and Actions | [`AGENTS.md`](AGENTS.md) and [`custom-memory-engine/PLAN/CONTRIBUTING.md`](custom-memory-engine/PLAN/CONTRIBUTING.md) §1.2–1.3 | — | `make check` (runs actionlint) |
+| `core/memory-engine/**` — the cognitive memory engine, its schema, its governance | **[`core/memory-engine/CLAUDE.md`](core/memory-engine/CLAUDE.md)**, then the documents it names | CPython **3.12** (`core/memory-engine/.python-version`) | `cd core/memory-engine && make` targets below |
+| `apps/api/app/**`, `apps/api/evals/**`, `apps/api/alembic/**`, `apps/api/docs/**` — the FastAPI + LangGraph application | **[`AGENTS.md`](AGENTS.md)** (it governs this side only) | CPython **3.14** (`apps/api/.python-version`) | `make check` |
+| `apps/studio/**` — the demo interface | `apps/studio/README.md`, `tickets/EPIC-demo-interface.md` | Node **22** LTS (`apps/studio/.nvmrc`) | `cd apps/studio && npm run check` |
+| `.github/**` — workflows and Actions | [`AGENTS.md`](AGENTS.md) and [`core/memory-engine/PLAN/CONTRIBUTING.md`](core/memory-engine/PLAN/CONTRIBUTING.md) §1.2–1.3 | — | `make check` (runs actionlint) |
 | `REVIEW.md`, `CLAUDE.md`, `.claude/**` | this file, plus [`REVIEW.md`](REVIEW.md) | — | `make check` |
 
-`custom-memory-engine/` is excluded from the root Ruff, Pyright and pytest configuration on purpose. Linting it with the
+`core/memory-engine/` is excluded from the root Ruff, Pyright and pytest configuration on purpose. Linting it with the
 root toolchain runs one Ruff version over files another version formats, so **never** "fix" a file there with the root
 command. Its own pinned toolchain is the only correct one for it.
 
 ## Commands
 
 ```bash
-# The FastAPI application (root)
+# The FastAPI API workspace
 make dev          # hot-reloading server on :8000
 make migrate      # Alembic to head
 make check        # ruff check + format check + pyright + pytest — the same four gates as CI `checks`
 
 # The memory engine
-cd custom-memory-engine
+cd core/memory-engine
 uv run --no-sync pytest -q -m 'not integration'    # seconds, no database; use it while iterating
 docker compose --env-file .env -p cme-verify up -d --wait
 uv run --env-file .env pytest -q -n auto           # the full suite (what CI `verify` runs)
@@ -33,21 +33,21 @@ uv run --no-sync ruff check src tests research/benchmarks evaluation scripts
 uv run --no-sync pyright
 ```
 
-`custom-memory-engine/CLAUDE.md` has the rest: the six static gates, the plan/evidence scripts, and how a new migration
+`core/memory-engine/CLAUDE.md` has the rest: the six static gates, the plan/evidence scripts, and how a new migration
 is shaped.
 
 ## What is authoritative
 
-1. **`custom-memory-engine/PLAN/V2/` is the approved implementation plan**, and its decision records (`V2-D##` in
-   [`DECISIONS_V2.md`](custom-memory-engine/PLAN/V2/DECISIONS_V2.md)) are the binding record of what was decided and why.
-   `custom-memory-engine/PLAN/` outside `V2/` and `PROJECT_ROADMAP.md` are the superseded v1 plan: history, not
+1. **`core/memory-engine/PLAN/V2/` is the approved implementation plan**, and its decision records (`V2-D##` in
+   [`DECISIONS_V2.md`](core/memory-engine/PLAN/V2/DECISIONS_V2.md)) are the binding record of what was decided and why.
+   `core/memory-engine/PLAN/` outside `V2/` and `PROJECT_ROADMAP.md` are the superseded v1 plan: history, not
    instruction.
 2. **`Graduation_Project_Proposal.md`, `Methodology_and_Consistency_Checklist.md` and `TECHNICAL_SPECIFICATION.md` §3.3–3.5
    are frozen research records.** They are checksum-bound (`validation/document_hashes.txt`); edit them only through an
    additive header, and never to make a test pass.
-3. **`README.md`, `docs/` and the plan files are claims, not proofs.** Where a document and the code disagree, the code
+3. **`README.md`, `apps/api/docs/` and the plan files are claims, not proofs.** Where a document and the code disagree, the code
    and its tests are the fact and the document is a defect to report — several of them are already stale (see
-   `custom-memory-engine/CLAUDE.md`, "Known drift").
+   `core/memory-engine/CLAUDE.md`, "Known drift").
 4. **`AGENTS.md` describes the FastAPI template.** Two of its "critical rules" are already false in the code they
    govern (see its scope note). Do not extend them to the engine, and do not enforce them retroactively.
 
@@ -62,7 +62,7 @@ is shaped.
 - **The app holds two engine tokens; never swap them.** `MEMORY_ENGINE_TOKEN` (Tier B) is the agent's.
   `MEMORY_ENGINE_USER_TOKEN` (Tier C, which can erase and export for every user) is used only by the
   `/api/v1/memory/*` routes. Both are secrets in `.env*`, and `.env.example` keeps them empty. See
-  [`AGENTS.md`](AGENTS.md), "Memory", and [`docs/memory.md`](docs/memory.md).
+  [`AGENTS.md`](AGENTS.md), "Memory", and [`apps/api/docs/memory.md`](apps/api/docs/memory.md).
 - **Commits**: `type(scope): summary`, in the repository's existing style — `feat(e037): … (Refs #207)`,
   `fix(w3): … (#229)`. Reference an issue with `Refs #N`; never `closes`/`fixes` (the issue is closed by hand once its
   criteria are verified).
@@ -76,7 +76,7 @@ is shaped.
 
 ## Reviewing
 
-Automated review follows [`REVIEW.md`](REVIEW.md) and, for engine changes, `custom-memory-engine/CLAUDE.md`. The review
+Automated review follows [`REVIEW.md`](REVIEW.md) and, for engine changes, `core/memory-engine/CLAUDE.md`. The review
 is advisory to the owner and never a substitute for the deterministic gates: lint, types, tests, the plan scripts and
 branch protection decide whether a change is mergeable; review decides whether it is *correct*. See `README.md` in
 `.github/workflows/` for how the two reviewers are wired.

@@ -6,12 +6,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
-      # Fixers never touch custom-memory-engine/: it holds hash-checked research records (validation/document_hashes.txt)
+      # Fixers never touch core/memory-engine/: it holds hash-checked research records (validation/document_hashes.txt)
       # and is formatted by its own pinned tools in its own CI job.
       - id: trailing-whitespace
-        exclude: ^custom-memory-engine/
+        exclude: ^core/memory-engine/
       - id: end-of-file-fixer
-        exclude: ^custom-memory-engine/
+        exclude: ^core/memory-engine/
       - id: check-yaml
       - id: check-json
         exclude: ^\.vscode/
@@ -36,13 +36,13 @@ repos:
     hooks:
       - id: ruff-check
         args: ["--fix"]
-        exclude: ^custom-memory-engine/
+        exclude: ^core/memory-engine/
       - id: ruff-format
-        exclude: ^custom-memory-engine/
+        exclude: ^core/memory-engine/
 
   # Pyright: static type checker
   - repo: https://github.com/RobertCraigie/pyright-python
     rev: v1.1.414
     hooks:
       - id: pyright
-        exclude: ^custom-memory-engine/
+        exclude: ^core/memory-engine/

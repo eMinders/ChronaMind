@@ -1,8 +1,8 @@
 name: CI
 
-# Root application (app/, evals/): lint, format, type check and its own tests; plus actionlint over every workflow
+# Root application (apps/api/app/, apps/api/evals/): lint, format, type check and its own tests; plus actionlint over every workflow
 # file. All three jobs are required checks, so they run on every PR (no path filter: a skipped workflow never
-# reports). custom-memory-engine/ is excluded from the root Ruff config and verified by its own workflow.
+# reports). core/memory-engine/ is excluded from the root Ruff config and verified by its own workflow.
 # `app-engine-boundary` drives the app's memory client and the /api/v1/memory routes against the engine's real host and
 # PostgreSQL: the one place the two projects are tested together (tests/integration/test_app_engine_boundary.py and
 # tests/integration/test_memory_router_live.py).
@@ -31,17 +31,17 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           version: "0.13.7"
-          cache-dependency-glob: uv.lock  # the root lock only (Python comes from .python-version)
+          cache-dependency-glob: apps/api/uv.lock  # the API workspace lock only (Python comes from .python-version)
       - name: uv sync --locked
-        run: uv sync --locked --all-extras --all-groups
+        run: uv sync --locked --all-extras --all-groups --project apps/api
       - name: ruff check
-        run: uv run --no-sync ruff check .
+        run: cd apps/api && uv run --no-sync ruff check .
       - name: ruff format --check
-        run: uv run --no-sync ruff format --check .
+        run: cd apps/api && uv run --no-sync ruff format --check .
       - name: pyright
-        run: uv run --no-sync pyright
-      - name: pytest (root application; no services needed)
-        run: uv run --no-sync pytest -q
+        run: cd apps/api && uv run --no-sync pyright
+      - name: pytest (API workspace; no services needed)
+        run: cd apps/api && uv run --no-sync pytest -q
 
   app-engine-boundary:
     runs-on: ubuntu-24.04
@@ -67,14 +67,14 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           version: "0.13.7"
-          # both interpreters' locks: the app's (3.14, root) and the engine's (3.12, custom-memory-engine/)
+          # both interpreters' locks: the app's (3.14, root) and the engine's (3.12, core/memory-engine/)
           cache-dependency-glob: |
-            uv.lock
-            custom-memory-engine/uv.lock
-      - name: uv sync --locked (root application)
-        run: uv sync --locked --all-extras --all-groups
-      - name: uv sync --locked --extra host (engine interpreter, custom-memory-engine/.venv)
-        working-directory: custom-memory-engine
+            apps/api/uv.lock
+            core/memory-engine/uv.lock
+      - name: uv sync --locked (API workspace)
+        run: uv sync --locked --all-extras --all-groups --project apps/api
+      - name: uv sync --locked --extra host (engine interpreter, core/memory-engine/.venv)
+        working-directory: core/memory-engine
         run: uv sync --locked --extra host
       - name: Prepare database extensions (in public, as the engine's migrations expect)
         run: >-
@@ -87,7 +87,7 @@ jobs:
         # job silently tested nothing: the step fails on it instead of reporting success. The second module drives the
         # /api/v1/memory routes against the real host with both delegating tokens (Tier B agent, Tier C inspector).
         run: |
-          uv run --no-sync pytest -q -rs -m integration \
+          cd apps/api && uv run --no-sync pytest -q -rs -m integration \
             tests/integration/test_app_engine_boundary.py \
             tests/integration/test_memory_router_live.py | tee /tmp/boundary.txt
           if grep -qiE "[0-9]+ skipped" /tmp/boundary.txt; then echo "a boundary test skipped"; exit 1; fi

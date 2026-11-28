@@ -1,6 +1,6 @@
 name: Web
 
-# web/ (the demo interface): type check, lint, format check and unit tests. No path filter: a skipped workflow never
+# apps/studio/ (the demo interface): type check, lint, format check and unit tests. No path filter: a skipped workflow never
 # reports, and a check that never reports cannot be made required later.
 
 on:
@@ -22,16 +22,16 @@ jobs:
     timeout-minutes: 10
     defaults:
       run:
-        working-directory: web
+        working-directory: apps/studio
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: web/.nvmrc
+          node-version-file: apps/studio/.nvmrc
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: apps/studio/package-lock.json
       - name: npm ci
         run: npm ci
       - name: npm run check (typecheck, lint, format, unit tests)

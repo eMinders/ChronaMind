@@ -21,7 +21,7 @@ from"). The summary is parsed first because it is exact, and the timeline is the
 the prose is not.
 
 Both are pure functions of the event payload, the review history and a `git diff`, so both are unit-tested in
-`custom-memory-engine/tests/test_review_gate.py` without a network, a token or a runner.
+`core/memory-engine/tests/test_review_gate.py` without a network, a token or a runner.
 
 Deliberately *not* a path filter: a change to `PLAN/V2/`, `.github/` or an instruction file is reviewable here
 (`REVIEW.md` §"Documents are code here"), so the gate asks whether the tree changed at all and nothing more. An
@@ -198,7 +198,7 @@ def classify(
     which is a reason to review, never a reason to skip).
 
     Every branch below is one line of the table in `.github/workflows/README.md`, and each is a test in
-    `custom-memory-engine/tests/test_review_gate.py`.
+    `core/memory-engine/tests/test_review_gate.py`.
     """
     if not history.available:
         return Decision(review=True, tier=UNKNOWN, reason="history_unavailable")

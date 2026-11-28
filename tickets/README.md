@@ -4,7 +4,7 @@
 |---|---|
 | [`EPIC-demo-interface.md`](EPIC-demo-interface.md) | The Epic: objective, current state, plan alignment, acceptance criteria, scope, phases, files, technical details, metrics. It is authoritative for every ticket |
 | [`tickets_app.md`](tickets_app.md) | `app` tickets APP-01 to APP-10 (CPython 3.14, `make check`) |
-| [`tickets_web.md`](tickets_web.md) | `web` tickets WEB-01 to WEB-14 (Node 22, `npm run check`) |
+| [`tickets_web.md`](tickets_web.md) | `apps/studio` tickets WEB-01 to WEB-14 (Node 22, `npm run check` in apps/studio) |
 | [`tickets_ci.md`](tickets_ci.md) | `ci` tickets CI-01 to CI-03 (`make check`, actionlint) |
 | [`create_issues.py`](create_issues.py) | Opens one GitHub issue per ticket and links them |
 

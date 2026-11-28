@@ -1,7 +1,7 @@
 # Tickets — Epic: ChronaMind Studio demo interface — Label: web
 
-Side: `web/**` (Node 22 LTS, TypeScript strict). Verify with `npm run check` inside `web/`. Until WEB-01 merges,
-every file under `web/` is new.
+Side: `apps/studio/**` (Node 22 LTS, TypeScript strict). Verify with `npm run check` inside `apps/studio/`. Until WEB-01 merges,
+every file under `apps/studio/` is new.
 
 ## References
 
@@ -9,11 +9,11 @@ every file under `web/` is new.
 |---|---|
 | Parent Epic | [`tickets/EPIC-demo-interface.md`](EPIC-demo-interface.md) |
 | App tickets (the API these screens call) | [`tickets/tickets_app.md`](tickets_app.md) |
-| Generated API document | `docs/api/openapi.json` (APP-07) |
+| Generated API document | `apps/api/docs/api/openapi.json` (APP-07) |
 | Content and claims for the Evidence page | [`SHOWCASE.md`](../SHOWCASE.md) §4, §8.2, §10, §13 |
-| Channels and their meaning | [`custom-memory-engine/PLAN/V2/CHANNELS.md`](../custom-memory-engine/PLAN/V2/CHANNELS.md) |
+| Channels and their meaning | [`core/memory-engine/PLAN/V2/CHANNELS.md`](../core/memory-engine/PLAN/V2/CHANNELS.md) |
 
-Every live acceptance criterion below runs against the stack from APP-01 (`uv run python scripts/demo/up.py`), with
+Every live acceptance criterion below runs against the stack from APP-01 (`uv run python tools/demo/up.py`), with
 `npm run dev` on port 5173 proxying `/api` and `/health` to the app on port 8000.
 
 ---
@@ -29,35 +29,35 @@ Every live acceptance criterion below runs against the stack from APP-01 (`uv ru
 
 ### Objective
 
-Create `web/` as a Vite + React 19 + TypeScript (strict) app with Tailwind CSS, shadcn/ui, ESLint, Prettier and
+Create `apps/studio/` as a Vite + React 19 + TypeScript (strict) app with Tailwind CSS, shadcn/ui, ESLint, Prettier and
 Vitest. One `npm run check` script runs every gate. Dev and preview servers proxy `/api` and `/health` to the app, so
 the browser talks to one origin and no CORS configuration is needed.
 
 ### Background and Current State
 
-- `web/` does not exist. The app serves on `127.0.0.1:8000` (`run.py`, or APP-01).
+- `apps/studio/` does not exist. The app serves on `127.0.0.1:8000` (`run.py`, or APP-01).
 - The app's `ALLOWED_ORIGINS` defaults to `*`. With a same-origin proxy, it stays unchanged.
-- The root Ruff, Pyright and pytest configurations include `app`, `evals` and `tests` only, so `web/` is outside them.
+- The root Ruff, Pyright and pytest configurations include `app`, `evals` and `tests` only, so `apps/studio/` is outside them.
 
 ### Acceptance Criteria
 
-- `cd web && npm ci && npm run check` exits 0. `check` runs, in order: `tsc -b --noEmit`, `eslint .`,
+- `cd apps/studio && npm ci && npm run check` exits 0. `check` runs, in order: `tsc -b --noEmit`, `eslint .`,
   `prettier --check .` and `vitest run`.
 - `npm run dev` serves on port 5173. With the app running, `fetch("/health")` from the page returns 200 with no CORS
   error in the console.
 - `npm run preview` proxies `/api` and `/health` the same way.
-- `web/.nvmrc` contains `22`, and `package.json` declares `"engines": {"node": ">=22 <23"}`.
-- `web/.gitignore` excludes `node_modules/`, `dist/`, `dist-mock/`, `test-results/`, `playwright-report/`.
+- `apps/studio/.nvmrc` contains `22`, and `package.json` declares `"engines": {"node": ">=22 <23"}`.
+- `apps/studio/.gitignore` excludes `node_modules/`, `dist/`, `dist-mock/`, `test-results/`, `playwright-report/`.
 - These folders exist with an `index.ts` or `.gitkeep`: `src/api/`, `src/auth/`, `src/components/`,
   `src/features/`, `src/pages/`, `src/content/`, `src/mocks/`.
 - One placeholder route renders, and one Vitest test passes.
-- `web/README.md` lists the prerequisites, `npm ci`, `npm run dev` (with the APP-01 stack) and `npm run check`.
+- `apps/studio/README.md` lists the prerequisites, `npm ci`, `npm run dev` (with the APP-01 stack) and `npm run check`.
 - `make check` at the repository root still passes.
 
 ### Implementation
 
 ```ts
-// web/vite.config.ts
+// apps/studio/vite.config.ts
 import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -82,7 +82,7 @@ export default defineConfig({
 ### Files
 
 ```text
-web/
+apps/studio/
 ├── .gitignore            # NEW
 ├── .nvmrc                # NEW
 ├── README.md             # NEW
@@ -103,8 +103,8 @@ web/
 ### Verification
 
 ```bash
-cd web && npm ci && npm run check
-cd web && npm run dev     # with the app running: fetch("/health") returns 200
+cd apps/studio && npm ci && npm run check
+cd apps/studio && npm run dev     # with the app running: fetch("/health") returns 200
 make check
 ```
 
@@ -128,13 +128,13 @@ make check
 
 ### Objective
 
-Generate `web/src/api/schema.d.ts` from `docs/api/openapi.json` with openapi-typescript, and add `src/api/client.ts`
+Generate `apps/studio/src/api/schema.d.ts` from `apps/api/docs/api/openapi.json` with openapi-typescript, and add `src/api/client.ts`
 with one `request<T>()` function. Every response type comes from the generated file, so a backend change that is not
 followed here breaks the build, not the demo.
 
 ### Background and Current State
 
-- APP-07 commits the app's OpenAPI document to `docs/api/openapi.json`.
+- APP-07 commits the app's OpenAPI document to `apps/api/docs/api/openapi.json`.
 - The app returns errors as FastAPI `HTTPException` bodies: `{"detail": {"code": <engine code>, "detail": <string or
   null>}}` for memory routes, and `{"detail": <string>}` for auth routes.
 - Memory routes take the **user** token. Chat routes take the **session** token. Login and register take none.
@@ -143,7 +143,7 @@ followed here breaks the build, not the demo.
 
 ### Acceptance Criteria
 
-- `npm run gen:api` runs `openapi-typescript ../docs/api/openapi.json -o src/api/schema.d.ts`. On a clean tree it
+- `npm run gen:api` runs `openapi-typescript ../apps/api/docs/api/openapi.json -o src/api/schema.d.ts`. On a clean tree it
   produces no diff.
 - `src/api/` contains no hand-written interface that duplicates a schema from `schema.d.ts` (review check).
 - `request()` sends `Authorization: Bearer <token>` for the requested token kind (`user` or `session`), and no header
@@ -161,7 +161,7 @@ followed here breaks the build, not the demo.
 ### Implementation
 
 ```ts
-// web/src/api/client.ts
+// apps/studio/src/api/client.ts
 export type TokenKind = "user" | "session" | "none";
 
 export class ApiError extends Error {
@@ -212,7 +212,7 @@ export async function request<T>(path: string, options: Options = {}): Promise<T
 ### Files
 
 ```text
-web/
+apps/studio/
 ├── package.json                 # MODIFIED (gen:api script, openapi-typescript)
 ├── eslint.config.js             # MODIFIED (fetch only inside src/api/)
 └── src/api/
@@ -229,9 +229,9 @@ web/
 ### Verification
 
 ```bash
-cd web && npm run gen:api && git diff --exit-code src/api/schema.d.ts
-cd web && npx vitest run src/api
-cd web && npm run check
+cd apps/studio && npm run gen:api && git diff --exit-code src/api/schema.d.ts
+cd apps/studio && npx vitest run src/api
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -263,7 +263,7 @@ and the session token (chat). Protected routes redirect to `/login`. Any 401 cle
 - `POST /api/v1/auth/login` takes form fields `email`, `password`, `grant_type=password` and returns `access_token`.
 - `POST /api/v1/auth/session` (user token) returns `session_id` and `token.access_token`. Chat routes accept only
   this session token.
-- Password rules (`app/schemas/auth.py::UserCreate`): 8 to 64 characters, with an upper-case letter, a lower-case
+- Password rules (`apps/api/app/schemas/auth.py::UserCreate`): 8 to 64 characters, with an upper-case letter, a lower-case
   letter, a digit and a special character. Display name: at most 50 characters.
 
 ### Acceptance Criteria
@@ -283,7 +283,7 @@ and the session token (chat). Protected routes redirect to `/login`. Any 401 cle
 ### Implementation
 
 ```tsx
-// web/src/auth/AuthProvider.tsx
+// apps/studio/src/auth/AuthProvider.tsx
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { setTokenSource } from "@/api/client";
 import { createSession, login as loginRequest } from "@/api/auth";
@@ -344,7 +344,7 @@ export function useAuth() {
 ### Files
 
 ```text
-web/src/
+apps/studio/src/
 ├── auth/AuthProvider.tsx          # NEW
 ├── auth/AuthProvider.test.tsx     # NEW
 ├── auth/RequireAuth.tsx           # NEW
@@ -357,8 +357,8 @@ web/src/
 ### Verification
 
 ```bash
-cd web && npx vitest run src/auth src/pages/Login.test.tsx
-cd web && npm run check
+cd apps/studio && npx vitest run src/auth src/pages/Login.test.tsx
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -412,7 +412,7 @@ separately from the verbatim conversation record.
 ### Implementation
 
 ```tsx
-// web/src/components/MemorySections.tsx
+// apps/studio/src/components/MemorySections.tsx
 import type { components } from "@/api/schema";
 import { EmptyState } from "./EmptyState";
 import { MemoryItemRow } from "./MemoryItemRow";
@@ -455,7 +455,7 @@ export function MemorySections({ view, onOpen }: { view: MemoryView; onOpen(id: 
 ### Files
 
 ```text
-web/src/
+apps/studio/src/
 ├── layout/AppShell.tsx             # NEW
 ├── layout/HealthIndicator.tsx      # NEW
 ├── components/ChannelBadge.tsx     # NEW
@@ -474,8 +474,8 @@ web/src/
 ### Verification
 
 ```bash
-cd web && npx vitest run src/components src/layout
-cd web && npm run check
+cd apps/studio && npx vitest run src/components src/layout
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -533,7 +533,7 @@ to Paris" as the single known fact.
 ### Implementation
 
 ```tsx
-// web/src/features/chat/useMemoryAfterReply.ts
+// apps/studio/src/features/chat/useMemoryAfterReply.ts
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { listMemory } from "@/api/memory";
@@ -580,7 +580,7 @@ export function useMemoryAfterReply(userKey: string, replyCount: number) {
 ### Files
 
 ```text
-web/src/
+apps/studio/src/
 ├── pages/Chat.tsx                              # NEW
 ├── features/chat/MessageList.tsx               # NEW
 ├── features/chat/Composer.tsx                  # NEW
@@ -594,9 +594,9 @@ web/src/
 ### Verification
 
 ```bash
-cd web && npx vitest run src/features/chat
-cd web && npm run check
-uv run python scripts/demo/up.py && cd web && npm run dev   # run J1 by hand; screenshots in the PR
+cd apps/studio && npx vitest run src/features/chat
+cd apps/studio && npm run check
+uv run python tools/demo/up.py && cd apps/studio && npm run dev   # run J1 by hand; screenshots in the PR
 ```
 
 ### Dependencies
@@ -644,7 +644,7 @@ search box backed by `POST /api/v1/memory/search`. It is the full view behind jo
 ### Implementation
 
 ```tsx
-// web/src/pages/Memory.tsx (core)
+// apps/studio/src/pages/Memory.tsx (core)
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { listMemory, searchMemory } from "@/api/memory";
@@ -690,7 +690,7 @@ export function useExplorerData(text: string) {
 ### Files
 
 ```text
-web/src/
+apps/studio/src/
 ├── pages/Memory.tsx            # NEW
 ├── pages/Memory.test.tsx       # NEW
 └── api/memory.ts               # MODIFIED (listMemory(limit), searchMemory)
@@ -699,8 +699,8 @@ web/src/
 ### Verification
 
 ```bash
-cd web && npx vitest run src/pages/Memory.test.tsx
-cd web && npm run check
+cd apps/studio && npx vitest run src/pages/Memory.test.tsx
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -751,7 +751,7 @@ and only fields the engine returns.
 ### Implementation
 
 ```tsx
-// web/src/features/memory/describeSource.ts
+// apps/studio/src/features/memory/describeSource.ts
 import type { components } from "@/api/schema";
 
 type SourceRef = components["schemas"]["SourceRefOut"];
@@ -781,7 +781,7 @@ export function describeSource(source: SourceRef, item: MemoryItem): SourceLine 
 ### Files
 
 ```text
-web/src/features/memory/
+apps/studio/src/features/memory/
 ├── MemoryDrawer.tsx            # NEW
 ├── MemoryDrawer.test.tsx       # NEW
 ├── describeSource.ts           # NEW
@@ -791,8 +791,8 @@ web/src/features/memory/
 ### Verification
 
 ```bash
-cd web && npx vitest run src/features/memory
-cd web && npm run check
+cd apps/studio && npx vitest run src/features/memory
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -841,7 +841,7 @@ Add Confirm and Deny actions for `contested` items, in the Explorer's Conflicts 
 ### Implementation
 
 ```tsx
-// web/src/features/memory/useAdjudicate.ts
+// apps/studio/src/features/memory/useAdjudicate.ts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { adjudicate } from "@/api/memory";
 import { ApiError } from "@/api/client";
@@ -870,7 +870,7 @@ export function useAdjudicate() {
 ### Files
 
 ```text
-web/src/
+apps/studio/src/
 ├── features/memory/useAdjudicate.ts        # NEW
 ├── features/memory/AdjudicateButtons.tsx   # NEW
 ├── features/memory/AdjudicateButtons.test.tsx # NEW
@@ -882,8 +882,8 @@ web/src/
 ### Verification
 
 ```bash
-cd web && npx vitest run src/features/memory
-cd web && npm run check
+cd apps/studio && npx vitest run src/features/memory
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -936,7 +936,7 @@ makes the engine's belief time visible.
 ### Implementation
 
 ```tsx
-// web/src/features/time/useTimeTravel.ts
+// apps/studio/src/features/time/useTimeTravel.ts
 import { useQuery } from "@tanstack/react-query";
 import { getChanges, getTimeline, listMemory } from "@/api/memory";
 
@@ -973,7 +973,7 @@ export function useTimeTravel(userKey: string, instant: Date | null) {
 ### Files
 
 ```text
-web/src/
+apps/studio/src/
 ├── pages/TimeTravel.tsx                    # NEW
 ├── features/time/useTimeTravel.ts          # NEW
 ├── features/time/useTimeTravel.test.ts     # NEW
@@ -984,8 +984,8 @@ web/src/
 ### Verification
 
 ```bash
-cd web && npx vitest run src/features/time
-cd web && npm run check
+cd apps/studio && npx vitest run src/features/time
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -1046,7 +1046,7 @@ user can ask again and see that the assistant has no memory left.
 ### Implementation
 
 ```tsx
-// web/src/pages/Forget.tsx (core)
+// apps/studio/src/pages/Forget.tsx (core)
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { forgetEverything } from "@/api/memory";
@@ -1092,7 +1092,7 @@ export function useConfirmWord() {
 ### Files
 
 ```text
-web/src/
+apps/studio/src/
 ├── pages/Forget.tsx            # NEW
 ├── pages/Forget.test.tsx       # NEW
 └── api/memory.ts               # MODIFIED (forgetEverything)
@@ -1101,8 +1101,8 @@ web/src/
 ### Verification
 
 ```bash
-cd web && npx vitest run src/pages/Forget.test.tsx
-cd web && npm run check
+cd apps/studio && npx vitest run src/pages/Forget.test.tsx
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -1158,7 +1158,7 @@ with a source for every entry, and its single source is `SHOWCASE.md`.
 ### Implementation
 
 ```ts
-// web/src/content/evidence.ts
+// apps/studio/src/content/evidence.ts
 export type Status = "Implemented" | "Partial" | "Planned" | "Research design";
 
 export type Result = {
@@ -1182,21 +1182,21 @@ export const RESULTS: readonly Result[] = [
     result: "hybrid 0.882; BM25-reranked 0.765; recency-reranked 0.726",
     n: "64 questions over 49 memories",
     split: "development split",
-    source: "SHOWCASE.md §8.2; custom-memory-engine/reports/retrieval/README.md (round 2)",
+    source: "SHOWCASE.md §8.2; core/memory-engine/reports/retrieval/README.md (round 2)",
   },
   {
     measurement: "Value of the dense arm (Recall@5)",
     result: "hybrid 0.982; lexical-only 0.393",
     n: "64 questions over 49 memories",
     split: "development split",
-    source: "SHOWCASE.md §8.2; custom-memory-engine/reports/retrieval/README.md (round 2)",
+    source: "SHOWCASE.md §8.2; core/memory-engine/reports/retrieval/README.md (round 2)",
   },
   {
     measurement: "Relevance judge, no-match false positives",
     result: "0.125 to 0 (1/8 to 0/8); 2.73-logit separation over 448 pairs",
     n: "8 no-match questions",
     split: "development split",
-    source: "SHOWCASE.md §8.2; custom-memory-engine/reports/retrieval/README.md",
+    source: "SHOWCASE.md §8.2; core/memory-engine/reports/retrieval/README.md",
   },
   {
     measurement: "Deletion-order model",
@@ -1213,7 +1213,7 @@ export const NOT_CONFIRMATORY = "No confirmatory experiment has been run yet.";
 ### Files
 
 ```text
-web/src/
+apps/studio/src/
 ├── pages/About.tsx                 # NEW
 ├── content/evidence.ts             # NEW
 ├── content/evidence.test.ts        # NEW
@@ -1223,8 +1223,8 @@ web/src/
 ### Verification
 
 ```bash
-cd web && npx vitest run src/content
-cd web && npm run check
+cd apps/studio && npx vitest run src/content
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -1246,7 +1246,7 @@ cd web && npm run check
 
 ### Objective
 
-Add `web/e2e/demo.spec.ts` and `npm run e2e:live`. The spec drives journeys J1–J5 in a real browser against the live
+Add `apps/studio/e2e/demo.spec.ts` and `npm run e2e:live`. The spec drives journeys J1–J5 in a real browser against the live
 stack in about 3 minutes, so a late change cannot break the demo unnoticed.
 
 ### Background and Current State
@@ -1267,14 +1267,14 @@ stack in about 3 minutes, so a late change cannot break the demo unnoticed.
 - J5 signs in as the seeded user, confirms the conflict and asserts it is under Known facts. `globalSetup` runs
   `reset.py` and `seed.py`, so the spec can run again.
 - No assertion depends on the LLM's answer text.
-- On failure, the trace, screenshot and video are kept in `web/test-results/`.
+- On failure, the trace, screenshot and video are kept in `apps/studio/test-results/`.
 - Showing episodes under Known facts (a deliberate break) makes J1 fail with a readable message. The PR shows this
   once, then reverts it.
 
 ### Implementation
 
 ```ts
-// web/e2e/demo.spec.ts (J1)
+// apps/studio/e2e/demo.spec.ts (J1)
 import { expect, test } from "@playwright/test";
 
 const email = `demo-${Date.now()}@example.com`;
@@ -1311,7 +1311,7 @@ test("J1 remember and update: one current fact, both sentences in the record", a
 ### Files
 
 ```text
-web/
+apps/studio/
 ├── playwright.config.ts     # NEW
 ├── package.json             # MODIFIED (e2e:live script, @playwright/test)
 └── e2e/
@@ -1322,9 +1322,9 @@ web/
 ### Verification
 
 ```bash
-uv run python scripts/demo/up.py && uv run python scripts/demo/seed.py
-cd web && npx playwright install chromium && npm run e2e:live
-cd web && npm run check
+uv run python tools/demo/up.py && uv run python tools/demo/seed.py
+cd apps/studio && npx playwright install chromium && npm run e2e:live
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -1372,7 +1372,7 @@ rehearsal". This is the on-stage fallback and the backend-free target for the CI
 ### Implementation
 
 ```ts
-// web/src/mocks/handlers.ts (core)
+// apps/studio/src/mocks/handlers.ts (core)
 import { http, HttpResponse } from "msw";
 import type { components } from "@/api/schema";
 import afterBerlin from "./fixtures/memory-after-berlin.json";
@@ -1410,7 +1410,7 @@ export const handlers = [
 ### Files
 
 ```text
-web/
+apps/studio/
 ├── package.json                    # MODIFIED (record-fixtures, build:mock, e2e:mock, msw)
 ├── scripts/record-fixtures.ts      # NEW
 ├── public/mockServiceWorker.js     # NEW (generated by msw init)
@@ -1424,9 +1424,9 @@ web/
 ### Verification
 
 ```bash
-uv run python scripts/demo/up.py && uv run python scripts/demo/seed.py && cd web && npm run record-fixtures
-cd web && npm run build:mock && npm run e2e:mock
-cd web && npm run check
+uv run python tools/demo/up.py && uv run python tools/demo/seed.py && cd apps/studio && npm run record-fixtures
+cd apps/studio && npm run build:mock && npm run e2e:mock
+cd apps/studio && npm run check
 ```
 
 ### Dependencies
@@ -1449,7 +1449,7 @@ cd web && npm run check
 ### Objective
 
 Cause each planned failure deliberately on the live stack and record that the interface shows its planned message,
-with no blank page and no stack trace. Commit the drill procedure and the results to `web/README.md` so they can be
+with no blank page and no stack trace. Commit the drill procedure and the results to `apps/studio/README.md` so they can be
 repeated before the demo. Defects found become linked fix tickets.
 
 ### Background and Current State
@@ -1480,9 +1480,9 @@ repeated before the demo. Defects found become linked fix tickets.
 ### Implementation
 
 ```markdown
-## Failure drills (web/README.md)
+## Failure drills (apps/studio/README.md)
 
-Run on the live stack (`scripts/demo/up.py`, then `scripts/demo/seed.py`). Record PASS or FAIL with a screenshot.
+Run on the live stack (`tools/demo/up.py`, then `tools/demo/seed.py`). Record PASS or FAIL with a screenshot.
 
 | # | Cause | Expected | Result |
 |---|---|---|---|
@@ -1498,15 +1498,15 @@ Run on the live stack (`scripts/demo/up.py`, then `scripts/demo/seed.py`). Recor
 ### Files
 
 ```text
-web/README.md     # MODIFIED (Failure drills section with results)
+apps/studio/README.md     # MODIFIED (Failure drills section with results)
 ```
 
 ### Verification
 
 ```bash
-uv run python scripts/demo/up.py && uv run python scripts/demo/seed.py
-cd web && npm run dev
-cd web && npm run check
+uv run python tools/demo/up.py && uv run python tools/demo/seed.py
+cd apps/studio && npm run dev
+cd apps/studio && npm run check
 ```
 
 ### Dependencies

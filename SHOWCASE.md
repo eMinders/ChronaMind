@@ -23,10 +23,10 @@ Every claim below cites the document or code that states it. Status is reported 
 | Declared invariants | **17** (`I1′`–`I17`), **all `ENFORCED`** | `PLAN/V2/INVARIANT_LEDGER.md` |
 | Threat model | **47** cross-tenant / leak paths (`T-01`–`T-47`), each with a mitigation and a covering test | `PLAN/V2/THREAT_MODEL.md` |
 | Decision records | **`V2-D01`–`V2-D125`** (a handful still open, e.g. thresholds `V2-D30`) | `PLAN/V2/DECISIONS_V2.md` |
-| Test suite | **4,520+ passed / 21 skipped** on PostgreSQL 16.15 + pgvector 0.8.7 (documented figure, 2026-11-21) | `custom-memory-engine/CLAUDE.md` |
+| Test suite | **4,520+ passed / 21 skipped** on PostgreSQL 16.15 + pgvector 0.8.7 (documented figure, 2026-11-21) | `core/memory-engine/CLAUDE.md` |
 | Commits | 349 on `main` | `git log` |
 
-All paths below are relative to `custom-memory-engine/` unless they start with `app/`, `docs/` or `.github/`.
+All paths below are relative to `core/memory-engine/` unless they start with `app/`, `docs/` or `.github/`.
 
 ---
 
@@ -152,7 +152,7 @@ CI job (`PLAN/INDEPENDENCE_BOUNDARY.md`, root `CLAUDE.md`).
 
 | Part | Where | Interpreter | Role |
 |---|---|---|---|
-| **Memory engine** | `custom-memory-engine/` | CPython 3.12 | The research contribution: the substrate, its schema, governance, evaluation |
+| **Memory engine** | `core/memory-engine/` | CPython 3.12 | The research contribution: the substrate, its schema, governance, evaluation |
 | **Agent application** | `app/`, `evals/`, `alembic/` | CPython 3.14 | FastAPI + LangGraph chat agent that uses the engine as its long-term memory **over HTTP** (`V2-D93`) |
 
 ```mermaid
@@ -167,7 +167,7 @@ flowchart TB
     subgraph Host["Engine host (host/)"]
         HTTP["POST /v1/call - bearer token decides tier"]
     end
-    subgraph TierA["Tier A - Memory substrate (custom-memory-engine)"]
+    subgraph TierA["Tier A - Memory substrate (core/memory-engine)"]
         DOOR["Engine.call - authorise, validate, 7 conditions, dispatch, static errors"]
         SEM["Semantic layer - extraction, quote grounding, authority, conflict, entities"]
         GATE["Admission - grounding policy and soundness policy"]
@@ -739,9 +739,9 @@ flowchart LR
 
 ## 11. Live demonstration guide
 
-> These commands are taken from the repository's documentation (`custom-memory-engine/CLAUDE.md`,
-> `custom-memory-engine/README.md`, `docs/`). **Nothing was executed while preparing this document. Rehearse every
-> step on the demo machine beforehand.** The engine's commands run from `custom-memory-engine/`.
+> These commands are taken from the repository's documentation (`core/memory-engine/CLAUDE.md`,
+> `core/memory-engine/README.md`, `docs/`). **Nothing was executed while preparing this document. Rehearse every
+> step on the demo machine beforehand.** The engine's commands run from `core/memory-engine/`.
 
 **Prerequisites:**
 
@@ -857,7 +857,7 @@ measured results in section 8.
 ChronaMind/
 ├── app/, evals/, alembic/, docs/      FastAPI + LangGraph agent (CPython 3.14)
 ├── .github/workflows/                 CI: engine gates, app checks, AI review
-└── custom-memory-engine/              The memory engine (CPython 3.12)
+└── core/memory-engine/              The memory engine (CPython 3.12)
     ├── src/custom_memory_engine/
     │   ├── api/          Engine.call, contract (32 ops), handlers, wiring
     │   ├── engine/       retrieval, channels, staleness, deletion, verification, procedures

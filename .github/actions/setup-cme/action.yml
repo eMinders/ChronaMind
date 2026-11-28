@@ -1,8 +1,8 @@
-name: Set up custom-memory-engine
+name: Set up core/memory-engine
 description: >-
-  Install the pinned uv and sync custom-memory-engine from its lockfile (frozen).
+  Install the pinned uv and sync core/memory-engine from its lockfile (frozen).
   Single source of truth for the uv version used by every engine CI job; Python comes from
-  custom-memory-engine/.python-version.
+  core/memory-engine/.python-version.
   Requires the repository to be checked out first.
 
 inputs:
@@ -18,14 +18,14 @@ runs:
       with:
         version: "0.13.7"
         # Only the engine's lock keys its cache: a root uv.lock change must not invalidate it (and vice versa).
-        cache-dependency-glob: custom-memory-engine/uv.lock
+        cache-dependency-glob: core/memory-engine/uv.lock
     - name: uv sync --frozen
       shell: bash
-      working-directory: custom-memory-engine
+      working-directory: core/memory-engine
       env:
         EXTRAS: ${{ inputs.extras }}
       run: |
-        # The interpreter comes from custom-memory-engine/.python-version (one source for CI and local runs).
+        # The interpreter comes from core/memory-engine/.python-version (one source for CI and local runs).
         args=(--frozen)
         for extra in $EXTRAS; do args+=(--extra "$extra"); done
         uv sync "${args[@]}"

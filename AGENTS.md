@@ -1,16 +1,16 @@
 # AI Agent Development Guide — the FastAPI application
 
-This document provides essential guidelines for AI agents working on this LangGraph FastAPI Agent project: `app/`, `evals/`,
-`alembic/`, `docs/`, and the root packaging files. It is the FastAPI/LangGraph template's guide.
+This document provides essential guidelines for AI agents working on this LangGraph FastAPI Agent project: `apps/api/app/`, `apps/api/evals/`,
+`apps/api/alembic/`, `apps/api/docs/`, and the root packaging files. It is the FastAPI/LangGraph template's guide.
 
-> **Scope.** This file governs the root **application** only (CPython 3.14, root `pyproject.toml`/`uv.lock`, `make check`).
-> It does **not** apply to `custom-memory-engine/`, which is a separate project with its own interpreter (CPython 3.12),
+> **Scope.** This file governs the API workspace **application** only (CPython 3.14, `apps/api/pyproject.toml`/`apps/api/uv.lock`, `make check`).
+> It does **not** apply to `core/memory-engine/`, which is a separate project with its own interpreter (CPython 3.12),
 > its own Ruff/Pyright/lock, its own CI job, and its own instructions in
-> [`custom-memory-engine/CLAUDE.md`](custom-memory-engine/CLAUDE.md). A rule below is not evidence about the engine, and
+> [`core/memory-engine/CLAUDE.md`](core/memory-engine/CLAUDE.md). A rule below is not evidence about the engine, and
 > must never be used to review an engine change.
 >
 > Two rules below are already **false in the code this file governs**, and are marked where they appear: the import rule
-> (both projects use deliberate guarded/lazy imports) and the rate-limiter rule (four `app/api/v1/auth.py` session routes
+> (both projects use deliberate guarded/lazy imports) and the rate-limiter rule (four `apps/api/app/api/v1/auth.py` session routes
 > have none). Do not enforce either retroactively; do not extend the import rule to new lazy imports without a reason.
 
 ## First-Time Setup & Installation
@@ -27,7 +27,7 @@ Run one of the automated setup scripts to bootstrap the repository (downloads `u
   ```
 - **Cross-Platform / CLI**:
   ```bash
-  uv run python scripts/setup.py
+  uv run --project apps/api python apps/api/scripts/setup.py
   # or
   make setup
   ```
@@ -41,7 +41,7 @@ make dev                  # Dev server with hot reload (port 8000 via run.py)
 make lint                 # ruff check .
 make format               # ruff format .
 make typecheck            # uv run pyright (static type check)
-make test                 # root app tests (tests/, no services needed)
+make test                 # API workspace tests (tests/, no services needed)
 make check                # lint + format-check + typecheck + test (= CI `checks`)
 make eval                 # Run LLM evals (interactive)
 make eval-quick           # Run LLM evals (default settings)
@@ -55,25 +55,11 @@ make stack-up ENV=development  # Full stack: API + DB + Prometheus + Grafana
 
 ## Project Structure
 
-```
-app/
-  api/v1/          # Route handlers (auth.py, chatbot.py, api.py)
-  core/
-    config.py      # Pydantic Settings config
-    database.py    # Async DB setup
-    langgraph/     # LangGraph agent graph + tools
-    logging.py     # structlog setup
-    llm.py         # LLM service with retry logic
-    limiter.py     # Rate limiting (slowapi)
-    metrics.py     # Prometheus metrics
-    middleware.py  # ASGI middleware
-    prompts/       # System prompts
-  models/          # SQLModel ORM models
-  schemas/         # Pydantic request/response schemas + graph state
-  services/        # Business logic services
-  utils/           # Shared utilities
-evals/             # LLM evaluation framework (Langfuse-based)
-scripts/           # Environment setup, Docker build scripts
+```text
+apps/api/app/       # FastAPI application
+apps/api/evals/     # LLM evaluations
+apps/api/alembic/   # API database migrations
+apps/api/scripts/   # API workspace tooling
 ```
 
 ## Project Overview
@@ -82,15 +68,15 @@ This is a production-ready AI agent application built with:
 - **LangGraph** for stateful, multi-step AI agent workflows
 - **FastAPI** for high-performance async REST API endpoints
 - **Langfuse** for LLM observability and tracing
-- **PostgreSQL + pgvector** for long-term memory storage (mem0ai)
+- **PostgreSQL + pgvector** for API persistence and LangGraph checkpoints
 - **JWT authentication** with session management
 - **Prometheus + Grafana** for monitoring
 
 ## Quick Reference: Critical Rules
 
 ### Import Rules
-- Keep imports at the top of the file, **except for an optional dependency**: `app/core/cache.py` (redis),
-  `app/core/middleware.py` (pyinstrument) and `app/services/llm/router.py` (provider SDKs) import inside a
+- Keep imports at the top of the file, **except for an optional dependency**: `apps/api/app/core/cache.py` (redis),
+  `apps/api/app/core/middleware.py` (pyinstrument) and `apps/api/app/services/llm/router.py` (provider SDKs) import inside a
   `TYPE_CHECKING`/`try` block on purpose, so the application runs without that extra installed. A guarded optional
   import is the one correct place for an import below the top, and it needs its `# pyright: ignore[reportMissingImports]`.
 - The memory engine's deliberate lazy imports are **not** covered by this rule, and are not violations of it.
@@ -117,7 +103,7 @@ This is a production-ready AI agent application built with:
 
 ### FastAPI Rules
 - **New** routes must have rate limiting decorators (`@limiter.limit(settings.RATE_LIMIT_ENDPOINTS[...])`). The four
-  `app/api/v1/auth.py` session routes (`POST /session`, `PATCH /session/{id}/name`, `DELETE /session/{id}`,
+  `apps/api/app/api/v1/auth.py` session routes (`POST /session`, `PATCH /session/{id}/name`, `DELETE /session/{id}`,
   `GET /sessions`) predate this rule and do not have one: adding it is a behavioural change for existing clients, so it
   is a tracked decision, not a drive-by fix.
 - Use dependency injection for services, database connections, and auth
@@ -144,7 +130,7 @@ This is a production-ready AI agent application built with:
 
 ### Graph Structure
 - Use `StateGraph` for building AI agent workflows
-- Define clear state schemas using Pydantic models (see `app/schemas/graph.py`)
+- Define clear state schemas using Pydantic models (see `apps/api/app/schemas/graph.py`)
 - Use `CompiledStateGraph` for production workflows
 - Implement `AsyncPostgresSaver` for checkpointing and persistence
 - Use `Command` for controlling graph flow between nodes
@@ -155,9 +141,9 @@ This is a production-ready AI agent application built with:
 
 ### Memory (the ChronaMind engine, over HTTP)
 
-Long-term memory is the engine in `custom-memory-engine/`, reached only over `POST {MEMORY_ENGINE_URL}/v1/call`
-(`app/services/memory_engine.py`, `V2-D93`). The `mem0ai` client is retired: never import or extend it. The full
-reference is [`docs/memory.md`](docs/memory.md).
+Long-term memory is the engine in `core/memory-engine/`, reached only over `POST {MEMORY_ENGINE_URL}/v1/call`
+(`apps/api/app/services/memory_engine.py`, `V2-D93`). The `mem0ai` client is retired: never import or extend it. The full
+reference is [`apps/api/docs/memory.md`](apps/api/docs/memory.md).
 
 **Two engine tokens, two clients, never swapped.** Both are delegating tokens on the engine host, which take their tier
 from the token and act for the end user named as `principal` (`V2-D120`, threat `T-42`).
@@ -165,24 +151,24 @@ from the token and act for the end user named as `principal` (`V2-D120`, threat 
 | Setting | Tier | Client | Used by |
 | --- | --- | --- | --- |
 | `MEMORY_ENGINE_TOKEN` | B | `memory_engine` | the agent only: `search()` before a reply, `add()` after it |
-| `MEMORY_ENGINE_USER_TOKEN` | C | `memory_inspector` | the `/api/v1/memory/*` routes only (`app/api/v1/memory.py`) |
+| `MEMORY_ENGINE_USER_TOKEN` | C | `memory_inspector` | the `/api/v1/memory/*` routes only (`apps/api/app/api/v1/memory.py`) |
 
 - Tier C can `delete`, `adjudicate`, `export` and run `audit_as_of` for **every** end user, which Tier B cannot. Never give
   the agent path the Tier C token, and never add an agent or tool call that uses `memory_inspector`. A test
-  (`tests/test_memory_inspector_client.py`) fails if the agent's client sends the inspector token.
+  (`apps/api/tests/test_memory_inspector_client.py`) fails if the agent's client sends the inspector token.
 - The `principal` is always `str(user.id)` from the authenticated user (`get_current_user`), never a value taken from the
   request. No request field may name a principal or a tier.
 - An empty `MEMORY_ENGINE_USER_TOKEN` disables the inspector routes (HTTP 503 `inspector_not_configured`). The agent's
   memory is unaffected.
 - Real token values live only in the gitignored `.env*` files and in the engine host's `CME_HOST_TOKENS`.
   `.env.example` carries the key with an empty value. Never commit a real one.
-- A new or changed inspector route or response model needs `uv run python scripts/export_openapi.py`; CI fails while
-  `docs/api/openapi.json` is stale.
+- A new or changed inspector route or response model needs `uv run python apps/api/scripts/export_openapi.py`; CI fails while
+  `apps/api/docs/api/openapi.json` is stale.
 
 ## Authentication & Security
 
 - Use JWT tokens for authentication
-- Implement session-based user management (see `app/api/v1/auth.py`)
+- Implement session-based user management (see `apps/api/app/api/v1/auth.py`)
 - Use `get_current_session` dependency for protected endpoints
 - Store sensitive data in environment variables
 - Validate all user inputs with Pydantic models
@@ -190,7 +176,7 @@ from the token and act for the end user named as `principal` (`V2-D120`, threat 
 ## Database Operations
 
 - Use SQLModel for ORM models (combines SQLAlchemy + Pydantic)
-- Define models in `app/models/` directory
+- Define models in `apps/api/app/models/` directory
 - Use async database operations with asyncpg
 - Use LangGraph's AsyncPostgresSaver for agent checkpointing
 
@@ -211,15 +197,15 @@ from the token and act for the end user named as `principal` (`V2-D120`, threat 
 
 ## Testing & Evaluation
 
-- Implement metric-based evaluations for LLM outputs (see `evals/` directory)
-- Create custom evaluation metrics as markdown files in `evals/metrics/prompts/`
+- Implement metric-based evaluations for LLM outputs (see `apps/api/evals/` directory)
+- Create custom evaluation metrics as markdown files in `apps/api/evals/metrics/prompts/`
 - Use Langfuse traces for evaluation data sources
 - Generate JSON reports with success rates
 
 ## Configuration Management
 
 - Use environment-specific configuration files (`.env.development`, `.env.staging`, `.env.production`)
-- Use Pydantic Settings for type-safe configuration (see `app/core/config.py`)
+- Use Pydantic Settings for type-safe configuration (see `apps/api/app/core/config.py`)
 - Never hardcode secrets or API keys
 
 ## Key Dependencies
@@ -230,7 +216,7 @@ from the token and act for the end user named as `principal` (`V2-D120`, threat 
 - **Langfuse** - LLM observability and tracing
 - **Pydantic v2** - Data validation and settings
 - **structlog** - Structured logging
-- **mem0ai** - Long-term memory management
+- **ChronaMind memory engine** - Long-term memory over HTTP
 - **PostgreSQL + pgvector** - Database and vector storage
 - **SQLModel** - ORM for database models
 - **tenacity** - Retry logic
