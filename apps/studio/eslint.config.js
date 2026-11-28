@@ -7,7 +7,13 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist/", "dist-mock/", "playwright-report/", "test-results/"],
+    ignores: [
+      "dist/",
+      "dist-mock/",
+      "playwright-report/",
+      "test-results/",
+      "src/api/schema.d.ts",
+    ],
   },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
@@ -25,6 +31,21 @@ export default tseslint.config(
       "react-refresh/only-export-components": [
         "warn",
         { allowConstantExport: true },
+      ],
+    },
+  },
+  {
+    // Only src/api/ talks to the server: components use its typed functions, so
+    // tokens, timeouts and error shapes are handled in one place.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/api/**", "src/**/*.test.{ts,tsx}", "src/test/**"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "fetch",
+          message: "Call the typed functions in src/api/ instead of fetch.",
+        },
       ],
     },
   },

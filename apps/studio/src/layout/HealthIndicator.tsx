@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { getMemoryHealth } from "@/api/memory";
 import type { EngineHealth } from "@/api/types";
 import { cn } from "@/lib/utils";
 
@@ -27,18 +28,6 @@ const HEALTH_STYLE: Record<
   },
 };
 
-async function fetchEngineHealth(signal?: AbortSignal): Promise<EngineHealth> {
-  const response = await fetch("/api/v1/memory/health", {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    throw new Error(`Health check failed with status ${response.status}`);
-  }
-  return (await response.json()) as EngineHealth;
-}
-
 export interface HealthIndicatorProps {
   /** Static state override for component galleries and tests. */
   statusOverride?: HealthDisplayState;
@@ -51,7 +40,7 @@ export function HealthIndicator({
 }: HealthIndicatorProps) {
   const query = useQuery<EngineHealth>({
     queryKey: ["memory-health"],
-    queryFn: ({ signal }) => fetchEngineHealth(signal),
+    queryFn: ({ signal }) => getMemoryHealth(signal),
     refetchInterval: HEALTH_POLL_INTERVAL_MS,
     refetchIntervalInBackground: false,
     retry: false,

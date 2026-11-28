@@ -56,6 +56,7 @@
           }
         },
         "required": [
+          "request_id",
           "id",
           "effect",
           "recorded_at"
@@ -177,7 +178,9 @@
           }
         },
         "required": [
-          "outcome"
+          "outcome",
+          "previous",
+          "current"
         ],
         "title": "ChangeOut",
         "type": "object"
@@ -210,8 +213,10 @@
           }
         },
         "required": [
+          "request_id",
           "start",
-          "end"
+          "end",
+          "changes"
         ],
         "title": "ChangesView",
         "type": "object"
@@ -334,7 +339,12 @@
         "required": [
           "deletion_epoch",
           "deleted_versions",
-          "dependents"
+          "dependents",
+          "rederived_dependents",
+          "retired_dependents",
+          "deleted_turns",
+          "deleted_entities",
+          "deleted_mentions"
         ],
         "title": "DeletionCounts",
         "type": "object"
@@ -404,6 +414,12 @@
             "title": "Old Item Not Found"
           }
         },
+        "required": [
+          "chat_history_cleared",
+          "memory_list_empty",
+          "export_artifact_count",
+          "old_item_not_found"
+        ],
         "title": "ForgetChecks",
         "type": "object"
       },
@@ -449,8 +465,10 @@
           }
         },
         "required": [
+          "request_id",
           "receipt",
           "cleared_chat_sessions",
+          "failed_chat_sessions",
           "checks"
         ],
         "title": "ForgetResult",
@@ -568,7 +586,12 @@
           "lifecycle",
           "channel",
           "content",
-          "verification"
+          "verification",
+          "label",
+          "support_summary",
+          "bound",
+          "conflict_sides",
+          "sources"
         ],
         "title": "MemoryItem",
         "type": "object"
@@ -678,7 +701,13 @@
           "lifecycle",
           "channel",
           "content",
-          "verification"
+          "verification",
+          "label",
+          "support_summary",
+          "bound",
+          "conflict_sides",
+          "sources",
+          "request_id"
         ],
         "title": "MemoryItemResponse",
         "type": "object"
@@ -730,6 +759,14 @@
             "type": "string"
           }
         },
+        "required": [
+          "request_id",
+          "known_facts",
+          "hypotheses",
+          "procedures",
+          "conflicts",
+          "conversation"
+        ],
         "title": "MemoryView",
         "type": "object"
       },
@@ -810,9 +847,11 @@
           }
         },
         "required": [
+          "request_id",
           "id",
           "depth",
-          "depth_limited"
+          "depth_limited",
+          "edges"
         ],
         "title": "ProvenanceOut",
         "type": "object"
@@ -899,6 +938,7 @@
         },
         "required": [
           "readable",
+          "source_type",
           "derivation_type",
           "ref"
         ],
@@ -937,7 +977,10 @@
           }
         },
         "required": [
-          "at"
+          "request_id",
+          "at",
+          "beliefs",
+          "conversation"
         ],
         "title": "TimelineView",
         "type": "object"

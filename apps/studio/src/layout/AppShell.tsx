@@ -7,7 +7,9 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { useOptionalAuth } from "@/auth/context";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { HealthIndicator } from "./HealthIndicator";
 
@@ -44,6 +46,32 @@ export function ModeBadge({ mode, className }: ModeBadgeProps) {
   );
 }
 
+/** The signed-in user and a sign-out button; nothing when nobody is signed in. */
+export function UserMenu() {
+  const session = useOptionalAuth();
+  if (!session?.auth) {
+    return null;
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className="max-w-48 truncate text-xs text-muted-foreground"
+        title={session.auth.email}
+      >
+        {session.auth.email}
+      </span>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={session.logout}
+      >
+        Sign out
+      </Button>
+    </div>
+  );
+}
+
 export interface AppShellProps {
   children?: ReactNode;
   demoMode?: DemoMode;
@@ -64,6 +92,7 @@ export function AppShell({ children, demoMode }: AppShellProps) {
         <div className="flex flex-wrap items-center gap-2.5">
           <HealthIndicator />
           <ModeBadge mode={resolvedMode} />
+          <UserMenu />
         </div>
       </header>
 

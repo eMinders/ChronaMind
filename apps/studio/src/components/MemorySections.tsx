@@ -55,7 +55,10 @@ export function MemorySections({ view, onOpen }: MemorySectionsProps) {
         );
       })}
 
-      <details className="rounded-md border border-border bg-muted/25 p-3">
+      <details
+        data-testid="conversation-record"
+        className="rounded-md border border-border bg-muted/25 p-3"
+      >
         <summary className="cursor-pointer list-item text-sm font-semibold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
           Conversation record ({view.conversation.length})
         </summary>

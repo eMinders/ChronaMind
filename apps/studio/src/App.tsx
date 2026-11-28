@@ -1,7 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { AuthProvider } from "@/auth/AuthProvider";
+import { RequireAuth } from "@/auth/RequireAuth";
 import { AppShell } from "@/layout/AppShell";
+import { Chat } from "@/pages/Chat";
+import { Login } from "@/pages/Login";
 import { DevComponents } from "@/pages/DevComponents";
 
 function createQueryClient() {
@@ -35,76 +39,82 @@ export interface AppRoutesProps {
 
 export function AppRoutes({ devMode = import.meta.env.DEV }: AppRoutesProps) {
   return (
-    <Routes>
-      <Route element={<AppShell />}>
-        <Route
-          index
-          element={
-            <PlaceholderPage
-              title="ChronaMind Studio"
-              description="Select a workspace view from the navigation rail."
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route element={<AppShell />}>
+          <Route
+            index
+            element={
+              <PlaceholderPage
+                title="ChronaMind Studio"
+                description="Select a workspace view from the navigation rail."
+              />
+            }
+          />
+          <Route element={<RequireAuth />}>
+            <Route path="/chat" element={<Chat />} />
+            <Route
+              path="/memory"
+              element={
+                <PlaceholderPage
+                  title="Memory"
+                  description="Memory Explorer arrives in WEB-06."
+                />
+              }
             />
-          }
-        />
-        <Route
-          path="/chat"
-          element={
-            <PlaceholderPage
-              title="Chat"
-              description="Live chat and side-by-side memory panel arrive in WEB-05."
+            <Route
+              path="/time"
+              element={
+                <PlaceholderPage
+                  title="Time Travel"
+                  description="Belief-time inspection arrives in WEB-09."
+                />
+              }
             />
-          }
-        />
-        <Route
-          path="/memory"
-          element={
-            <PlaceholderPage
-              title="Memory"
-              description="Memory Explorer arrives in WEB-06."
+            <Route
+              path="/forget"
+              element={
+                <PlaceholderPage
+                  title="Forget"
+                  description="Erasure and verification receipt arrive in WEB-10."
+                />
+              }
             />
-          }
-        />
-        <Route
-          path="/time"
-          element={
-            <PlaceholderPage
-              title="Time Travel"
-              description="Belief-time inspection arrives in WEB-09."
+            <Route
+              path="/memory/:id"
+              element={
+                <PlaceholderPage
+                  title="Memory item"
+                  description="The memory detail drawer arrives in WEB-07."
+                />
+              }
             />
-          }
-        />
-        <Route
-          path="/forget"
-          element={
-            <PlaceholderPage
-              title="Forget"
-              description="Erasure and verification receipt arrive in WEB-10."
-            />
-          }
-        />
-        <Route
-          path="/about"
-          element={
-            <PlaceholderPage
-              title="Evidence"
-              description="Architecture, status legend, and measured results arrive in WEB-11."
-            />
-          }
-        />
-        {devMode ? (
-          <Route path="/dev/components" element={<DevComponents />} />
-        ) : null}
-        <Route
-          path="*"
-          element={
-            <PlaceholderPage
-              title="Page not found"
-              description="The requested route is not available."
-            />
-          }
-        />
-      </Route>
-    </Routes>
+          </Route>
+          <Route
+            path="/about"
+            element={
+              <PlaceholderPage
+                title="Evidence"
+                description="Architecture, status legend, and measured results arrive in WEB-11."
+              />
+            }
+          />
+          {devMode ? (
+            <Route path="/dev/components" element={<DevComponents />} />
+          ) : null}
+          <Route
+            path="*"
+            element={
+              <PlaceholderPage
+                title="Page not found"
+                description="The requested route is not available."
+              />
+            }
+          />
+        </Route>
+      </Routes>
+    </AuthProvider>
   );
 }
 
