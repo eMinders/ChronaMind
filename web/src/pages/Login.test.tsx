@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { request } from "@/api/client";
 import { AppRoutes } from "@/App";
-import { AUTH_STORAGE_KEY } from "@/auth/AuthProvider";
+import { AUTH_STORAGE_KEY, sessionStore } from "@/auth/sessionStore";
 import { json, stubApi } from "@/test/apiStub";
 
 const SESSION = {
@@ -38,7 +38,10 @@ async function fillAndSubmit(fields: Record<string, string>, submit: string) {
   return user;
 }
 
-beforeEach(() => sessionStorage.clear());
+beforeEach(() => {
+  sessionStorage.clear();
+  sessionStore.reload();
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -180,6 +183,7 @@ describe("The session", () => {
 
   it("survives a reload (restored from sessionStorage)", async () => {
     sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(saved));
+    sessionStore.reload();
     stubApi({ "GET /api/v1/memory/health": HEALTH });
     renderAt("/chat");
 
@@ -198,6 +202,7 @@ describe("The session", () => {
 
   it("a 401 on a signed-in call clears the session and says it expired", async () => {
     sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(saved));
+    sessionStore.reload();
     stubApi({
       "GET /api/v1/memory/health": HEALTH,
       "GET /api/v1/memory/": json(401, {
@@ -217,6 +222,7 @@ describe("The session", () => {
 
   it("sign out clears both tokens and returns to sign in", async () => {
     sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(saved));
+    sessionStore.reload();
     stubApi({ "GET /api/v1/memory/health": HEALTH });
     renderAt("/chat");
 
