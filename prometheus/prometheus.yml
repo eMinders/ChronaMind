@@ -13,9 +13,9 @@ scrape_configs:
     static_configs:
       - targets: ['cadvisor:8080']
 
-  # Custom Memory Engine HTTP host (`custom-memory-engine/src/custom_memory_engine/host/app.py`).
+  # Custom Memory Engine HTTP host (`core/memory-engine/src/custom_memory_engine/host/app.py`).
   # Host binds 127.0.0.1:8100 by default; update target to your host service address when deployed via Docker/systemd.
-  - job_name: 'custom-memory-engine'
+  - job_name: 'core/memory-engine'
     metrics_path: '/metrics'
     scheme: 'http'
     static_configs:

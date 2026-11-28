@@ -9,12 +9,12 @@ actionlint over every workflow).
 |---|---|
 | Parent Epic | [`tickets/EPIC-demo-interface.md`](EPIC-demo-interface.md) |
 | Repository guide | [`CLAUDE.md`](../CLAUDE.md), [`REVIEW.md`](../REVIEW.md) |
-| Workflow conventions | [`.github/workflows/README.md`](../.github/workflows/README.md); `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2–1.3 |
+| Workflow conventions | [`.github/workflows/README.md`](../.github/workflows/README.md); `core/memory-engine/PLAN/CONTRIBUTING.md` §1.2–1.3 |
 | Existing root workflow | [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml) |
 
 ---
 
-## [CI-01] · Web workflow and the repository guide row for `web/`
+## [CI-01] · Web workflow and the repository guide row for `apps/studio/`
 
 **Label:** ci, feature
 **Plan task:** none
@@ -25,8 +25,8 @@ actionlint over every workflow).
 
 ### Objective
 
-Add `.github/workflows/web.yaml` with one job, `web`, that runs `npm ci` and `npm run check` in `web/` on every pull
-request and every push to `main`. Add a `web/**` row to the routing table in `CLAUDE.md`, so every contributor and
+Add `.github/workflows/web.yaml` with one job, `apps/studio`, that runs `npm ci` and `npm run check` in `apps/studio/` on every pull
+request and every push to `main`. Add a `apps/studio/**` row to the routing table in `CLAUDE.md`, so every contributor and
 agent knows which toolchain verifies the folder.
 
 ### Background and Current State
@@ -37,8 +37,8 @@ agent knows which toolchain verifies the folder.
 - No workflow uses `actions/setup-node` yet.
 - The repository rule: workflows have no `paths:` filter, because a filtered workflow never reports and a required
   check would hang.
-- `CLAUDE.md`'s routing table has rows for `custom-memory-engine/**`, the app, `.github/**` and the Claude
-  configuration, and none for `web/**`.
+- `CLAUDE.md`'s routing table has rows for `core/memory-engine/**`, the app, `.github/**` and the Claude
+  configuration, and none for `apps/studio/**`.
 
 ### Acceptance Criteria
 
@@ -48,20 +48,20 @@ agent knows which toolchain verifies the folder.
   `persist-credentials: false`.
 - Every `uses:` is pinned to a full 40-character commit SHA with a version comment. `actions/checkout` uses the same
   SHA as `ci.yaml`.
-- Node comes from `web/.nvmrc` through `actions/setup-node`, with the npm cache keyed on `web/package-lock.json`.
+- Node comes from `apps/studio/.nvmrc` through `actions/setup-node`, with the npm cache keyed on `apps/studio/package-lock.json`.
 - The job runs `npm ci` and `npm run check` with `working-directory: web`, and fails when either fails. The PR shows
   one red run caused by a deliberate lint error, then reverts it.
 - `make check` (actionlint) passes with the new workflow.
-- `CLAUDE.md` gains the row: ``| `web/**` — the demo interface | `web/README.md`, `tickets/EPIC-demo-interface.md` |
-  Node **22** LTS (`web/.nvmrc`) | `cd web && npm run check` |``.
-- Branch protection is not changed. The PR body states that making `web` a required check is the owner's decision.
+- `CLAUDE.md` gains the row: ``| `apps/studio/**` — the demo interface | `apps/studio/README.md`, `tickets/EPIC-demo-interface.md` |
+  Node **22** LTS (`apps/studio/.nvmrc`) | `cd apps/studio && npm run check` |``.
+- Branch protection is not changed. The PR body states that making `apps/studio` a required check is the owner's decision.
 
 ### Implementation
 
 ```yaml
 name: Web
 
-# web/ (the demo interface): type check, lint, format check and unit tests. No path filter: a skipped workflow never
+# apps/studio/ (the demo interface): type check, lint, format check and unit tests. No path filter: a skipped workflow never
 # reports, and a check that never reports cannot be made required later.
 
 on:
@@ -90,9 +90,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@<full-commit-sha> # <version>; see Needs confirmation
         with:
-          node-version-file: web/.nvmrc
+          node-version-file: apps/studio/.nvmrc
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: apps/studio/package-lock.json
       - name: npm ci
         run: npm ci
       - name: npm run check (typecheck, lint, format, unit tests)
@@ -103,14 +103,14 @@ jobs:
 
 ```text
 .github/workflows/web.yaml    # NEW
-CLAUDE.md                     # MODIFIED (routing-table row for web/**)
+CLAUDE.md                     # MODIFIED (routing-table row for apps/studio/**)
 ```
 
 ### Verification
 
 ```bash
 make check
-cd web && npm ci && npm run check
+cd apps/studio && npm ci && npm run check
 ```
 
 ### Dependencies
@@ -133,7 +133,7 @@ cd web && npm ci && npm run check
 ### Objective
 
 Extend the `app-engine-boundary` job in `.github/workflows/ci.yaml` to also run
-`tests/integration/test_memory_router_live.py`. Every PR then proves the memory router against a real engine host
+`apps/api/tests/integration/test_memory_router_live.py`. Every PR then proves the memory router against a real engine host
 and PostgreSQL in a required check, and a change to the engine's result shapes that breaks the interface fails CI
 before it reaches the web app.
 
@@ -141,9 +141,9 @@ before it reaches the web app.
 
 - `app-engine-boundary` is a required check. It starts `pgvector/pgvector:0.8.7-pg16-bookworm` (pinned by digest),
   syncs both interpreters, and creates the `vector`, `btree_gist` and `pg_trgm` extensions in `public`.
-- Its pytest step runs only `tests/integration/test_app_engine_boundary.py` and fails when the output reports any
+- Its pytest step runs only `apps/api/tests/integration/test_app_engine_boundary.py` and fails when the output reports any
   skip.
-- APP-03 adds `tests/integration/test_memory_router_live.py`, with the same skip conditions (engine interpreter,
+- APP-03 adds `apps/api/tests/integration/test_memory_router_live.py`, with the same skip conditions (engine interpreter,
   `CME_TEST_DATABASE_URL`). APP-04 and APP-05 extend it.
 
 ### Acceptance Criteria
@@ -164,8 +164,8 @@ before it reaches the web app.
         # the job silently tested nothing: the step fails on it instead of reporting success.
         run: |
           uv run --no-sync pytest -q -rs -m integration \
-            tests/integration/test_app_engine_boundary.py \
-            tests/integration/test_memory_router_live.py | tee /tmp/boundary.txt
+            apps/api/tests/integration/test_app_engine_boundary.py \
+            apps/api/tests/integration/test_memory_router_live.py | tee /tmp/boundary.txt
           if grep -qiE "[0-9]+ skipped" /tmp/boundary.txt; then echo "a boundary test skipped"; exit 1; fi
 ```
 
@@ -179,7 +179,7 @@ before it reaches the web app.
 
 ```bash
 make check
-CME_TEST_DATABASE_URL=<placeholder-dsn> uv run pytest -q -rs -m integration tests/integration/test_app_engine_boundary.py tests/integration/test_memory_router_live.py
+CME_TEST_DATABASE_URL=<placeholder-dsn> cd apps/api && uv run pytest -q -rs -m integration apps/api/tests/integration/test_app_engine_boundary.py apps/api/tests/integration/test_memory_router_live.py
 ```
 
 ### Dependencies
@@ -201,13 +201,13 @@ CME_TEST_DATABASE_URL=<placeholder-dsn> uv run pytest -q -rs -m integration test
 
 ### Objective
 
-Add two steps to the `web` job: regenerate `web/src/api/schema.d.ts` from `docs/api/openapi.json` and fail on any
+Add two steps to the `apps/studio` job: regenerate `apps/studio/src/api/schema.d.ts` from `apps/api/docs/api/openapi.json` and fail on any
 difference, then build the mock bundle and run the Playwright demo spec against it. A backend change that is not
 followed by the web types, or a screen change that breaks a journey, fails the PR.
 
 ### Background and Current State
 
-- `npm run gen:api` (WEB-02) generates the types from `docs/api/openapi.json`. `tests/test_openapi_export.py` (APP-07)
+- `npm run gen:api` (WEB-02) generates the types from `apps/api/docs/api/openapi.json`. `apps/api/tests/test_openapi_export.py` (APP-07)
   already keeps that document equal to the app.
 - `npm run build:mock` and `npm run e2e:mock` (WEB-13) need no backend and no LLM.
 - Playwright needs its Chromium build, installed with `npx playwright install --with-deps chromium`.
@@ -217,7 +217,7 @@ followed by the web types, or a screen change that breaks a journey, fails the P
 - After `npm ci`, the job runs `npm run gen:api`, then `git diff --exit-code src/api/schema.d.ts`, and fails on a
   difference. The PR shows one red run caused by a hand edit of the generated file, then reverts it.
 - The job installs Chromium and runs `npm run build:mock` and `npm run e2e:mock`. It fails when any journey fails.
-- On failure, `web/test-results/` is uploaded as an artifact with `actions/upload-artifact`, pinned by commit SHA,
+- On failure, `apps/studio/test-results/` is uploaded as an artifact with `actions/upload-artifact`, pinned by commit SHA,
   with retention of 7 days.
 - `timeout-minutes` covers the measured run, and the PR states both numbers.
 - The job still has no `paths:` filter, and `make check` (actionlint) passes.
@@ -225,7 +225,7 @@ followed by the web types, or a screen change that breaks a journey, fails the P
 ### Implementation
 
 ```yaml
-      - name: API types match docs/api/openapi.json
+      - name: API types match apps/api/docs/api/openapi.json
         run: |
           npm run gen:api
           git diff --exit-code src/api/schema.d.ts
@@ -240,7 +240,7 @@ followed by the web types, or a screen change that breaks a journey, fails the P
         uses: actions/upload-artifact@<full-commit-sha> # <version>; see Needs confirmation
         with:
           name: web-test-results
-          path: web/test-results/
+          path: apps/studio/test-results/
           retention-days: 7
 ```
 
@@ -254,8 +254,8 @@ followed by the web types, or a screen change that breaks a journey, fails the P
 
 ```bash
 make check
-cd web && npm run gen:api && git diff --exit-code src/api/schema.d.ts
-cd web && npm run build:mock && npm run e2e:mock
+cd apps/studio && npm run gen:api && git diff --exit-code src/api/schema.d.ts
+cd apps/studio && npm run build:mock && npm run e2e:mock
 ```
 
 ### Dependencies
@@ -271,4 +271,4 @@ cd web && npm run build:mock && npm run e2e:mock
 - The full commit SHAs and versions of the current `actions/setup-node` and `actions/upload-artifact` releases.
   Neither is used anywhere in the repository yet. Look them up on the action's release page and pin them the way
   `ci.yaml` pins `actions/checkout`.
-- Whether the owner makes `web` a required check after CI-01 merges.
+- Whether the owner makes `apps/studio` a required check after CI-01 merges.

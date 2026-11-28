@@ -9,7 +9,7 @@ name: Claude Code Review
 # never reviewed) and restrict its bug agents to the diff. Measured over 106 pull requests it posted 106 "No issues
 # found" summaries and four inline findings, while the defects it was meant to catch were found later by hand (#228,
 # #229). The skill reads REVIEW.md and the engine's CLAUDE.md from the BASE branch, so a pull request cannot edit the
-# standard it is reviewed against. Both behaviours are pinned by custom-memory-engine/tests/test_claude_integration.py.
+# standard it is reviewed against. Both behaviours are pinned by core/memory-engine/tests/test_claude_integration.py.
 #
 # Two reviewers must never run on one PR. If Code Review (the managed service, an Owner setting) is enabled for this
 # repository, set the repository variable CLAUDE_REVIEW_MODE=native and this job skips before minting any token.
@@ -72,7 +72,7 @@ jobs:
 
       - name: Decide whether this push needs a review, and at which tier
         # Two decisions, taken before the model is paid for (`.github/scripts/review_gate.py`, unit-tested in
-        # `custom-memory-engine/tests/test_review_gate.py`):
+        # `core/memory-engine/tests/test_review_gate.py`):
         #   tier   read from the review history on the PR, not inferred from the shape of the diff. A base branch that
         #          advances moves the diff range, and a reviewer that infers its tier from the diff then calls itself a
         #          first review, re-reports nothing and leaves its own threads open (the canary did exactly this).
@@ -131,13 +131,13 @@ jobs:
           fi
           test -f .claude/skills/review-pr/SKILL.md
           # 2. The reviewed tree carries the base branch's instructions.
-          for path in REVIEW.md CLAUDE.md AGENTS.md custom-memory-engine/CLAUDE.md .claude; do
+          for path in REVIEW.md CLAUDE.md AGENTS.md core/memory-engine/CLAUDE.md .claude; do
             if git cat-file -e "HEAD:$path" 2>/dev/null; then
               rm -rf "pr-head/${path:?}"
               git archive HEAD "$path" | tar -x -C pr-head
             fi
           done
-          for path in REVIEW.md custom-memory-engine/CLAUDE.md; do
+          for path in REVIEW.md core/memory-engine/CLAUDE.md; do
             if [ -f "$path" ]; then diff -q "$path" "pr-head/$path"; fi
           done
 

@@ -1,6 +1,6 @@
 # Tickets — Epic: ChronaMind Studio demo interface — Label: app
 
-Side: `app/**`, `evals/**`, `alembic/**`, `docs/**`, and the root `scripts/` and `tests/` that run on the app's
+Side: `apps/api/app/**`, `apps/api/evals/**`, `apps/api/alembic/**`, `apps/api/docs/**`, and the root `scripts/` and `apps/api/tests/` that run on the app's
 interpreter (CPython 3.14). Verify with `make check` at the repository root.
 
 ## References
@@ -9,10 +9,10 @@ interpreter (CPython 3.14). Verify with `make check` at the repository root.
 |---|---|
 | Parent Epic | [`tickets/EPIC-demo-interface.md`](EPIC-demo-interface.md) |
 | App rules | [`AGENTS.md`](../AGENTS.md), [`CLAUDE.md`](../CLAUDE.md) |
-| App memory client | [`app/services/memory_engine.py`](../app/services/memory_engine.py) |
-| Live boundary test recipe | [`tests/integration/test_app_engine_boundary.py`](../tests/integration/test_app_engine_boundary.py) |
-| Engine API reference | [`custom-memory-engine/PLAN/V2/API_V2.md`](../custom-memory-engine/PLAN/V2/API_V2.md) §4.1–4.9 |
-| Delegating tokens | [`custom-memory-engine/PLAN/V2/DECISIONS_V2.md`](../custom-memory-engine/PLAN/V2/DECISIONS_V2.md) `V2-D120`; `THREAT_MODEL.md` `T-42` |
+| App memory client | [`apps/api/app/services/memory_engine.py`](../app/services/memory_engine.py) |
+| Live boundary test recipe | [`apps/api/tests/integration/test_app_engine_boundary.py`](../apps/api/tests/integration/test_app_engine_boundary.py) |
+| Engine API reference | [`core/memory-engine/PLAN/V2/API_V2.md`](../core/memory-engine/PLAN/V2/API_V2.md) §4.1–4.9 |
+| Delegating tokens | [`core/memory-engine/PLAN/V2/DECISIONS_V2.md`](../core/memory-engine/PLAN/V2/DECISIONS_V2.md) `V2-D120`; `THREAT_MODEL.md` `T-42` |
 
 ---
 
@@ -27,18 +27,18 @@ interpreter (CPython 3.14). Verify with `make check` at the repository root.
 
 ### Objective
 
-Add `scripts/demo/up.py`, `down.py` and `check.py`. One command starts the engine database, the engine host with two
+Add `tools/demo/up.py`, `down.py` and `check.py`. One command starts the engine database, the engine host with two
 delegating tokens, the app database and the app, and a second command proves the memory path end to end. Every later
 ticket is accepted on this stack.
 
 ### Background and Current State
 
-- The engine host runs from `custom-memory-engine/scripts/run_host.py` and needs `CME_DATABASE_URL`, `CME_RUNTIME_ROLE`,
+- The engine host runs from `core/memory-engine/scripts/run_host.py` and needs `CME_DATABASE_URL`, `CME_RUNTIME_ROLE`,
   `CME_SCHEMA`, `CME_HOST_TOKENS`, `CME_PROVENANCE_KEY` and `CME_DELETION_RECEIPT_KEY`.
-- `tests/integration/test_app_engine_boundary.py` (fixture `engine_host`) is the only proven recipe: migrate a schema
+- `apps/api/tests/integration/test_app_engine_boundary.py` (fixture `engine_host`) is the only proven recipe: migrate a schema
   with `python -m custom_memory_engine.schema.migrate apply --schema <s>` (env `RL_DATABASE_URL`), provision a role with
   `scripts/provision_role.py --schema <s> --role <r>`, then start the host lexical-only. No model files are needed.
-- The engine's interpreter is `custom-memory-engine/.venv`, which is `.venv/bin/python` on Linux and macOS and
+- The engine's interpreter is `core/memory-engine/.venv`, which is `.venv/bin/python` on Linux and macOS and
   `.venv/Scripts/python.exe` on Windows.
 - `.claude/skills/run-chronamind/` starts only the app, with no engine. On Windows with Avast it needs
   `SSLKEYLOGFILE` removed, a CA bundle shim, and the Selector event loop, which `run.py` sets.
@@ -46,21 +46,21 @@ ticket is accepted on this stack.
 
 ### Acceptance Criteria
 
-- `uv run python scripts/demo/up.py` from cold reaches a printed "all healthy" line in under 3 minutes, with app
+- `uv run python tools/demo/up.py` from cold reaches a printed "all healthy" line in under 3 minutes, with app
   `/health` and host `/healthz` both answering 200.
 - The host runs with an agent token (Tier B, delegating) and an inspector token (Tier C, delegating), both generated
-  into the gitignored `scripts/demo/.env.demo` on the first run and reused on every later run.
+  into the gitignored `tools/demo/.env.demo` on the first run and reused on every later run.
 - `CME_PROVENANCE_KEY` and `CME_DELETION_RECEIPT_KEY` keep the same values across `down.py` / `up.py` cycles until
   `down.py --wipe` removes the engine volume.
-- `scripts/demo/check.py` registers a new user, chats "I live in Berlin", then "I moved to Paris", and asserts that a
+- `tools/demo/check.py` registers a new user, chats "I live in Berlin", then "I moved to Paris", and asserts that a
   `query` as that user returns exactly one non-episode fact containing "Paris" within 20 seconds. It passes 3
   consecutive runs.
 - `down.py` stops every process `up.py` started. No process from the stack remains listening on 8000 or 8100.
-- No token, key or database URL is printed to the console or written outside `scripts/demo/.env.demo` and
-  `scripts/demo/.state/`. Both are ignored by `scripts/demo/.gitignore`, and `git status` stays clean after a run.
+- No token, key or database URL is printed to the console or written outside `tools/demo/.env.demo` and
+  `tools/demo/.state/`. Both are ignored by `tools/demo/.gitignore`, and `git status` stays clean after a run.
 - The app is started with `MEMORY_ENGINE_URL`, `MEMORY_ENGINE_TOKEN`, `MEMORY_ENGINE_USER_TOKEN` and
   `RATE_LIMIT_REGISTER=1000 per hour` taken from `.env.demo`.
-- `scripts/demo/README.md` lists the prerequisites (`uv sync`, `uv sync --locked --extra host` in the engine, Docker)
+- `tools/demo/README.md` lists the prerequisites (`uv sync`, `uv sync --locked --extra host` in the engine, Docker)
   and the three commands. The PR states the operating systems it was run on.
 
 ### Implementation
@@ -78,7 +78,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-ENGINE = ROOT / "custom-memory-engine"
+ENGINE = ROOT / "core/memory-engine"
 ENGINE_PYTHON = ENGINE / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
 STATE, ENV_FILE = HERE / ".state", HERE / ".env.demo"
 SCHEMA, ROLE = "cme_demo", "cme_demo_rt"
@@ -119,7 +119,7 @@ def prepare_engine(environment: dict[str, str]) -> None:
 ### Files
 
 ```text
-scripts/demo/
+tools/demo/
 ├── up.py           # NEW
 ├── down.py         # NEW
 ├── check.py        # NEW
@@ -130,9 +130,9 @@ scripts/demo/
 ### Verification
 
 ```bash
-uv run python scripts/demo/up.py
-uv run python scripts/demo/check.py      # three consecutive passes
-uv run python scripts/demo/down.py
+uv run python tools/demo/up.py
+uv run python tools/demo/check.py      # three consecutive passes
+uv run python tools/demo/down.py
 make check
 ```
 
@@ -156,7 +156,7 @@ make check
 ### Objective
 
 Add the setting `MEMORY_ENGINE_USER_TOKEN` and a second client instance, `memory_inspector`, in
-`app/services/memory_engine.py`. It uses that Tier C delegating token and exposes `call(user_id, operation,
+`apps/api/app/services/memory_engine.py`. It uses that Tier C delegating token and exposes `call(user_id, operation,
 arguments)`, which raises a typed `EngineCallError` carrying the engine's static code. The agent path keeps its Tier B
 token.
 
@@ -171,12 +171,12 @@ token.
   TB9).
 - Host statuses: `validation_error` 400, `forbidden` 403, `precondition_failed` 412, `resource_limit` 429,
   `retryable_conflict` 409, `internal_error` 500. The body is `{"error": {"code", "detail"?}}`.
-- `app/main.py` closes `memory_engine` in the lifespan shutdown.
+- `apps/api/app/main.py` closes `memory_engine` in the lifespan shutdown.
 
 ### Acceptance Criteria
 
 - `settings.MEMORY_ENGINE_USER_TOKEN` reads the environment variable of the same name, defaulting to `""`. It is
-  documented with a placeholder in `.env.example` and in the configuration table of `docs/memory.md`.
+  documented with a placeholder in `.env.example` and in the configuration table of `apps/api/docs/memory.md`.
 - The inspector client sends `Authorization: Bearer <MEMORY_ENGINE_USER_TOKEN>`. The agent client still sends
   `MEMORY_ENGINE_TOKEN`, and a test fails if the agent client ever sends the inspector token.
 - `memory_inspector.call` returns the `result` object on HTTP 200.
@@ -251,15 +251,15 @@ app/
 ├── core/config.py                    # MODIFIED
 ├── main.py                           # MODIFIED (close memory_inspector)
 └── services/memory_engine.py         # MODIFIED
-docs/memory.md                        # MODIFIED
+apps/api/docs/memory.md                        # MODIFIED
 .env.example                          # MODIFIED (placeholder only)
-tests/test_memory_inspector_client.py # NEW
+apps/api/tests/test_memory_inspector_client.py # NEW
 ```
 
 ### Verification
 
 ```bash
-uv run pytest -q tests/test_memory_inspector_client.py tests/test_memory_engine_boundary.py
+cd apps/api && uv run pytest -q apps/api/tests/test_memory_inspector_client.py apps/api/tests/test_memory_engine_boundary.py
 make check
 ```
 
@@ -282,8 +282,8 @@ make check
 
 ### Objective
 
-Add `app/api/v1/memory.py`, mounted at `/api/v1/memory`, with response models in `app/schemas/memory.py` and pure
-mapping functions in `app/services/memory_view.py`. The routes are `GET /health`, `GET /`, `POST /search`,
+Add `apps/api/app/api/v1/memory.py`, mounted at `/api/v1/memory`, with response models in `apps/api/app/schemas/memory.py` and pure
+mapping functions in `apps/api/app/services/memory_view.py`. The routes are `GET /health`, `GET /`, `POST /search`,
 `GET /{artifact_id}` and `GET /{artifact_id}/provenance`. Each acts as the signed-in user through `memory_inspector`,
 and each is proven against a real engine host. The response models are the single source of the web app's generated
 types.
@@ -323,9 +323,9 @@ types.
 - An engine refusal produces `{"detail": {"code": <engine code>, "detail": <detail or null>}}` with HTTP status
   `validation_error` 422, `forbidden` 404, `precondition_failed` 409, `resource_limit` 429, `internal_error` 502 and
   `engine_unavailable` 502. An empty inspector token returns 503 with code `inspector_not_configured`.
-- Live test in `tests/integration/test_memory_router_live.py`, with a host configured with both delegating tokens:
+- Live test in `apps/api/tests/integration/test_memory_router_live.py`, with a host configured with both delegating tokens:
   after `memory_engine.add()` of "I live in Berlin" then "I moved to Paris" (recorded classifications from
-  `tests/slot_fakes.py`), `GET /` returns exactly one `known_facts` item containing "Paris", and `conversation`
+  `apps/api/tests/slot_fakes.py`), `GET /` returns exactly one `known_facts` item containing "Paris", and `conversation`
   contains both sentences.
 - Live test: `GET /{id}` of the Paris claim returns `lifecycle` `asserted`, `channel` `facts`, and a readable source
   whose `ref` starts with `app://session/`. `GET /{id}/provenance?depth=1` returns 200.
@@ -401,8 +401,8 @@ tests/
 ### Verification
 
 ```bash
-uv run pytest -q tests/test_memory_router.py tests/test_memory_view.py
-CME_TEST_DATABASE_URL=<placeholder-dsn> uv run pytest -q tests/integration/test_memory_router_live.py
+cd apps/api && uv run pytest -q apps/api/tests/test_memory_router.py apps/api/tests/test_memory_view.py
+CME_TEST_DATABASE_URL=<placeholder-dsn> cd apps/api && uv run pytest -q apps/api/tests/integration/test_memory_router_live.py
 make check
 ```
 
@@ -513,8 +513,8 @@ tests/
 ### Verification
 
 ```bash
-uv run pytest -q tests/test_memory_router.py tests/test_memory_view.py
-CME_TEST_DATABASE_URL=<placeholder-dsn> uv run pytest -q tests/integration/test_memory_router_live.py
+cd apps/api && uv run pytest -q apps/api/tests/test_memory_router.py apps/api/tests/test_memory_view.py
+CME_TEST_DATABASE_URL=<placeholder-dsn> cd apps/api && uv run pytest -q apps/api/tests/integration/test_memory_router_live.py
 make check
 ```
 
@@ -635,8 +635,8 @@ tests/
 ### Verification
 
 ```bash
-uv run pytest -q tests/test_memory_router.py
-CME_TEST_DATABASE_URL=<placeholder-dsn> uv run pytest -q tests/integration/test_memory_router_live.py
+cd apps/api && uv run pytest -q apps/api/tests/test_memory_router.py
+CME_TEST_DATABASE_URL=<placeholder-dsn> cd apps/api && uv run pytest -q apps/api/tests/integration/test_memory_router_live.py
 make check
 ```
 
@@ -659,7 +659,7 @@ make check
 
 ### Objective
 
-Add `scripts/demo/seed.py` and `scripts/demo/reset.py`. Seed creates the demo user Layla through the app's auth API
+Add `tools/demo/seed.py` and `tools/demo/reset.py`. Seed creates the demo user Layla through the app's auth API
 and writes her memory through the inspector client, using the agent's own request shapes. The result covers known
 facts, a superseded value and one contested claim. Reset erases her memory through `POST /api/v1/memory/forget`. The
 seeded user carries journey J5 and is the fallback when the LLM is unavailable.
@@ -667,7 +667,7 @@ seeded user carries journey J5 and is the fallback when the LLM is unavailable.
 ### Background and Current State
 
 - The agent writes memory as `ingest_episode`, then `assert` with `_claim_arguments(scope, text, turn_id,
-  classification)` (`app/services/memory_engine.py`). Idempotency keys are `episode:<turn_id>` and
+  classification)` (`apps/api/app/services/memory_engine.py`). Idempotency keys are `episode:<turn_id>` and
   `claim:<turn_id>`.
 - `SlotClassification("single", "residence")` supersedes the previous residence. `MULTI` supersedes nothing.
 - `assert` with `assertion_mode` `hedged` is held: the receipt says `contested` (`engine/gate.py::classify_assertion`).
@@ -687,7 +687,7 @@ seeded user carries journey J5 and is the fallback when the LLM is unavailable.
 - The password comes from `DEMO_SEED_PASSWORD`. When that is unset, the password is generated and printed once, on the
   run that registers the user.
 - No token, key or database URL is printed.
-- `scripts/demo/README.md` documents both commands.
+- `tools/demo/README.md` documents both commands.
 
 ### Implementation
 
@@ -728,7 +728,7 @@ async def write(user_id: str, position: int, text: str, slot: str | None, mode: 
 ### Files
 
 ```text
-scripts/demo/
+tools/demo/
 ├── seed.py       # NEW
 ├── reset.py      # NEW
 └── README.md     # MODIFIED
@@ -737,9 +737,9 @@ scripts/demo/
 ### Verification
 
 ```bash
-uv run python scripts/demo/up.py
-uv run python scripts/demo/seed.py && uv run python scripts/demo/seed.py   # same counts twice
-uv run python scripts/demo/reset.py && uv run python scripts/demo/seed.py
+uv run python tools/demo/up.py
+uv run python tools/demo/seed.py && uv run python tools/demo/seed.py   # same counts twice
+uv run python tools/demo/reset.py && uv run python tools/demo/seed.py
 make check
 ```
 
@@ -762,7 +762,7 @@ make check
 
 ### Objective
 
-Add `scripts/export_openapi.py`, which writes the app's OpenAPI document to `docs/api/openapi.json`, and a test that
+Add `scripts/export_openapi.py`, which writes the app's OpenAPI document to `apps/api/docs/api/openapi.json`, and a test that
 fails when the committed document differs from the app. The web app generates its TypeScript types from this file
 (WEB-02), so a router change that is not exported fails CI instead of breaking the interface.
 
@@ -770,16 +770,16 @@ fails when the committed document differs from the app. The web app generates it
 
 - `app.main:app` is a FastAPI instance, and `app.openapi()` builds the schema without running the lifespan (no
   database, no LLM).
-- Settings are read at import time. `tests/conftest.py` sets `APP_ENV=test`, a random `JWT_SECRET_KEY` and a dummy
+- Settings are read at import time. `apps/api/tests/conftest.py` sets `APP_ENV=test`, a random `JWT_SECRET_KEY` and a dummy
   `OPENAI_API_KEY` before any `app` import. The script sets the same defaults.
 - Every memory route declares `response_model`, so the document includes the memory schemas.
 
 ### Acceptance Criteria
 
-- `uv run python scripts/export_openapi.py` writes `docs/api/openapi.json` with sorted keys, two-space indent and a
+- `uv run python scripts/export_openapi.py` writes `apps/api/docs/api/openapi.json` with sorted keys, two-space indent and a
   trailing newline, and needs no database, LLM key or `.env` file.
 - `uv run python scripts/export_openapi.py --check` exits 0 when the file is current and 1 when it differs.
-- `tests/test_openapi_export.py` fails when a field is added to `MemoryItem` without re-exporting. The PR shows this
+- `apps/api/tests/test_openapi_export.py` fails when a field is added to `MemoryItem` without re-exporting. The PR shows this
   once and then reverts it.
 - The exported document contains `MemoryView`, `MemoryItem`, `ProvenanceOut`, `TimelineView`, `ChangesView`,
   `AdjudicateResult` and `ForgetResult` when APP-04 and APP-05 are merged. The test asserts the ones present at merge
@@ -789,7 +789,7 @@ fails when the committed document differs from the app. The web app generates it
 ### Implementation
 
 ```python
-"""Write the app's OpenAPI document to docs/api/openapi.json, the single source of the web app's API types."""
+"""Write the app's OpenAPI document to apps/api/docs/api/openapi.json, the single source of the web app's API types."""
 
 from __future__ import annotations
 
@@ -831,15 +831,15 @@ if __name__ == "__main__":
 
 ```text
 scripts/export_openapi.py       # NEW
-docs/api/openapi.json           # NEW (generated, committed)
-tests/test_openapi_export.py    # NEW
+apps/api/docs/api/openapi.json           # NEW (generated, committed)
+apps/api/tests/test_openapi_export.py    # NEW
 ```
 
 ### Verification
 
 ```bash
 uv run python scripts/export_openapi.py --check
-uv run pytest -q tests/test_openapi_export.py
+cd apps/api && uv run pytest -q apps/api/tests/test_openapi_export.py
 make check
 ```
 
@@ -863,7 +863,7 @@ make check
 ### Objective
 
 A person who wrote none of APP-01, WEB-03 or WEB-05 runs journey J1 from a clean checkout, following only
-`scripts/demo/README.md` and `web/README.md`, and commits the result as `docs/demo/checkpoint-a.md`. Phase 2 starts
+`tools/demo/README.md` and `apps/studio/README.md`, and commits the result as `apps/api/docs/demo/checkpoint-a.md`. Phase 2 starts
 only on an all-PASS report.
 
 ### Background and Current State
@@ -871,17 +871,17 @@ only on an all-PASS report.
 - J1: register, "I live in Berlin", "I moved to Paris last week", "Where do I live?", then the Arabic pair on a
   second user.
 - The memory panel polls for up to 15 seconds after each reply (WEB-05).
-- `docs/demo/` does not exist.
+- `apps/api/docs/demo/` does not exist.
 
 ### Acceptance Criteria
 
 - The report records the commit SHA tested, the operating system, and the start and end time of the run.
-- Every step has PASS or FAIL and a screenshot under `docs/demo/checkpoint-a/`.
+- Every step has PASS or FAIL and a screenshot under `apps/api/docs/demo/checkpoint-a/`.
 - Cold start to the first chat answer takes under 5 minutes, and the measured time is in the report.
 - After the Paris message, the panel shows exactly one known fact (Paris) and both sentences under Conversation
   record.
 - With the engine host stopped, chat still answers and the health indicator turns red. The report shows both.
-- `npm run check` (in `web/`) and `make check` pass on the tested commit.
+- `npm run check` (in `apps/studio/`) and `make check` pass on the tested commit.
 - Each README gap found is a linked follow-up issue. The report lists the issue numbers.
 - Every step is PASS. A FAIL keeps this ticket open until a re-run passes.
 
@@ -899,7 +899,7 @@ only on an all-PASS report.
 
 | # | Step | Result | Evidence | Notes |
 |---|---|---|---|---|
-| 1 | `scripts/demo/up.py` all healthy | PASS / FAIL | checkpoint-a/01-up.png | |
+| 1 | `tools/demo/up.py` all healthy | PASS / FAIL | checkpoint-a/01-up.png | |
 | 2 | Register a new user, land on /chat | PASS / FAIL | checkpoint-a/02-register.png | |
 | 3 | "I live in Berlin": Berlin under Known facts | PASS / FAIL | checkpoint-a/03-berlin.png | |
 | 4 | "I moved to Paris last week": only Paris under Known facts | PASS / FAIL | checkpoint-a/04-paris.png | |
@@ -914,7 +914,7 @@ Follow-up issues: #<n>, #<n>
 ### Files
 
 ```text
-docs/demo/
+apps/api/docs/demo/
 ├── checkpoint-a.md     # NEW
 └── checkpoint-a/       # NEW (screenshots)
 ```
@@ -922,8 +922,8 @@ docs/demo/
 ### Verification
 
 ```bash
-uv run python scripts/demo/up.py
-cd web && npm ci && npm run check && npm run dev
+uv run python tools/demo/up.py
+cd apps/studio && npm ci && npm run check && npm run dev
 make check
 ```
 
@@ -947,7 +947,7 @@ make check
 ### Objective
 
 Two people, one driving and one recording, run the full demo script live, from a wiped stack, in one uninterrupted
-session, and commit the result as `docs/demo/checkpoint-b.md`. Phase 3 starts only on an all-PASS report.
+session, and commit the result as `apps/api/docs/demo/checkpoint-b.md`. Phase 3 starts only on an all-PASS report.
 
 ### Background and Current State
 
@@ -958,7 +958,7 @@ session, and commit the result as `docs/demo/checkpoint-b.md`. Phase 3 starts on
 ### Acceptance Criteria
 
 - The report records the commit SHA, the operating system and the total duration.
-- J1–J5 and the Arabic pair are each PASS, with a screenshot under `docs/demo/checkpoint-b/`.
+- J1–J5 and the Arabic pair are each PASS, with a screenshot under `apps/api/docs/demo/checkpoint-b/`.
 - The full run takes under 10 minutes.
 - J4's four after-checks are all observed true, and the report shows the receipt counts.
 - J5's conflict moves from Conflicts to Known facts after Confirm.
@@ -993,7 +993,7 @@ Linked bugs: #<n>
 ### Files
 
 ```text
-docs/demo/
+apps/api/docs/demo/
 ├── checkpoint-b.md     # NEW
 └── checkpoint-b/       # NEW (screenshots)
 ```
@@ -1001,8 +1001,8 @@ docs/demo/
 ### Verification
 
 ```bash
-uv run python scripts/demo/down.py --wipe && uv run python scripts/demo/up.py && uv run python scripts/demo/seed.py
-cd web && npm run check
+uv run python tools/demo/down.py --wipe && uv run python tools/demo/up.py && uv run python tools/demo/seed.py
+cd apps/studio && npm run check
 make check
 ```
 
@@ -1025,7 +1025,7 @@ make check
 
 ### Objective
 
-Commit `docs/demo/readiness.md`: the demo-laptop checklist, ticked on the laptop itself, and the record of two timed
+Commit `apps/api/docs/demo/readiness.md`: the demo-laptop checklist, ticked on the laptop itself, and the record of two timed
 rehearsals, one of them with a forced switch to mock mode. This closes the Epic's demo-length and fallback metrics.
 
 ### Background and Current State
@@ -1076,14 +1076,14 @@ Recording of rehearsal 2 stored at: <location>
 ### Files
 
 ```text
-docs/demo/readiness.md   # NEW
+apps/api/docs/demo/readiness.md   # NEW
 ```
 
 ### Verification
 
 ```bash
-uv run python scripts/demo/up.py && uv run python scripts/demo/check.py
-cd web && npm run e2e:live
+uv run python tools/demo/up.py && uv run python tools/demo/check.py
+cd apps/studio && npm run e2e:live
 ```
 
 ### Dependencies
@@ -1096,7 +1096,7 @@ cd web && npm run e2e:live
 
 ## Settled by the first bundle's live tests
 
-`tests/integration/test_memory_router_live.py` observed each of these against a real engine host:
+`apps/api/tests/integration/test_memory_router_live.py` observed each of these against a real engine host:
 
 - `query` with `mode: current_state` and no `text` returns every current item up to `limit` (APP-03).
 - For the Berlin → Paris move, `mode: change` reports `changed` for the residence and `added` for the new turn (APP-04).

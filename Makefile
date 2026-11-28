@@ -22,23 +22,23 @@ define load_env_file
 endef
 
 # Shorthand: source env vars then run a command
-run_with_env = bash -c "source scripts/set_env.sh $(ENV) && $(1)"
+run_with_env = bash -c "source apps/api/scripts/set_env.sh $(ENV) && $(1)"
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 setup:
-	@uv run python scripts/setup.py
+	@uv run --project apps/api python apps/api/scripts/setup.py
 
 install:
-	uv sync
-	uv run pre-commit install
+	uv sync --project apps/api
+	uv run --project apps/api pre-commit install
 
 # ---------------------------------------------------------------------------
 # Server
 # ---------------------------------------------------------------------------
 dev:
-	@$(call run_with_env,uv run python run.py)
+	@$(call run_with_env,cd apps/api && uv run python run.py)
 
 staging:
 	@$(call run_with_env,$(MAKE) _serve ENV=staging)
@@ -47,72 +47,72 @@ prod:
 	@$(call run_with_env,$(MAKE) _serve ENV=production)
 
 _serve:
-	@$(call run_with_env,./.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --loop uvloop)
+	@$(call run_with_env,cd apps/api && ./.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --loop uvloop)
 
 # ---------------------------------------------------------------------------
 # Database migrations
 # ---------------------------------------------------------------------------
 migrate:
-	@$(call run_with_env,uv run alembic upgrade head)
+	@$(call run_with_env,cd apps/api && uv run alembic upgrade head)
 
 migration:
 	@if [ -z "$(MSG)" ]; then \
 		echo "Usage: make migration MSG=\"describe your change\""; exit 1; \
 	fi
-	@$(call run_with_env,uv run alembic revision --autogenerate -m '$(MSG)')
+	@$(call run_with_env,cd apps/api && uv run alembic revision --autogenerate -m '$(MSG)')
 
 migrate-downgrade:
-	@$(call run_with_env,uv run alembic downgrade -1)
+	@$(call run_with_env,cd apps/api && uv run alembic downgrade -1)
 
 migrate-history:
-	@$(call run_with_env,uv run alembic history --verbose)
+	@$(call run_with_env,cd apps/api && uv run alembic history --verbose)
 
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------
 eval:
-	@$(call run_with_env,python -m evals.main --interactive)
+	@$(call run_with_env,cd apps/api && uv run python -m evals.main --interactive)
 
 eval-quick:
-	@$(call run_with_env,python -m evals.main --quick)
+	@$(call run_with_env,cd apps/api && uv run python -m evals.main --quick)
 
 eval-no-report:
-	@$(call run_with_env,python -m evals.main --no-report)
+	@$(call run_with_env,cd apps/api && uv run python -m evals.main --no-report)
 
 # ---------------------------------------------------------------------------
 # Code quality
 # ---------------------------------------------------------------------------
 lint:
-	uv run ruff check .
+	cd apps/api && uv run ruff check .
 
 format:
-	uv run ruff format .
+	cd apps/api && uv run ruff format .
 
 format-check:
-	uv run ruff format --check .
+	cd apps/api && uv run ruff format --check .
 
 typecheck:
-	uv run pyright
+	cd apps/api && uv run pyright
 
 test:
-	uv run pytest -q
+	cd apps/api && uv run pytest -q
 
 # The same four gates as the CI `checks` job (.github/workflows/ci.yaml), in the same order.
 check: lint format-check typecheck test
 	@echo "All checks passed"
 
 pre-commit:
-	uv run pre-commit run --all-files
+	uv run --project apps/api pre-commit run --all-files
 
 pre-commit-update:
-	uv run pre-commit autoupdate
+	uv run --project apps/api pre-commit autoupdate
 
 # ---------------------------------------------------------------------------
 # Docker — single service (API + DB)
 # ---------------------------------------------------------------------------
 docker-build:
 	$(call check_env)
-	@./scripts/build-docker.sh $(ENV)
+	@apps/api/scripts/build-docker.sh $(ENV)
 
 docker-up:
 	$(call load_env_file)

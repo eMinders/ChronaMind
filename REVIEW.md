@@ -9,8 +9,8 @@ Two projects live in this repository with separate interpreters, linters, locks 
 
 | Path | What it is | Review instructions |
 |---|---|---|
-| `app/`, `evals/`, `docs/`, `alembic/` | FastAPI + LangGraph reference application (CPython 3.14) | `AGENTS.md` applies here and only here |
-| `custom-memory-engine/` | The ChronaMind cognitive memory engine (CPython 3.12) and its `PLAN/V2` governance | `custom-memory-engine/CLAUDE.md` |
+| `apps/api/` | FastAPI + LangGraph reference application (CPython 3.14) | `AGENTS.md` applies here and only here |
+| `core/memory-engine/` | The ChronaMind cognitive memory engine (CPython 3.12) and its `PLAN/V2` governance | `core/memory-engine/CLAUDE.md` |
 
 ---
 
@@ -95,15 +95,14 @@ So, before writing the verdict:
   handler, SQL guard and Python twin. A fix applied to one sibling and not the other is the most common real bug here.
 - **Check the pair.** Where this repository keeps a mechanism and its proof in two places (`MIGRATIONS` and
   `rollback/<n>_*.sql`, a guard function and `provisioning.TABLE_GRANTS`, a channel and its membership test,
-  `INVARIANT_LEDGER.md` and its `path::symbol` citations, a claim in a plan document and its `scripts/check_evidence.py`
+  `INVARIANT_LEDGER.md` and its `path::symbol` citations, a claim in a plan document and its `core/memory-engine/scripts/check_evidence.py`
   reference), a change to one side is a change that must be visible on the other.
 - **Ask what the change makes untrue.** List the statements in `PLAN/V2/` that mention the behaviour, and check whether
   this pull request updates them in the same commit. This project's rule is that registers move with the change.
 - **Check the sequence, not only the pull request.** If several open branches touch one file (a ledger, a roadmap, a
   migration list), the merge order decides the result, and per-PR green CI cannot see it.
 
-Changes of 200+ added or removed lines: take each behaviour the diff changes and search outside the diff for every
-other place that assumes the old behaviour.
+For 200+ changed lines, search outside the diff for every place assuming the old behaviour.
 
 ## How a review proceeds
 
@@ -160,9 +159,9 @@ is a review of an assertion:
 - A new or changed `V2-D##` decision is authoritative only for what it decides, and it must not contradict
   `ARCHITECTURE_V2.md` without saying which text it supersedes.
 - A closure record must be **posted** on the issue, not only written: `gh issue close` silently ignores a body.
-- A citation in a plan document must resolve. `scripts/check_evidence.py` decides.
+- A citation in a plan document must resolve. `core/memory-engine/scripts/check_evidence.py` decides.
 - A claim of a measured result must name the artifact that holds the measurement (`reports/`, `validation/`), and a
-  confirmatory (`test`) split must not have been run: `G-TS` is a gate, and `scripts/check_test_split_gate.py` enforces
+  confirmatory (`test`) split must not have been run: `G-TS` is a gate, and `core/memory-engine/scripts/check_test_split_gate.py` enforces
   it.
 
 A stale claim is 🟡; a stale claim that a script gates CI on is 🔴; a test weakened, skipped or deleted to make a suite

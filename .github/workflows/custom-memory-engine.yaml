@@ -18,7 +18,7 @@ name: Custom Memory Engine verification
 on:
   push:
     branches: [main]
-    paths: ["custom-memory-engine/**", ".github/**"]
+    paths: ["core/memory-engine/**", ".github/**"]
   pull_request:
   workflow_dispatch:
 
@@ -54,7 +54,7 @@ jobs:
           if [ "$EVENT" != "pull_request" ]; then echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           if ! changed="$(git diff --name-only "$BASE...$HEAD")"; then echo "engine=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           # Any .github/ change counts: the engine suite also tests the CI configuration (tests/test_ci_workflow.py).
-          if grep -qE '^(custom-memory-engine/|\.github/)' <<< "$changed"; then
+          if grep -qE '^(core/memory-engine/|\.github/)' <<< "$changed"; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
           else
             echo "engine=false" >> "$GITHUB_OUTPUT"
@@ -68,7 +68,7 @@ jobs:
     timeout-minutes: 10
     defaults:
       run:
-        working-directory: custom-memory-engine
+        working-directory: core/memory-engine
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -130,7 +130,7 @@ jobs:
       PGPASSWORD: isolated_ci_only  # pragma: allowlist secret
     defaults:
       run:
-        working-directory: custom-memory-engine
+        working-directory: core/memory-engine
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -172,7 +172,7 @@ jobs:
     timeout-minutes: 10
     defaults:
       run:
-        working-directory: custom-memory-engine
+        working-directory: core/memory-engine
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -210,7 +210,7 @@ jobs:
       PGPASSWORD: isolated_ci_only  # pragma: allowlist secret
     defaults:
       run:
-        working-directory: custom-memory-engine
+        working-directory: core/memory-engine
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -272,7 +272,7 @@ jobs:
       CME_TEST_DATABASE_URL: postgresql://cme_test:isolated_ci_only@localhost:5433/cme_compatibility  # pragma: allowlist secret
     defaults:
       run:
-        working-directory: custom-memory-engine
+        working-directory: core/memory-engine
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -2,38 +2,38 @@
 
 | Workflow | Trigger | Jobs (check names) | Purpose |
 |---|---|---|---|
-| `custom-memory-engine.yaml` | Every PR (a `changes` job skips the gates when neither `custom-memory-engine/` nor `.github/` changed, so required checks still report; `.github/` counts because the engine suite tests the CI configuration); pushes to `main` touching those paths; manual | `changes`, then `static`, `verify`, `default-install`, `deploy-smoke` (parallel), plus advisory `dual-profile` | Engine quality gates (below) |
-| `ci.yaml` | Every PR; pushes to `main`; manual | `checks`, `workflows`, `app-engine-boundary` | `checks`: root application lint, format, type check and tests (`tests/`, no services). `app-engine-boundary`: the app's memory client against the engine's real host and PostgreSQL (`tests/integration/test_app_engine_boundary.py`); a skip fails it. The engine is excluded from the root Ruff config and verified only by its own workflow. `workflows`: actionlint over every workflow, pinned by digest |
+| `custom-memory-engine.yaml` | Every PR (a `changes` job skips the gates when neither `core/memory-engine/` nor `.github/` changed, so required checks still report; `.github/` counts because the engine suite tests the CI configuration); pushes to `main` touching those paths; manual | `changes`, then `static`, `verify`, `default-install`, `deploy-smoke` (parallel), plus advisory `dual-profile` | Engine quality gates (below) |
+| `ci.yaml` | Every PR; pushes to `main`; manual | `checks`, `workflows`, `app-engine-boundary` | `checks`: API workspace lint, format, type check and tests (`apps/api/tests/`, no services). `app-engine-boundary`: the app's memory client against the engine's real host and PostgreSQL (`apps/api/tests/integration/test_app_engine_boundary.py`); a skip fails it. The engine is excluded from the root Ruff config and verified only by its own workflow. `workflows`: actionlint over every workflow, pinned by digest |
 | `claude-code-review.yml` | Same-repository, non-draft, non-Dependabot PRs, on open, push, ready and reopen | `claude-review` | Advisory automated review, through the repository's own `review-pr` skill (below), not the stock `code-review` plugin. A gate step decides the tier from the PR's history and skips a push that changed no tree before the action is paid for. A second pair of eyes, not the review gate: the gate is the AI review on the Project Owner's behalf (`V2-D57`, `PLAN/CONTRIBUTING.md` §1.1), and no human peer review is a prerequisite |
 | `claude.yml` | `@chronamind` in an issue or PR comment, or `@claude review` on a PR, by an owner, member or collaborator | `claude` (assistant), `review` (reviewer) | The interactive assistant, and an on-demand review through the same `review-pr` skill |
-| `app-image.yaml` | PRs and `main` pushes touching anything that goes into the root image (`Dockerfile`, lock, `app/`, ...); manual | `image` | Builds the root image, imports the app inside it, checks it runs as `appuser` with read-only code, reports its size. Not required, so its path filter is safe |
+| `app-image.yaml` | PRs and `main` pushes touching anything that goes into the root image (`Dockerfile`, lock, `apps/api/app/`, ...); manual | `image` | Builds the root image, imports the app inside it, checks it runs as `appuser` with read-only code, reports its size. Not required, so its path filter is safe |
 | `deploy.yaml` | Manual (`workflow_dispatch`) only | `Build and push to Docker Hub` | Root application image. Automatic publication on `main` is an owner decision and is not enabled |
 
 ## Engine quality gates (`custom-memory-engine.yaml`)
 
 | Job | Gates |
 |---|---|
-| `static` | `ruff check`, `ruff format --check`, `pyright` (including `scripts/`); frozen research record (`md5sum -c validation/document_hashes.txt`), mechanical checks, Clopper–Pearson bounds, `scripts/check_statistics.py`, G-TS split gate (`scripts/check_test_split_gate.py`), plan references (`check_plan_refs.py`), status registry (`audit_status.py --check`), architecture ownership (`plan_coverage.py --check`) |
-| `verify` | Full CI-scope `pytest -n auto` with work stealing: one disposable database per xdist worker (`conftest.py`, #167) and a private clone of a runner-migrated template per database test (`tests/integration/schema.py`), on a PostgreSQL service with durability switched off (throwaway data) plus FalkorDB and prepared model assets: PostgreSQL integration, restricted-role RLS, cross-tenant, migration, bitemporal, deletion and API-contract tests; `validation/bitemporal_checks.sql` |
+| `static` | `ruff check`, `ruff format --check`, `pyright` (including `apps/api/scripts/`); frozen research record (`md5sum -c validation/document_hashes.txt`), mechanical checks, Clopper–Pearson bounds, `apps/api/scripts/check_statistics.py`, G-TS split gate (`apps/api/scripts/check_test_split_gate.py`), plan references (`check_plan_refs.py`), status registry (`audit_status.py --check`), architecture ownership (`plan_coverage.py --check`) |
+| `verify` | Full CI-scope `pytest -n auto` with work stealing: one disposable database per xdist worker (`conftest.py`, #167) and a private clone of a runner-migrated template per database test (`apps/api/tests/integration/schema.py`), on a PostgreSQL service with durability switched off (throwaway data) plus FalkorDB and prepared model assets: PostgreSQL integration, restricted-role RLS, cross-tenant, migration, bitemporal, deletion and API-contract tests; `validation/bitemporal_checks.sql` |
 | `default-install` | `pytest` on the default install with no optional extras |
 | `deploy-smoke` | Executes `deploy/` (`deploy/ci_smoke.sh`): `systemd-analyze verify` on every unit and timer, the worker image built and run against a migrated database, its healthcheck, exit 2 on missing variables, the compose file to `healthy`, image inspection |
-| `dual-profile` | One PostgreSQL service, migrated **once** through `schema.migrate` with the applied state gated, then both profiles on that one database: the conversational adapter suite, the coding-profile suite, the cross-profile parity and isolation module (`tests/integration/test_dual_profile_db.py`: forbidden both ways, RLS-indistinguishable, both orders, exposure 0 with its one-sided 97.5% Clopper–Pearson bound) and the restricted-role Suite I bound. Each suite clones the migrated database (`CME_TEST_PREMIGRATED_DATABASE`), so one migration invocation appears in the log |
+| `dual-profile` | One PostgreSQL service, migrated **once** through `schema.migrate` with the applied state gated, then both profiles on that one database: the conversational adapter suite, the coding-profile suite, the cross-profile parity and isolation module (`apps/api/tests/integration/test_dual_profile_db.py`: forbidden both ways, RLS-indistinguishable, both orders, exposure 0 with its one-sided 97.5% Clopper–Pearson bound) and the restricted-role Suite I bound. Each suite clones the migrated database (`CME_TEST_PREMIGRATED_DATABASE`), so one migration invocation appears in the log |
 
-All four required engine gates (`static`, `verify`, `default-install`, `deploy-smoke`) must be green (or skipped by `changes` when no engine path changed). `dual-profile` is advisory: it reports but does not block a merge until it is added to the required checks (`custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2). A PR is not "CI green" because `verify` alone passed.
+All four required engine gates (`static`, `verify`, `default-install`, `deploy-smoke`) must be green (or skipped by `changes` when no engine path changed). `dual-profile` is advisory: it reports but does not block a merge until it is added to the required checks (`core/memory-engine/PLAN/CONTRIBUTING.md` §1.2). A PR is not "CI green" because `verify` alone passed.
 
-`main` is **protected** (applied and verified 2026-11-05): eight required checks bound to GitHub Actions (`deploy-smoke` and `app-engine-boundary` added 2026-11-26), up-to-date branches, conversation resolution, no force pushes or deletions. Details and the verification are in `custom-memory-engine/PLAN/CONTRIBUTING.md` §1.2, including why no required check can leave a PR pending forever.
+`main` is **protected** (applied and verified 2026-11-05): eight required checks bound to GitHub Actions (`deploy-smoke` and `app-engine-boundary` added 2026-11-26), up-to-date branches, conversation resolution, no force pushes or deletions. Details and the verification are in `core/memory-engine/PLAN/CONTRIBUTING.md` §1.2, including why no required check can leave a PR pending forever.
 
 ## Conventions
 
-- **Allowed actions.** Only GitHub-owned actions and an explicit allow list may run, and every reference must be SHA-pinned; both are enforced by repository settings (`custom-memory-engine/PLAN/CONTRIBUTING.md` §1.3). A new third-party action must be added to the allow list first.
+- **Allowed actions.** Only GitHub-owned actions and an explicit allow list may run, and every reference must be SHA-pinned; both are enforced by repository settings (`core/memory-engine/PLAN/CONTRIBUTING.md` §1.3). A new third-party action must be added to the allow list first.
 - **Pinning.** Third-party actions are pinned to a full **commit** SHA with the version in a comment, and container images to a digest. (An annotated-tag object SHA also works but cannot be checked with the commits API; use the commit it dereferences to.)
 - **Updates.** `.github/dependabot.yml` proposes weekly grouped updates for actions (including `setup-cme`), both uv projects and the root image, after a 7-day cooldown. The engine's evaluated baseline vendors are ignored: they are frozen research inputs (`evidence/RL-031-verification.md`).
 - **Permissions.** Least privilege: `contents: read` by default; only the Claude workflows add the scopes their action needs. Checkouts set `persist-credentials: false`, since no job uses git credentials after cloning. The Claude action manages its own authentication.
 - **Concurrency.** A new push to a PR cancels that PR's superseded run. Each push to `main` has its own group (keyed on the commit SHA), so no `main` run is cancelled or replaced: GitHub replaces a *pending* run in a shared group even when `cancel-in-progress` is false. A running deploy is never cancelled; a newer manual dispatch supersedes one that is still queued.
 - **Timeouts.** Every job sets `timeout-minutes`, sized to a few times its measured duration so a hang fails fast.
 - **No duplicate runs.** `push` is limited to `main`; branch work is verified through its PR (or run manually via `workflow_dispatch`).
-- **Python and uv.** Each project's interpreter comes from its own `.python-version` (root: 3.14; engine: the CPython 3.12 line, `RL-013`), so CI and local runs agree. uv is pinned in two places, `ci.yaml` and `.github/actions/setup-cme`, because the root and engine keep independent CI (`custom-memory-engine/PLAN/INDEPENDENCE_BOUNDARY.md` §4). Each keys its uv cache on its own lock only.
-- **Lint scope.** Each project is linted once, by its own pinned Ruff and Pyright: the root config excludes `custom-memory-engine/`.
+- **Python and uv.** Each project's interpreter comes from its own `.python-version` (root: 3.14; engine: the CPython 3.12 line, `RL-013`), so CI and local runs agree. uv is pinned in two places, `ci.yaml` and `.github/actions/setup-cme`, because the root and engine keep independent CI (`core/memory-engine/PLAN/INDEPENDENCE_BOUNDARY.md` §4). Each keys its uv cache on its own lock only.
+- **Lint scope.** Each project is linted once, by its own pinned Ruff and Pyright: the root config excludes `core/memory-engine/`.
 - **Secrets.** Never interpolate `${{ secrets.* }}` or event data directly into `run:` scripts; pass them through `env:`.
 - **Validation.** `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12` (includes shellcheck) must report nothing.
 
@@ -49,7 +49,7 @@ The replacement differs in four ways that matter here:
 
 | | Stock plugin | `review-pr` |
 |---|---|---|
-| Instructions | plugin text, same for every repository | `REVIEW.md` and `custom-memory-engine/CLAUDE.md`, **read from the base branch** so a PR cannot edit the standard it is reviewed against |
+| Instructions | plugin text, same for every repository | `REVIEW.md` and `core/memory-engine/CLAUDE.md`, **read from the base branch** so a PR cannot edit the standard it is reviewed against |
 | Scope | the diff | the diff plus the callers, the SQL/Python twins, the invariant ledger, the threat model and the migration list |
 | A second push | skipped if Claude has already commented | reviewed, strictly: new regressions and unfixed earlier findings |
 | Findings | high-signal only | evidence bar of six parts, severity-ranked, nit-capped, deduplicated |
@@ -64,7 +64,7 @@ Four things it decides before the model is paid for, or verifies after GitHub an
 | **Cost** | the gate compares the pushed tree with the one the last review read and skips the run when they are identical. The canary's empty commit bought a 15-turn run that posted nothing. |
 
 Each is a line of `.github/scripts/review_gate.py` or of the skill, and each has a test in
-`custom-memory-engine/tests/test_review_gate.py` or `tests/test_claude_integration.py`.
+`core/memory-engine/tests/test_review_gate.py` or `apps/api/tests/test_claude_integration.py`.
 
 What it can and cannot do: it reads the diff and the surrounding code, and it does not build or run the repository. It
 never approves, never merges and never pushes — those tools are denied in `claude_args` — so it cannot satisfy a branch
@@ -81,7 +81,7 @@ stays with the reviewer and the mutation happens one layer down:
 
 1. after verifying a fix, the review ends its summary with `<!-- resolve-threads: PRRT_… -->`, naming **only** the
    threads it verified;
-2. a step after the review (`.github/scripts/resolve_threads.py`, policy code from the base branch like the gate) reads
+2. a step after the review (`.github/apps/api/scripts/resolve_threads.py`, policy code from the base branch like the gate) reads
    that comment, refuses any id that is not an unresolved thread of this reviewer's, resolves the rest with
    `secrets.GITHUB_TOKEN`, and prints `isResolved: true` per thread;
 3. a refusal is a warning on the run and an open thread, never a failed review — the findings are already posted.
@@ -141,7 +141,7 @@ Replay it read-only against any pull request:
 
 ```bash
 REPOSITORY=eMinders/ChronaMind PR_NUMBER=235 HEAD_SHA=<sha> BASE_SHA=<sha> ACTION=synchronize \
-  GH_TOKEN=$(gh auth token) python3 .github/scripts/review_gate.py
+  GH_TOKEN=$(gh auth token) python3 .github/apps/api/scripts/review_gate.py
 ```
 
 **Verifying the reviewer.** A green run proves nothing about detection. After any change to `REVIEW.md`, the skill or
@@ -151,7 +151,7 @@ any past PR, which is how its tier and skip decisions were checked without a liv
 
 ```bash
 REPOSITORY=eMinders/ChronaMind PR_NUMBER=<n> HEAD_SHA=<sha> BASE_SHA=<sha> ACTION=synchronize \
-  python3 .github/scripts/review_gate.py
+  python3 .github/apps/api/scripts/review_gate.py
 ```
 
 **A controlled canary, and the rules that keep it safe.** Detection is the one property a green run cannot show, so it is
@@ -172,7 +172,7 @@ proves a change to `REVIEW.md`, the skill or this workflow has not cost a findin
    resolved, and nothing repeated.
 5. Close it unmerged and delete the branch. A canary is evidence about the reviewer and is never a change: it must not
    reach `main`, and it must not leave a defect behind. The instruction files' own references are
-checked on every run: `tests/test_claude_integration.py` holds them to `scripts/check_evidence.py`, and pins the
+checked on every run: `apps/api/tests/test_claude_integration.py` holds them to `apps/api/scripts/check_evidence.py`, and pins the
 workflow's triggers, permissions, deny list and base-branch checkout.
 
 **Why `@chronamind`, not `@claude`.** One comment must start one agent. `@claude review` is the reviewer, in both the

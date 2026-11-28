@@ -21,7 +21,7 @@ updates:
       root-app: { patterns: ["*"] }
 
   - package-ecosystem: uv
-    directory: /custom-memory-engine
+    directory: /core/memory-engine
     schedule: { interval: weekly }
     cooldown: { default-days: 7 }
     # The evaluated baseline vendors are frozen: their versions are identity-checked at runtime and hash-recorded in

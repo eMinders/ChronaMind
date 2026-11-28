@@ -38,13 +38,13 @@ services:
   # Single API service with dynamic environment
   app:
     build:
-      context: .
+      context: ./apps/api
       args:
         APP_ENV: ${APP_ENV:-development}
     ports:
       - "8000:8000"
     volumes:
-      - ./app:/app/app
+      - ./apps/api/app:/app/app
       - ./logs:/app/logs
     env_file:
       - .env.${APP_ENV:-development}

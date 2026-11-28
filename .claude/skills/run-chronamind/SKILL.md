@@ -34,7 +34,7 @@ uv run python .claude/skills/run-chronamind/driver.py down    # kills the server
 ## Gotchas (all hit on this machine, which runs Avast)
 
 - **`OPENSSL_Uplink(...): no OPENSSL_Applink` and the process dies silently.** Avast sets `SSLKEYLOGFILE=\\.\aswMonFltProxy\...`. Python's `ssl.create_default_context()` tries to open it and aborts. urllib triggers it even for plain http. The driver pops the variable; for manual runs use `env -u SSLKEYLOGFILE ...`. It shows up on `import langchain_openai`, so the log stops after `database_initialized`.
-- **`CERTIFICATE_VERIFY_FAILED` from Python while curl works.** Avast re-signs HTTPS with a root only the Windows store trusts. This breaks the tiktoken download at import time (`app/utils/graph.py`) and every LLM call (the failure surfaces as `APIConnectionError`, then a 60s "llm call timed out" 500 on `/chat`). `driver.py up` handles it two ways. It downloads the tiktoken file with curl into `TIKTOKEN_CACHE_DIR`. It also writes a `sitecustomize.py` on `PYTHONPATH` that points `certifi.where()` at a bundle of certifi plus the Windows ROOT/CA stores. `SSL_CERT_FILE` alone is not enough, because `langchain_openai` hardcodes `certifi.where()`.
+- **`CERTIFICATE_VERIFY_FAILED` from Python while curl works.** Avast re-signs HTTPS with a root only the Windows store trusts. This breaks the tiktoken download at import time (`apps/api/app/utils/graph.py`) and every LLM call (the failure surfaces as `APIConnectionError`, then a 60s "llm call timed out" 500 on `/chat`). `driver.py up` handles it two ways. It downloads the tiktoken file with curl into `TIKTOKEN_CACHE_DIR`. It also writes a `sitecustomize.py` on `PYTHONPATH` that points `certifi.where()` at a bundle of certifi plus the Windows ROOT/CA stores. `SSL_CERT_FILE` alone is not enough, because `langchain_openai` hardcodes `certifi.where()`.
 - **`Psycopg cannot use the 'ProactorEventLoop'`** (health is fine, the LangGraph checkpointer pool spams errors, chat breaks). The plain `uvicorn` CLI does not set the Selector policy. `run.py` does, and so does the driver's launcher. Do not start with `uvicorn app.main:app` on Windows.
 - **`uv run uvicorn ...` gives `uv trampoline failed to canonicalize script path`.** Use `uv run python -m uvicorn`, or just the driver.
 - Backgrounding `uv run ... &` from the Bash tool keeps the call open until timeout. The driver uses a detached process with a log file instead.
@@ -44,8 +44,8 @@ uv run python .claude/skills/run-chronamind/driver.py down    # kills the server
 - `up` prints `server exited with ...`: read `.claude/skills/run-chronamind/.state/server.log` (strip colors with `sed 's/\x1b\[[0-9;]*m//g'`).
 - `/health` shows `database: unhealthy`: the Postgres container is down or `POSTGRES_PORT` in `.env.development` is wrong.
 - `chat` fails with `llm call timed out`: look in the log for `APIConnectionError` (TLS, see above) or a 401/429 from the provider (key or free-tier limits).
-- `register` returns 429: `app/core/config.py` sets the register limit to 10 per hour. Wait, or restart the server (the limiter appears to be in-memory, since Redis is unavailable). I did not hit this.
+- `register` returns 429: `apps/api/app/core/config.py` sets the register limit to 10 per hour. Wait, or restart the server (the limiter appears to be in-memory, since Redis is unavailable). I did not hit this.
 
 ## Tests and checks
 
-There is no `tests/` directory for the app (the `custom-memory-engine/` subproject has its own). Use `uv run ruff check . && uv run pyright` (`make check`) for static checks.
+There is no `apps/api/tests/` directory for the app (the `core/memory-engine/` subproject has its own). Use `uv run ruff check . && uv run pyright` (`make check`) for static checks.

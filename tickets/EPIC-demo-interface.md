@@ -2,31 +2,31 @@
 
 ## Objective
 
-An end user signs in to a new web app, ChronaMind Studio (`web/`), chats with the existing FastAPI + LangGraph agent,
+An end user signs in to a new web app, ChronaMind Studio (`apps/studio/`), chats with the existing FastAPI + LangGraph agent,
 and sees beside the chat what the memory engine holds about them: known facts separated from hypotheses, procedures,
 conflicts and the verbatim conversation record. They can also see where each memory came from, what the engine
 believed at an earlier instant, and a content-free receipt proving that "forget me" erased everything. The browser
 calls only the app. The app gains one authenticated router, `/api/v1/memory/*`, which acts as the signed-in user
 through a Tier C delegating token and calls the engine operations `query`, `get`, `provenance`, `adjudicate`,
-`delete` and `export` over `POST /v1/call`. The memory engine (`custom-memory-engine/`) is not changed.
+`delete` and `export` over `POST /v1/call`. The memory engine (`core/memory-engine/`) is not changed.
 
 ## Background and Current State
 
 **Existing files the Epic relies on and does not change in behaviour**
 
-- `app/services/memory_engine.py`: `MemoryEngineClient` with the agent's three calls (`initialize`, `search`, `add`);
+- `apps/api/app/services/memory_engine.py`: `MemoryEngineClient` with the agent's three calls (`initialize`, `search`, `add`);
   `add` runs `ingest_episode`, then `assert` with a slot classification, in a background task after each reply.
-- `app/core/langgraph/graph.py`: `LangGraphAgent.get_response` runs `memory_engine.search` concurrently with the state
+- `apps/api/app/core/langgraph/graph.py`: `LangGraphAgent.get_response` runs `memory_engine.search` concurrently with the state
   check, and schedules `memory_engine.add` with `asyncio.create_task` after the reply.
-- `app/api/v1/auth.py`: `get_current_user` (user token, `sub` = user id) and `get_current_session` (session token).
-- `app/api/v1/chatbot.py`: the module-level `agent = LangGraphAgent()` and the existing chat routes.
-- `app/services/database.py`: `get_user_sessions(user_id)` and `advance_history_epoch(session_id)`.
-- `custom-memory-engine/src/custom_memory_engine/host/credentials.py`: delegating tokens keep their tier and are never
+- `apps/api/app/api/v1/auth.py`: `get_current_user` (user token, `sub` = user id) and `get_current_session` (session token).
+- `apps/api/app/api/v1/chatbot.py`: the module-level `agent = LangGraphAgent()` and the existing chat routes.
+- `apps/api/app/services/database.py`: `get_user_sessions(user_id)` and `advance_history_epoch(session_id)`.
+- `core/memory-engine/src/custom_memory_engine/host/credentials.py`: delegating tokens keep their tier and are never
   admin (`V2-D120`).
-- `tests/integration/test_app_engine_boundary.py`: the proven recipe for running a real engine host for the app
-  (migrate, provision the role, `scripts/run_host.py`).
+- `apps/api/tests/integration/test_app_engine_boundary.py`: the proven recipe for running a real engine host for the app
+  (migrate, provision the role, `core/memory-engine/scripts/run_host.py`).
 
-**Engine operations used** (all Implemented and wired; contract in `custom-memory-engine/src/custom_memory_engine/api/contract.py`)
+**Engine operations used** (all Implemented and wired; contract in `core/memory-engine/src/custom_memory_engine/api/contract.py`)
 
 | Operation | Tier | Defined in |
 |---|---|---|
@@ -106,7 +106,7 @@ application (W7). Hypotheses therefore appear in the interface only when seeded.
 
 ### Engine
 
-No changes. `git diff main -- custom-memory-engine/` is empty for every PR in this Epic.
+No changes. `git diff main -- core/memory-engine/` is empty for every PR in this Epic.
 
 ### App
 
@@ -146,8 +146,8 @@ No changes. `git diff main -- custom-memory-engine/` is empty for every PR in th
 | 3 | The `/api/v1/memory/*` router: health, list, search, get, provenance, timeline, changes, adjudicate, forget |
 | 4 | Router response models as the single source of the generated TypeScript types |
 | 5 | A seed and reset script for the demo user Layla (facts, a superseded value, a contested claim) |
-| 6 | `web/`: sign in, chat with memory panel, Explorer, detail drawer, conflict resolution, Time Travel, Forget, Evidence page |
-| 7 | A CI job for `web/` (checks, type staleness, mock end-to-end), and the router's live tests added to the required `app-engine-boundary` job |
+| 6 | `apps/studio/`: sign in, chat with memory panel, Explorer, detail drawer, conflict resolution, Time Travel, Forget, Evidence page |
+| 7 | A CI job for `apps/studio/` (checks, type staleness, mock end-to-end), and the router's live tests added to the required `app-engine-boundary` job |
 | 8 | Live end-to-end tests, a mock mode built from recorded responses, failure drills, two checkpoints and rehearsals |
 
 ### Out of Scope
@@ -166,7 +166,7 @@ No changes. `git diff main -- custom-memory-engine/` is empty for every PR in th
    the typed engine call to the app service layer. Add the memory router in three PRs (read; time; write), each with
    unit tests against a fake transport and live tests against a real host. Then the seed and reset scripts, and the
    OpenAPI export with its staleness test.
-2. **Phase 1, walking skeleton (web, ci).** Scaffold `web/` and its CI job. Generate the API types and the client.
+2. **Phase 1, walking skeleton (web, ci).** Scaffold `apps/studio/` and its CI job. Generate the API types and the client.
    Build sign-in, the shell and shared components, then chat with the polling memory panel. The phase ends with
    Checkpoint A: a second person runs journey J1 from a clean checkout and commits the report.
 3. **Phase 2, screens (web).** Explorer, drawer, conflict resolution, Time Travel, Forget, Evidence page. The phase
@@ -182,7 +182,7 @@ ChronaMind/
 ├── .env.example                                [MODIFIED]
 ├── .github/workflows/ci.yaml                   [MODIFIED] router live tests in app-engine-boundary
 ├── .github/workflows/web.yaml                  [NEW]
-├── app/
+├── apps/api/app/
 │   ├── api/v1/api.py                           [MODIFIED]
 │   ├── api/v1/memory.py                        [NEW]
 │   ├── core/config.py                          [MODIFIED]
@@ -190,20 +190,20 @@ ChronaMind/
 │   ├── schemas/memory.py                       [NEW]
 │   ├── services/memory_engine.py               [MODIFIED]
 │   └── services/memory_view.py                 [NEW]
-├── docs/
+├── apps/api/docs/
 │   ├── memory.md                               [MODIFIED]
 │   ├── api/openapi.json                        [NEW] generated, committed
 │   └── demo/                                   [NEW] checkpoint and rehearsal reports
 ├── scripts/
 │   ├── export_openapi.py                       [NEW]
 │   └── demo/                                   [NEW] up.py, down.py, check.py, seed.py, reset.py, README.md, .gitignore
-├── tests/
+├── apps/api/tests/
 │   ├── test_memory_inspector_client.py         [NEW]
 │   ├── test_memory_router.py                   [NEW]
 │   ├── test_memory_view.py                     [NEW]
 │   ├── test_openapi_export.py                  [NEW]
 │   └── integration/test_memory_router_live.py  [NEW]
-└── web/                                        [NEW] the whole folder
+└── apps/studio/                                        [NEW] the whole folder
 ```
 
 ```diff
@@ -211,11 +211,11 @@ ChronaMind/
 +MEMORY_ENGINE_USER_TOKEN=<tier-c-delegating-token>
 +RATE_LIMIT_MEMORY=60 per minute
 
-# engine host CME_HOST_TOKENS (generated into the untracked scripts/demo/.env.demo)
+# engine host CME_HOST_TOKENS (generated into the untracked tools/demo/.env.demo)
 +{"<agent-token>": {"principal": "chronamind-app", "tier": "B", "delegate": true},
 + "<inspector-token>": {"principal": "chronamind-inspector", "tier": "C", "delegate": true}}
 
-# web/package.json (new): react, react-dom, react-router, @tanstack/react-query, tailwindcss,
+# apps/studio/package.json (new): react, react-dom, react-router, @tanstack/react-query, tailwindcss,
 # openapi-typescript, msw, vitest, @testing-library/react, @playwright/test
 ```
 
@@ -243,7 +243,7 @@ ChronaMind/
 
 | Metric | Target |
 |---|---|
-| Invariant ledger | All 17 invariants remain ENFORCED; `custom-memory-engine/tests/test_invariants_declared_and_enforced.py` passes (no engine change) |
+| Invariant ledger | All 17 invariants remain ENFORCED; `core/memory-engine/tests/test_invariants_declared_and_enforced.py` passes (no engine change) |
 | Regression | `make check` passes and the engine suite is untouched; no test removed, skipped or loosened |
 | Plan consistency | `check_plan_refs`, `audit_status --check` and `plan_coverage --check` pass unchanged |
 | Gate criterion | None (demo support). The internal gates are Checkpoint A (J1 live from a clean checkout) and Checkpoint B (J1–J5 live in one run) |
@@ -258,24 +258,24 @@ ChronaMind/
 - Open owner decisions, not blocking Phase 0:
   - Whether the app's Tier C inspector token needs its own `V2-D` record, or an amendment to `T-42`. Either is an
     engine-side documentation ticket outside this Epic.
-  - Whether the `web` CI job becomes a required check.
+  - Whether the `apps/studio` CI job becomes a required check.
 
 ## References
 
 | Source | Path or URL |
 |---|---|
 | Project showcase (content and claims) | `SHOWCASE.md` |
-| Engine contract | `custom-memory-engine/src/custom_memory_engine/api/contract.py` |
-| Read path, query modes, artifact shape | `custom-memory-engine/src/custom_memory_engine/api/read_handlers.py` |
-| Deletion scopes and receipt | `custom-memory-engine/src/custom_memory_engine/engine/deletion.py`, `api/delete_handlers.py` |
-| Export manifest | `custom-memory-engine/src/custom_memory_engine/engine/export.py` |
-| Gate holds | `custom-memory-engine/src/custom_memory_engine/engine/gate.py` |
-| Host credentials and statuses | `custom-memory-engine/src/custom_memory_engine/host/credentials.py`, `host/app.py` |
-| API reference | `custom-memory-engine/PLAN/V2/API_V2.md` §4.1–4.9 |
-| Decisions | `custom-memory-engine/PLAN/V2/DECISIONS_V2.md` (`V2-D37`, `V2-D47`, `V2-D73`, `V2-D81`, `V2-D86`, `V2-D87`, `V2-D93`, `V2-D99`, `V2-D116`, `V2-D120`, `V2-D121`) |
-| Threats | `custom-memory-engine/PLAN/V2/THREAT_MODEL.md` (`T-42`, `T-43`) |
-| Invariants | `custom-memory-engine/PLAN/V2/INVARIANT_LEDGER.md` (`I4`, `I5`, `I8`, `I14`, `I17`) |
-| App memory client and boundary test | `app/services/memory_engine.py`, `tests/integration/test_app_engine_boundary.py` |
+| Engine contract | `core/memory-engine/src/custom_memory_engine/api/contract.py` |
+| Read path, query modes, artifact shape | `core/memory-engine/src/custom_memory_engine/api/read_handlers.py` |
+| Deletion scopes and receipt | `core/memory-engine/src/custom_memory_engine/engine/deletion.py`, `api/delete_handlers.py` |
+| Export manifest | `core/memory-engine/src/custom_memory_engine/engine/export.py` |
+| Gate holds | `core/memory-engine/src/custom_memory_engine/engine/gate.py` |
+| Host credentials and statuses | `core/memory-engine/src/custom_memory_engine/host/credentials.py`, `host/app.py` |
+| API reference | `core/memory-engine/PLAN/V2/API_V2.md` §4.1–4.9 |
+| Decisions | `core/memory-engine/PLAN/V2/DECISIONS_V2.md` (`V2-D37`, `V2-D47`, `V2-D73`, `V2-D81`, `V2-D86`, `V2-D87`, `V2-D93`, `V2-D99`, `V2-D116`, `V2-D120`, `V2-D121`) |
+| Threats | `core/memory-engine/PLAN/V2/THREAT_MODEL.md` (`T-42`, `T-43`) |
+| Invariants | `core/memory-engine/PLAN/V2/INVARIANT_LEDGER.md` (`I4`, `I5`, `I8`, `I14`, `I17`) |
+| App memory client and boundary test | `apps/api/app/services/memory_engine.py`, `apps/api/tests/integration/test_app_engine_boundary.py` |
 | App rules | `AGENTS.md`, `CLAUDE.md` |
 | **Vite** | https://vite.dev |
 | **React** | https://react.dev |
