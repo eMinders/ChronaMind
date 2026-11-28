@@ -14,6 +14,7 @@ export function MemoryItemRow({ item, onOpen, className }: MemoryItemRowProps) {
   return (
     <button
       type="button"
+      data-testid="memory-item"
       onClick={() => onOpen(item.id)}
       className={cn(
         "group flex w-full cursor-pointer items-start justify-between gap-3 rounded-md border border-border bg-card px-3 py-2.5 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",

@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "@/auth/AuthProvider";
 import { RequireAuth } from "@/auth/RequireAuth";
 import { AppShell } from "@/layout/AppShell";
+import { Chat } from "@/pages/Chat";
 import { Login } from "@/pages/Login";
 import { DevComponents } from "@/pages/DevComponents";
 
@@ -52,15 +53,7 @@ export function AppRoutes({ devMode = import.meta.env.DEV }: AppRoutesProps) {
             }
           />
           <Route element={<RequireAuth />}>
-            <Route
-              path="/chat"
-              element={
-                <PlaceholderPage
-                  title="Chat"
-                  description="Live chat and side-by-side memory panel arrive in WEB-05."
-                />
-              }
-            />
+            <Route path="/chat" element={<Chat />} />
             <Route
               path="/memory"
               element={

@@ -60,6 +60,19 @@ Only `src/api/` talks to the server (an ESLint rule rejects `fetch` anywhere els
 three error shapes the server uses. `errors.ts` (`messageFor`) turns any error into one plain sentence. A 401 on a
 signed-in call ends the session; a 401 from the login form ("Incorrect email or password") is a form error.
 
+## Signing in and the chat page
+
+- **Sign in** (`/login`): Register or Sign in, then the app opens a chat session at once. The session (user token +
+  chat-session token) lives in `src/auth/sessionStore.ts`, outside React, with a `sessionStorage` copy, so a reload
+  stays signed in and the client has the right token from the very first request. A 401 on a signed-in call ends the
+  session and the login page says "Session expired"; a wrong password is only a form error.
+- **Protected pages** (`RequireAuth`): chat, memory, time travel and forget. Login, Evidence and the start page are
+  public. Tests that prepare `sessionStorage` call `sessionStore.reload()` to simulate a page load.
+- **Chat** (`/chat`): the conversation on the left, the memory panel on the right. A send carries only the new message.
+  After each reply the panel refreshes every 1.5 s until the memory has changed and held still for two refreshes, or
+  for at most 15 s (`src/features/chat/memoryPolling.ts`), because the app writes memory a few seconds _after_ it
+  answers. The send time of each message is kept for Time Travel (`turnMarkers.ts`).
+
 ## Quality Gates
 
 Run every gate in order (`tsc -b --noEmit`, `eslint .`, `prettier --check .`, `vitest run`):
