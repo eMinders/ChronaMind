@@ -66,6 +66,9 @@ signed-in call ends the session; a 401 from the login form ("Incorrect email or 
   chat-session token) lives in `src/auth/sessionStore.ts`, outside React, with a `sessionStorage` copy, so a reload
   stays signed in and the client has the right token from the very first request. A 401 on a signed-in call ends the
   session and the login page says "Session expired"; a wrong password is only a form error.
+- **Keep the tokens in `sessionStorage`, never `localStorage`.** They are tab-scoped on purpose: the user token
+  can read and erase this user's memory through `/api/v1/memory/*`, so it must not outlive the tab or be shared
+  between tabs.
 - **Protected pages** (`RequireAuth`): chat, memory, time travel and forget. Login, Evidence and the start page are
   public. Tests that prepare `sessionStorage` call `sessionStore.reload()` to simulate a page load.
 - **Chat** (`/chat`): the conversation on the left, the memory panel on the right. A send carries only the new message.

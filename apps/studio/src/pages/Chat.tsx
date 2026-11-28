@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { getHistory, sendMessage } from "@/api/chat";
+import { ApiError } from "@/api/client";
 import { messageFor } from "@/api/errors";
 import type { ChatMessage } from "@/api/types";
 import { useAuth, type AuthSession } from "@/auth/context";
@@ -34,10 +35,7 @@ function ChatScreen({ session }: { session: AuthSession }) {
   const [slow, setSlow] = useState(false);
 
   const send = useMutation({
-    mutationFn: (text: string) => {
-      recordMarker(session.email, text);
-      return sendMessage(text);
-    },
+    mutationFn: (text: string) => sendMessage(text),
     onSuccess: (messages: ChatMessage[]) => {
       queryClient.setQueryData(historyKey, messages);
       setDraft("");
@@ -53,11 +51,22 @@ function ChatScreen({ session }: { session: AuthSession }) {
     return () => clearTimeout(timer);
   }, [send.isPending]);
 
-  function onSend(text: string) {
+  /**
+   * `retry` resends the same message after a failure. Its Time Travel marker is
+   * not recorded again: the first attempt's time is the moment the message was
+   * sent, and a timed-out first attempt may already have reached the server.
+   */
+  function onSend(text: string, retry = false) {
+    if (!retry) {
+      recordMarker(session.email, text);
+    }
     setSlow(false);
     setDraft(text); // a failed send keeps the text in the box
     send.mutate(text);
   }
+
+  const timedOut =
+    send.error instanceof ApiError && send.error.code === "timeout";
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)]">
@@ -87,8 +96,12 @@ function ChatScreen({ session }: { session: AuthSession }) {
         {send.error ? (
           <ErrorBanner
             title="No reply"
-            message={messageFor(send.error)}
-            onRetry={() => onSend(draft)}
+            message={
+              timedOut
+                ? `${messageFor(send.error)} Your message may still have reached the assistant: check the conversation before resending.`
+                : messageFor(send.error)
+            }
+            onRetry={() => onSend(draft, true)}
             retryLabel="Retry"
           />
         ) : null}

@@ -256,3 +256,31 @@ describe("The memory panel", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("Retrying a failed message", () => {
+  it("does not record a second Time Travel marker for the same message", async () => {
+    let attempts = 0;
+    chatApi({
+      "POST /api/v1/chatbot/chat": () => {
+        attempts += 1;
+        return attempts === 1
+          ? json(500, { detail: "llm call timed out" })
+          : json(200, {
+              messages: [{ role: "assistant", content: "Recovered." }],
+            });
+      },
+    });
+    renderChat();
+    await screen.findByText("Noted, Berlin.");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Where do I live?" }));
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Recovered.")).toBeInTheDocument();
+    expect(attempts).toBe(2);
+    expect(readMarkers(SESSION.email).map((m) => m.text)).toEqual([
+      "Where do I live?",
+    ]);
+  });
+});
