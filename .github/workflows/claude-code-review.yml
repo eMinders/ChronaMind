@@ -144,7 +144,7 @@ jobs:
       - name: Run the review
         id: claude-review
         if: steps.gate.outputs.review == 'true'
-        uses: anthropics/claude-code-action@c84e279f859e2591391e95bd309286eb111c345f # v1.0.284
+        uses: anthropics/claude-code-action@acfe7992852970efb4fee683d63d628e3e52df67 # v1.0.286
         env:
           # `--model` reads the environment, so the depth/cost trade-off is a repository variable rather than an edit to
           # this file: unset means claude-sonnet-5-5; `claude-opus-5-5` buys depth at a higher cost per review, and each
