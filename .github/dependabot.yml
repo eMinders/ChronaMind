@@ -10,7 +10,7 @@ updates:
       actions: { patterns: ["*"] }
 
   - package-ecosystem: uv
-    directory: /
+    directory: /apps/api
     schedule: { interval: weekly }
     cooldown: { default-days: 7 }
     ignore:
@@ -38,7 +38,7 @@ updates:
       engine: { patterns: ["*"] }
 
   - package-ecosystem: docker
-    directory: /
+    directory: /apps/api
     schedule: { interval: weekly }
     cooldown: { default-days: 7 }
     ignore:

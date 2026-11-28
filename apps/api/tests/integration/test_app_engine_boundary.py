@@ -40,7 +40,7 @@ from app.services.memory_slots import NullSlotClassifier, SlotExtraction
 from tests.slot_fakes import current, recorded_classifier
 
 ROOT = Path(__file__).resolve().parents[4]
-ENGINE_DIRECTORY = ROOT / "services" / "memory-engine"
+ENGINE_DIRECTORY = ROOT / "core" / "memory-engine"
 ENGINE_PYTHON = ENGINE_DIRECTORY / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 DATABASE_URL = os.environ.get("CME_TEST_DATABASE_URL", "")
 

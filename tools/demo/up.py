@@ -36,7 +36,7 @@ os.environ.pop("SSLKEYLOGFILE", None)
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-ENGINE = ROOT / "services" / "memory-engine"
+ENGINE = ROOT / "core" / "memory-engine"
 ENGINE_PYTHON = ENGINE / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
 STATE = HERE / ".state"
 ENV_FILE = HERE / ".env.demo"
