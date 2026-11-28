@@ -282,7 +282,7 @@ Rules:
    Invariant 7 principle, preserved).
 5. **Scope identity is immutable** (enforced by migration 32, `guard_scope_identity`). A change of scope is a new
    artifact: *copy + retract* with a recorded `supersedes` association, so provenance history is never rewritten.
-   The engine does not offer that `move` yet (`API_V2.md` §5.2, #258); sharing is `set_visibility` plus a grant.
+   Tier C can re-file a current memory version within its owner's namespace (`API_V2.md` §4.10, `V2-D129`).
 6. **Cross-scope reads are logged** with `event_type='scope_read'` and the selector set,
    content-free. This is what makes the isolation claim auditable rather than asserted.
 
@@ -420,7 +420,7 @@ operation a tier needs appears here, and nothing outside it exists.**
 | **Delete** | `delete` | **—** | ✓ | Tier B can never delete. It can only `retract_own` artifacts whose method it produced. |
 | **Export** | `export` | — | ✓ | User-facing data export; excludes content whose deletion is pending. |
 | **Observe** | `stats`, `cost` | ✓ | ✓ | Support/coverage/usage/cost; never content of other scopes. |
-| **Scope** | `create_scope`, `grant_access`, `revoke_access`, `set_visibility` | — | ✓ | Scope administration (`V2-D46`, `V2-D113`); owner of the namespace only; Tier B can never change access or visibility. |
+| **Scope** | `create_scope`, `grant_access`, `revoke_access`, `set_visibility`, `move` | — | ✓ | Scope administration (`V2-D46`, `V2-D113`); owner of the namespace only; Tier B can never change access or visibility. |
 
 **The corrected rule:** Tier B *cannot delete*, *cannot adjudicate*, and *cannot write
 grounded claims without evidence*. It **can** propose inferences and link structure,
@@ -433,8 +433,7 @@ to `asserted`.
 
 > **r9 (`V2-D46`, `V2-D47`).** Six operations close gaps other sections relied on: `dissent` (§5 of
 > `USER_MODEL.md`: a user rejecting an inference), `create_entity` (§5.2), `register_method` (§4,
-> `I3`) and the Scope class. 29 operations, 18 for Tier B. `move` and *revise* are compositions,
-> not operations (`API_V2.md` §5). Admin is a role within Tier C.
+> `I3`) and the Scope class. The updated matrix includes 33 operations, 19 for Tier B. See `API_V2.md` §3. Admin is a role within Tier C.
 
 ### 8.2 `stats` is the only way Tier B sees evidence
 

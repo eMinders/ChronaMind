@@ -157,6 +157,7 @@ VALUES: dict[str, object] = {
     "params_schema_hash": "h",
     "description": "x",
     "target_ref": "k",
+    "target_scope": "/u/alice/project/",
     "deletion_epoch": None,
     "selectors": [],
     "window": None,

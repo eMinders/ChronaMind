@@ -30,8 +30,7 @@ from custom_memory_engine.security.provisioning import RlsProvisioningError, pro
 async def provision(dsn: str, schema: str, role: str, login_role: str | None) -> None:
     """Provision ``role`` on ``schema`` in one transaction; a failed verification rolls the grants back."""
     async with await AsyncConnection.connect(dsn, connect_timeout=5) as connection:
-        async with connection.transaction():
-            await provision_runtime_role(connection, schema, role, login_role=login_role)
+        await provision_runtime_role(connection, schema, role, login_role=login_role)
 
 
 def main(argv: list[str] | None = None) -> int:

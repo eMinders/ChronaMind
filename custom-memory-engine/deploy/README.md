@@ -71,6 +71,27 @@ excluded by both `.gitignore` and `.dockerignore`.
   `prometheus/prometheus.yml` scrapes `custom-memory-engine` and `grafana/dashboards/json/cme_operations.json` plots
   these series.
 
+## Upgrading an existing deployment in place
+
+Stop the host, worker, maintenance jobs and journal timer. From `custom-memory-engine/`, set `RL_DATABASE_URL` to the
+schema owner's connection and use the deployment's existing `CME_RUNTIME_ROLE` and schema name. Run these commands
+for each upgrade that adds a relation. The migration creates the tables and the provisioning command reapplies and
+verifies the runtime grants, including `SELECT` and `INSERT` on all three migration 33 tables.
+
+```bash
+python -m custom_memory_engine.schema.migrate apply --schema cme_engine
+python scripts/provision_role.py --schema cme_engine --role "$CME_RUNTIME_ROLE"
+python -m custom_memory_engine.schema.migrate status --schema cme_engine
+```
+
+Pass `--login-role` to provisioning if the host login also needs membership in `CME_RUNTIME_ROLE`. An unsafe existing
+role causes provisioning to roll back. Check the configured role name and correct its attributes or excess privileges
+before retrying. Confirm `state == 'applied'` and `version == migrate.VERSION` (34 in this release). When upgrading
+from 32, also grant the journal exporter `SELECT` on `cme_engine.erasure_marker` as described in restore step 5.
+Migrations 33 and 34 leave the upgraded database awaiting reconciliation. For an intact in-place upgrade, follow the
+replay procedure below with `--restored-mode in-place`. If there is no journal to replay, the operator can explicitly
+record `replay --mark-reconciled --restored-mode in-place`. Restart the services and timer after reconciliation succeeds.
+
 ## Running the worker and maintenance scheduler
 
 **systemd** — `deploy/cme-worker.service`, `deploy/cme-maintenance.service`, `deploy/cme-maintenance.timer`. Install:
@@ -171,9 +192,9 @@ depend on process-wide HMAC keys outside the database. Therefore:
    artifact check, and `pg_restore --disable-triggers` (superuser) is the escape hatch if that path is ever needed. Roles are cluster-wide and not included in a
    schema dump. Restore a `--schema=cme_engine` dump with `pg_restore --no-owner --no-acl --exit-on-error` (omit
    `--schema=` on `pg_restore` so `CREATE SCHEMA` and `COMMENT ON SCHEMA` are restored), confirm the `cme_engine`
-   schema comment carries `OWNER_MARKER`, run `security.provisioning.provision_runtime_role` to create/grant
-   `CME_RUNTIME_ROLE` with least privilege, and run `MigrationRunner.status()` to verify `state == 'applied'`,
-   `version == 32`, and matching `_cme_schema_migrations` checksums and catalog fingerprint.
+   schema comment carries `OWNER_MARKER`, then run the migration, provisioning and status commands in the upgrade
+   section above. Verify `state == 'applied'`, `version == migrate.VERSION` (34 in this release), and matching
+   `_cme_schema_migrations` checksums and catalog fingerprint. Use the actual restore mode in step 5.
 5. **Deletions survive an older backup: the erasure journal (`V2-D122`).** A backup taken before a deletion still
    holds the deleted rows, and restoring it rolls back the `deletion_request` rows too. So the deletion log is copied
    *out of the database*: `cme-erasure-journal.timer` runs `scripts/erasure_journal.py export` every five minutes,
@@ -190,11 +211,10 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
      The role also reads `cme_engine.erasure_marker` (what each deletion erased besides its target, `V2-D125`), so
      export needs `GRANT SELECT ON cme_engine.erasure_marker TO cme_journal;` as well.
 
-   **The host's login role reads `cme_engine.restore_reconciliation`.** The host and the worker refuse to serve a
-   database the journal has not been replayed into (`restore_not_reconciled`, `V2-D125`), and both check it as their own
-   login role: `GRANT SELECT ON cme_engine.restore_reconciliation TO <login role>;`. Without the grant the check fails
-   closed and the host does not start -- deliberately, because the alternative is answering with memories a later
-   deletion erased.
+   The host and worker read `cme_engine.restore_reconciliation` after `SET LOCAL ROLE` to `CME_RUNTIME_ROLE`.
+   `erasure_runtime_grant_missing` means the runtime role needs its migration 33 grants reapplied with
+   `scripts/provision_role.py`. A live `delete` reports `forbidden` with the same detail. Once the grants are in
+   place, `restore_not_reconciled` at host startup means the database still needs journal reconciliation.
 
    **Ship the journal off-host** with every backup and continuously (it is small and holds no content); the database
    cannot protect a copy of its own history.
@@ -248,13 +268,18 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    ```
 
    **What the journal carries besides the target** (`V2-D125`). A target is not the whole effect of a deletion, so each
-   request also records keyed digests of the evidence turns it erased and of the writes whose results it erased (with
-   each result's id). The replay re-inserts them and then:
-   - erases every marked turn the restored database still holds, with its jobs — including for a request whose target
+   request records the writes whose results it erased as keyed digests with their result ids. `memory` and `topic`
+   also record keyed digests of their evidence turns. An `all` replay takes every turn of the user directly from the
+   restored database, including turns with queued jobs. Older format-2 files work as they are. The next export keeps
+   the first-seen entry when the database omits all its legacy `all` turn markers and every write still matches.
+
+   Replay applies the following rules.
+
+   - Erase every selected turn the restored database still holds, with its jobs — including for a request whose target
      the backup never held, which is exactly the case where nothing else would;
-   - flags a marked turn that survives (turns are retained, or a later version cites it) so no extraction ever runs on
+   - Flag a selected turn that survives (turns are retained, or a later version cites it) so no extraction ever runs on
      it again;
-   - answers a client's resend under an erased idempotency key with the erased result instead of writing the claim
+   - Answer a client's resend under an erased idempotency key with the erased result instead of writing the claim
      again (the app resends its whole conversation every turn).
 
    **Upgrading to migration 33, or restoring at all.** A migration never records the identity itself: a dump taken
@@ -266,8 +291,8 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    ```bash
    # the normal case: replay (a no-op on an intact database, and it exits 0); --restored-mode names the restore
    python scripts/erasure_journal.py replay --restored-from-backup-at <backup-start-iso8601> --restored-mode logical --journal /var/lib/chronamind-journal/erasure-journal.jsonl
-   # no journal to replay (an in-place upgrade, or the timer was never enabled): an explicit operator assertion
-   python scripts/erasure_journal.py replay --mark-reconciled --restored-mode in-place --journal /var/lib/chronamind-journal/erasure-journal.jsonl
+   # In-place upgrade with no journal to replay. This assertion needs no journal file or CME_DELETION_RECEIPT_KEY.
+   python scripts/erasure_journal.py replay --mark-reconciled --restored-mode in-place
    ```
 
    `--restored-mode` is required (`restored_mode_required`, exit `2`), on both commands: the reconciliation records
@@ -277,7 +302,7 @@ user (`DynamicUser=yes`, never the worker's `chronamind`) from `/etc/chronamind/
    Both the worker and the host **refuse a database the journal has not been replayed into**
    (`restore_not_reconciled`): `restore_reconciliation` records the identity of the database the last successful replay
    touched, and a `pg_restore` re-creates that table, so the restored copy no longer matches its own row. The worker
-   answers `unreconciled` and claims nothing; the host refuses to start and reports not-ready. Only a replay that exits
+   answers `unreconciled` and rolls back its claim. A probe error also rolls back the attempt. The host refuses to start. Only a replay that exits
    `0` records the new identity — including `--accept-unresolved`, which says the missing targets really were memories
    the backup never held.
 

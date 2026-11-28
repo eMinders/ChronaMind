@@ -21,6 +21,7 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
+from custom_memory_engine.api.move import move_version
 from custom_memory_engine.api.runtime import Receipt, Runtime, change_visibility, new_id, now, remember, replayed
 from custom_memory_engine.clock import allocate_clock
 from custom_memory_engine.engine.artifact_provenance import (
@@ -498,6 +499,12 @@ class Handlers:
             raise EntryError("precondition_failed", "already_revoked")
         raise EntryError("forbidden")
 
+    async def move(self, call: Call) -> str:
+        """Re-file an owned version and return its successor id, including on replay."""
+        return await move_version(
+            self.runtime, call.ctx.principal, _text(call, "artifact_id"), _scope(call, "target_scope"), _key(call)
+        )
+
     async def set_visibility(self, call: Call) -> Receipt:
         """``set_visibility(artifact_id, visibility)`` -> ``Receipt`` (``I7``, ``V2-D113``).
 
@@ -538,6 +545,7 @@ def register_structure_handlers(engine: Engine, runtime: Runtime) -> Handlers:
         "grant_access": handlers.grant_access,
         "revoke_access": handlers.revoke_access,
         "set_visibility": handlers.set_visibility,
+        "move": handlers.move,
     }
     for name, handler in table.items():
         engine.register(name, handler)

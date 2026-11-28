@@ -127,22 +127,17 @@ def _validated(schema_name: str, role_name: str) -> tuple[str, str]:
     return schema_name, role_name
 
 
-def _statements(section: str, schema_name: str, role_name: str) -> list[sql.Composed]:
-    """Render a section into individual statements with quoted identifiers substituted."""
-    rendered: list[sql.Composed] = []
-    for statement in _sections()[section].split(";"):
-        if not statement.strip():
-            continue
-        pieces: list[sql.Composable] = []
-        for part in re.split(r"(\{\{role\}\}|\{\{schema\}\})", statement):
-            if part == "{{role}}":
-                pieces.append(sql.Identifier(role_name))
-            elif part == "{{schema}}":
-                pieces.append(sql.Identifier(schema_name))
-            else:
-                pieces.append(sql.SQL(cast(LiteralString, part)))
-        rendered.append(sql.Composed(pieces))
-    return rendered
+def _render_section(section: str, schema_name: str, role_name: str) -> sql.Composed:
+    """Quote identifiers and let PostgreSQL parse the SQL, including dollar-quoted bodies."""
+    pieces: list[sql.Composable] = []
+    for part in re.split(r"(\{\{role\}\}|\{\{schema\}\})", _sections()[section]):
+        if part == "{{role}}":
+            pieces.append(sql.Identifier(role_name))
+        elif part == "{{schema}}":
+            pieces.append(sql.Identifier(schema_name))
+        else:
+            pieces.append(sql.SQL(cast(LiteralString, part)))
+    return sql.Composed(pieces)
 
 
 async def verify_forced_rls(connection: AsyncConnection, schema_name: str) -> None:
@@ -245,7 +240,7 @@ async def provision_runtime_role(
     *,
     login_role: str | None = None,
 ) -> None:
-    """Create the restricted role, grant least privilege, and verify the result.
+    """Create or verify the restricted role and reapply its grants atomically.
 
     ``login_role`` (optional) is granted membership so a login role can ``SET ROLE`` to it; the runtime
     role itself never has ``LOGIN``. Raises ``RlsProvisioningError`` if forced RLS or the role's
@@ -254,16 +249,19 @@ async def provision_runtime_role(
     schema_name, role_name = _validated(schema_name, role_name)
     if login_role is not None and ROLE_PATTERN.fullmatch(login_role) is None:
         raise RlsProvisioningError("valid_login_role_required")
-    for section in ("create-role", "grants"):
-        for statement in _statements(section, schema_name, role_name):
-            await connection.execute(statement)
-    if login_role is not None:
-        await connection.execute(
-            sql.SQL("GRANT {} TO {}").format(sql.Identifier(role_name), sql.Identifier(login_role))
-        )
-    await verify_forced_rls(connection, schema_name)
-    await verify_runtime_role(connection, role_name)
-    await verify_privileges(connection, schema_name, role_name)
+    async with connection.transaction():
+        # A schema owner can refresh an existing role's grants without cluster-wide CREATEROLE.
+        existing = await connection.execute("SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = %s", (role_name,))
+        if await existing.fetchone() is None:
+            await connection.execute(_render_section("create-role", schema_name, role_name), prepare=False)
+        await verify_runtime_role(connection, role_name)
+        await verify_forced_rls(connection, schema_name)
+        await connection.execute(_render_section("grants", schema_name, role_name), prepare=False)
+        await verify_privileges(connection, schema_name, role_name)
+        if login_role is not None:
+            await connection.execute(
+                sql.SQL("GRANT {} TO {}").format(sql.Identifier(role_name), sql.Identifier(login_role))
+            )
 
 
 __all__ = [

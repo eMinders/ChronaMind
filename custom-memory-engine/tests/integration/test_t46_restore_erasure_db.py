@@ -14,22 +14,34 @@ live database had. The worker, the deletion and the API run for real.
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
 import pytest
 from psycopg import AsyncConnection, sql
 
+from custom_memory_engine.api.delete_handlers import DeleteHandlers
 from custom_memory_engine.api.entry import CallerContext, Credential
 from custom_memory_engine.api.runtime import Receipt, Runtime
 from custom_memory_engine.api.wiring import wire_engine
+from custom_memory_engine.deletion.journal import (
+    export_journal,
+    export_to_file,
+    read_journal,
+    replay_journal,
+    write_journal,
+)
 from custom_memory_engine.deletion.markers import (
     ErasureMarker,
     MarkerKind,
     record_reconciliation,
+    replayed_write,
     turn_digest,
     write_digest,
 )
@@ -198,6 +210,103 @@ async def world(database) -> AsyncIterator[World]:  # noqa: F811
                 await owner.execute("RESET ROLE")
                 await owner.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
                 await owner.commit()
+
+
+async def test_a_thousand_turns_add_no_marker_rows_or_journal_bytes_to_an_all_deletion(
+    world: World, tmp_path: Path
+) -> None:
+    """Compare complete one-entry files from real requests with the same timestamp precision and id length."""
+    sizes = []
+    for turn_count in (0, 1000):
+        await world.rows(
+            "INSERT INTO turn (id, session_id, user_id, sequence_no, role, content, occurred_at) "
+            "SELECT 'turn-' || n, 's-alice', 'alice', n, 'user', 'test', %s FROM generate_series(1, %s) AS n",
+            T0,
+            turn_count,
+        )
+        receipt = await delete_memory(
+            world.owner,
+            "alice",
+            scope="all",
+            receipt_key=KEY,
+            schema_name=world.schema,
+            delete_exclusive_sources=True,
+            replay_time=T0.replace(microsecond=1 + turn_count),
+        )
+        assert receipt.deleted_turns == turn_count
+        [(marker_rows,)] = await world.rows(
+            "SELECT count(*) FROM erasure_marker WHERE request_id = %s", receipt.request_id
+        )
+        entries = await export_journal(world.owner, schema_name=world.schema)
+        assert entries[-1].request_id == receipt.request_id
+        path = tmp_path / f"{turn_count}.jsonl"
+        write_journal(path, [entries[-1]], schema_name=world.schema, key=KEY, exported_at=T0.replace(second=1))
+        sizes.append((marker_rows, path.stat().st_size))
+    assert sizes[0][0] == 0
+    assert sizes[1] == sizes[0]
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["compact", "legacy"])
+@pytest.mark.parametrize("restored_claim", [False, True], ids=["before-extraction", "after-extraction"])
+async def test_an_all_replay_finds_restored_turns_and_preserves_the_erased_write(
+    world: World, tmp_path: Path, legacy: bool, restored_claim: bool
+) -> None:
+    job = await world.enqueue_turn("t-peanut")
+    assert await run_once(world.worker, "alice", world.settings()) == f"done:{job}"
+    [(version_id, _)] = await world.claims("peanuts")
+    await world.rows(
+        "INSERT INTO api_idempotency (user_id, operation, idempotency_key, result_id) "
+        "VALUES ('alice', 'assert', 'claim:turn-1', %s)",
+        version_id,
+    )
+    await world.enqueue_turn("t-queued", sequence=2)
+    receipt = await delete_memory(
+        world.owner, "alice", scope="all", receipt_key=KEY, schema_name=world.schema, delete_exclusive_sources=True
+    )
+    assert (receipt.deleted_versions, receipt.deleted_turns) == (1, 2)
+    assert await world.rows("SELECT id FROM job WHERE user_id = 'alice'") == []
+    assert await world.claims("peanuts") == []
+    path = tmp_path / "journal.jsonl"
+    await export_to_file(world.owner, path, key=KEY, schema_name=world.schema)
+    [entry] = read_journal(path).entries
+    write = ErasureMarker("write", write_digest(KEY, "alice", "assert", "claim:turn-1"), version_id)
+    assert entry.markers == (write,)
+    if legacy:
+        turns = tuple(ErasureMarker("turn", turn_digest(KEY, "alice", turn)) for turn in ("t-peanut", "t-queued"))
+        entry = replace(entry, markers=tuple(sorted((*turns, write))))
+        write_journal(path, [entry], schema_name=world.schema, key=KEY)
+
+    await world.restore_backup_state()
+    # This turn existed in the older backup only. Even the legacy file has no digest for it.
+    await world.enqueue_turn("t-restored")
+    if restored_claim:
+        assert await run_once(world.worker, "alice", world.settings()) == "done:job-t-restored"
+        assert len(await world.claims("peanuts")) == 1
+    await world.enqueue_turn("t-queued", sequence=2)
+    handlers = DeleteHandlers(
+        Runtime(world.owner, world.role, world.schema, provenance_key=PROVENANCE, deletion_key=KEY)
+    )
+    report = await replay_journal(handlers, read_journal(path))
+    assert report.replayed == 1 and report.refusal_reason(accept_unresolved=False) is None
+    assert await world.rows("SELECT id FROM turn WHERE user_id = 'alice'") == []
+    assert await world.rows("SELECT id FROM job WHERE user_id = 'alice'") == []
+    assert await run_once(world.worker, "alice", world.settings()) == "idle"
+    assert await world.claims("peanuts") == []
+    assert await world.markers(receipt.request_id) == [(write.kind, write.digest, version_id)]
+    assert await world.rows("SELECT result_id FROM api_idempotency WHERE user_id = 'alice'") == []
+    assert (
+        await replayed_write(
+            world.owner,
+            user_id="alice",
+            operation="assert",
+            idempotency_key="claim:turn-1",
+            key=KEY,
+            schema_name=world.schema,
+        )
+        == version_id
+    )
+    await export_to_file(world.owner, path, key=KEY, schema_name=world.schema)
+    assert read_journal(path).entries == (entry,)
 
 
 async def test_a_replayed_deletion_erases_the_marked_turn_so_the_worker_cannot_extract_it_again(world: World) -> None:
@@ -383,7 +492,10 @@ async def test_a_replay_erases_the_marked_turn_even_when_its_target_is_not_in_th
     assert await world.markers("del-t46") == [("turn", turn_digest(KEY, "alice", "t-peanut"), "")]
 
 
-async def test_migrating_a_restored_database_does_not_mark_it_reconciled(database) -> None:  # noqa: F811
+async def test_migrating_a_restored_database_does_not_mark_it_reconciled(
+    database,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The trap the first version of this fix had: a restored pre-33 dump is *migrated*, so a migration that stamped
     itself would mark a restored copy as reconciled and let the worker and the host run on it with no replay.
 
@@ -415,7 +527,24 @@ async def test_migrating_a_restored_database_does_not_mark_it_reconciled(databas
     )
     # and the explicit assertion records it, so an upgrade with no journal to replay is not stuck
     async with await AsyncConnection.connect(config.database_url.get_secret_value(), autocommit=True) as conn:
-        await record_reconciliation(conn, schema_name=schema, by="operator-assertion", restored_mode="in-place")
+        login = await (await conn.execute("SELECT current_user")).fetchone()
+        assert login is not None
+        monkeypatch.setenv("CME_RUNTIME_ROLE", str(login[0]))
+        monkeypatch.setenv("CME_DATABASE_URL", config.database_url.get_secret_value())
+        monkeypatch.setenv("CME_SCHEMA", schema)
+        monkeypatch.delenv("CME_DELETION_RECEIPT_KEY", raising=False)
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "scripts/erasure_journal.py",
+            "replay",
+            "--mark-reconciled",
+            "--restored-mode",
+            "in-place",
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await process.communicate()
+        assert process.returncode == 0, stderr.decode()
+        assert b"No journal was read." in stderr
         assert await (
             await conn.execute(cast(Any, f"SELECT count(*) FROM {schema}.restore_reconciliation"))
         ).fetchall() == [(1,)]

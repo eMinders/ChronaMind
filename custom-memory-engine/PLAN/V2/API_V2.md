@@ -86,10 +86,9 @@ channel-ordered `(artifact_id, bundle)` view of those same items. Audit rows nev
 
 ## 3. Operations and tiers (the tier matrix, `MA-015`)
 
-`✓` = permitted, `—` = not permitted (calling it is `forbidden`). **32 operations, eleven capability classes**:
+`✓` = permitted, `—` = not permitted (calling it is `forbidden`). **33 operations, eleven capability classes**:
 the 23 of `ARCHITECTURE_V2.md` 8.1 as approved (`V2-D39`), the six added by `V2-D46` (`dissent`, `create_entity`,
-`register_method`, `create_scope`, `grant_access`, `revoke_access`), the two of `V2-D105` (`lift`, `constraints`), and
-`set_visibility` (`V2-D113`). 19 are open to Tier B.
+`register_method`, `create_scope`, `grant_access`, `revoke_access`), the two of `V2-D105` (`lift`, `constraints`), `set_visibility` (`V2-D113`) and `move` (`V2-D129`). 19 are open to Tier B.
 
 **Tiers (`V2-D47`).** There are two tiers, taken from the authenticated credential. **Admin is a role within
 Tier C**, not a third tier: an admin-only operation (`Admin` ✓, `Tier C` —) needs a Tier C credential that holds
@@ -136,6 +135,7 @@ lineage produced; Tier C: its own assertions), `scope_writable` (`scope.access.a
 | 26 | Scope | `grant_access` | — | ✓ | ✓ | `namespace_owner_only` |
 | 27 | Scope | `revoke_access` | — | ✓ | ✓ | `namespace_owner_only` |
 | 32 | Scope | `set_visibility` | — | ✓ | ✓ | `namespace_owner_only` |
+| 33 | Scope | `move` | — | ✓ | ✓ | `namespace_owner_only`, `targets_readable` |
 | 28 | Observe | `stats` | ✓ | ✓ | ✓ | `targets_readable` |
 | 29 | Observe | `cost` | ✓ | ✓ | ✓ | — |
 
@@ -467,7 +467,8 @@ Tier B call, TB1), `validation_error`, `retryable_conflict`.
 
 The request also records what it erased besides its target — the evidence turns of the versions it deleted and the
 idempotency identities of the writes whose results it deleted — as keyed digests (`V2-D125`), which is what makes the
-deletion survive the restore of an older backup. Two consequences a caller sees: a **resend** under an idempotency key
+deletion survive the restore of an older backup. An `all` replay derives the user's turns from the restored database
+and carries only the write digests and their result ids. Two consequences a caller sees: a **resend** under an idempotency key
 whose result was deleted answers with that erased result and writes nothing (before `V2-D125` it was a first write once
 a restore had removed the record), and a turn that evidenced a deleted version is never extracted again, so a
 re-extraction cannot re-derive the claim. The turn is erased when nothing surviving cites it; otherwise it stays and is
@@ -506,6 +507,17 @@ One content-free `visibility_changed` audit row (artifact kind and new value, ne
 `forbidden` (another tenant's id and an unknown id are one answer), `validation_error` (`visibility_invalid`).
 `visibility` may also be given at insertion to `ingest_episode`, `assert`, `create_entity` and `link`.
 
+**`move(ctx, artifact_id, target_scope, idempotency_key) → ArtifactId`** copies a current memory version into a
+different scope within the owner's namespace. Select a private source by its exact scope. Read the new version by
+selecting its destination scope. The new version starts private and carries the original memory key,
+event range, content, citations and derivation sources. Its recorded range opens when the old version closes.
+A private `supersedes` edge records the move. Replaying the same key returns the original successor id.
+The operation returns `forbidden` for a foreign or unknown source or a foreign destination, `validation_error` for
+malformed input, and `precondition_failed` when the version cannot be re-filed faithfully (including a scope-local
+entity subject, an abstraction's scope-bound ledger, a contradiction, a destination dissent or a single-value
+collision). The association degree cap returns `resource_limit`. A concurrent transaction conflict can return
+`retryable_conflict`. See `V2-D129`.
+
 ### 4.11 Observe
 
 **`stats(ctx, artifact_id) → Stats`** returns counts, coverage, refutation attempts, verification status and the
@@ -528,7 +540,7 @@ Nothing outside sections 3-4 exists.
 | # | Gap | Decision |
 |---|---|---|
 | 5.1 | A Tier C way to reject an inference (`USER_MODEL.md` §3, `UM-012`, `V2-D33`) | New operation **`dissent`** (Adjudicate, Tier C): `inferred → retired`, `reason='user_dissent'`, negative constraint. `refute` stays Tier B and evidenced |
-| 5.2 | `move` (`ARCHITECTURE_V2.md` 5 rule 5) | **Not offered by the engine** (`V2-D113`). A faithful move re-cites the original's evidence in the target scope, and the contract deliberately returns evidence as ids only (`V2-D37`), so no client composition of public operations can carry it; a composition that re-asserts content without it would launder a grounded claim into a weaker one. The need `I7` names — a collaborator reading a memory — is met without a copy by `set_visibility` plus a grant, which also keeps one deletion surface instead of two. Scope identity stays immutable (migration 32 `guard_scope_identity`). A server-side `move` primitive is tracked as #258 |
+| 5.2 | Re-file a memory (`ARCHITECTURE_V2.md` §5 rule 5) | Tier C `move` copies the server-held evidence and retires the original in one transaction (§4.10, `V2-D129`). |
 | 5.3 | `ingest_artifact` payload | **Confirmed** as in 4.1: an externally formed claim or procedure through the grounding policy |
 | 5.4 | Creating an entity | New operation **`create_entity`** (Structure, Tier B and C) |
 | 5.5 | Registering an inference method | New operation **`register_method`** (Maintain, admin-only, append-only) |
@@ -575,7 +587,7 @@ application computed. Each layer is tested alone; the application read set is pr
 
 | Criterion | Where |
 |---|---|
-| All operations present exactly once, each with signature, tiers and error contract | section 3 (29 rows: the 23 of 8.1 plus `V2-D46`), section 4, section 1.1; `tests/test_api_contract.py` |
+| All operations present exactly once, each with signature, tiers and error contract | section 3 (33 rows), section 4, section 1.1; `tests/test_api_contract.py` |
 | Every Tier B prohibition stated and labelled for `MA-015` | 3.1 (TB1-TB10, AD1), each with a test in `tests/test_tier_permissions.py` |
 | No-oracle error rule with exact codes | 1.1 (`forbidden` for absent and unreadable alike; static codes) |
 | `V2-D07` contradiction resolved by an approved record, cited | header (`V2-D39`) |
@@ -586,7 +598,6 @@ application computed. Each layer is tested alone; the application read set is pr
 
 | Name | Kind | Meaning |
 |---|---|---|
-| `move` | not offered | section 5.2 |
 | `revise` | composition | section 5.7 |
 | `ground` | internal function | grounding policy (`E-015`), called by `assert`/`ingest_artifact` |
 | `assess_soundness` | internal function | soundness policy (`E-015`), called by `infer` |

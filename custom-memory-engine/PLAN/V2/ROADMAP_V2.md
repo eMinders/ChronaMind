@@ -178,6 +178,8 @@ outstanding criterion (`V2-D62`).
 
 ### 4.1 `E-039` deferral register — the 7 unwired operations (r19, `V2-D63`)
 
+`move` is wired for Tier C through the Scope handlers (`V2-D129`, #258).
+
 `Engine.call` dispatches to registered handlers and nothing else. **22 of 29** operations are wired on `main`
 (`register_method`, `create_entity`, `create_scope`, `link`, `unlink`, `link_entity`, `adjudicate`, `retract_own`,
 `grant_access`, `revoke_access` via `api/handlers.py`; `ingest_episode`, `assert`, `ingest_artifact` via
@@ -513,17 +515,16 @@ journal (`V2-D122`), and the hardening that three independent reviews then produ
 
 *What is deliberately not closed, and why.*
 
-1. **#258 `move`** stays open: no consumer, sharing covers `I7` with a single deletion surface, and a copy doubles it
-   (`V2-D113`).
+1. **#258 `move`** was deferred in `V2-D113` and implemented in `V2-D129` with deletion coverage for both versions.
 2. **T-46 is closed** (`V2-D125`, migration 33). A deletion records what it erased besides its target — the evidence
-   turns and the write identities — and the journal carries them, so a restore plus a replay cannot re-derive a deleted
+   turns (`all` derives these from the restored database) and the write identities — so a restore plus a replay cannot re-derive a deleted
    claim from a turn the backup still holds, and a client's resend under an erased key answers with the erased result.
    The worker and the host refuse a database the journal has not been replayed into. Measured over real
    `pg_dump`/`pg_restore` by `scripts/rehearse_restore.py` (`t46_*` in its report). Three limitations it did not close
    are tracked as their own issues rather than left in prose: **#262** (a data-only or PITR restore keeps every OID, so
    the reconciliation check cannot see it), **#263** (the markers inherit the journal's recovery point, and no check
    compares that point with the backup being restored), and **#264** (the final commit's independent review did not run
-   — a tooling failure, not a finding). The availability-only `T-47` is closed by **#261** / `V2-D127`. `#258` stays open above.
+   — a tooling failure, not a finding). The availability-only `T-47` is closed by **#261** / `V2-D127`.
 3. **The statistical instruments that W4 owns were started early, and only as far as `I11`/`I15` needed them.**
    `SD-001`, `SD-002` and `SD-008` have drafts with their level separation, required evidence, dependence gating and a
    grid pin to the engine's own admission predicate (`V2-D114`, `V2-D124`). `C-012` and gate `G4` are **not** started:

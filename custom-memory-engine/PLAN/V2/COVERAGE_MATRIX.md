@@ -4,7 +4,7 @@
 (`--check`) or if any element is unowned (`tests/test_plan_coverage.py`). Elements are extracted from
 `ARCHITECTURE_V2.md`; owners come from `INVARIANT_LEDGER.md` (invariants) and `COVERAGE.md` (the rest).
 
-**73 elements, 0 unowned.**
+**74 elements, 0 unowned.**
 
 ## Kinds (4)
 
@@ -58,7 +58,7 @@
 | `procedures` | §9.1 | `E-017`, `E-030`, `E-033` |
 | `conflicts` | §9.1 | `E-017`, `E-033`, `E-035` |
 
-## Operations (32)
+## Operations (33)
 
 | Element | Declared | Owners |
 |---|---|---|
@@ -94,6 +94,7 @@
 | `grant_access` | §8.1 Scope | `E-039`, `E-011` |
 | `revoke_access` | §8.1 Scope | `E-039`, `E-011` |
 | `set_visibility` | §8.1 Scope | `E-039`, `E-011` |
+| `move` | §8.1 Scope | `E-039`, `E-011` |
 
 ## Migrations (9)
 

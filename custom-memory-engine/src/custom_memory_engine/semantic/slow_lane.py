@@ -35,7 +35,7 @@ from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait
 
 from custom_memory_engine.clock import ClockTick, allocate_clock
 from custom_memory_engine.deletion.closure import StaleDeletionEpoch
-from custom_memory_engine.deletion.markers import TurnErased
+from custom_memory_engine.deletion.markers import RestoreNotReconciled, TurnErased, is_reconciled
 from custom_memory_engine.queue.contracts import Job, NewJob, QueueError, WorkerResult
 from custom_memory_engine.queue.worker import JOB_COLUMNS, MAX_ATTEMPTS, _schema, _user
 from custom_memory_engine.security.audit_guard import content_free_details
@@ -98,6 +98,7 @@ async def claim_one(
     schema_name: str = "cme_engine",
     kinds: Sequence[str] | None = None,
     role: str | None = None,
+    require_reconciled: bool = False,
 ) -> Job | None:
     """Take one queued job, or ``None``. Returns with the job ``running`` and its attempt counted."""
     _user(user_id)
@@ -136,6 +137,9 @@ async def claim_one(
                             ).format(table),
                             (LEASE, job.id, user_id),
                         )
+                    # Refusal, query failure and connection loss all roll the claim and its lease back together.
+                    if require_reconciled and not await is_reconciled(connection, schema_name=schema_name):
+                        raise RestoreNotReconciled
     except Exception as error:
         if _is_retryable_pg_error(error):
             raise QueueError("queue_contention_conflict") from None

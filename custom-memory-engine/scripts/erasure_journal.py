@@ -68,7 +68,7 @@ MIN_KEY_BYTES = 32
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export or replay the ChronaMind erasure journal.")
     parser.add_argument("command", choices=("export", "replay"))
-    parser.add_argument("--journal", required=True, type=Path, help="The journal file (JSON lines).")
+    parser.add_argument("--journal", type=Path, help="The JSON lines file to export or replay.")
     parser.add_argument("--json", action="store_true", help="Print the result as one JSON object.")
     parser.add_argument(
         "--restored-from-backup-at",
@@ -96,7 +96,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Succeed even when journalled targets were absent from the restored database (the backup never held "
         "them). Without it any unresolved entry exits 1, because a wrong deletion key looks identical.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.journal is None and (args.command == "export" or not args.mark_reconciled):
+        parser.error("--journal is required for export and journal replay")
+    return args
 
 
 class MissingInput(Exception):
@@ -153,6 +156,7 @@ async def _mark_reconciled(schema: str, *, restored_mode: RestoredMode) -> dict[
         "reconciled": True,
         "refusal": None,
         "marked_reconciled": True,
+        "journal_read": False,
         "restored_mode": restored_mode,
     }
 
@@ -240,6 +244,8 @@ async def main(argv: list[str] | None = None) -> int:
         return 1
     if args.json:
         print(json.dumps(result, sort_keys=True))
+    elif result.get("marked_reconciled"):
+        console.print(f"Reconciliation recorded ({args.restored_mode}). No journal was read.")
     else:
         console.print(result)
     if args.command != "replay":

@@ -11,11 +11,12 @@ erased, and two of those things re-create the deleted memory on their own --
   writes it again.
 
 So every deletion records, per request and in its own transaction, keyed digests of both: ``turn`` for each evidence
-turn of a physically deleted version (for ``all``, every turn the user has), and ``write`` for each recorded
+turn of a physically deleted version under ``memory`` or ``topic``, and ``write`` under every scope for each recorded
 idempotency identity whose result it erased, with that result's engine-generated id. The journal exports them; a replay
 inserts them again, uses the ``turn`` digests to find the turns the restored database still holds and erases them with
 their jobs, and from then on :func:`replayed_write` answers a resend with the erased result -- exactly what the live
-database answered, because there the ``api_idempotency`` row had survived the deletion.
+database answered, because there the ``api_idempotency`` row had survived the deletion. An ``all`` request enumerates
+the user's stored turns during deletion and replay, so its journal entry needs only write markers.
 
 Digests, never plaintext, for the reason ``deletion_request.target_ref`` is one (``T-29``): the journal leaves the
 host. They are keyed with the deployment's deletion key and bound to the user and the marker's kind, so two tenants or
@@ -31,6 +32,7 @@ from hashlib import sha256
 from typing import Literal, LiteralString
 
 from psycopg import AsyncConnection, sql
+from psycopg.errors import InsufficientPrivilege
 from psycopg.rows import tuple_row
 
 type MarkerKind = Literal["write", "turn"]
@@ -274,6 +276,30 @@ _TIMELINE: LiteralString = (
 _APPEND_LOCK: LiteralString = "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(%s, 0))"
 
 
+# PostgreSQL treats a comma-separated privilege list as *any* privilege. Require both on every relation.
+_ERASURE_GRANTS: LiteralString = (
+    "SELECT count(*) = 3 AND pg_catalog.bool_and(pg_catalog.has_table_privilege(c.oid, 'SELECT') "
+    "AND pg_catalog.has_table_privilege(c.oid, 'INSERT')) "
+    "FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = %s AND c.relname IN ('erasure_marker', 'erased_turn', 'restore_reconciliation')"
+)
+
+
+class ErasureGrantMissing(MarkerError):
+    """The current role lacks migration 33's required table grants."""
+
+    def __init__(self) -> None:
+        super().__init__("erasure_runtime_grant_missing")
+
+
+async def require_erasure_grants(connection: AsyncConnection, *, schema_name: str) -> None:
+    """Refuse a deletion before any writes, even when its target would need no markers."""
+    async with connection.cursor(row_factory=tuple_row) as cursor:
+        await cursor.execute(_ERASURE_GRANTS, (schema_name,))
+        if await cursor.fetchone() != (True,):
+            raise ErasureGrantMissing
+
+
 class TurnErased(MarkerError):
     """A deletion marked this turn: extracting it would re-derive what the user deleted (``erased_turn``)."""
 
@@ -299,18 +325,28 @@ async def is_reconciled(connection: AsyncConnection, *, schema_name: str) -> boo
     reconciled, which every test fixture and an operator's own clone depend on.
     """
     table = sql.Identifier(schema_name, "restore_reconciliation")
-    async with connection.cursor(row_factory=tuple_row) as cursor:
-        await cursor.execute(
-            sql.SQL(
-                "SELECT EXISTS (SELECT 1 FROM {t} AS r WHERE r.relation_oid = ("
-                + _IDENTITY
-                + ") AND pg_catalog.xid(r.written_xid) = r.xmin AND r.rows_before = ("
-                "SELECT pg_catalog.count(*) FROM {t}) - 1 AND r.timeline IS NOT DISTINCT FROM " + _TIMELINE + ")"
-            ).format(t=table),
-            (f"{schema_name}.restore_reconciliation",),
-        )
-        row = await cursor.fetchone()
-    return bool(row and row[0])
+    try:
+        async with connection.cursor(row_factory=tuple_row) as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT EXISTS (SELECT 1 FROM {t} AS r WHERE r.relation_oid = ("
+                    + _IDENTITY
+                    + ") AND pg_catalog.xid(r.written_xid) = r.xmin AND r.rows_before = ("
+                    "SELECT pg_catalog.count(*) FROM {t}) - 1 AND r.timeline IS NOT DISTINCT FROM "
+                    + _TIMELINE
+                    + "), ("
+                    + _ERASURE_GRANTS
+                    + ")"
+                ).format(t=table),
+                (f"{schema_name}.restore_reconciliation", schema_name),
+            )
+            row = await cursor.fetchone()
+    except InsufficientPrivilege:
+        # PostgreSQL checks SELECT on the identity table before it evaluates the catalog expression.
+        raise ErasureGrantMissing from None
+    if row is None or not row[1]:
+        raise ErasureGrantMissing
+    return bool(row[0])
 
 
 async def record_reconciliation(
@@ -352,6 +388,7 @@ async def record_reconciliation(
 __all__ = [
     "MARKER_KINDS",
     "RESTORED_MODES",
+    "ErasureGrantMissing",
     "ErasureMarker",
     "MarkerError",
     "MarkerKind",
@@ -365,6 +402,7 @@ __all__ = [
     "record_markers",
     "record_reconciliation",
     "replayed_write",
+    "require_erasure_grants",
     "resolve_turns",
     "turn_digest",
     "turn_is_erased",

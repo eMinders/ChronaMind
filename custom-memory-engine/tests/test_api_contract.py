@@ -94,7 +94,7 @@ def test_every_operation_is_counted_and_tier_b_has_the_right_reach() -> None:
     """The totals, and the property they exist to protect: Tier B reaches most of the read/write surface and **none**
     of the destructive or adjudicating one. ``V2-D105`` added ``lift`` (Adjudicate) and ``constraints`` (Read), which
     moves the totals; the reach of Tier B must stay exactly what ``TB1``/``TB2``/``TB8`` say it is."""
-    assert len(OPERATIONS) == 32
+    assert len(OPERATIONS) == 33
     tier_b = {op.name for op in OPERATIONS if "B" in op.tiers}
     assert len(tier_b) == 19
     # the two additions, stated here so a later change has to argue with them

@@ -458,12 +458,16 @@ def test_the_restore_modes_are_the_ones_the_identity_records() -> None:
         assert f"'{mode}'" in migration, mode
 
 
-def test_a_mark_reconciled_run_accepts_a_mode_and_reaches_the_database(tmp_path: Path) -> None:
-    """The upgrade path takes a mode too: `--mark-reconciled --restored-mode in-place` is what the procedure says."""
-    journal = tmp_path / "journal.jsonl"
-    write_journal(journal, [entry()], schema_name="cme_engine", key=KEY)
+@pytest.mark.parametrize("command", ["export", "replay"])
+def test_export_and_replay_require_a_journal_path(command: str) -> None:
+    result = _cli(command)
+    assert result.returncode == 2
+    assert "--journal is required" in result.stderr
 
-    result = _cli("replay", "--mark-reconciled", "--restored-mode", "in-place", "--journal", str(journal))
+
+def test_a_mark_reconciled_run_accepts_a_mode_and_reaches_the_database() -> None:
+    """The in-place operator assertion needs no journal file."""
+    result = _cli("replay", "--mark-reconciled", "--restored-mode", "in-place")
 
     assert "restored_mode_required" not in result.stderr
     assert "OperationalError" in result.stderr  # the mode was accepted; the run stopped at the connection
@@ -529,9 +533,18 @@ def test_a_version_one_journal_is_still_read_and_carries_no_markers(tmp_path: Pa
         [["write", "a" * 64, ""]],  # a write marker without its result
         [["turn", "a" * 64, "v_1"]],  # a turn marker with one
         [["turn", "a" * 64, ""], ["turn", "a" * 64, ""]],  # an export never writes the same marker twice
+        [["write", "a" * 64, "v_1"], ["write", "a" * 64, "v_2"]],
         "not-a-list",
     ],
-    ids=["bad-digest", "bad-kind", "write-without-result", "turn-with-result", "duplicate", "not-a-list"],
+    ids=[
+        "bad-digest",
+        "bad-kind",
+        "write-without-result",
+        "turn-with-result",
+        "duplicate",
+        "two-results",
+        "not-a-list",
+    ],
 )
 def test_a_journal_entry_with_a_malformed_marker_is_refused(tmp_path: Path, markers: object) -> None:
     path = tmp_path / "journal.jsonl"
@@ -541,6 +554,31 @@ def test_a_journal_entry_with_a_malformed_marker_is_refused(tmp_path: Path, mark
     with pytest.raises(JournalError) as refused:
         read_journal(path)
     assert refused.value.code == "journal_entry_invalid"
+
+
+def test_only_complete_removal_of_legacy_all_turns_merges_into_the_original() -> None:
+    first = ErasureMarker("turn", "a" * 64)
+    second = ErasureMarker("turn", "b" * 64)
+    write = ErasureMarker("write", "c" * 64, "v_1")
+    legacy = dataclasses.replace(entry(), scope="all", markers=(first, second, write))
+    compact = dataclasses.replace(legacy, markers=(write,), requested_at="2026-11-27T00:00:00+00:00")
+    assert merge_journal([legacy], [compact]) == [legacy]
+    for incompatible in (
+        dataclasses.replace(legacy, markers=(first, write)),
+        dataclasses.replace(legacy, markers=(ErasureMarker("turn", "f" * 64), write)),
+        dataclasses.replace(compact, markers=()),
+        dataclasses.replace(compact, markers=(dataclasses.replace(write, result_id="v_2"),)),
+        dataclasses.replace(compact, markers=(dataclasses.replace(write, digest="e" * 64),)),
+        dataclasses.replace(compact, markers=(write, ErasureMarker("write", "f" * 64, "v_2"))),
+        dataclasses.replace(compact, target_ref="hmac-sha256:bb"),
+    ):
+        with pytest.raises(JournalError, match="^journal_entry_conflict$"):
+            merge_journal([legacy], [incompatible])
+    with pytest.raises(JournalError, match="^journal_entry_conflict$"):
+        merge_journal([compact], [legacy])
+    for scope in ("topic", "memory"):
+        with pytest.raises(JournalError, match="^journal_entry_conflict$"):
+            merge_journal([dataclasses.replace(legacy, scope=scope)], [dataclasses.replace(compact, scope=scope)])
 
 
 def test_two_entries_under_one_request_differ_in_what_they_erased_are_refused() -> None:

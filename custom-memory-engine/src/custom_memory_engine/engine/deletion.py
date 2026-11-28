@@ -47,6 +47,7 @@ from custom_memory_engine.deletion.markers import (
     ErasureMarker,
     flag_erased_turns,
     record_markers,
+    require_erasure_grants,
     resolve_turns,
     turn_digest,
     write_markers_for,
@@ -329,32 +330,37 @@ async def _erase_marked(
     marked_turn_ids: Sequence[str],
     erased_result_ids: Sequence[str],
     delete_turns: bool,
+    record_turn_markers: bool,
     jobs: sql.Identifier,
     exclusive_turns_fn: sql.Identifier,
 ) -> _Marked:
     """Record this request's erasure markers and erase the turns they name (``T-46``, ``V2-D125``).
 
-    Live (``given is None``) the markers are computed from what the deletion erased. A replay (``given``) records the
-    journalled markers verbatim, so the next export reproduces the journal exactly, and finds the marked turns among
-    the ones the restored database holds. Either way a marked turn loses its jobs, is erased when nothing surviving
-    cites it (and ``delete_turns``), and is flagged against extraction when something does. A replay also purges a
-    *running* job: a restored lease belongs to no live worker, and the worker refuses to run before the replay
-    (``restore_reconciliation``); live, a running job is left to the deletion-epoch guard, as before.
+    Live (``given is None``) the markers are computed from what the deletion erased. A replay records the journalled
+    markers and resolves their turns in the restored database. For ``all``, ``marked_turn_ids`` already contains every
+    stored turn of the user, so even a legacy entry needs only its write markers. A marked turn loses its jobs, is
+    erased when nothing surviving cites it (and ``delete_turns``), and flagged against extraction otherwise. A replay
+    also purges running jobs because restored leases belong to no live worker. During live deletion the deletion-epoch
+    guard fences running jobs.
 
     Must run inside the deletion's transaction with ``app.deletion_active`` set (``delete_exclusive_turns``).
     """
     if given is None:
-        markers = [ErasureMarker("turn", turn_digest(key, user_id, turn_id)) for turn_id in marked_turn_ids]
+        markers = (
+            [ErasureMarker("turn", turn_digest(key, user_id, turn_id)) for turn_id in marked_turn_ids]
+            if record_turn_markers
+            else []
+        )
         markers += await write_markers_for(
             connection, user_id=user_id, result_ids=erased_result_ids, key=key, schema_name=schema_name
         )
         turns = sorted(set(marked_turn_ids))
     else:
-        markers = list(given)
+        markers = [marker for marker in given if record_turn_markers or marker.kind == "write"]
         resolved = await resolve_turns(
             connection,
             user_id=user_id,
-            digests=[marker.digest for marker in given if marker.kind == "turn"],
+            digests=[marker.digest for marker in markers if marker.kind == "turn"],
             key=key,
             schema_name=schema_name,
         )
@@ -411,14 +417,14 @@ async def delete_memory(
     (``V2-D122``): the replayed request keeps its original id and digest, so a second replay finds it and does nothing.
     With ``stored_target_ref`` a blank ``target_ref`` is allowed (the restored database never held the target, so the
     request is recorded and nothing is erased); a non-blank one must digest to ``stored_target_ref``. Its
-    ``erasure_markers`` are the journalled markers of the request (``V2-D125``): the replay records exactly those, and
-    erases every turn they name that the restored database still holds.
+    ``erasure_markers`` are the journalled markers of the request (``V2-D125``). Replay records them except for
+    redundant legacy ``all`` turn markers and erases the selected turns that the restored database still holds.
 
     * **Erasure markers (``T-46``, ``V2-D125``):** the request records, in this transaction, keyed digests of what it
       erased besides its target: each recorded idempotency identity whose result it erased (so a resend after a restore
-      replays instead of writing it again), and each evidence turn of a physically deleted version -- for ``all``,
-      every turn of the user. A marked turn loses its queued jobs, is erased when nothing surviving cites it, and is
-      flagged against extraction (``erased_turn``) when something does.
+      replays instead of writing it again), and each evidence turn of a physically deleted version. For ``all``,
+      the scope itself re-derives every turn of the user, so no turn marker is written. A marked turn loses its queued
+      jobs, is erased when nothing surviving cites it, and is flagged against extraction (``erased_turn``) otherwise.
 
     * **Unbounded closure (``V2-D09``):** traverses ``memory_derivation`` with ``WITH RECURSIVE ... UNION`` and no
       depth limit; terminates even on an injected cycle (F9).
@@ -460,6 +466,7 @@ async def delete_memory(
     stored_target_ref = stored_target_ref if stored_target_ref is not None else computed_target_ref
 
     await _verify_user_context(connection, user_id)
+    await require_erasure_grants(connection, schema_name=schema_name)
 
     versions = sql.Identifier(schema_name, "memory_version")
     derivations = sql.Identifier(schema_name, "memory_derivation")
@@ -686,6 +693,7 @@ async def _delete_memory_once(
                     schema_name=schema_name,
                     given=erasure_markers,
                     marked_turn_ids=await _all_turns(cursor, schema_name, user_id) if scope == "all" else (),
+                    record_turn_markers=scope != "all",
                     erased_result_ids=await _vanished(cursor, schema_name, "entity", user_id, entity_candidates),
                     delete_turns=delete_exclusive_sources,
                     jobs=jobs,
@@ -1019,6 +1027,7 @@ async def _delete_memory_once(
                 schema_name=schema_name,
                 given=erasure_markers,
                 marked_turn_ids=sorted({*exclusive_candidates, *all_turns}),
+                record_turn_markers=scope != "all",
                 erased_result_ids=[
                     *plan.to_delete,
                     *plan.to_retire,

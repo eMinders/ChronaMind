@@ -3193,7 +3193,7 @@ append-only verification records outlive deleted artifacts (IDs are opaque and c
    deletion surface. A `move` would add a second copy of the content (two deletion surfaces until the old one is
    retired), a new Tier C write path with its own provenance rows, and an idempotency key spanning two scopes — risk
    with no caller. It becomes needed when a client writes sub-scopes and must re-file memories between them, or a
-   product needs to hand a memory to another namespace rather than share it; #258 holds the design and stays open.
+   product needs to hand a memory to another namespace rather than share it; #258 holds the design and stays open. `V2-D129` subsequently implements owner-only re-filing.
 
 Tests: `tests/integration/test_visibility_sharing_db.py`, `tests/integration/test_migration_m2.py::test_the_read_policy_is_the_library_expression_on_every_scoped_table`.
 
@@ -3554,11 +3554,11 @@ default mitigation for timing inference is the concurrency bound rather than a r
 ### V2-D125 — A deletion's whole live effect survives a restore (`T-46`)
 
 **Decision.** A deletion request records, in its own transaction, keyed digests of what it erased *besides* its target:
-the evidence turns of the versions it physically deleted (for `all`, every turn of the user), and the idempotency
-identities of the writes whose results it erased, with each result's engine-generated id. The erasure journal carries
-them (`format 2`); a replay inserts them again, erases every marked turn the restored database still holds (with its
-jobs), and from then on a client's resend under an erased idempotency key answers with the erased result instead of
-writing the claim again. A stored turn a deletion marked but could not erase is flagged (`erased_turn`) and no
+the evidence turns of the versions it physically deleted under `memory` or `topic`, and, under every scope, the
+idempotency identities of the writes whose results it erased, with each result's engine-generated id. For `all`, the
+live deletion and replay enumerate every stored turn of the user, including turns with no extracted version (#270).
+Replay reads the markers from the format-2 journal, records the write identities and erases the selected turns and
+their jobs in the restored database. A client resending an erased idempotency key receives the original result. A stored turn a deletion marked but could not erase is flagged (`erased_turn`) and no
 extraction ever runs on it. A database the journal has not been replayed into is refused by both the worker and the
 host (`restore_reconciliation`).
 
@@ -3574,6 +3574,12 @@ where the backup lacks the target, which is precisely when the surviving evidenc
 * **The marker is a digest, never the identity.** The journal leaves the host, so a marker is an HMAC of the identity
   under the deployment's deletion key, bound to the user and the kind (`T-29`). A wrong key makes the replay refuse
   before it writes anything, because the file's key check is compared first; it cannot silently produce no-ops.
+* **Older format-2 `all` entries keep their first-seen form.** Replay consumes their write markers and derives the
+  turns from the restored database. An export may omit all of the original turn markers when the user, epoch,
+  request id, scope, target digest and every `(write digest, result id)` agree. The merge preserves the original
+  entry and timestamp. Removing only some turns, adding or substituting a turn, or changing a write raises
+  `journal_entry_conflict`. `memory` and `topic` require exact marker equality. Existing files and historical
+  database rows need no rewrite or migration.
 * **The flag is a plaintext id, and that is deliberate.** `erased_turn` holds a turn's own id, which `turn` already
   holds, and goes with the turn by cascade (migration 33). The worker therefore needs no deletion key -- the key stays
   in the host and the journal unit -- and a marked turn cannot be re-extracted by any code path.
@@ -3609,10 +3615,16 @@ way a restored dump is upgraded, and requires that it stay unreconciled until a 
 0.4 ms to flag a turn), one indexed lookup per extraction (the flag) and one per idempotent write (the marker probe:
 0.125 ms → 0.186 ms median at 50 000 markers and 50 000 idempotency rows). The reconciliation check costs one query per
 *claimed* job, not per idle tick: the worker claims first and puts the job back when the database is not reconciled, so
-an idle worker on a healthy database is exactly as cheap as it was. The journal grows by the digests a deletion erased,
-which is bounded by the closure it already traversed. A replay resolves an entry's `turn` digests against the user's
-stored turns (the key is only in Python), so its cost is O(requests x turns) per user, alongside the deletion closure it
-already walks for every entry; that is an offline recovery step measured in seconds, not a request path.
+an idle worker on a healthy database is exactly as cheap as it was.
+
+For one `all` deletion of **1,000 turns**, with no versions or idempotent writes, PostgreSQL 16.15 at `ef65d57` wrote
+**1,000 marker rows** and exported **82,482 bytes**. After #270 the same deletion wrote **0 marker rows** and exported
+**484 bytes**. Both runs erased all 1,000 turns. The measurement uses the complete one-entry format-2 file, including
+its header, with a fixed export timestamp (`test_a_thousand_turns_add_no_marker_rows_or_journal_bytes_to_an_all_deletion`).
+An `all` deletion still enumerates the user's turns to purge jobs, erase exclusive turns and flag survivors. Its new
+marker rows and journal payload grow only with erased idempotent writes. Each `memory` or `topic` replay with turn
+markers scans the user's stored turns to match their HMACs alongside its deletion closure. Each export still rewrites
+the whole file, including any first-seen legacy entries.
 
 **Limit, stated.** A data-only restore into the same relation, and a physical (PITR) restore, keep every OID and are not
 detected by `restore_reconciliation`; the procedure replays after any restore regardless. Markers are exported with the
@@ -3728,3 +3740,21 @@ relation-OID control and a second replay (the identity is an append log); the ro
 `test_migrating_a_restored_database_does_not_mark_it_reconciled` (from `V2-D125`) still holds through the new rollback. Every witness has a control: removing any one of the four clauses from `is_reconciled` fails a test in this file. The full `-m integration` suite (1565 passed, 9 skipped) was run on this branch, which is what proves a clone of the migrated template stays reconciled for every fixture, not only the four here.
 `tests/test_erasure_journal.py` pins the required flag and that the modes the CLI accepts are the ones the column's
 `CHECK` allows. `tests/integration/test_t46_restore_erasure_db.py` is unchanged apart from passing the mode it restores.
+
+### V2-D129 — Re-file a memory version within its owner's namespace (#258)
+
+The Tier C `move` operation implements §5 rule 5 and supersedes the deferral in `V2-D113` item 5.
+The server can re-cite a turn, span, hash or derivation exactly. Public provenance reveals only ids.
+
+One caller-scoped transaction takes the idempotency lock and allocates one belief-clock tick. The successor
+keeps the memory key, event time, observation, authorship, content, lifecycle, method and citations. It starts
+private in the destination. A Tier C decision records continuation of an asserted version. A private, attributed
+`supersedes` edge points from successor to predecessor. The predecessor's recorded range closes at the same tick
+and archival branch S retains its history. A retry returns the successor id. Memory-key deletion selects both
+versions, and deletion of a derivation source visits each through its own lineage edge (`T-50`).
+
+A move requires a current, active version and a different canonical scope in the same owner's namespace.
+Scope-local entity subjects and abstraction ledgers (including scope-specific probes and verification) cannot
+be transplanted faithfully. The operation refuses them, a contradiction whose history belongs to the old endpoint,
+a destination dissent blocking the inference, and a conflicting single-valued destination belief. Other historical
+links stay attached to the versions they describe. Sharing continues to use visibility and grants.

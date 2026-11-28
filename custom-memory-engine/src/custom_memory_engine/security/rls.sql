@@ -10,7 +10,12 @@
 -- Sections are split on the marker lines below.
 
 -- @create-role
-CREATE ROLE {{role}} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT
+DO $$
+BEGIN
+  CREATE ROLE {{role}} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN
+  NULL;
+END $$
 
 -- @grants
 -- Least privilege, derived from every statement the engine issues (V2-D54, finding S-03).
@@ -65,6 +70,6 @@ ORDER BY c.relname
 
 -- @verify-role
 -- Returns the role's dangerous attributes; every column must be false.
-SELECT r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolreplication, r.rolcanlogin
+SELECT r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolreplication, r.rolcanlogin, r.rolinherit
 FROM pg_catalog.pg_roles AS r
 WHERE r.rolname = %(role)s

@@ -219,21 +219,31 @@ async def export_journal(connection: AsyncConnection, *, schema_name: str = "cme
     ]
 
 
-def _identity(entry: JournalEntry) -> tuple[str, int, str, str, str, tuple[ErasureMarker, ...]]:
-    """What makes two entries one request. Not ``requested_at``: a replay re-records the request at replay time."""
-    return entry.user_id, entry.deletion_epoch, entry.request_id, entry.scope, entry.target_ref, entry.markers
+def _same_request(original: JournalEntry, exported: JournalEntry) -> bool:
+    """Compare entries under one request id. A replay can have a later timestamp and omit legacy ``all`` turns."""
+    if (original.user_id, original.deletion_epoch, original.scope, original.target_ref) != (
+        exported.user_id,
+        exported.deletion_epoch,
+        exported.scope,
+        exported.target_ref,
+    ):
+        return False
+    if original.markers == exported.markers:
+        return True
+    return original.scope == "all" and exported.markers == tuple(m for m in original.markers if m.kind == "write")
 
 
 def merge_journal(existing: Iterable[JournalEntry], exported: Iterable[JournalEntry]) -> list[JournalEntry]:
     """The union of both, by request id, keeping the first-seen (original) entry.
 
     Never drops an entry; two entries under one id that differ in identity (user, epoch, scope or target) are refused.
-    A replayed request differs only in ``requested_at`` (the replay's own time) and merges into the original.
+    A replayed request may differ in ``requested_at``. Older ``all`` entries can also carry redundant turn markers:
+    accept their complete removal only when every write marker, including its result id, matches. Keep the first entry.
     """
     merged: dict[str, JournalEntry] = {}
     for entry in (*existing, *exported):
         previous = merged.setdefault(entry.request_id, entry)
-        if _identity(previous) != _identity(entry):
+        if previous is not entry and not _same_request(previous, entry):
             raise JournalError("journal_entry_conflict")
     epochs: dict[tuple[str, int], str] = {}
     for entry in merged.values():
@@ -264,9 +274,10 @@ def read_journal(path: Path) -> Journal:
             raw_markers = fields.pop("markers", [])
             if not isinstance(raw_markers, list):
                 raise JournalError("journal_entry_invalid")
-            markers = tuple(sorted({ErasureMarker(*marker) for marker in raw_markers}))
-            if len(markers) != len(raw_markers):
-                raise JournalError("journal_entry_invalid")  # a duplicated marker is not something an export writes
+            markers = tuple(sorted(ErasureMarker(*marker) for marker in raw_markers))
+            if len({(m.kind, m.digest) for m in markers}) != len(markers):
+                # The database has one result per (request, kind, digest). A replay must never choose between two.
+                raise JournalError("journal_entry_invalid")
             entries.append(JournalEntry(**fields, markers=markers))
         # an off-host copy cut at a line boundary would otherwise load as a valid, shorter journal and the missing
         # deletions would never be replayed (`M2`, review of #259)

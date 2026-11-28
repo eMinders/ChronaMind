@@ -123,11 +123,3 @@ def test_rls_sql_grants_equal_the_least_privilege_matrix_exactly() -> None:
     assert set(TABLE_GRANTS) == set(USER_TABLES) | {"predicate_schema", "method", "restore_reconciliation"}
     for append_only in ("audit_event", "deletion_request", "turn", "session", "app_user", "memory_evidence"):
         assert not {"UPDATE", "DELETE"} & TABLE_GRANTS[append_only], append_only
-
-
-def test_no_comment_in_a_provisioning_section_contains_a_statement_separator() -> None:
-    """``_statements`` splits a section on ``;``: one inside a comment turns the comment's tail into broken SQL."""
-    # the two sections `provision_runtime_role` splits; the verify-* sections are executed whole, one query each
-    for name in ("create-role", "grants"):
-        for line in _sections()[name].splitlines():
-            assert not (line.lstrip().startswith("--") and ";" in line), name

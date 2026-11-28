@@ -958,10 +958,11 @@ async def test_a_host_login_without_bypassrls_reports_the_queue_unmeasured_not_z
     """Under forced RLS a non-BYPASSRLS login sees no tenant's jobs: that must not render as 0 dead letters."""
     config, schema = database
     login = "cme_metrics_" + uuid4().hex[:10]
+    runtime = "cme_rt_metrics_" + uuid4().hex[:10]
     password = uuid4().hex
     async with connect(database) as conn:
         await conn.execute(
-            sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD {}").format(
+            sql.SQL("CREATE ROLE {} LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS PASSWORD {}").format(
                 sql.Identifier(login), sql.Literal(password)
             )
         )
@@ -972,17 +973,13 @@ async def test_a_host_login_without_bypassrls_reports_the_queue_unmeasured_not_z
         await conn.execute(
             sql.SQL("GRANT SELECT ON {} TO {}").format(sql.Identifier(schema, "job"), sql.Identifier(login))
         )
-        # the host reads the restore-reconciliation identity before it serves (`T-46`), as its own login role
-        await conn.execute(
-            sql.SQL("GRANT SELECT ON {} TO {}").format(
-                sql.Identifier(schema, "restore_reconciliation"), sql.Identifier(login)
-            )
-        )
+        # Startup checks erasure grants as the runtime role. Queue metrics use the original login.
+        await provision_runtime_role(conn, schema, runtime, login_role=login)
         await conn.commit()
     try:
         dsn = make_conninfo(config.database_url.get_secret_value(), user=login, password=password)
         credentials = HostCredentials({TOKENS["alice-b"]: Credential("alice", "B")})
-        service = await HostService.open(HostSettings(dsn=dsn, role=login, schema_name=schema), credentials)
+        service = await HostService.open(HostSettings(dsn=dsn, role=runtime, schema_name=schema), credentials)
         try:
             assert await service.collect_queue_metrics() is None
             body = service.metrics.render(queue_counts=None)
@@ -992,7 +989,7 @@ async def test_a_host_login_without_bypassrls_reports_the_queue_unmeasured_not_z
         assert "cme_queue_dead_letters_total" not in body
         # the owner-level login (a superuser here) does measure it
         owner = await HostService.open(
-            HostSettings(dsn=config.database_url.get_secret_value(), role=login, schema_name=schema), credentials
+            HostSettings(dsn=config.database_url.get_secret_value(), role=runtime, schema_name=schema), credentials
         )
         try:
             assert await owner.collect_queue_metrics() == {}

@@ -14,7 +14,7 @@ from typing import cast
 from custom_memory_engine.api.entry import Call, Engine, EntryError, Handler
 from custom_memory_engine.api.runtime import Runtime
 from custom_memory_engine.deletion.closure import DeletionPolicyError
-from custom_memory_engine.deletion.markers import ErasureMarker
+from custom_memory_engine.deletion.markers import ErasureGrantMissing, ErasureMarker
 from custom_memory_engine.deletion.rederive import ReDerivationError, SummaryBuilder
 from custom_memory_engine.engine.deletion import DeletionError, DeletionReceipt, DeletionScope, delete_memory
 from custom_memory_engine.engine.transactions import AblationMode
@@ -76,6 +76,8 @@ class DeleteHandlers:
                     receipt_key=self.runtime.deletion_key,
                     schema_name=self.runtime.schema_name,
                 )
+        except ErasureGrantMissing as exc:
+            raise EntryError("forbidden", exc.code) from None
         except (DeletionError, DeletionPolicyError, ReDerivationError) as exc:
             # API_V2.md §4.8: closure growth past the bounded lock retries is a conflict the caller may retry.
             if exc.code in _RETRYABLE_CODES:
@@ -97,8 +99,8 @@ class DeleteHandlers:
 
         Not an API operation: only :func:`custom_memory_engine.deletion.journal.replay_journal` calls it. The request
         keeps its original id, digest and epoch, so the restored database ends in the state the journal records.
-        ``erasure_markers`` are the request's journalled markers (``V2-D125``): recorded as they are, and every turn
-        they name that the restored database holds is erased with its jobs.
+        Replay records the write markers and erases the journalled turns with their jobs. For ``all``, the scope
+        selects every restored turn of the user, including turns absent from a legacy entry (``V2-D125``).
         """
         async with self.runtime.session(user) as connection:
             return await delete_memory(
